@@ -1,33 +1,35 @@
-//! A quarantine allocator for one pool size class, so a write through a **stale pointer into
-//! freed-and-reused memory** faults *at the writing instruction* instead of days later in
-//! someone else's free.
+//! A quarantine allocator for **one or more** pool size classes, so a write through a **stale
+//! pointer into freed-and-reused memory** faults *at the writing instruction* instead of days
+//! later in someone else's free.
 //!
 //! # The disease this is built for
 //!
 //! Five write-watch runs (`research/the-180-second-clock-2026-09-07.md`) point at one writer
 //! with one habit: it holds a pointer into pool memory that has since been freed and handed
-//! back out, and writes a small increment through it on a timer. The evidence is that the same
-//! damage lands on three different occupants of the same addresses:
+//! back out, and writes a small increment through it on a timer. The damage has now been seen
+//! on **three different size classes**:
 //!
-//! * a **freed `0x20` slot**, where the increment hits the size header (`body − 4`) and the
-//!   next free of that slot dies `0xC0000374` — the pooled-free family;
-//! * a **live `0x40` map node**, where it hits a pointer's low dword and a later read of the
-//!   `+2` pointer dies `0xC0000005` — runs 2 and 5.
+//! | when | victim | damage |
+//! |---|---|---|
+//! | 2026-09-07 runs 2 and 5 | a live `0x40` map node | a pointer's low dword `+2` |
+//! | 2026-09-08 overnight | a live `0x20` red-black tree node | a pointer's high dword to `-1` |
+//! | 2026-09-08 the 1 h 57 m run | a live `0x40` object | a vtable pointer `+2` |
 //!
-//! The write watch (`crate::writewatch`) catches the first: it protects the `0x20` chunk pages
-//! read-only around a predicted firing. It cannot catch the second — wrong class, a live node,
-//! and run 5 died before any window opened. What catches an arbitrary stale write, on any
-//! clock, is memory that is **never handed out twice**: quarantine.
+//! `[I]`, and it is why this module now takes a *set* of classes: **the class is probably
+//! incidental.** The writer holds a stale ADDRESS; whichever bucket's chunk is later carved
+//! over that address is the victim. Quarantining one class is whack-a-mole, and the run of
+//! 2026-09-08 12:01 proved it - `0x20` was quarantined for 1 h 57 m and the client died on a
+//! `0x40` slot.
 //!
 //! # What it does
 //!
-//! While armed, an allocation of the watched class is served from its **own page** in a large
-//! private reservation, and its free **decommits that page and never reuses the address**. A
-//! genuine allocation that outlives its free is invisible — the client stops touching a slot it
-//! freed. A *stale* pointer is not: the next write through it hits a decommitted page and
-//! faults, and the handler names the instruction, the address, the return address that
-//! allocated the slot, and the one that freed it, then recommits the page and continues so the
-//! client survives to the next one.
+//! While armed, an allocation of a watched class is served from its **own page** in a large
+//! private reservation, and its free **decommits that page and holds the address back** for
+//! [`REUSE_AFTER_MS`]. A genuine allocation that outlives its free is invisible - the client
+//! stops touching a slot it freed. A *stale* pointer is not: the next access through it hits a
+//! decommitted page and faults, and the handler names the instruction, the address, the return
+//! address that allocated the slot, the one that freed it, and how long ago each happened, then
+//! recommits the page and continues so the client survives to the next one.
 //!
 //! # Why this is not a rewrite of the client's allocator
 //!
@@ -38,22 +40,46 @@
 //!   `mov [rsp+disp],reg` (15 bytes, `research/heap-wild-write.md` §1), reused through
 //!   [`crate::identity::install_detour`], which refuses to patch unless the prologue matches.
 //! * **Free is a pointer swap, not a code patch.** A quarantined slot's header is stamped
-//!   `> 0x80`, so the client's own free (`FUN_14019bb50` / `FUN_14019b4e0`) takes its
-//!   `HeapFree` arm rather than the pool arm — keeping our slots entirely off the pool's
-//!   free-list and live-counter — and we intercept by swapping the cached `HeapFree` pointer
-//!   at [`HEAPFREE_SLOT_RVA`], exactly as `crate::freeguard` swaps PCOM's.
+//!   [`QUARANTINE_HEADER`], so the client's own free takes its `HeapFree` arm rather than the
+//!   pool arm - keeping our slots entirely off the pool's free-list and live-counter - and we
+//!   intercept by swapping the cached `HeapFree` pointer at [`HEAPFREE_SLOT_RVA`], exactly as
+//!   `crate::freeguard` swaps PCOM's.
 //!
 //! Our slots never touch the pool's chunk chain, free list or counters, so `poolsentry` and
 //! `tools/poolchain.py` are unaffected and keep walking the real pool.
 //!
-//! # Off by default, one bucket, and bounded
+//! # The header stamp is class-independent, and that was checked, not assumed
 //!
-//! Armed only by `guardpage=<hex slot size>` in the session marker (`0x40` is the default the
-//! flag writes). Default bucket 2 (`0x40`) because runs 2 and 5 have no other coverage and it
-//! is the lowest-traffic class (18 758 allocations in a 50-minute run against bucket 1's
-//! 56 446). The reserve is address space only (2 GB reserved = 512 K one-page slots); committed
-//! memory is one page per *live* slot; a decommitted page costs nothing but its address. If the
-//! cursor runs out, allocation falls back to the client's own and says so.
+//! `research/heapfix-did-not-hold.md` §1 disassembles all three standalone frees. Every one of
+//! them ladders **on the header value alone** and never on the requested size:
+//!
+//! ```text
+//! 14019bb63  mov  rax,[rdx-8]        ; the header
+//! 14019bb7f  cmp  rax,0x20 / ja      ; -> 14019bb90
+//! 14019bb90  cmp  rax,0x40 / ja      ; -> 14019bbc4
+//! 14019bbc4  cmp  rax,0x80 / mov ecx,-1 / cmovbe ecx,3
+//! 14019bbd7  test ecx,ecx / jns      ; not taken for a header > 0x80
+//! 14019bbdb  ...HeapFree(heap, 0, ptr-8)
+//! ```
+//!
+//! So one stamp `> 0x80` diverts **every** class we serve, and the third free
+//! (`0x14019ba40`, ladder `0x28/0x38/0x58/0x98`) is covered by the same value as long as it is
+//! also `> 0x98`. `0x100` is. `[L]` from the listing; the test
+//! [`the_quarantine_header_takes_the_heapfree_arm_on_both_ladders`] pins both ladders.
+//!
+//! What is **not** proved for a new class is that its frees all reach the *cached pointer we
+//! swapped*: the 2026-09-08 run showed 1.02 M `0x20` frees coming back through
+//! [`heapfree_shim`] `[L]`, but 53 of the 56 ladder sites are inlined into ordinary functions
+//! and none of those was traced. `[I]` So this module now logs the **first free of each class**
+//! and the heartbeat shouts if a class is served and never freed - that is the liveness control
+//! for a newly-added class, and it answers in seconds rather than in a morning.
+//!
+//! # Off by default, a named set of classes, and bounded
+//!
+//! Armed only by `guardpage=<classes>` in the session marker: `0x20`, `0x20+0x40`, or `all`.
+//! The reserve is address space only; committed memory is one page per *live* slot, and a
+//! decommitted page costs nothing but its address. If the cursor runs out, allocation falls
+//! back to the client's own and says so **per class**.
 //!
 //! # The control that has to pass first
 //!
@@ -103,6 +129,7 @@ const PAGE_NOACCESS: u32 = 0x01;
 const MEM_RESERVE: u32 = 0x2000;
 const MEM_COMMIT: u32 = 0x1000;
 const MEM_DECOMMIT: u32 = 0x4000;
+const MEM_RELEASE: u32 = 0x8000;
 
 const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
 const EXCEPTION_CONTINUE_EXECUTION: i32 = -1;
@@ -128,50 +155,13 @@ extern "system" {
 }
 
 // ---------------------------------------------------------------------------------------
-// Sizing and the pure core
+// The size classes
 // ---------------------------------------------------------------------------------------
 
-/// 4 GB of address space: 1 M one-page slots. Reserved, not committed; a decommitted page
-/// costs only its slot in this range.
-///
-/// **Sized for bucket 1, the hottest class.** The 2026-09-08 death dump has **56 744 live
-/// `0x20` allocations** [L], and what has to fit here is not that but every `0x20` allocation
-/// made inside one [`REUSE_AFTER_MS`] window - everything older has aged out and come back. At
-/// 1 M slots that is about **1700 allocations a second sustained** before the cursor is spent
-/// and the class falls back to the client's own pool. The doubling costs only address space
-/// plus the metadata below; the committed cost is one page per LIVE slot, ~230 MB for that
-/// bucket, which is the real price of quarantining it.
-const RESERVE_BYTES: usize = 4 * 1024 * 1024 * 1024;
-const MAX_SLOTS: usize = RESERVE_BYTES / PAGE_BYTES;
-
-/// Where in a guard page the slot sits. The header the client reads at `body − 8` lands at
-/// `page + 8`; the body at `page + 0x10` is 16-aligned, as the pool's are.
-const SLOT_BODY_OFF: usize = 0x10;
-const SLOT_HEADER_OFF: usize = SLOT_BODY_OFF - 8;
-
-/// **How long a freed slot's address stays retired before it may be handed out again.**
-///
-/// The original design never reused an address, which is the strongest possible guarantee and
-/// cannot last a night: the cursor only advances, so the reserve is a budget of total
-/// allocations. 512 K of them at even a thousand a second is under nine minutes, after which
-/// the module falls back to the client's own allocator and the protection is silently gone.
-/// The owner, 2026-09-08: *"Our goal is to leave the client running overnight without it exiting."*
-///
-/// So a page is reused only after this long. The number comes from the writer itself: it fires
-/// on an exact **180 s** clock (`research/the-180-second-clock-2026-09-07.md`), and the stale
-/// pointers it holds have been seen to survive several periods, so 600 s covers three firings
-/// of any pointer taken at the moment of a free. A stale write inside that window still lands
-/// on a decommitted page and is caught; one after it lands on a live quarantined slot, which is
-/// the same exposure the client's own pool has after a few milliseconds.
-///
-/// The trade, stated: this exchanges an absolute guarantee that lasts nine minutes for a
-/// 600-second guarantee that lasts as long as the client runs.
-const REUSE_AFTER_MS: u64 = 600_000;
-
-/// The header value stamped on a quarantined slot: **greater than `0x80`**, so the client's
-/// free ladders past `0x10/0x20/0x40/0x80` and takes the `HeapFree` arm we intercept, instead
-/// of pushing our slot onto the pool's free list. `research/heapfix-did-not-hold.md` §1.
-const QUARANTINE_HEADER: u64 = 0x100;
+/// The pool's four buckets, in the order the allocator's own ladder tests them. A *bucket* is
+/// an index `0..4` into this; a *class* is the byte size.
+pub(crate) const CLASSES: [usize; 4] = [0x10, 0x20, 0x40, 0x80];
+pub(crate) const NCLASS: usize = CLASSES.len();
 
 /// The pool's size-class ladder, from the allocator's own thresholds. Rounds a requested size
 /// up to `0x10/0x20/0x40/0x80`, or `None` for anything larger (the big-block path, never
@@ -186,9 +176,192 @@ pub(crate) fn size_class(size: usize) -> Option<usize> {
     }
 }
 
+/// The bucket index of a class size, or `None` if it is not one of the four.
+pub(crate) fn bucket_of(class: usize) -> Option<usize> {
+    CLASSES.iter().position(|&c| c == class)
+}
+
+/// The bucket a request of `size` lands in.
+pub(crate) fn size_bucket(size: usize) -> Option<usize> {
+    size_class(size).and_then(bucket_of)
+}
+
+/// Parse the `guardpage=` token into a bucket mask.
+///
+/// Accepted: one class (`0x20`), several joined by `+` or `|` (`0x20+0x40`), or the word
+/// `all`. **Not** commas - the session marker is itself comma-separated, so a comma here would
+/// split the token in [`crate::session::marker_token`] and silently arm half of what was asked
+/// for. A bare number without `0x` is read as **decimal**, which is what the single-class
+/// parser did before this and is kept so an old command line means what it always meant
+/// (`32` is `0x20`).
+///
+/// Returns the mask, or a message naming exactly what was rejected - never a silent zero.
+pub(crate) fn parse_classes(tok: &str) -> Result<u32, String> {
+    let t = tok.trim().to_ascii_lowercase();
+    if t.is_empty() {
+        return Err("the token is empty".into());
+    }
+    if t == "all" {
+        return Ok((1 << NCLASS) - 1);
+    }
+    let mut mask = 0u32;
+    for part in t.split(['+', '|']) {
+        let p = part.trim();
+        if p.is_empty() {
+            return Err(format!("{tok:?} has an empty term - write it as 0x20+0x40"));
+        }
+        let v = match p.strip_prefix("0x") {
+            Some(h) => usize::from_str_radix(h, 16).ok(),
+            None => p.parse::<usize>().ok(),
+        };
+        match v.and_then(bucket_of) {
+            Some(b) => mask |= 1 << b,
+            None => {
+                return Err(format!(
+                    "{p:?} is not one of 0x10/0x20/0x40/0x80 (or `all`, or a `+`-joined list \
+                     of them)"
+                ))
+            }
+        }
+    }
+    Ok(mask)
+}
+
+/// The classes a mask names, for a log line.
+pub(crate) fn mask_text(mask: u32) -> String {
+    let mut s = String::new();
+    for (b, &c) in CLASSES.iter().enumerate() {
+        if mask & (1 << b) != 0 {
+            if !s.is_empty() {
+                s.push('+');
+            }
+            s.push_str(&format!("{c:#x}"));
+        }
+    }
+    if s.is_empty() {
+        s.push_str("(none)");
+    }
+    s
+}
+
+// ---------------------------------------------------------------------------------------
+// Sizing, and the arithmetic that justifies it
+// ---------------------------------------------------------------------------------------
+
+/// **The largest reserve this module will take, in one-page slots: 8 M, i.e. 32 GiB of address
+/// space.** Reserved, never committed as a whole; a decommitted page costs only its slot here.
+///
+/// # Why this number, from the 2026-09-08 12:01 run
+///
+/// That run quarantined `0x20` with `MAX_SLOTS = 1 048 576` and the cursor was **spent at six
+/// minutes**, four minutes before anything could age out. From its heartbeats `[L]`:
+///
+/// ```text
+///    60 s     627 172 served      <- a startup burst, ~10 000/s in the first minute
+///   120 s     720 807             +93 635
+///   300 s   1 001 708             +93 621     -> 1 560/s sustained
+///   360 s   1 048 576 = cap       ***** 47 058 FELL BACK *****
+///   600 s   1 050 852             419 588 fell back; recycling begins
+/// ```
+///
+/// Two quantities, and confusing them is what made the first sizing wrong:
+///
+/// * **steady state** needs one retirement window of churn: `1 560 x 600 = 936 000` slots.
+///   That *fits* in the old 1 M. The old size was not wrong for the steady state.
+/// * **the first window** starts at zero with nothing to recycle, so it needs the burst too:
+///   `627 172 + 1 560 x 540 = 1 469 572`. That does **not** fit in 1 M, and the difference,
+///   ~421 K, is the 419 588 that fell back. `[D]`, and it agrees with the measurement to 0.06 %.
+///
+/// So the binding constraint is the burst, and the fix is a bigger cursor rather than a
+/// shorter window. 8 M slots is **5.7 x** one class's measured first window, which leaves room
+/// for two classes at that rate with better than 2 x headroom, or all four if the other three
+/// together are no worse than `0x20`. Everything above the cursor is address space and lazily
+/// committed metadata, so the headroom is nearly free - see [`META_BLOCK_BYTES`].
+pub(crate) const MAX_SLOTS: usize = 8 * 1024 * 1024;
+
+/// Reserve sizes to try, in slots, largest first. A 32 GiB reservation in a 64-bit process
+/// with 128 TB of user address space should never fail - but "should never fail" is how this
+/// project has lost runs before, and standing the whole module down because address space was
+/// fragmented would be a worse outcome than arming with a smaller cursor and saying so. Every
+/// entry is a power of two: the retirement ring indexes with a mask.
+const RESERVE_LADDER: [usize; 5] = [
+    8 * 1024 * 1024,
+    4 * 1024 * 1024,
+    2 * 1024 * 1024,
+    1024 * 1024,
+    512 * 1024,
+];
+
+/// Where in a guard page the slot sits. The header the client reads at `body − 8` lands at
+/// `page + 8`; the body at `page + 0x10` is 16-aligned, as the pool's are. The largest class
+/// we serve is `0x80`, so a slot occupies `page..page+0x90` and one page is ample.
+const SLOT_BODY_OFF: usize = 0x10;
+const SLOT_HEADER_OFF: usize = SLOT_BODY_OFF - 8;
+
+/// **How long a freed slot's address stays retired before it may be handed out again.**
+///
+/// The original design never reused an address, which is the strongest possible guarantee and
+/// cannot last a night: the cursor only advances, so the reserve is a budget of total
+/// allocations. So a page is reused only after this long.
+///
+/// **Unchanged at 600 s on 2026-09-08, deliberately.** The number comes from the writer, not
+/// from the reserve: it fires on an exact **180 s** clock
+/// (`research/the-180-second-clock-2026-09-07.md`), and 600 s covers three firings of any
+/// pointer taken at the instant of a free. The temptation after the 12:01 run was to shorten it
+/// - every 100 s shaved is ~156 K slots per class - but the run showed the *cursor* was the
+/// constraint and the cursor is the cheap thing to grow: 8 M slots costs address space and
+/// lazily-committed metadata, while a shorter window costs guarantee. Nothing measured says a
+/// stale pointer stops being written after two firings rather than three, so the window stays
+/// where the measurement of the writer put it.
+///
+/// A stale write inside the window lands on a decommitted page and is caught; one after it
+/// lands on a live quarantined slot, which is the same exposure the client's own pool has after
+/// a few milliseconds.
+const REUSE_AFTER_MS: u64 = 600_000;
+
+/// The header value stamped on a quarantined slot: **greater than `0x98`**, so every one of the
+/// client's three free ladders (`0x10/0x20/0x40/0x80` twice, `0x28/0x38/0x58/0x98` once) falls
+/// through to the `HeapFree` arm we intercept instead of pushing our slot onto a pool free
+/// list. `research/heapfix-did-not-hold.md` §1. It does **not** depend on which class the slot
+/// was requested as - the ladders read the header and nothing else - which is what makes one
+/// stamp correct for all four classes at once.
+const QUARANTINE_HEADER: u64 = 0x100;
+
 /// The page containing `addr`.
 pub(crate) fn page_of(addr: usize) -> usize {
     addr & !(PAGE_BYTES - 1)
+}
+
+// ---- the measurement this sizing has to argue with -------------------------------------
+//
+// All read off the sentry heartbeat of the 2026-09-08 12:01 run,
+// `client-patched/maplecw-hook.log`, the first time the guard page ever ran on a client. It
+// quarantined `0x20` only, armed at 12:01:21, and the client lived to 13:58:14 - 1 h 57 m, the
+// longest session this project has had.
+
+/// Slots served in the first 60 s: the startup burst, ~10 000/s. `[L]`
+pub(crate) const MEASURED_BURST_60S: usize = 627_172;
+/// Sustained rate afterwards: +93 635, +93 637, +93 643, +93 621 per 60 s. `[L]`
+pub(crate) const MEASURED_STEADY_PER_S: usize = 1_560;
+/// The cursor that run had, and which was spent between its 300 s and 360 s heartbeats. `[L]`
+pub(crate) const OLD_MAX_SLOTS: usize = 1_048_576;
+/// Allocations that had fallen back by the 600 s heartbeat, when recycling began. `[L]`
+pub(crate) const MEASURED_FALLBACK_AT_600S: usize = 419_588;
+/// Live `0x20` slots at every heartbeat after the first three minutes: ~26 000. `[L]`
+/// One committed page each, so ~104 MB - not the ~230 MB predicted before the launch.
+pub(crate) const MEASURED_LIVE_0X20: usize = 26_000;
+
+/// Slots one class needs to be covered from a standing start: its first-minute burst plus the
+/// rest of one retirement window at the sustained rate. Pure, so the sizing has to argue with
+/// the measurement rather than with a comment.
+pub(crate) fn first_window_slots(burst_60s: usize, steady_per_s: usize, reuse_ms: u64) -> usize {
+    let window_s = (reuse_ms / 1000) as usize;
+    burst_60s + steady_per_s * window_s.saturating_sub(60)
+}
+
+/// Slots one class needs once it is turning over: one retirement window of churn, no burst.
+pub(crate) fn steady_slots(steady_per_s: usize, reuse_ms: u64) -> usize {
+    steady_per_s * (reuse_ms / 1000) as usize
 }
 
 // ---------------------------------------------------------------------------------------
@@ -200,11 +373,12 @@ const MODE_ARMED: u32 = 1;
 
 static INSTALLED: AtomicBool = AtomicBool::new(false);
 static MODE: AtomicU32 = AtomicU32::new(MODE_OFF);
-/// The size class we quarantine (`0x40` by default).
-static WATCHED: AtomicUsize = AtomicUsize::new(0);
-/// Base of the reservation, and a bump cursor in pages. The cursor only ever advances: a freed
-/// page's address is retired, which is the whole point.
+/// Which buckets we quarantine, one bit each. Zero until [`arm`] succeeds.
+static WATCHED_MASK: AtomicU32 = AtomicU32::new(0);
+/// Base of the reservation, how many slots it actually holds (a power of two from
+/// [`RESERVE_LADDER`]), and a bump cursor in pages.
 static RESERVE_BASE: AtomicUsize = AtomicUsize::new(0);
+static SLOTS: AtomicUsize = AtomicUsize::new(0);
 static CURSOR: AtomicUsize = AtomicUsize::new(0);
 /// The original allocator, reached for every non-quarantined size.
 static ALLOC_TRAMPOLINE: AtomicUsize = AtomicUsize::new(0);
@@ -212,12 +386,26 @@ static ALLOC_TRAMPOLINE: AtomicUsize = AtomicUsize::new(0);
 static REAL_HEAPFREE: AtomicUsize = AtomicUsize::new(0);
 static HEAPFREE_SLOT: AtomicUsize = AtomicUsize::new(0);
 
-static SERVED: AtomicU64 = AtomicU64::new(0);
-static FREED: AtomicU64 = AtomicU64::new(0);
-static FALLBACK: AtomicU64 = AtomicU64::new(0);
+const ZERO_U64: AtomicU64 = AtomicU64::new(0);
+/// Per-bucket counters. **Summing across classes is what hides which one is exhausting**, so
+/// nothing here is kept as a total; the heartbeat prints them apart.
+static SERVED: [AtomicU64; NCLASS] = [ZERO_U64; NCLASS];
+static FREED: [AtomicU64; NCLASS] = [ZERO_U64; NCLASS];
+static FALLBACK: [AtomicU64; NCLASS] = [ZERO_U64; NCLASS];
+static RECYCLED: [AtomicU64; NCLASS] = [ZERO_U64; NCLASS];
+/// **Every pool allocation the detour sees, by class, watched or not.** One relaxed increment
+/// on a path that already does three atomic loads, and it is the churn measurement nobody has:
+/// after the 12:01 run we know `0x20` runs at 1 560/s and we know *nothing at all* about the
+/// other three, which is exactly the number needed to size a two- or four-class run. It costs
+/// no launch of its own - it rides along on whatever the next run is.
+static SEEN: [AtomicU64; NCLASS] = [ZERO_U64; NCLASS];
+
 static CATCHES: AtomicU64 = AtomicU64::new(0);
 static CATCH_LOGS: AtomicU32 = AtomicU32::new(0);
 const MAX_CATCH_LOGS: u32 = 64;
+/// A pointer inside the reserve that was handed to `HeapFree` but never handed out by us.
+/// Should be zero forever; a non-zero value means a wild pointer landed in our range.
+static ALIEN_FREES: AtomicU64 = AtomicU64::new(0);
 
 /// The client's executable sections as `[lo, hi)`, from the PE header at the module base,
 /// read once at arm. On this build: `.text`, `.themida` and `.boot`. A return address is only
@@ -276,7 +464,13 @@ static SELF_TEST_OK: AtomicBool = AtomicBool::new(false);
 
 /// One page's metadata, kept **outside** the guard page so it survives the decommit and can
 /// name the allocator and freer when a stale write finally arrives. Indexed by page number
-/// within the reserve. Committed once at install (512 K × 32 B = 16 MB).
+/// within the reserve.
+///
+/// **Committed lazily** - see [`ensure_meta`]. At 40 bytes a slot, an 8 M-slot reserve would be
+/// 320 MB if it were committed up front, and that array is what stopped the reserve growing
+/// after the 12:01 run. Reserved in full, committed in [`META_BLOCK_BYTES`] blocks as the
+/// cursor advances, it costs only what the run actually uses: 60 MB for one class's first
+/// window, and nothing at all for the 6.5 M slots a two-class run never reaches.
 #[repr(C)]
 struct Meta {
     alloc_ra: AtomicU64,
@@ -287,26 +481,99 @@ struct Meta {
     /// 0 never used, 1 live, 2 quarantined (decommitted), 3 caught (recommitted after a stale
     /// write).
     state: AtomicU32,
-    _pad: AtomicU32,
+    /// Which class this slot was handed out as, so the free path can count per class without
+    /// re-deriving it from a size it is never told.
+    class: AtomicU32,
 }
 
-static META: AtomicUsize = AtomicUsize::new(0); // *mut Meta, MAX_SLOTS long
+const META_STRIDE: usize = std::mem::size_of::<Meta>();
+/// How much `Meta` is committed at a time. 1 MB is 26 214 slots, so at the measured 1 560/s
+/// this is one `VirtualAlloc` every ~17 seconds per class - off the hot path in every practical
+/// sense, and the block is large enough that the commit ladder never becomes the cost.
+const META_BLOCK_BYTES: usize = 1024 * 1024;
+
+static META: AtomicUsize = AtomicUsize::new(0); // *mut Meta, reserved for SLOTS entries
+/// Bytes of [`META`] committed so far, from its base. Only ever grows.
+static META_COMMITTED: AtomicUsize = AtomicUsize::new(0);
+
+/// Round `need` up to the next commit block, capped at the reservation.
+pub(crate) fn commit_target(need: usize, block: usize, total: usize) -> usize {
+    if need >= total {
+        return total;
+    }
+    let up = need.div_ceil(block) * block;
+    up.min(total)
+}
+
+/// Make sure `Meta[i]` is backed before anyone dereferences it.
+///
+/// Idempotent and lock-free. `MEM_COMMIT` over an already-committed range succeeds, so two
+/// threads racing on the same block do redundant work and never corrupt anything; the
+/// high-water is published with a CAS so a thread that observes it can dereference safely.
+unsafe fn ensure_meta(i: usize) -> bool {
+    let need = (i + 1) * META_STRIDE;
+    let mut have = META_COMMITTED.load(Ordering::Acquire);
+    if need <= have {
+        return true;
+    }
+    let base = META.load(Ordering::SeqCst);
+    let total = SLOTS.load(Ordering::SeqCst) * META_STRIDE;
+    if base == 0 || need > total {
+        return false;
+    }
+    while need > have {
+        let want = commit_target(need, META_BLOCK_BYTES, total);
+        if VirtualAlloc(
+            (base + have) as *mut c_void,
+            want - have,
+            MEM_COMMIT,
+            PAGE_READWRITE,
+        )
+        .is_null()
+        {
+            return false;
+        }
+        match META_COMMITTED.compare_exchange(have, want, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => return true,
+            Err(now) => have = now,
+        }
+    }
+    true
+}
+
+/// Is `Meta[i]` backed *right now*? Read-only, for the paths that must not commit: the
+/// exception handler (a fault on a reserve page that was never handed out would otherwise make
+/// the handler dereference an uncommitted array and fault inside itself) and the free shim.
+fn meta_ready(i: usize) -> bool {
+    (i + 1) * META_STRIDE <= META_COMMITTED.load(Ordering::Acquire)
+}
+
+unsafe fn meta(i: usize) -> &'static Meta {
+    &*((META.load(Ordering::SeqCst) as *const Meta).add(i))
+}
 
 // ---------------------------------------------------------------------------------------
 // The retirement queue
 // ---------------------------------------------------------------------------------------
 //
 // Freed slots in the order they were freed, so the oldest is the first candidate for reuse.
-// A `u32` slot index per entry, `MAX_SLOTS` of them (2 MB), reserved and committed with the
-// metadata. Head and tail are guarded by one spinlock: the critical section is a bounds check
-// and one store, shorter than the `lock cmpxchg` the client's own pool takes on every
+// A `u32` slot index per entry, `SLOTS` of them, reserved and committed in full with the
+// reservation. Head and tail are guarded by one spinlock: the critical section is a bounds
+// check and one store, shorter than the `lock cmpxchg` the client's own pool takes on every
 // allocation, and it is never held across a page operation or a log.
+//
+// **The ring is committed eagerly and `Meta` is not, and that asymmetry is deliberate.** The
+// ring is 4 bytes a slot where `Meta` is 40, so at 8 M slots it is 32 MB against 320 MB - it
+// does not scale into the number that blocked the reserve. And its index is `tail & mask`,
+// where `tail` counts *every free ever*, not distinct slots: at the measured 1 560/s it sweeps
+// the whole array inside 90 minutes whatever the cursor does, so laziness here would defer the
+// charge rather than avoid it - while putting a `VirtualAlloc` inside the ring spinlock, on the
+// hot free path, in the one module in this crate that has a client run behind it.
 
-static RING: AtomicUsize = AtomicUsize::new(0); // *mut u32, MAX_SLOTS long
+static RING: AtomicUsize = AtomicUsize::new(0); // *mut u32, SLOTS long
 static RING_HEAD: AtomicUsize = AtomicUsize::new(0); // pop here
 static RING_TAIL: AtomicUsize = AtomicUsize::new(0); // push here
 static RING_LOCK: AtomicBool = AtomicBool::new(false);
-static RECYCLED: AtomicU64 = AtomicU64::new(0);
 
 struct RingGuard;
 impl Drop for RingGuard {
@@ -327,19 +594,20 @@ fn ring_lock() -> RingGuard {
 /// Push a freed slot onto the tail of the retirement queue.
 unsafe fn retire(i: usize) {
     let ring = RING.load(Ordering::SeqCst);
-    if ring == 0 {
+    let slots = SLOTS.load(Ordering::SeqCst);
+    if ring == 0 || slots == 0 {
         return;
     }
     let _g = ring_lock();
     let tail = RING_TAIL.load(Ordering::Relaxed);
     let head = RING_HEAD.load(Ordering::Relaxed);
-    // Full is impossible - the queue holds at most MAX_SLOTS entries and every entry is a
+    // Full is impossible - the queue holds at most `slots` entries and every entry is a
     // distinct slot - but a wrap that would collide is dropped rather than corrupting the
     // queue. A dropped entry is a slot that is simply never reused, the old behaviour.
-    if tail.wrapping_sub(head) >= MAX_SLOTS {
+    if tail.wrapping_sub(head) >= slots {
         return;
     }
-    *((ring as *mut u32).add(tail % MAX_SLOTS)) = i as u32;
+    *((ring as *mut u32).add(tail & (slots - 1))) = i as u32;
     RING_TAIL.store(tail.wrapping_add(1), Ordering::Relaxed);
 }
 
@@ -347,7 +615,8 @@ unsafe fn retire(i: usize) {
 /// `None`. The queue is in free order, so the head is the oldest and one look decides it.
 unsafe fn take_reusable(now: u64) -> Option<usize> {
     let ring = RING.load(Ordering::SeqCst);
-    if ring == 0 {
+    let slots = SLOTS.load(Ordering::SeqCst);
+    if ring == 0 || slots == 0 {
         return None;
     }
     let _g = ring_lock();
@@ -355,8 +624,8 @@ unsafe fn take_reusable(now: u64) -> Option<usize> {
     if head == RING_TAIL.load(Ordering::Relaxed) {
         return None;
     }
-    let i = *((ring as *const u32).add(head % MAX_SLOTS)) as usize;
-    if i >= MAX_SLOTS {
+    let i = *((ring as *const u32).add(head & (slots - 1))) as usize;
+    if i >= slots || !meta_ready(i) {
         RING_HEAD.store(head.wrapping_add(1), Ordering::Relaxed);
         return None;
     }
@@ -372,13 +641,9 @@ pub(crate) fn reusable_at(freed_tick: u64, now: u64) -> bool {
     freed_tick != 0 && now.saturating_sub(freed_tick) >= REUSE_AFTER_MS
 }
 
-unsafe fn meta(i: usize) -> &'static Meta {
-    &*((META.load(Ordering::SeqCst) as *const Meta).add(i))
-}
-
 /// Is `addr` inside the reservation, and if so which page index?
-fn slot_index(base: usize, addr: usize) -> Option<usize> {
-    if base == 0 || addr < base || addr >= base + RESERVE_BYTES {
+fn slot_index(base: usize, slots: usize, addr: usize) -> Option<usize> {
+    if base == 0 || slots == 0 || addr < base || addr >= base + slots * PAGE_BYTES {
         return None;
     }
     Some((page_of(addr) - base) / PAGE_BYTES)
@@ -388,26 +653,31 @@ fn slot_index(base: usize, addr: usize) -> Option<usize> {
 // The allocator detour
 // ---------------------------------------------------------------------------------------
 
-/// `alloc(ctx, size)`. Quarantines a request of the watched class from our own reserve;
+/// `alloc(ctx, size)`. Quarantines a request of any watched class from our own reserve;
 /// everything else goes to the client's own allocator through the trampoline.
 unsafe extern "system" fn alloc_detour(ctx: usize, size: usize) -> usize {
     let tramp: extern "system" fn(usize, usize) -> usize =
         std::mem::transmute(ALLOC_TRAMPOLINE.load(Ordering::SeqCst));
 
-    if MODE.load(Ordering::SeqCst) != MODE_ARMED
-        || ctx != crate::hook::base() + POOL_CTX_RVA
-        || size_class(size) != Some(WATCHED.load(Ordering::SeqCst))
-    {
+    if MODE.load(Ordering::SeqCst) != MODE_ARMED || ctx != crate::hook::base() + POOL_CTX_RVA {
+        return tramp(ctx, size);
+    }
+    let Some(b) = size_bucket(size) else {
+        return tramp(ctx, size); // the big-block path
+    };
+    // Count it whether or not we serve it: this is the per-class churn measurement.
+    SEEN[b].fetch_add(1, Ordering::Relaxed);
+    if WATCHED_MASK.load(Ordering::SeqCst) & (1 << b) == 0 {
         return tramp(ctx, size);
     }
 
     // Who allocated this slot, for the eventual fault report. Best-effort stack scan, the
     // same one the free path uses; a wrong value only makes a worse log line.
     let ra = caller_ra();
-    match quarantine_alloc(ra) {
+    match quarantine_alloc(ra, b) {
         Some(body) => body,
         None => {
-            FALLBACK.fetch_add(1, Ordering::SeqCst);
+            FALLBACK[b].fetch_add(1, Ordering::SeqCst);
             tramp(ctx, size)
         }
     }
@@ -415,29 +685,36 @@ unsafe extern "system" fn alloc_detour(ctx: usize, size: usize) -> usize {
 
 /// Take a page - the oldest one retired longer than [`REUSE_AFTER_MS`] ago, or a fresh one
 /// from the cursor - commit it, stamp the header, and return the body.
-unsafe fn quarantine_alloc(alloc_ra: usize) -> Option<usize> {
+///
+/// The reserve is **shared across every watched class**, and that is not a compromise: a page
+/// is a page, the body offset is the same for all four, and the header stamp is the same value
+/// for all four, so a slot retired by `0x20` is a perfectly good `0x40` ten minutes later. The
+/// alternative - one reserve per class - would need each class's burst sized separately, and
+/// three of the four rates are still unmeasured.
+unsafe fn quarantine_alloc(alloc_ra: usize, bucket: usize) -> Option<usize> {
     let base = RESERVE_BASE.load(Ordering::SeqCst);
-    if base == 0 {
+    let slots = SLOTS.load(Ordering::SeqCst);
+    if base == 0 || slots == 0 {
         return None;
     }
     let now = GetTickCount64();
     // A slot retired long enough ago is preferred over a fresh one, so the cursor advances
     // only while nothing has aged out and the reserve becomes a working set rather than a
     // budget of total allocations.
-    let i = match take_reusable(now) {
-        Some(i) => {
-            RECYCLED.fetch_add(1, Ordering::SeqCst);
-            i
-        }
+    let (i, recycled) = match take_reusable(now) {
+        Some(i) => (i, true),
         None => {
             let i = CURSOR.fetch_add(1, Ordering::SeqCst);
-            if i >= MAX_SLOTS {
-                CURSOR.store(MAX_SLOTS, Ordering::SeqCst); // do not wrap the counter
+            if i >= slots {
+                CURSOR.store(slots, Ordering::SeqCst); // do not wrap the counter
                 return None; // nothing aged out and no fresh slot: caller falls back
             }
-            i
+            (i, false)
         }
     };
+    if !ensure_meta(i) {
+        return None; // the metadata array could not grow: fall back rather than deref it
+    }
     let page = base + i * PAGE_BYTES;
     if VirtualAlloc(page as *mut c_void, PAGE_BYTES, MEM_COMMIT, PAGE_READWRITE).is_null() {
         return None;
@@ -449,8 +726,12 @@ unsafe fn quarantine_alloc(alloc_ra: usize) -> Option<usize> {
     m.free_ra.store(0, Ordering::SeqCst);
     m.alloc_tick.store(now, Ordering::SeqCst);
     m.freed_tick.store(0, Ordering::SeqCst);
+    m.class.store(CLASSES[bucket] as u32, Ordering::SeqCst);
     m.state.store(1, Ordering::SeqCst);
-    SERVED.fetch_add(1, Ordering::SeqCst);
+    if recycled {
+        RECYCLED[bucket].fetch_add(1, Ordering::SeqCst);
+    }
+    SERVED[bucket].fetch_add(1, Ordering::SeqCst);
     Some(body)
 }
 
@@ -462,9 +743,17 @@ unsafe fn quarantine_alloc(alloc_ra: usize) -> Option<usize> {
 /// (`lea r8,[rdi-8]`), which for a quarantined slot is `page + 8`.
 unsafe extern "system" fn heapfree_shim(heap: usize, flags: u32, mem: usize) -> i32 {
     let base = RESERVE_BASE.load(Ordering::SeqCst);
-    if let Some(i) = slot_index(base, mem) {
+    let slots = SLOTS.load(Ordering::SeqCst);
+    if let Some(i) = slot_index(base, slots, mem) {
+        if !meta_ready(i) {
+            // A pointer inside our reservation that we never handed out. Answer TRUE rather
+            // than passing it to the real HeapFree, which would be handed a non-heap address.
+            ALIEN_FREES.fetch_add(1, Ordering::SeqCst);
+            return 1;
+        }
         let page = page_of(mem);
         let m = meta(i);
+        let class = m.class.load(Ordering::SeqCst) as usize;
         m.free_ra.store(caller_ra() as u64, Ordering::SeqCst);
         m.freed_tick.store(GetTickCount64(), Ordering::SeqCst);
         m.state.store(2, Ordering::SeqCst);
@@ -472,7 +761,20 @@ unsafe extern "system" fn heapfree_shim(heap: usize, flags: u32, mem: usize) -> 
         // aged out of the retirement queue - see REUSE_AFTER_MS.
         VirtualFree(page as *mut c_void, PAGE_BYTES, MEM_DECOMMIT);
         retire(i);
-        FREED.fetch_add(1, Ordering::SeqCst);
+        if let Some(b) = bucket_of(class) {
+            // **The liveness control for a class we have never quarantined before.** 53 of the
+            // 56 ladder sites are inlined and none was traced, so "this class's frees reach the
+            // cached pointer we swapped" is an inference until a free actually arrives here.
+            // One line, the first time each class comes back, settles it in seconds.
+            if FREED[b].fetch_add(1, Ordering::SeqCst) == 0 {
+                log(&format!(
+                    "guard page: the FIRST free of class {class:#x} came back through our \
+                     HeapFree shim - that class's free path IS intercepted and its slots are \
+                     being decommitted. (This is the control: a class that is served and never \
+                     freed would leak and the heartbeat would say so.)"
+                ));
+            }
+        }
         return 1; // BOOL TRUE, as HeapFree returns on success
     }
     let real: extern "system" fn(usize, u32, usize) -> i32 =
@@ -545,7 +847,8 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
     }
 
     let base = RESERVE_BASE.load(Ordering::SeqCst);
-    let Some(i) = slot_index(base, target) else {
+    let slots = SLOTS.load(Ordering::SeqCst);
+    let Some(i) = slot_index(base, slots, target) else {
         return EXCEPTION_CONTINUE_SEARCH; // not ours - the client's, or another watcher's
     };
     // A fault on a reserved page in our range is a use of retired memory: THE catch. Recommit
@@ -553,28 +856,50 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
     CATCHES.fetch_add(1, Ordering::SeqCst);
     let page = page_of(target);
     let rip = *((*p).context.cast::<u8>().add(CTX_RIP).cast::<u64>()) as usize;
-    let m = meta(i);
     let is_write = kind == 1;
+    let now = GetTickCount64();
+    // **Never dereference `Meta` for a slot the cursor has not reached.** The array is
+    // committed lazily, so a wild pointer into the untouched tail of the reservation would
+    // otherwise make the handler fault inside itself. Attribution is dropped, the catch is not.
+    let ready = meta_ready(i);
     if CATCH_LOGS.fetch_add(1, Ordering::SeqCst) < MAX_CATCH_LOGS {
         // Fixed static ring would be safer, but this event is rare (a stale access, at most a
         // few a session) and the log write is out of GRAP64's heap, not the client's - the
         // same trade `crate::freeguard`'s refusal log makes.
+        let attribution = if ready {
+            let m = meta(i);
+            let alloc_ra = m.alloc_ra.load(Ordering::SeqCst) as usize;
+            let free_ra = m.free_ra.load(Ordering::SeqCst) as usize;
+            let alloc_tick = m.alloc_tick.load(Ordering::SeqCst);
+            let freed_tick = m.freed_tick.load(Ordering::SeqCst);
+            format!(
+                "This slot was handed out as class {:#x}, allocated from {alloc_ra:#x}{} {} ms \
+                 ago and freed from {free_ra:#x}{} {} ms ago",
+                m.class.load(Ordering::SeqCst),
+                crate::netwatch::module_of(alloc_ra),
+                now.saturating_sub(alloc_tick),
+                crate::netwatch::module_of(free_ra),
+                now.saturating_sub(freed_tick),
+            )
+        } else {
+            "This page was NEVER handed out by the quarantine - the pointer is wild in our \
+             reservation, not stale in a slot we served"
+                .to_string()
+        };
         log(&format!(
             "***** GUARD PAGE - STALE {} at {target:#x} (slot page {page:#x}, retired): the \
-             instruction is RIP {rip:#x}{}, tid {}. This slot was allocated from {:#x}{} and \
-             freed from {:#x}{}. THE WRITER holds a pointer into memory it no longer owns; this \
-             is the instruction that uses it. Recommitting the page so the client continues. \
-             The 32-bit increment family, caught at the source *****",
+             instruction is RIP {rip:#x}{}, tid {}. {attribution}. THE WRITER holds a pointer \
+             into memory it no longer owns; this is the instruction that uses it. Recommitting \
+             the page so the client continues. The 32-bit increment family, caught at the \
+             source *****",
             if is_write { "WRITE" } else { "READ" },
             crate::netwatch::module_of(rip),
             GetCurrentThreadId(),
-            m.alloc_ra.load(Ordering::SeqCst),
-            crate::netwatch::module_of(m.alloc_ra.load(Ordering::SeqCst) as usize),
-            m.free_ra.load(Ordering::SeqCst),
-            crate::netwatch::module_of(m.free_ra.load(Ordering::SeqCst) as usize),
         ));
     }
-    m.state.store(3, Ordering::SeqCst);
+    if ready {
+        meta(i).state.store(3, Ordering::SeqCst);
+    }
     VirtualAlloc(page as *mut c_void, PAGE_BYTES, MEM_COMMIT, PAGE_READWRITE);
     // Re-stamp the header so a subsequent free of the recommitted slot still diverts here
     // rather than corrupting the pool.
@@ -605,7 +930,12 @@ pub(crate) unsafe fn suppresses(info: *mut c_void) -> bool {
     if probe != 0 && page_of(target) == probe {
         return true;
     }
-    slot_index(RESERVE_BASE.load(Ordering::SeqCst), target).is_some()
+    slot_index(
+        RESERVE_BASE.load(Ordering::SeqCst),
+        SLOTS.load(Ordering::SeqCst),
+        target,
+    )
+    .is_some()
 }
 
 // ---------------------------------------------------------------------------------------
@@ -629,7 +959,7 @@ unsafe fn self_test() -> Result<(), String> {
     let saw = PROBE_SAW.load(Ordering::SeqCst);
     let landed = std::ptr::read_volatile(at as *const u32);
     PROBE_PAGE.store(0, Ordering::SeqCst);
-    VirtualFree(page as *mut c_void, 0, 0x8000 /* MEM_RELEASE */);
+    VirtualFree(page as *mut c_void, 0, MEM_RELEASE);
     if saw != at {
         return Err(format!(
             "the handler did not catch the control write ({saw:#x}) - the VEH is not installed \
@@ -642,7 +972,7 @@ unsafe fn self_test() -> Result<(), String> {
     Ok(())
 }
 
-/// Arm the quarantine if `guardpage=<hex slot size>` is in the session marker.
+/// Arm the quarantine if `guardpage=<classes>` is in the session marker.
 pub fn install() {
     if INSTALLED.swap(true, Ordering::SeqCst) {
         return;
@@ -660,22 +990,35 @@ pub fn install() {
         ));
         return;
     };
-    let watched = tok
-        .trim()
-        .strip_prefix("0x")
-        .and_then(|h| usize::from_str_radix(h, 16).ok())
-        .or_else(|| tok.trim().parse::<usize>().ok());
-    let Some(watched) = watched.filter(|w| [0x10, 0x20, 0x40, 0x80].contains(w)) else {
-        log(&format!(
-            "***** GUARD PAGE: guardpage={tok:?} is not one of 0x10/0x20/0x40/0x80 - standing \
-             down *****"
-        ));
-        return;
+    let mask = match parse_classes(&tok) {
+        Ok(m) if m != 0 => m,
+        Ok(_) => {
+            log("***** GUARD PAGE: guardpage= named no classes - standing down *****");
+            return;
+        }
+        Err(why) => {
+            log(&format!("***** GUARD PAGE: guardpage={tok:?} rejected - {why}. Standing down *****"));
+            return;
+        }
     };
-    std::thread::spawn(move || unsafe { arm(watched) });
+    std::thread::spawn(move || unsafe { arm(mask) });
 }
 
-unsafe fn arm(watched: usize) {
+/// Release everything this module reserved. Used on every failure path after the reservation
+/// exists, so a stand-down leaves no 32 GB hole behind.
+unsafe fn release_all() {
+    for cell in [&RESERVE_BASE, &RING, &META] {
+        let p = cell.swap(0, Ordering::SeqCst);
+        if p != 0 {
+            VirtualFree(p as *mut c_void, 0, MEM_RELEASE);
+        }
+    }
+    SLOTS.store(0, Ordering::SeqCst);
+    META_COMMITTED.store(0, Ordering::SeqCst);
+    WATCHED_MASK.store(0, Ordering::SeqCst);
+}
+
+unsafe fn arm(mask: u32) {
     let base = crate::hook::base();
     if base == 0 {
         log("***** GUARD PAGE: no module base - NOT armed *****");
@@ -693,30 +1036,64 @@ unsafe fn arm(watched: usize) {
     }
     SELF_TEST_OK.store(true, Ordering::SeqCst);
 
-    // The reservation and its metadata.
-    let reserve = VirtualAlloc(std::ptr::null_mut(), RESERVE_BYTES, MEM_RESERVE, PAGE_NOACCESS) as usize;
+    // The reservation. Largest first; a smaller cursor is a worse run but a far better one
+    // than standing down, and the log says which was taken so a short run can be read for what
+    // it is rather than blamed on the writer.
+    let mut reserve = 0usize;
+    let mut slots = 0usize;
+    for &want in RESERVE_LADDER.iter() {
+        let p = VirtualAlloc(std::ptr::null_mut(), want * PAGE_BYTES, MEM_RESERVE, PAGE_NOACCESS) as usize;
+        if p != 0 {
+            reserve = p;
+            slots = want;
+            break;
+        }
+    }
     if reserve == 0 {
-        log("***** GUARD PAGE: could not reserve 2 GB of address space - NOT armed *****");
+        log(&format!(
+            "***** GUARD PAGE: could not reserve address space for even {} slots - NOT armed *****",
+            RESERVE_LADDER[RESERVE_LADDER.len() - 1]
+        ));
         return;
     }
-    let ring_bytes = MAX_SLOTS * std::mem::size_of::<u32>();
+    RESERVE_BASE.store(reserve, Ordering::SeqCst);
+    SLOTS.store(slots, Ordering::SeqCst);
+    if slots != MAX_SLOTS {
+        log(&format!(
+            "***** GUARD PAGE: only {slots} slots could be reserved, not {MAX_SLOTS}. The \
+             cursor is {}x smaller than designed and may be spent before the retirement queue \
+             turns over - watch FELL BACK *****",
+            MAX_SLOTS / slots
+        ));
+    }
+
+    // The retirement queue, committed in full (4 bytes a slot; see the note above the ring).
+    let ring_bytes = slots * std::mem::size_of::<u32>();
     let ring_ptr = VirtualAlloc(std::ptr::null_mut(), ring_bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) as usize;
     if ring_ptr == 0 {
-        VirtualFree(reserve as *mut c_void, 0, 0x8000);
+        release_all();
         log("***** GUARD PAGE: could not commit the retirement queue - NOT armed *****");
         return;
     }
     RING.store(ring_ptr, Ordering::SeqCst);
-    let meta_bytes = MAX_SLOTS * std::mem::size_of::<Meta>();
-    let meta_ptr = VirtualAlloc(std::ptr::null_mut(), meta_bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) as usize;
+    // The metadata: RESERVED in full, COMMITTED a block at a time as the cursor advances. This
+    // is the change that let the reserve grow at all - 40 bytes a slot committed up front is
+    // 320 MB, and it was the array, not the address space, that pinned MAX_SLOTS at 1 M.
+    let meta_bytes = slots * META_STRIDE;
+    let meta_ptr = VirtualAlloc(std::ptr::null_mut(), meta_bytes, MEM_RESERVE, PAGE_READWRITE) as usize;
     if meta_ptr == 0 {
-        VirtualFree(reserve as *mut c_void, 0, 0x8000);
-        log("***** GUARD PAGE: could not commit the metadata array - NOT armed *****");
+        release_all();
+        log("***** GUARD PAGE: could not reserve the metadata array - NOT armed *****");
         return;
     }
-    RESERVE_BASE.store(reserve, Ordering::SeqCst);
     META.store(meta_ptr, Ordering::SeqCst);
-    WATCHED.store(watched, Ordering::SeqCst);
+    META_COMMITTED.store(0, Ordering::SeqCst);
+    if !ensure_meta(0) {
+        release_all();
+        log("***** GUARD PAGE: the first metadata block would not commit - NOT armed *****");
+        return;
+    }
+    WATCHED_MASK.store(mask, Ordering::SeqCst);
 
     // Which addresses count as a caller. Read from the mapped image's own header so a
     // rebuilt client cannot silently move `.text` out from under a constant.
@@ -737,6 +1114,7 @@ unsafe fn arm(watched: usize) {
     // path exists).
     let slot = base + HEAPFREE_SLOT_RVA;
     if !crate::session::can_read(slot, 8) {
+        release_all();
         log(&format!("***** GUARD PAGE: HeapFree slot {slot:#x} unreadable - NOT armed *****"));
         return;
     }
@@ -746,6 +1124,8 @@ unsafe fn arm(watched: usize) {
     let shim: unsafe extern "system" fn(usize, u32, usize) -> i32 = heapfree_shim;
     std::ptr::write_volatile(slot as *mut usize, shim as usize);
     if std::ptr::read_volatile(slot as *const usize) != shim as usize {
+        std::ptr::write_volatile(slot as *mut usize, real);
+        release_all();
         log("***** GUARD PAGE: the HeapFree swap did not take - NOT arming the allocator *****");
         return;
     }
@@ -766,26 +1146,70 @@ unsafe fn arm(watched: usize) {
     ) {
         Some(_tramp) => {
             MODE.store(MODE_ARMED, Ordering::SeqCst);
-            log(&format!(
-                "***** GUARD PAGE ARMED: size class {watched:#x} is served one-slot-per-page \
-                 from a 2 GB reserve at {reserve:#x} and DECOMMITTED on free, its address held \
-                 back for {}s before it can be handed out again. A \
-                 stale write or read into a freed slot faults at the instruction that makes it, \
-                 which the handler logs (RIP, target, who allocated, who freed) and recommits so \
-                 the client continues. control PASS. The pool's own chain, free list and \
-                 counters are untouched - our slots take the HeapFree arm. This is the writer's \
-                 arbitrary stale-pointer surface, the one the write watch cannot reach *****",
-                REUSE_AFTER_MS / 1000
-            ));
+            log(&render_armed(mask, slots, reserve, ring_bytes));
         }
         None => {
             // Undo the swap; leave nothing behind.
             std::ptr::write_volatile(slot as *mut usize, real);
+            release_all();
             log("***** GUARD PAGE: the allocator hook was refused (prologue mismatch, or a \
                  thread would not leave it - the identity: line above says which) - HeapFree \
                  swap reverted, NOT armed *****");
         }
     }
+}
+
+/// The `GUARD PAGE ARMED` line, pure so the test can render it and read it.
+///
+/// It is the one line the owner reads at launch to decide whether to leave the run overnight, and
+/// it is long on purpose: it has to state the sizing model, the measurement the model came
+/// from, and what would make it wrong, because a run that quietly falls back looks exactly
+/// like a healthy one.
+pub(crate) fn render_armed(mask: u32, slots: usize, reserve: usize, ring_bytes: usize) -> String {
+    let need = first_window_slots(MEASURED_BURST_60S, MEASURED_STEADY_PER_S, REUSE_AFTER_MS);
+    let steady = steady_slots(MEASURED_STEADY_PER_S, REUSE_AFTER_MS);
+    let nclass = mask.count_ones() as usize;
+    // Headroom against the model, to one decimal, and a shout if the reserve is below it -
+    // "1x" and "0x" both read as a number rather than as a warning.
+    let tenths = slots.saturating_mul(10) / need.max(1) / nclass.max(1);
+    let headroom = if tenths >= 15 {
+        format!("{}.{}x", tenths / 10, tenths % 10)
+    } else {
+        format!(
+            "***** only {}.{}x, which is NOT enough headroom - expect FELL BACK *****",
+            tenths / 10,
+            tenths % 10
+        )
+    };
+    format!(
+        "***** GUARD PAGE ARMED: size class(es) {} are served one-slot-per-page from a \
+         {} GB reserve ({slots} slots) at {reserve:#x} and DECOMMITTED on free, each \
+         address held back for {}s before it can be handed out again. SIZED FROM THE \
+         12:01 RUN: 0x20 burst to {MEASURED_BURST_60S} in its first minute then ran at \
+         {MEASURED_STEADY_PER_S}/s, so ONE class needs {need} slots for its first \
+         retirement window ({steady} once it is turning over) - the old \
+         {OLD_MAX_SLOTS}-slot cursor was spent at six minutes and \
+         {MEASURED_FALLBACK_AT_600S} allocations fell back. Against that requirement \
+         this reserve has {headroom} of headroom for the {nclass} class(es) armed, IF \
+         they churn like 0x20 - which \
+         is measured for 0x20 and unmeasured for the other three, so read the \
+         'pool allocations seen by class' counters in the heartbeat. Metadata is \
+         committed lazily, so arming costs {} MB now and grows with the cursor instead \
+         of 320 MB up front. Committed PAGE memory is bounded by the LIVE set, not by \
+         the cursor: 0x20 held ~{MEASURED_LIVE_0X20} live slots all run, which is \
+         {} MB, so expect roughly that per class rather than the 230 MB predicted \
+         before that launch. A stale write or read into a freed slot faults at the \
+         instruction that makes it, which the handler logs (RIP, target, who allocated, \
+         who freed, how long ago) and recommits so the client continues. control PASS. \
+         The pool's own chain, free list and counters are untouched - our slots take \
+         the HeapFree arm, and that arm is chosen by the header value ALONE, so one \
+         stamp {QUARANTINE_HEADER:#x} covers every class at once *****",
+        mask_text(mask),
+        slots * PAGE_BYTES / (1024 * 1024 * 1024),
+        REUSE_AFTER_MS / 1000,
+        (ring_bytes + META_BLOCK_BYTES) / (1024 * 1024),
+        MEASURED_LIVE_0X20 * PAGE_BYTES / (1024 * 1024),
+    )
 }
 
 static VEH_REGISTERED: AtomicBool = AtomicBool::new(false);
@@ -796,28 +1220,129 @@ unsafe fn register_veh() -> bool {
     !AddVectoredExceptionHandler(1, veh as *const c_void).is_null()
 }
 
-/// `(served, freed, live, catches, fallback, recycled, cursor)` for the heartbeat.
+/// One watched class's counters, for the heartbeat.
+pub(crate) struct ClassCounters {
+    pub class: usize,
+    pub watched: bool,
+    pub seen: u64,
+    pub served: u64,
+    pub freed: u64,
+    pub live: u64,
+    pub recycled: u64,
+    pub fallback: u64,
+}
+
+/// Per-class counters plus the shared ones: `(classes, catches, cursor, slots, alien_frees)`.
 ///
-/// `fallback` is the one to read on a long run: it counts allocations that went to the
-/// client's own pool because nothing had aged out and the cursor was spent. A rising fallback
-/// means the quarantine is no longer covering the class, which is the failure that looks
-/// exactly like a quiet, healthy run.
-pub(crate) fn counters() -> (u64, u64, u64, u64, u64, u64, usize) {
-    let served = SERVED.load(Ordering::SeqCst);
-    let freed = FREED.load(Ordering::SeqCst);
+/// **Nothing is summed across classes.** The 12:01 run printed one `served` for one class and
+/// that was enough; with several, a total hides which class is exhausting the shared cursor,
+/// which is precisely the number the run exists to produce. `fallback` is still the one to read
+/// on a long run: it counts allocations that went to the client's own pool because nothing had
+/// aged out and the cursor was spent, and a rising fallback means the class is no longer
+/// covered - the failure that looks exactly like a quiet, healthy run.
+pub(crate) fn counters() -> ([ClassCounters; NCLASS], u64, usize, usize, u64) {
+    let mask = WATCHED_MASK.load(Ordering::SeqCst);
+    let one = |b: usize| {
+        let served = SERVED[b].load(Ordering::SeqCst);
+        let freed = FREED[b].load(Ordering::SeqCst);
+        ClassCounters {
+            class: CLASSES[b],
+            watched: mask & (1 << b) != 0,
+            seen: SEEN[b].load(Ordering::Relaxed),
+            served,
+            freed,
+            live: served.saturating_sub(freed),
+            recycled: RECYCLED[b].load(Ordering::SeqCst),
+            fallback: FALLBACK[b].load(Ordering::SeqCst),
+        }
+    };
+    let slots = SLOTS.load(Ordering::SeqCst);
     (
-        served,
-        freed,
-        served.saturating_sub(freed),
+        [one(0), one(1), one(2), one(3)],
         CATCHES.load(Ordering::SeqCst),
-        FALLBACK.load(Ordering::SeqCst),
-        RECYCLED.load(Ordering::SeqCst),
-        CURSOR.load(Ordering::SeqCst).min(MAX_SLOTS),
+        CURSOR.load(Ordering::SeqCst).min(slots.max(1)),
+        slots,
+        ALIEN_FREES.load(Ordering::SeqCst),
     )
 }
 
 pub(crate) fn armed() -> bool {
     MODE.load(Ordering::SeqCst) == MODE_ARMED
+}
+
+/// The guard page's half of the sentry heartbeat.
+///
+/// Split out of `poolsentry` and made pure so it can be **rendered and read** in a test rather
+/// than only at 03:00 on the owner's console - `CLAUDE.md`'s rule for the launcher's own plan, and
+/// the same reason applies to a line whose whole job is to be read in the morning.
+pub(crate) fn heartbeat_line() -> String {
+    let (classes, catches, cursor, slots, alien) = counters();
+    render_heartbeat(&classes, catches, cursor, slots, alien)
+}
+
+/// Three readings, in the order they matter:
+///
+/// * **`FELL BACK`** - allocations the quarantine did not serve because nothing had aged out
+///   and the shared cursor was spent. Above zero means that class is no longer covered from
+///   that moment, and nothing else on screen would say so: an uncovered run looks exactly like
+///   a quiet one.
+/// * **`NEVER FREED`** - served, but nothing came back through [`heapfree_shim`]. For a class
+///   that has never been quarantined before, this is the live control on whether its frees
+///   reach the cached pointer we swapped; 53 of the client's 56 free sites are inlined and
+///   untraced, so it is an inference until this says otherwise.
+/// * **`pool allocations seen`** - every allocation of each class the detour saw, watched or
+///   not. This is the churn measurement that sizes the next run. `0x20` is known to run at
+///   1 560/s after a 627 K first-minute burst; the other three are not known at all, and a
+///   number here costs no launch of its own.
+///
+/// Nothing is summed across classes: with several classes sharing one cursor, a total would
+/// hide which one is exhausting it.
+pub(crate) fn render_heartbeat(
+    classes: &[ClassCounters],
+    catches: u64,
+    cursor: usize,
+    slots: usize,
+    alien: u64,
+) -> String {
+    let per: Vec<String> = classes
+        .iter()
+        .filter(|c| c.watched)
+        .map(|c| {
+            let fell_back = if c.fallback == 0 {
+                "0 fell back".to_string()
+            } else {
+                format!("***** {} FELL BACK - NO LONGER COVERED *****", c.fallback)
+            };
+            let never_freed = if c.served > 1_000 && c.freed == 0 {
+                " ***** NEVER FREED - this class's free path does NOT reach our shim, so its \
+                 slots are leaking a page each *****"
+            } else {
+                ""
+            };
+            format!(
+                "{:#x}: {} served, {} freed, {} live, {} recycled, {fell_back}{never_freed}",
+                c.class, c.served, c.freed, c.live, c.recycled
+            )
+        })
+        .collect();
+    let seen: Vec<String> = classes
+        .iter()
+        .map(|c| format!("{:#x} {}", c.class, c.seen))
+        .collect();
+    let alien = if alien == 0 {
+        String::new()
+    } else {
+        format!(
+            " | ***** {alien} free(s) of an address inside the reserve that we never handed \
+             out *****"
+        )
+    };
+    format!(
+        "guard page: {} | {cursor} of {slots} fresh pages used, {catches} STALE-ACCESS \
+         CATCH(es){alien} | pool allocations seen by class: {}",
+        per.join(" | "),
+        seen.join(", ")
+    )
 }
 
 #[cfg(test)]
@@ -857,9 +1382,7 @@ mod tests {
         assert!(!accept_ra(0, base, exec));
     }
 
-    /// **The reserve must be a working set, not a budget.** The original design never reused
-    /// an address, so 512 K allocations ended the protection - at a thousand a second, nine
-    /// minutes, against a goal of eight hours. A slot is now reusable only after
+    /// **The reserve must be a working set, not a budget.** A slot is reusable only after
     /// `REUSE_AFTER_MS`, which is more than three periods of the writer's 180 s clock.
     #[test]
     fn a_retired_slot_is_reusable_only_after_three_firings_of_the_writers_clock() {
@@ -879,38 +1402,110 @@ mod tests {
         assert!(!reusable_at(freed, freed - 1_000));
     }
 
-    /// **The reserve has to hold bucket 1, which is the hottest class and the one that killed
-    /// the client on 2026-09-08.**
+    /// **The 12:01 run's own numbers, and the model that has to reproduce them.**
     ///
-    /// Two different quantities, and confusing them is what made the first sizing wrong:
-    /// without address reuse the reserve is a budget of *every allocation ever made*, and with
-    /// it what must fit is only the allocations made inside one [`REUSE_AFTER_MS`] window.
+    /// The run is the only measurement of pool churn this project has, and it settled which of
+    /// two quantities the reserve has to hold. Everything here is arithmetic over `[L]`
+    /// constants, so a future sizing change has to argue with the run rather than with prose.
     #[test]
-    fn the_reserve_holds_bucket_one_for_a_night() {
-        /// Live `0x20` allocations in the 2026-09-08 death dump, from
-        /// `tools/poolchain.py` [L]. The committed cost is one page each, ~230 MB.
-        const MEASURED_LIVE_BUCKET_1: usize = 56_744;
+    fn the_model_reproduces_the_measured_fallback_of_the_first_guard_page_run() {
+        // What one class needs from a standing start: the burst plus the rest of the window.
+        let first = first_window_slots(MEASURED_BURST_60S, MEASURED_STEADY_PER_S, REUSE_AFTER_MS);
+        assert_eq!(first, 1_469_572, "627172 + 1560*540");
+
+        // The old cursor could not hold it, and the shortfall IS the measured fallback. The
+        // run reported 419 588 fallen back at the 600 s heartbeat; the model says 421 K.
+        let shortfall = first - OLD_MAX_SLOTS;
+        let err = shortfall.abs_diff(MEASURED_FALLBACK_AT_600S);
         assert!(
-            MEASURED_LIVE_BUCKET_1 * 4 < MAX_SLOTS,
-            "the measured live set must fit with room to spare, not just fit"
+            err * 100 / MEASURED_FALLBACK_AT_600S < 2,
+            "model {shortfall} vs measured {MEASURED_FALLBACK_AT_600S}"
         );
 
-        // Without reuse the reserve is a budget of TOTAL allocations, and a budget runs out.
-        // At a thousand a second even 1 M slots is under twenty minutes, which is why the
-        // retirement queue exists at all rather than being an optimisation.
-        assert!(MAX_SLOTS / 1000 < 1_200, "a total-allocation budget cannot last a night");
+        // **The burst is what broke it, not the steady state.** Steady-state churn alone would
+        // have fitted in the old cursor with room to spare - which is why shortening
+        // REUSE_AFTER_MS was the wrong lever and a bigger cursor was the right one.
+        let steady = steady_slots(MEASURED_STEADY_PER_S, REUSE_AFTER_MS);
+        assert_eq!(steady, 936_000);
+        assert!(steady < OLD_MAX_SLOTS, "the steady state always fitted: {steady}");
 
-        // With reuse, only one retirement window has to fit.
-        let one_window = |rate: usize| rate * (REUSE_AFTER_MS as usize / 1000);
-        assert!(
-            one_window(1_700) < MAX_SLOTS,
-            "1700 allocations a second sustained still fits: {} vs {MAX_SLOTS}",
-            one_window(1_700)
+        // And the cursor really was spent between the 300 s and 360 s heartbeats.
+        let spent_at_s = 60 + (OLD_MAX_SLOTS - MEASURED_BURST_60S) / MEASURED_STEADY_PER_S;
+        assert!((300..360).contains(&spent_at_s), "model says {spent_at_s}s");
+    }
+
+    /// **The new reserve, sized against that model.**
+    #[test]
+    fn the_reserve_holds_the_measured_burst_for_more_than_one_class() {
+        let first = first_window_slots(MEASURED_BURST_60S, MEASURED_STEADY_PER_S, REUSE_AFTER_MS);
+        // One class, with real headroom rather than a fit.
+        assert!(MAX_SLOTS > first * 4, "{MAX_SLOTS} vs {first}");
+        // Two classes at the measured 0x20 rate, still with better than 2x headroom. This is
+        // the configuration the next run should use: 0x20 and 0x40, the two with victims.
+        assert!(MAX_SLOTS > 2 * first * 2, "two classes must fit twice over");
+        // All four, if the other three together are no worse than 0x20 - true only if their
+        // rates are at most 0x20's, which is UNMEASURED. The SEEN counters exist to settle it.
+        assert!(MAX_SLOTS > 4 * first, "all four must at least fit once");
+        // The ladder is powers of two, because the ring indexes with a mask.
+        for w in RESERVE_LADDER {
+            assert!(w.is_power_of_two(), "{w} is not a power of two");
+        }
+        assert_eq!(RESERVE_LADDER[0], MAX_SLOTS, "the ladder starts at the design size");
+        for pair in RESERVE_LADDER.windows(2) {
+            assert!(pair[0] > pair[1], "the ladder must descend: {pair:?}");
+        }
+    }
+
+    /// **Committed memory is not the constraint, and the run said so.** The prediction before
+    /// the launch was ~230 MB of committed pages for bucket 1; the measurement was ~26 000 live
+    /// slots, so ~104 MB. Retired pages are decommitted and cost only address space.
+    #[test]
+    fn committed_page_memory_is_bounded_by_the_live_set_not_the_cursor() {
+        let live_mb = MEASURED_LIVE_0X20 * PAGE_BYTES / (1024 * 1024);
+        assert!((100..110).contains(&live_mb), "{live_mb} MB");
+        // The cursor is 320x the live set at the design size, and costs nothing but address
+        // space plus lazily-committed metadata.
+        assert!(MAX_SLOTS > MEASURED_LIVE_0X20 * 300);
+        // All four classes' live sets together, scaled from poolchain's 174 528 enumerated
+        // slots at the same live fraction the 0x20 measurement showed: still under 300 MB.
+        let all_four_live = 174_528 * MEASURED_LIVE_0X20 / 70_848;
+        let all_four_mb = all_four_live * PAGE_BYTES / (1024 * 1024);
+        assert!(all_four_mb < 300, "{all_four_mb} MB for all four classes");
+    }
+
+    /// **The metadata array is the thing that stopped the reserve growing, and it is now
+    /// lazy.** Eagerly committed it would be 320 MB at the design size; a run that touches one
+    /// class's first window commits 60 MB of it and nothing more.
+    #[test]
+    fn the_metadata_array_is_committed_only_as_far_as_the_cursor_reaches() {
+        assert_eq!(META_STRIDE, 40, "four u64-ish fields and two u32");
+        let eager_mb = MAX_SLOTS * META_STRIDE / (1024 * 1024);
+        assert_eq!(eager_mb, 320, "what it would cost committed up front");
+
+        let first = first_window_slots(MEASURED_BURST_60S, MEASURED_STEADY_PER_S, REUSE_AFTER_MS);
+        let used = commit_target(first * META_STRIDE, META_BLOCK_BYTES, MAX_SLOTS * META_STRIDE);
+        assert!(used / (1024 * 1024) < 60, "{} MB for one class", used / (1024 * 1024));
+
+        // commit_target rounds up to a block, never past the reservation, and is monotone.
+        assert_eq!(commit_target(1, 1024, 8192), 1024);
+        assert_eq!(commit_target(1024, 1024, 8192), 1024);
+        assert_eq!(commit_target(1025, 1024, 8192), 2048);
+        assert_eq!(commit_target(9000, 1024, 8192), 8192, "never past the reservation");
+        assert_eq!(commit_target(8192, 1024, 8192), 8192);
+        // A block is big enough that the commit ladder is not itself a cost: at the measured
+        // rate it fires about three times a minute.
+        let slots_per_block = META_BLOCK_BYTES / META_STRIDE;
+        assert!(slots_per_block > MEASURED_STEADY_PER_S * 10, "{slots_per_block} slots a block");
+
+        // The ring is the other array, and it is eager on purpose: 4 bytes a slot.
+        let ring_mb = MAX_SLOTS * std::mem::size_of::<u32>() / (1024 * 1024);
+        assert_eq!(ring_mb, 32);
+        assert_eq!(
+            ring_mb * META_STRIDE / std::mem::size_of::<u32>(),
+            eager_mb,
+            "the ring is exactly a tenth of the metadata - 4 bytes a slot against 40, which is \
+             why one is committed eagerly and the other is not"
         );
-        // Above that it falls back to the client's own allocator - gracefully, and LOUDLY:
-        // the heartbeat prints FELL BACK rather than a quiet count, because an uncovered run
-        // is otherwise indistinguishable from a protected one.
-        assert!(one_window(2_000) > MAX_SLOTS);
     }
 
     #[test]
@@ -935,19 +1530,64 @@ mod tests {
         assert_eq!(size_class(0x80), Some(0x80));
         assert_eq!(size_class(0x81), None, "the big-block path is never quarantined");
         assert_eq!(size_class(0), Some(0x10));
+
+        // And the bucket index the counters are kept by.
+        assert_eq!(size_bucket(0x11), Some(1));
+        assert_eq!(size_bucket(0x41), Some(3));
+        assert_eq!(size_bucket(0x81), None);
+        assert_eq!(bucket_of(0x40), Some(2));
+        assert_eq!(bucket_of(0x30), None, "0x30 is not a class, it is a size");
+        assert_eq!(bucket_of(0), None);
+    }
+
+    /// **How several classes are named, and what is refused.**
+    ///
+    /// The separator is `+`, not `,`: the session marker is comma-separated, so a comma here
+    /// would be split away by `session::marker_token` and arm half of what was asked for -
+    /// silently, which is the failure mode this whole module keeps being rebuilt around.
+    #[test]
+    fn a_class_list_is_parsed_or_refused_by_name() {
+        assert_eq!(parse_classes("0x20"), Ok(0b0010));
+        assert_eq!(parse_classes("0x40"), Ok(0b0100));
+        assert_eq!(parse_classes(" 0X20 "), Ok(0b0010), "case and space");
+        assert_eq!(parse_classes("0x20+0x40"), Ok(0b0110), "the next run's pair");
+        assert_eq!(parse_classes("0x40+0x20"), Ok(0b0110), "order does not matter");
+        assert_eq!(parse_classes("0x20|0x40"), Ok(0b0110), "| is accepted too");
+        assert_eq!(parse_classes("0x10+0x20+0x40+0x80"), Ok(0b1111));
+        assert_eq!(parse_classes("all"), Ok(0b1111));
+        // The single-class form the test plan already tells the owner to type still means what it
+        // always meant, including the bare-decimal spelling the old parser accepted.
+        assert_eq!(parse_classes("32"), Ok(0b0010), "decimal 32 is 0x20, as before");
+        assert_eq!(parse_classes("64"), Ok(0b0100));
+        // Refusals name the offending term rather than returning an empty mask.
+        assert!(parse_classes("0x30").is_err());
+        assert!(parse_classes("").is_err());
+        assert!(parse_classes("0x20+").is_err(), "a trailing + is a typo, not a class");
+        assert!(parse_classes("0x20,0x40").is_err(), "a comma cannot survive the marker");
+        assert!(parse_classes("on").is_err());
+        for e in [parse_classes("0x30"), parse_classes("0x20+")] {
+            assert!(e.unwrap_err().len() > 10, "a refusal has to say what was wrong");
+        }
+
+        assert_eq!(mask_text(0b0110), "0x20+0x40");
+        assert_eq!(mask_text(0b0010), "0x20");
+        assert_eq!(mask_text(0b1111), "0x10+0x20+0x40+0x80");
+        assert_eq!(mask_text(0), "(none)");
     }
 
     #[test]
     fn a_slot_index_is_only_inside_the_reserve() {
         let base = 0x1_0000_0000;
-        assert_eq!(slot_index(0, base), None, "no reserve yet");
-        assert_eq!(slot_index(base, base - 1), None);
-        assert_eq!(slot_index(base, base), Some(0));
-        assert_eq!(slot_index(base, base + 0x10), Some(0), "the body of slot 0");
-        assert_eq!(slot_index(base, base + PAGE_BYTES), Some(1));
-        assert_eq!(slot_index(base, base + PAGE_BYTES + 0x40), Some(1));
-        assert_eq!(slot_index(base, base + RESERVE_BYTES - 1), Some(MAX_SLOTS - 1));
-        assert_eq!(slot_index(base, base + RESERVE_BYTES), None, "one past the end");
+        let slots = 1024;
+        assert_eq!(slot_index(0, slots, base), None, "no reserve yet");
+        assert_eq!(slot_index(base, 0, base), None, "no slots yet");
+        assert_eq!(slot_index(base, slots, base - 1), None);
+        assert_eq!(slot_index(base, slots, base), Some(0));
+        assert_eq!(slot_index(base, slots, base + 0x10), Some(0), "the body of slot 0");
+        assert_eq!(slot_index(base, slots, base + PAGE_BYTES), Some(1));
+        assert_eq!(slot_index(base, slots, base + PAGE_BYTES + 0x40), Some(1));
+        assert_eq!(slot_index(base, slots, base + slots * PAGE_BYTES - 1), Some(slots - 1));
+        assert_eq!(slot_index(base, slots, base + slots * PAGE_BYTES), None, "one past the end");
     }
 
     #[test]
@@ -960,24 +1600,142 @@ mod tests {
         let body = page + SLOT_BODY_OFF;
         let mem = body - 8;
         assert_eq!(page_of(mem), page);
-        assert_eq!(slot_index(base, mem), Some(5));
+        assert_eq!(slot_index(base, 1024, mem), Some(5));
     }
 
+    /// **One stamp has to divert every class, on every one of the client's free ladders.**
+    ///
+    /// `research/heapfix-did-not-hold.md` §1 lists three standalone frees. Two ladder
+    /// `0x10/0x20/0x40/0x80` and one ladders `0x28/0x38/0x58/0x98`, and every one of them
+    /// decides on the **header value alone** - never on the size the caller asked for. So the
+    /// stamp is correct for a multi-class quarantine if and only if it is above the largest
+    /// rung of both ladders, which is the actual check rather than "greater than 0x80".
     #[test]
-    fn the_quarantine_header_takes_the_heapfree_arm_not_the_pool_arm() {
-        // The free ladders on the header value: <=0x80 is a pool bucket, >0x80 falls through
-        // to HeapFree. Our stamp must be strictly greater than the largest bucket.
-        assert!(QUARANTINE_HEADER > 0x80);
-        for bucket in [0x10u64, 0x20, 0x40, 0x80] {
-            assert_ne!(QUARANTINE_HEADER, bucket);
+    fn the_quarantine_header_takes_the_heapfree_arm_on_both_ladders() {
+        const POOL_LADDER: [u64; 4] = [0x10, 0x20, 0x40, 0x80];
+        const OTHER_LADDER: [u64; 4] = [0x28, 0x38, 0x58, 0x98]; // FUN_14019ba40
+        for rung in POOL_LADDER.into_iter().chain(OTHER_LADDER) {
+            assert!(
+                QUARANTINE_HEADER > rung,
+                "{QUARANTINE_HEADER:#x} must be above every rung, including {rung:#x}"
+            );
         }
+        // Every class we can serve is one of the four the pool ladder names, and the stamp is
+        // the SAME value for all of them - that is what makes one reserve serve all four.
+        for c in CLASSES {
+            assert!(POOL_LADDER.contains(&(c as u64)));
+            assert_ne!(QUARANTINE_HEADER, c as u64);
+        }
+        // The ladder does `test rax,rax; jns; not rax` first, so a stamp with the sign bit set
+        // would be complemented into something small. Ours is positive.
+        assert_eq!(QUARANTINE_HEADER >> 63, 0, "a negative header would be NOTed into a bucket");
+    }
+
+    /// **Render the ARMED line and read it**, for the two configurations that matter: the
+    /// single class the test plan already tells the owner to type, and the pair the next run wants.
+    #[test]
+    fn the_armed_line_states_the_sizing_model_and_its_headroom() {
+        let one = render_armed(parse_classes("0x20").unwrap(), MAX_SLOTS, 0x1_8006_0000, MAX_SLOTS * 4);
+        eprintln!("{one}\n");
+        assert!(one.contains("size class(es) 0x20 are served"), "{one}");
+        assert!(one.contains("32 GB reserve (8388608 slots)"), "{one}");
+        assert!(one.contains("held back for 600s"), "{one}");
+        assert!(one.contains("ONE class needs 1469572 slots"), "{one}");
+        assert!(one.contains("936000 once it is turning over"), "{one}");
+        assert!(one.contains("this reserve has 5.7x of headroom for the 1 class(es) armed"), "{one}");
+        assert!(one.contains("arming costs 33 MB now"), "{one}");
+        assert!(one.contains("~26000 live slots all run, which is 101 MB"), "{one}");
+        assert!(one.contains("control PASS"), "the launcher's plan greps for this");
+        assert!(one.contains("stamp 0x100 covers every class at once"), "{one}");
+
+        let two = render_armed(parse_classes("0x20+0x40").unwrap(), MAX_SLOTS, 0x1_8006_0000, MAX_SLOTS * 4);
+        eprintln!("{two}\n");
+        assert!(two.contains("size class(es) 0x20+0x40 are served"), "{two}");
+        assert!(two.contains("this reserve has 2.8x of headroom for the 2 class(es) armed"), "{two}");
+
+        // All four at 0x20's rate is a fit rather than headroom, and the line has to SAY so
+        // instead of printing "1x" and letting it read like a pass. This is the number that
+        // decides whether all-four is a run worth spending a night on.
+        let four = render_armed(parse_classes("all").unwrap(), MAX_SLOTS, 0x1000, MAX_SLOTS * 4);
+        assert!(four.contains("***** only 1.4x, which is NOT enough headroom"), "{four}");
+
+        // A degraded reservation still renders, and still says how much cursor it has.
+        let small = render_armed(parse_classes("0x20").unwrap(), 512 * 1024, 0x1000, 512 * 1024 * 4);
+        assert!(small.contains("(524288 slots)"), "{small}");
+        assert!(small.contains("***** only 0.3x, which is NOT enough headroom"), "{small}");
+    }
+
+    /// **Render the heartbeat and read it.** The same rule the launcher's test plan lives
+    /// under: a line that is only ever seen at 03:00 on someone else's console has to be
+    /// produced here, in full, and looked at.
+    #[test]
+    fn the_heartbeat_says_which_class_ran_out_and_which_never_freed() {
+        let c = |class: usize, watched: bool, seen, served, freed, recycled, fallback| ClassCounters {
+            class,
+            watched,
+            seen,
+            served,
+            freed,
+            live: served - freed,
+            recycled,
+            fallback,
+        };
+
+        // The healthy shape: two classes, both turning over, nothing lost.
+        let healthy = [
+            c(0x10, false, 41_000, 0, 0, 0, 0),
+            c(0x20, true, 1_628_991, 1_628_991, 1_603_226, 580_415, 0),
+            c(0x40, true, 402_113, 402_113, 396_004, 141_002, 0),
+            c(0x80, false, 9_004, 0, 0, 0, 0),
+        ];
+        let line = render_heartbeat(&healthy, 0, 1_469_572, MAX_SLOTS, 0);
+        assert_eq!(
+            line,
+            "guard page: 0x20: 1628991 served, 1603226 freed, 25765 live, 580415 recycled, \
+             0 fell back | 0x40: 402113 served, 396004 freed, 6109 live, 141002 recycled, \
+             0 fell back | 1469572 of 8388608 fresh pages used, 0 STALE-ACCESS CATCH(es) | \
+             pool allocations seen by class: 0x10 41000, 0x20 1628991, 0x40 402113, 0x80 9004"
+        );
+        // An unwatched class contributes its churn measurement and nothing else - that is the
+        // number that sizes the next run, and it must not read as though it were quarantined.
+        assert!(!line.contains("0x10: "), "an unwatched class has no served/freed section");
+        assert!(line.contains("0x10 41000"), "but it is still counted");
+
+        // The three failures, each of which is silent without a shout.
+        let broken = [
+            c(0x10, false, 41_000, 0, 0, 0, 0),
+            c(0x20, true, 1_628_991, 1_048_576, 1_022_029, 0, 419_588),
+            c(0x40, true, 402_113, 402_113, 0, 0, 0),
+            c(0x80, false, 9_004, 0, 0, 0, 0),
+        ];
+        let line = render_heartbeat(&broken, 3, OLD_MAX_SLOTS, MAX_SLOTS, 7);
+        assert!(line.contains("***** 419588 FELL BACK - NO LONGER COVERED *****"), "{line}");
+        assert!(line.contains("0x40: 402113 served, 0 freed"), "{line}");
+        assert!(line.contains("NEVER FREED - this class's free path does NOT reach our shim"), "{line}");
+        assert!(line.contains("3 STALE-ACCESS CATCH(es)"), "{line}");
+        assert!(line.contains("7 free(s) of an address inside the reserve"), "{line}");
+        // The 12:01 run's exact numbers must render as a FELL BACK, since that is what it was.
+        assert!(line.contains("1048576 of 8388608 fresh pages used"), "{line}");
+
+        // A served-but-never-freed class is only shouted about once there is enough of it to
+        // mean something: one allocation in the first millisecond of a run is not a leak.
+        let early = [
+            c(0x10, false, 0, 0, 0, 0, 0),
+            c(0x20, true, 40, 40, 0, 0, 0),
+            c(0x40, false, 0, 0, 0, 0, 0),
+            c(0x80, false, 0, 0, 0, 0, 0),
+        ];
+        assert!(!render_heartbeat(&early, 0, 40, MAX_SLOTS, 0).contains("NEVER FREED"));
     }
 
     #[test]
     fn the_reserve_is_whole_pages_and_the_geometry_is_consistent() {
-        assert_eq!(RESERVE_BYTES % PAGE_BYTES, 0);
-        assert_eq!(MAX_SLOTS, RESERVE_BYTES / PAGE_BYTES);
+        assert_eq!(MAX_SLOTS * PAGE_BYTES % PAGE_BYTES, 0);
+        assert!(MAX_SLOTS.is_power_of_two(), "the ring indexes with a mask");
         assert_eq!(SLOT_HEADER_OFF + 8, SLOT_BODY_OFF, "header sits at body-8");
-        assert!(SLOT_BODY_OFF < PAGE_BYTES);
+        // The largest class we serve has to fit in one page beside its header.
+        assert!(SLOT_BODY_OFF + CLASSES[NCLASS - 1] < PAGE_BYTES);
+        // A slot index must survive the u32 the retirement ring stores it in.
+        assert!(MAX_SLOTS <= u32::MAX as usize);
     }
 }

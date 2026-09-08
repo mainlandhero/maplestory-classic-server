@@ -112,6 +112,50 @@ died this way. The `0x20` write watch is still one door-close from its own write
 covering the `0x40`/worker surface needs the guard-page build, which is a deliberate schedule,
 not a window tweak.
 
+**2026-09-08 12:01, THE GUARD PAGE'S FIRST CLIENT RUN: it works, the client lived 1h57m, and it
+died on a class we were not watching.** 12:01:18 -> 13:58:14 is the longest session this project
+has had. `GUARD PAGE ARMED: size class 0x20 ... control PASS` [L], and an inline hook on the pool
+allocator - called from thirty threads thousands of times a second - did not destabilise
+anything. **That question is closed.** Zero stale-access catches, but that is not a clean
+negative: from minute six the class was only partly covered.
+
+**The reserve ran out at six minutes.** From the heartbeats [L]: 627 172 slots served in the
+first minute (a startup burst, ~10 000/s), then a flat 1 560/s. The 1 048 576-slot cursor was
+spent at 06:00, four minutes before anything could age out of the 10-minute retirement queue, and
+**419 588 allocations fell back** before recycling began at 10:00. Steady state alone
+(1560 x 600 = 936 000) would have *fitted*; **the burst is what broke it**, and the model
+reproduces the measurement to 0.4 % [D]. Live `0x20` slots held at ~26 000 all afternoon, ~104 MB
+of committed pages, against the ~230 MB predicted. **Memory was never the constraint; the cursor
+was.**
+
+**The fatal object was a `0x40` slot whose vtable pointer had been incremented by 2** - it reads
+`0x143406c02`, and `0x143406c00` is the genuine vtable, all four of its slots pointing into
+`.text` [L]. **[I]: the class is incidental.** The writer holds a stale ADDRESS, and whichever
+bucket's chunk is later carved over it is the victim - `0x40` map node `+2` (runs 2 and 5), `0x20`
+tree node set to `-1` (the overnight run), `0x40` vtable `+2` (this one). Quarantining one class
+is whack-a-mole.
+
+**Both fixed in `guardpage.rs` (never run on a client).** Several classes from one shared reserve
+(`guardpage=0x20+0x40`, `all`, any `+`-joined subset - **not commas**, the marker is
+comma-separated); the default is now `0x20+0x40`, which contains all three deaths. One reserve
+serves every class because the stamp `0x100` is above every rung of all three of the client's free
+ladders, and those ladders decide on the **header value alone** [L]. **8 388 608 slots** (32 GiB,
+with a fall-back ladder if it cannot be had) - 5.7x one class, 2.8x two, only **1.4x all four**,
+which the ARMED line calls out in words rather than printing a bare "1x". `REUSE_AFTER_MS` **stays
+600 s**: it comes from the writer's clock, not the reserve, and the cursor is the cheap thing to
+grow. The metadata array is **committed lazily** - 40 bytes a slot is 320 MB at the design size,
+and that array, not address space, is what pinned the reserve at 1 M. **Per-class counters**,
+nothing summed, plus **`pool allocations seen by class`** for all four whether watched or not:
+only `0x20`'s churn has ever been measured, and those numbers decide whether `all` is viable. And
+**two new controls**, because 53 of the client's 56 free sites are inlined and untraced so "a new
+class's frees reach the pointer we swapped" is an [I], not an [L]: the first free of each class
+logs a line, and the heartbeat shouts `NEVER FREED` if a class is served and nothing comes back.
+
+**All four at once is coherent but is NOT the next run** [D/I]: 1.4x headroom on an unmeasured
+assumption, 3-4x the decommit rate (a TLB shootdown across every core each time) of the only
+configuration with a client run behind it, and it blinds the pool sentry - with every class served
+from the reserve the pool stops carving, so "pool clean" becomes vacuous.
+
 **2026-09-08: the GUARD-PAGE quarantine is built (`crates/grap-stub/src/guardpage.rs`,
 `-GuardPage`).** It covers the surface the write watch cannot: it serves one pool size class
 (default `0x40`, bucket 2) one-slot-per-page from a private 2 GB reserve and DECOMMITS each slot
@@ -261,8 +305,9 @@ object explains `+1`, `+2`, `-1` and a 180 s timer in one mechanism.
 session marker reads `mode=2,create=on`, so the guard page never armed and never logged. And it
 would not have mattered: `-GuardPage` defaults to bucket **`0x40`**, chosen from runs 2 and 5,
 while this victim is **`0x20`**. The flag was missing *and* aimed at the wrong class. The right
-run is **`-GuardPage -GuardBucket 0x20`**; budget ~230 MB extra committed (56 744 live `0x20`
-allocations at death) and read `FELL BACK` FIRST, not last.
+run is **`-GuardPage`** with the new default `0x20+0x40`. The ~230 MB budget was wrong by more
+than a factor of two: the 12:01 run measured ~26 000 live `0x20` slots, ~104 MB [L]. `FELL BACK`
+was indeed the first number to read, and it was **419 588**.
 
 **2026-09-08: THE WRITER IS ON OTHER PEOPLE'S MACHINES, and it is killing live players.**
 Four hook logs off the live server (`research/live-client-crash-2026-09-08.md`). One is a crash,
