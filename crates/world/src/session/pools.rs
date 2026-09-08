@@ -47,10 +47,18 @@ impl Session {
             }
             self.config.firstjob.level(skill_id, level).and_then(pick).unwrap_or(0)
         };
+        // **Hyper Body, while it is held.** Same shape as the passive, different lifetime: the
+        // percent is CTS 94's value on the buff this session is holding, and it goes back to
+        // zero the moment the buff expires or is cancelled. A recipient of the party cast holds
+        // its own copy, so their ceiling rises on their own session.
+        let hyper_body = u32::try_from(self.held_value(net::jobbuffs::CTS_MAX_HP)).unwrap_or(0);
         Pools {
             max_hp: crate::itemrecovery::boosted_max(
-                chr.max_hp,
-                percent(MAX_HP_INCREASE, |l| l.max_hp_percent),
+                crate::itemrecovery::boosted_max(
+                    chr.max_hp,
+                    percent(MAX_HP_INCREASE, |l| l.max_hp_percent),
+                ),
+                hyper_body,
             ),
             max_mp: crate::itemrecovery::boosted_max(
                 chr.max_mp,

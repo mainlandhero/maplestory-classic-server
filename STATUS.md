@@ -64,6 +64,23 @@ function pointer at `PCOM+0xdbb80` - the IAT is **not** the call site, so an IAT
 have installed cleanly and intercepted nothing. Off by default, and off during a write-watch
 run.
 
+**2026-09-07: the second- and third-job skills are audited - 149 of them - and most now do
+something correct on the server.** `research/second-third-job-audit-2026-09-07.md` has one
+row per skill. What landed, all unit-tested and **none of it yet on a screen**: every cast now
+pays what the client's own table prices (MP, the Boosters' HP, Magic/Summoning Rocks, Shadow
+Meso's mesos) whether or not a stat is granted - Teleport used to keep its MP; 33 more buffs
+are granted on bits from the 408-name table (`crate::advbuffs`, `net::jobbuffs`) with their
+server halves where the number is the server's - Hyper Body's HP ceiling, Power Guard's
+reflection, Meso Guard's mesos, Invincible's cut, Holy Symbol's EXP, Element Amplification's
+MP, Dragon Blood's drain, Combo's orbs, Soul Arrow's free shots, Bless's heal bonus; arrows and
+stars come from each skill's own row (Strafe 3, Arrow Rain 8, Avenger 4, the hidden hits none);
+Heal, Drain and MP Eater move HP/MP; the third-job Improved MP Recovery is flat MP per tick.
+**A latent bug fell out**: a toggle (Magic Guard) expired on the next loop pass, because its
+expiry was `now + 0`. **Not built, and said so in the table**: summons and Puppet, Mystic Door,
+every mob-side status (slow, seal, stun, freeze, DoT - no mob-stat packet is decoded),
+Pickpocket and Meso Explosion, Meso Saver, Chakra, Critical/Nimble Recovery, Final Attack's
+HP absorb, Steal's theft. The test plan's T19 says what each screen outcome means.
+
 **2026-09-06: Thief and Warrior audit - built, unit-tested, NOT yet on a screen.** Details in
 `research/thief-warrior-audit-2026-09-06.md`; the plan is T16 / 0f-0h in `tools/test-server.ps1`.
 

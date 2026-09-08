@@ -161,7 +161,25 @@ impl Session {
         let percent =
             crate::itemrecovery::mp_regen_percent(crate::itemrecovery::IMPROVED_MP_RECOVERY, level);
         let bonus = crate::itemrecovery::regen_of_max(max_mp, percent);
-        MpRegen { amount: REGEN_AMOUNT.saturating_add(bonus), bonus, percent }
+        // **The third-job warriors' "Improved MP Recovery"** (`1110000` Crusader, `1210000`
+        // White Knight) is a different skill from the Magician's `2000000` despite the name:
+        // its `x` is FLAT - *"Recover 3 additional MP every 10 sec."*, 3..22 - not a percent
+        // of the maximum. Read as such, and added on top. **[L]** for the unit, off the tooltip.
+        let flat: u32 = crate::advbuffs::IMPROVED_MP_RECOVERY_3RD
+            .iter()
+            .filter_map(|&skill| {
+                let level = self.store.skill_level(character_id, skill).unwrap_or(0);
+                if level == 0 {
+                    return None;
+                }
+                self.config.firstjob.level(skill, level)?.x.and_then(|x| u32::try_from(x).ok())
+            })
+            .sum();
+        MpRegen {
+            amount: REGEN_AMOUNT.saturating_add(bonus).saturating_add(flat),
+            bonus: bonus.saturating_add(flat),
+            percent,
+        }
     }
 
     /// The regeneration this tick owes, if any. At most one `0x007C`.
@@ -817,5 +835,36 @@ mod tests {
         let after = store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
         assert_eq!((after.hp, after.mp), (max_hp, max_mp), "capped, not overshot");
         assert!(s.regen_tick(20_000).is_empty(), "and then it stops");
+    }
+
+    /// **The third-job warriors' Improved MP Recovery is FLAT**, not the Magician's percent.
+    /// *"Recover 3 additional MP every 10 sec."* at level 1, 22 at 20.
+    #[test]
+    fn the_third_job_improved_mp_recovery_adds_a_flat_amount_per_tick() {
+        let table = std::path::Path::new("../../gm-handbook/skills.txt");
+        if !table.exists() {
+            return; // python tools/dump_skills.py
+        }
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Crusader".to_string(), ..Default::default() };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        store.create_migration(account, id, 0, 0).unwrap();
+        let config = Config {
+            set_field_probe: true,
+            firstjob: crate::firstjob::CombatTable::load(table),
+            ..Config::default()
+        };
+        let mut s = Session::new(store.clone(), Arc::new(config));
+        s.claim_for_character(id);
+        assert_eq!(s.mp_regen(id, 500).amount, REGEN_AMOUNT, "the control: no skill, base only");
+        store.set_skill_level(id, 1_110_000, 1).unwrap();
+        assert_eq!(s.mp_regen(id, 500).amount, REGEN_AMOUNT + 3, "Crusader L1: +3, flat");
+        store.set_skill_level(id, 1_110_000, 20).unwrap();
+        assert_eq!(s.mp_regen(id, 500).amount, REGEN_AMOUNT + 22, "L20: +22");
+        // Both ids are one skill; the White Knight's reads the same.
+        store.set_skill_level(id, 1_110_000, 0).unwrap();
+        store.set_skill_level(id, 1_210_000, 1).unwrap();
+        assert_eq!(s.mp_regen(id, 500).amount, REGEN_AMOUNT + 3);
     }
 }

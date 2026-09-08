@@ -226,6 +226,75 @@ pub const DARK_SIGHT_ON: i16 = 1;
 /// invite - knows that a Dark Sight packet needs eight more than the others.
 pub const DARK_SIGHT_EXTRA_BYTES: usize = 8;
 
+// ---------------------------------------------------------------------------------------
+// The second- and third-job bits, 2026-09-07
+// ---------------------------------------------------------------------------------------
+//
+// Every constant below comes from the same re-derived 408-name table as [`CTS_JUMP`] and
+// [`CTS_WEAPON_ATTACK`] (`research/first-job-buffs.md` Appendix A), and every one of them has
+// the SAME standing unless its own doc says otherwise: **[D]** - the name, plus the decoder
+// census (`research/msexe-secondarystat-140a165f0.txt`) giving the bit the standard
+// 87-instruction block, `reads=u32,u16,u32,u32`, `occ1` - byte-identical in shape to bit 92,
+// which a client has run. What is NOT established for any of them is a reader that consumes
+// the slot; the client's own use of the stat is the run's to show.
+//
+// Two of these are stronger than the rest. **96 Booster and 100 PowerGuard were two of the
+// five positive controls** the name table was checked against - names the earlier 323-name
+// pass had already placed by a different route, and both came back identical. **[L]** for
+// the name on those two.
+
+/// **Max HP**, as a percent. Hyper Body's `indieMhpR` rides here.
+///
+/// The table has two candidates - `94 MaxHP` and `214 IncMaxHP` - and the column decides:
+/// `indieMhpR` is a **ratio** (the `R`), and 94 is the classic percent stat where 214 is the
+/// later flat one. **[D]**. The server raises its own HP ceiling by the same percent while the
+/// stat is held (`world::session::pools`), for the reason `mhpR` already taught: the client
+/// applies the percent to what it draws, and a server that did not would call a player full at
+/// the old maximum.
+pub const CTS_MAX_HP: u32 = 94;
+/// **Booster** - attack speed, in stages. All ten weapon boosters' `x` (`-2`) ride here.
+/// **[L]** for the name (a positive control); the value's unit is the tooltip's *"by 2
+/// stages"*. **[D]** that the client wants it negative as the WZ writes it.
+pub const CTS_BOOSTER: u32 = 96;
+/// **Power Guard** - percent of physical damage reflected. `x`, 20..40. **[L]** name (a
+/// positive control). The reflection itself is the server's arithmetic, in `on_user_hit`.
+pub const CTS_POWER_GUARD: u32 = 100;
+/// **Final Attack** - the eight `Final Attack: <weapon>` toggles, `processtype 113`. The
+/// client rolls the proc and sends the extra swing itself; the bit is what switches it on.
+pub const CTS_FINAL_ATTACK: u32 = 101;
+/// **Invincible** - percent of physical damage ignored. `x`, 10..30.
+pub const CTS_INVINCIBLE: u32 = 103;
+/// **Soul Arrow** - shots take no arrow while held. The client stops decrementing its own
+/// count; the server stops taking arrows in `spend_attack_arrows`.
+pub const CTS_SOUL_ARROW: u32 = 104;
+/// **Dragon Blood** - the toggle's flag. Its `indiePad` rides [`CTS_WEAPON_ATTACK`] beside it,
+/// and the HP drain (`x` every `y` seconds) is a server tick.
+pub const CTS_DRAGON_BLOOD: u32 = 105;
+/// **Weapon Element Charge** - the White Knight's three charges. One bit; the element comes
+/// from the reason (the skill id), which is why the three cannot be held at once.
+pub const CTS_WEAPON_CHARGE: u32 = 106;
+/// **Combo Attack** - the value is the orb count plus one. The decoder census shows a second,
+/// 19-byte block gated on this bit (`0x140a46de3`, reads one `u32`), so a Combo packet
+/// consumes **four more bytes** than a Nimble Feet one; they come out of
+/// [`crate::buff::TAIL_LEN`]'s zero padding, as Dark Sight's eight do. **[L]** for the block.
+pub const CTS_COMBO: u32 = 107;
+/// Extra body bytes the decoder consumes when [`CTS_COMBO`] is set. See its doc.
+pub const COMBO_EXTRA_BYTES: usize = 4;
+/// **Element Amplification** - the toggle's flag. The damage side is the client's; the
+/// **MP-cost side is the server's** (`x`% of every cost while held).
+pub const CTS_ELEMENT_AMP: u32 = 108;
+/// **Spell Booster** - casting speed, in stages. `x`, `-1..-2`.
+pub const CTS_SPELL_BOOSTER: u32 = 109;
+/// **Holy Symbol** - percent bonus experience. `x`, 5..35. Applied by the server in
+/// `exp_for_kill`; the bit buys the icon.
+pub const CTS_HOLY_SYMBOL: u32 = 110;
+/// **Meso Guard** - percent of damage paid in mesos instead of HP. `x`; the price is `y`% of
+/// what was blocked. Server arithmetic in `on_user_hit`.
+pub const CTS_MESO_GUARD: u32 = 112;
+/// **Shadow Partner** - the shadow that repeats the attack. The client draws it and sends the
+/// extra damage lines in its own attack packet; the bit is what makes it appear.
+pub const CTS_SHADOW_PARTNER: u32 = 113;
+
 /// Master level of [`IRON_BODY`], from the table's own length rather than a second literal.
 pub const IRON_BODY_MAX_LEVEL: u32 = IRON_BODY_PDD_PERCENT.len() as u32;
 

@@ -8517,3 +8517,539 @@ fn the_quest_exp_rate_multiplies_a_turn_in_and_the_kill_rate_does_not() {
     assert_eq!(doubled, base * 2, "the QUEST rate does: {why}");
     assert!(why.contains(&format!("quest 1001 ({base} at 2x)")), "and the reason says so: {why}");
 }
+
+// ---------------------------------------------------------------------------------------
+// The second- and third-job audit, 2026-09-07.
+// research/second-third-job-audit-2026-09-07.md
+// ---------------------------------------------------------------------------------------
+
+/// A level-70 character of `job` with `skills` at the given levels, `etc` items in the Etc
+/// tab, `mesos` in the purse, 1000/1000 HP and MP, claimed. `None` without the generated
+/// table. `tweak` edits the config before the session takes it.
+fn adv_session_with(
+    job: u16,
+    skills: &[(u32, u32)],
+    etc: &[(u32, u16)],
+    mesos: u32,
+    tweak: impl FnOnce(&mut Config),
+) -> Option<(Arc<Store>, Session, u32)> {
+    let table = std::path::Path::new("../../gm-handbook/skills.txt");
+    if !table.exists() {
+        return None; // python tools/dump_skills.py
+    }
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Advanced".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &chr).unwrap();
+    made.job = job;
+    made.level = 70;
+    made.hp = 1000;
+    made.max_hp = 1000;
+    made.mp = 1000;
+    made.max_mp = 1000;
+    store.save_character_progress(&made).unwrap();
+    for (skill, level) in skills {
+        store.set_skill_level(made.id, *skill, *level).unwrap();
+    }
+    for (item, n) in etc {
+        store
+            .add_item(made.id, store::InventoryType::Etc, &store::Item::bundle(*item, *n), 100)
+            .unwrap();
+    }
+    if mesos > 0 {
+        store.set_mesos(made.id, mesos).unwrap();
+    }
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let mut config = Config {
+        set_field_probe: true,
+        firstjob: crate::firstjob::CombatTable::load(table),
+        ..Config::default()
+    };
+    tweak(&mut config);
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    s.claim_for_character(made.id);
+    Some((store, s, made.id))
+}
+
+fn adv_session(job: u16, skills: &[(u32, u32)], etc: &[(u32, u16)], mesos: u32) -> Option<(Arc<Store>, Session, u32)> {
+    adv_session_with(job, skills, etc, mesos, |_| {})
+}
+
+fn hp_of(s: &Session) -> u32 {
+    s.claimed_character().expect("a character is claimed").hp
+}
+
+/// The CTS bits a `0x007D` sets, and its entries as `(value, reason, duration_ms)`, in the
+/// order the body carries them - ascending bit, whatever the caller passed.
+fn stat_set(reply: &Reply) -> (Vec<u32>, Vec<(i16, u32, u32)>) {
+    let bits = net::buff::bits_in_mask(&reply.body[..net::buff::MASK_LEN]);
+    let entries = (0..bits.len())
+        .map(|i| {
+            let at = net::buff::MASK_LEN + i * 10;
+            (
+                i16::from_le_bytes([reply.body[at], reply.body[at + 1]]),
+                u32::from_le_bytes(reply.body[at + 2..at + 6].try_into().unwrap()),
+                u32::from_le_bytes(reply.body[at + 6..at + 10].try_into().unwrap()),
+            )
+        })
+        .collect();
+    (bits, entries)
+}
+
+fn first_stat_set(out: &[Reply]) -> Option<&Reply> {
+    out.iter().find(|r| r.opcode == net::buff::TEMPORARY_STAT_SET)
+}
+
+/// **A toggle is held until it is cancelled; a timed buff still expires on schedule.**
+///
+/// Before 2026-09-07 `grant_buff_with_tail` recorded a toggle's expiry as `now + 0`, and
+/// `buff_tick` took Magic Guard off again on the next pass of the session loop. The one
+/// Magic Guard test grants and hits at the same instant, so it never saw a tick.
+#[test]
+fn a_toggle_survives_the_buff_tick_and_a_timed_buff_does_not() {
+    let Some((_store, mut s, _id)) =
+        adv_session(210, &[(net::buff::MAGIC_GUARD, 1), (2_101_000, 1)], &[], 0)
+    else {
+        return;
+    };
+    s.on_skill_use(&skill_use_body(net::buff::MAGIC_GUARD, 1));
+    assert!(s.holds(net::buff::CTS_MAGIC_GUARD), "the cast landed");
+    let out = s.buff_tick(3_600_000);
+    assert!(s.holds(net::buff::CTS_MAGIC_GUARD), "a toggle has no expiry");
+    assert_eq!(count_of(&out, net::buff::TEMPORARY_STAT_RESET), 0, "and no 0x007E: {out:?}");
+    // The control: Meditation L1 is 100 s and must still go.
+    s.on_skill_use(&skill_use_body(2_101_000, 1));
+    assert!(s.holds(net::jobbuffs::CTS_MAGIC_ATTACK));
+    assert!(s.buff_tick(99_999).is_empty());
+    let out = s.buff_tick(100_000);
+    assert!(!s.holds(net::jobbuffs::CTS_MAGIC_ATTACK), "expired on schedule");
+    assert_eq!(count_of(&out, net::buff::TEMPORARY_STAT_RESET), 1);
+    assert!(s.holds(net::buff::CTS_MAGIC_GUARD), "the toggle is untouched by a neighbour expiring");
+}
+
+/// **A Booster costs HP as well as MP**, and the buff tables never carried an HP cost.
+#[test]
+fn a_booster_costs_hp_and_mp_and_rides_bit_96_at_minus_two() {
+    let Some((_store, mut s, _id)) = adv_session(110, &[(1_101_002, 1)], &[], 0) else { return };
+    let out = s.on_skill_use(&skill_use_body(1_101_002, 1));
+    let set = first_stat_set(&out).expect("Sword Booster grants a stat");
+    let (bits, entries) = stat_set(set);
+    assert_eq!(bits, vec![net::jobbuffs::CTS_BOOSTER]);
+    assert_eq!(entries[0].0, -2, "x = -2, 'by 2 stages', sign kept");
+    assert_eq!(entries[0].1, 1_101_002, "the reason is the skill");
+    assert_eq!(entries[0].2, 100_000, "100 s, in MILLISECONDS");
+    assert_eq!(mp_of(&s), 1000 - 30, "mpCon 30");
+    assert_eq!(hp_of(&s), 1000 - 30, "hpCon 30");
+    let stat = out.iter().find(|r| r.opcode == net::stats::STAT_CHANGED).expect("0x007C");
+    assert!(stat.what.contains("hpCon"), "{}", stat.what);
+}
+
+/// **A skill the server grants nothing for still costs what the client's table says.**
+///
+/// Teleport: the client moves the character itself. The server used to answer with a chat
+/// line and keep the MP - which the next `0x007C` handed straight back.
+#[test]
+fn a_skill_the_server_grants_nothing_for_still_costs_what_the_table_says() {
+    let Some((_store, mut s, _id)) = adv_session(210, &[(2_101_001, 1)], &[], 0) else { return };
+    let out = s.on_skill_use(&skill_use_body(2_101_001, 1));
+    assert_eq!(mp_of(&s), 1000 - 55, "Teleport L1 mpCon 55");
+    assert_eq!(count_of(&out, net::stats::STAT_CHANGED), 1, "the bar is told");
+    assert_eq!(count_of(&out, net::buff::TEMPORARY_STAT_SET), 0, "nothing to grant");
+    assert_eq!(count_of(&out, net::notice::CHAT_NOTICE), 0, "and no chat line on every Teleport");
+}
+
+/// **Spell Booster takes its Magic Rock, and is refused before anything is spent without one.**
+#[test]
+fn spell_booster_takes_a_magic_rock_and_is_refused_without_one() {
+    let Some((_store, mut s, id)) = adv_session(211, &[(2_111_005, 1)], &[(4_006_000, 2)], 0) else {
+        return;
+    };
+    let out = s.on_skill_use(&skill_use_body(2_111_005, 1));
+    let (bits, entries) = stat_set(first_stat_set(&out).expect("Spell Booster grants bit 109"));
+    assert_eq!(bits, vec![net::jobbuffs::CTS_SPELL_BOOSTER]);
+    assert_eq!(entries[0].0, -1, "x = -1 at level 1");
+    assert_eq!(count_of(&out, net::inventory::INVENTORY_OPERATION), 1, "the rock stack is told");
+    assert!(s.has_items(id, store::InventoryType::Etc, 4_006_000, 1), "one of two left");
+    assert!(!s.has_items(id, store::InventoryType::Etc, 4_006_000, 2));
+    assert_eq!(mp_of(&s), 1000 - 60);
+
+    let Some((_store, mut s, _id)) = adv_session(211, &[(2_111_005, 1)], &[], 0) else { return };
+    let out = s.on_skill_use(&skill_use_body(2_111_005, 1));
+    assert!(first_stat_set(&out).is_none(), "no rock, no buff");
+    assert_eq!(mp_of(&s), 1000, "and nothing spent");
+    assert_eq!(count_of(&out, net::notice::CHAT_NOTICE), 1, "and it says why");
+}
+
+/// **Hyper Body raises the server's own HP ceiling while it is held**, the same lesson Max HP
+/// Increase taught on 2026-09-06 with a different lifetime.
+#[test]
+fn hyper_body_raises_the_servers_hp_ceiling_only_while_held() {
+    let Some((_store, mut s, _id)) = adv_session(131, &[(1_311_005, 1)], &[], 0) else { return };
+    let chr = s.claimed_character().unwrap();
+    assert_eq!(s.pools(&chr).max_hp, 1000, "the control");
+    let out = s.on_skill_use(&skill_use_body(1_311_005, 1));
+    let (bits, entries) = stat_set(first_stat_set(&out).expect("0x007D"));
+    assert_eq!(bits, vec![net::jobbuffs::CTS_MAX_HP]);
+    assert_eq!(entries[0].0, 10, "indieMhpR 10 = +10%");
+    assert_eq!(s.pools(&chr).max_hp, 1100, "the server's ceiling follows the icon");
+    let out = s.buff_tick(100_000);
+    assert_eq!(count_of(&out, net::buff::TEMPORARY_STAT_RESET), 1);
+    assert_eq!(s.pools(&chr).max_hp, 1000, "and comes back down with it");
+}
+
+#[test]
+fn bless_grants_accuracy_and_avoidability_together() {
+    let Some((_store, mut s, _id)) = adv_session(230, &[(2_301_003, 1)], &[], 0) else { return };
+    let out = s.on_skill_use(&skill_use_body(2_301_003, 1));
+    let (bits, entries) = stat_set(first_stat_set(&out).expect("0x007D"));
+    assert_eq!(bits, vec![net::jobbuffs::CTS_ACCURACY, net::jobbuffs::CTS_AVOIDABILITY]);
+    assert_eq!((entries[0].0, entries[1].0), (1, 1), "indieAcc 1, indieEva 1 at level 1");
+    assert_eq!(entries[0].2, 100_000);
+    assert_eq!(entries[0].2, entries[1].2, "one cast, one duration");
+}
+
+/// **Soul Arrow stops every arrow**, plain shot and skill alike.
+#[test]
+fn soul_arrow_stops_the_arrows_for_every_shot() {
+    let Some((store, mut s, id)) =
+        first_job_with(310, BOW, &[3_101_003, 3_001_001], BOW_ARROWS, 50, 1000)
+    else {
+        return;
+    };
+    s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 0));
+    assert_eq!(arrows_in_slot_1(&store, id), 49, "the control: a plain shot takes one");
+    let out = s.on_skill_use(&skill_use_body(3_101_003, 1));
+    assert!(first_stat_set(&out).is_some(), "Soul Arrow grants bit 104: {out:?}");
+    assert!(s.holds(net::jobbuffs::CTS_SOUL_ARROW));
+    s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 0));
+    s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 3_001_001));
+    assert_eq!(arrows_in_slot_1(&store, id), 49, "nothing taken while it is held");
+}
+
+/// **Outside the first-job book the row itself decides the arrow count.** Strafe fires 3 and
+/// names no consume column; Arrow Rain says 8; the hidden Arrow Bomb hit says none; Avenger
+/// says 4 for a single throw.
+#[test]
+fn third_job_shots_take_what_their_own_row_says() {
+    let Some((store, mut s, id)) =
+        first_job_with(311, BOW, &[3_111_003, 3_111_002, 3_101_005], BOW_ARROWS, 50, 1000)
+    else {
+        return;
+    };
+    s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 3_111_003));
+    assert_eq!(arrows_in_slot_1(&store, id), 47, "Strafe L1 fires 3 - one per projectile");
+    s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 3_111_002));
+    assert_eq!(arrows_in_slot_1(&store, id), 39, "Arrow Rain L1 bulletConsume 8");
+    s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 3_101_005));
+    assert_eq!(arrows_in_slot_1(&store, id), 39, "noBulletConsume");
+
+    let Some((store, mut s, id)) = first_job_with(411, CLAW, &[4_111_004], SUBI, 50, 800) else {
+        return;
+    };
+    s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 4_111_004));
+    assert_eq!(arrows_in_slot_1(&store, id), 46, "Avenger: bulletConsume 4 for one throw");
+}
+
+/// **Element Amplification raises every MP cost but its own.** Fire Arrow L1 is 14; at 120%
+/// that is 16, floored.
+#[test]
+fn element_amplification_raises_every_mp_cost_but_its_own() {
+    let Some((_store, mut s, _id)) = adv_session(211, &[(2_111_000, 1), (2_101_003, 1)], &[], 0) else {
+        return;
+    };
+    let out = s.on_skill_use(&skill_use_body(2_111_000, 1));
+    assert!(first_stat_set(&out).is_some(), "the toggle is granted: {out:?}");
+    assert_eq!(mp_of(&s), 1000 - 25, "its own cast is not amplified");
+    s.handle(&swing_packet(net::combat::USER_MAGIC_ATTACK, 2_101_003));
+    assert_eq!(mp_of(&s), 1000 - 25 - 16, "14 at 120% = 16");
+}
+
+#[test]
+fn holy_symbol_adds_its_percent_to_a_kills_experience() {
+    let Some((_store, mut s, _id)) = adv_session_with(231, &[(2_311_002, 1)], &[], 0, |c| {
+        c.mob_exp.insert(2, 100);
+    }) else {
+        return;
+    };
+    assert_eq!(s.exp_for_kill(2).0, 100, "the control");
+    let out = s.on_skill_use(&skill_use_body(2_311_002, 1));
+    assert!(first_stat_set(&out).is_some(), "{out:?}");
+    assert_eq!(s.exp_for_kill(2).0, 105, "x = 5 at level 1");
+    assert!(s.exp_for_kill(2).1.contains("Holy Symbol"), "{}", s.exp_for_kill(2).1);
+}
+
+/// **Dragon Blood** is the toggle's flag plus its `indiePad`, and a drain on its own clock
+/// that floors at 1.
+#[test]
+fn dragon_blood_drains_on_its_own_clock_and_never_kills() {
+    let Some((store, mut s, _id)) = adv_session(131, &[(1_311_004, 1)], &[], 0) else { return };
+    let out = s.on_skill_use(&skill_use_body(1_311_004, 1));
+    let (bits, entries) = stat_set(first_stat_set(&out).expect("0x007D"));
+    assert_eq!(bits, vec![net::jobbuffs::CTS_WEAPON_ATTACK, net::jobbuffs::CTS_DRAGON_BLOOD]);
+    assert_eq!(entries[0].0, 30, "indiePad 30");
+    assert_eq!(entries[1].0, 1, "the flag carries the level");
+    assert_eq!(entries[0].2, 0, "a toggle sends no duration");
+    assert_eq!(mp_of(&s), 1000 - 50);
+    assert!(s.dragon_blood_tick(2_999).is_empty(), "y = 3 s");
+    let out = s.dragon_blood_tick(3_000);
+    assert_eq!(count_of(&out, net::stats::STAT_CHANGED), 1);
+    assert_eq!(hp_of(&s), 1000 - 40, "x = 40");
+    assert!(s.dragon_blood_tick(5_999).is_empty());
+    let mut chr = s.claimed_character().unwrap();
+    chr.hp = 20;
+    store.save_character_progress(&chr).unwrap();
+    s.dragon_blood_tick(6_000);
+    assert_eq!(hp_of(&s), 1, "floored at 1 - the toggle never kills its holder");
+    assert!(s.dragon_blood_tick(9_000).is_empty(), "and nothing left to drain");
+    s.buffs.clear();
+    assert!(s.dragon_blood_tick(12_000).is_empty(), "a cancel stops the clock");
+}
+
+/// **Heal** restores `x`% of the drawn ceiling, capped there, and Bless's `x` adds to the rate.
+#[test]
+fn heal_restores_a_percent_of_the_ceiling_and_bless_raises_the_percent() {
+    let Some((store, mut s, _id)) = adv_session(230, &[(2_301_001, 1), (2_301_003, 1)], &[], 0) else {
+        return;
+    };
+    let mut chr = s.claimed_character().unwrap();
+    chr.hp = 100;
+    store.save_character_progress(&chr).unwrap();
+    let out = s.on_skill_use(&skill_use_body(2_301_001, 1));
+    assert_eq!(hp_of(&s), 500, "x = 40% of 1000, on top of 100");
+    assert_eq!(mp_of(&s), 1000 - 12);
+    assert_eq!(count_of(&out, net::stats::USER_EFFECT_LOCAL), 1, "the blue number");
+    s.on_skill_use(&skill_use_body(2_301_001, 1));
+    s.on_skill_use(&skill_use_body(2_301_001, 1));
+    assert_eq!(hp_of(&s), 1000, "capped at the ceiling");
+    s.on_skill_use(&skill_use_body(2_301_003, 1));
+    let mut chr = s.claimed_character().unwrap();
+    chr.hp = 100;
+    store.save_character_progress(&chr).unwrap();
+    s.on_skill_use(&skill_use_body(2_301_001, 1));
+    assert_eq!(hp_of(&s), 510, "Bless L1 adds 1%: 41% of 1000");
+}
+
+// ---- the four that need something to hit -------------------------------------------
+
+/// A channel with mob 2002 (template 2) at `hp`, the skill table loaded, template 2 given
+/// `mob_max_mp`, for the effects that hang off a landed swing.
+fn adv_channel(hp: u64, mob_max_mp: u32) -> Option<(Arc<Store>, Arc<Config>, Arc<crate::fields::Fields>, i64)> {
+    let table = std::path::Path::new("../../gm-handbook/skills.txt");
+    if !table.exists() {
+        return None;
+    }
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account = store.create_account("maplecw", "correct horse battery").unwrap();
+    let mut mobs = std::collections::HashMap::new();
+    mobs.insert(SHARED_MAP, vec![net::mob::FieldMob::new(2002, 2, 400, 395, 1, hp)]);
+    let mut mob_templates = std::collections::HashMap::new();
+    mob_templates.insert(
+        2u32,
+        crate::config::MobTemplate { max_hp: 30, max_mp: mob_max_mp, ..Default::default() },
+    );
+    let config = Arc::new(Config {
+        set_field_probe: true,
+        send_mobs: true,
+        mobs,
+        mob_templates,
+        firstjob: crate::firstjob::CombatTable::load(table),
+        ..Config::default()
+    });
+    let fields = Arc::new(crate::fields::Fields::new());
+    fields.seed(SHARED_MAP, &config, 0);
+    fields.due_respawns(SHARED_MAP, &config, 999_999);
+    Some((store, config, fields, account))
+}
+
+/// Join [`adv_channel`] as a level-70 `job` with `skills`, 1000/1000, standing on the map.
+fn adv_join(
+    store: &Arc<Store>,
+    config: &Arc<Config>,
+    fields: &Arc<crate::fields::Fields>,
+    account: i64,
+    job: u16,
+    skills: &[(u32, u32)],
+) -> (Session, u32) {
+    let chr = net::opcode::Character { name: "Advanced".to_string(), map_id: SHARED_MAP, ..Default::default() };
+    let mut made = store.create_character(account, 0, &chr).unwrap();
+    made.job = job;
+    made.level = 70;
+    made.hp = 1000;
+    made.max_hp = 1000;
+    made.mp = 1000;
+    made.max_mp = 1000;
+    store.save_character_progress(&made).unwrap();
+    for (skill, level) in skills {
+        store.set_skill_level(made.id, *skill, *level).unwrap();
+    }
+    store.create_migration(account, made.id, 0, 0).unwrap();
+    let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+    s.claim_for_character(made.id);
+    s.on_field_entered();
+    let _ = s.handle(&NO_PACKET);
+    (s, made.id)
+}
+
+/// The captured swing on mob 2002 with `skill` at level 1 patched in, behind `opcode`.
+fn skilled_swing(opcode: u16, skill: u32) -> Vec<u8> {
+    let mut body = unhex_body(MELEE_2002_FOR_19);
+    body[2..6].copy_from_slice(&skill.to_le_bytes());
+    body[6] = if skill == 0 { 0 } else { 1 };
+    let mut p = opcode.to_le_bytes().to_vec();
+    p.extend_from_slice(&body);
+    p
+}
+
+/// **Combo Attack gains an orb per landed swing, up to `y`, and Coma spends them.** The
+/// value starts at 1 and the client draws `value - 1` orbs; level 1's `y` is 3.
+#[test]
+fn combo_attack_gains_an_orb_per_landed_swing_up_to_y_and_a_finisher_spends_them() {
+    let Some((store, config, fields, account)) = adv_channel(1_000_000, 0) else { return };
+    let (mut s, _id) = adv_join(&store, &config, &fields, account, 111, &[(1_111_000, 1), (1_111_002, 1)]);
+    let out = s.on_skill_use(&skill_use_body(1_111_000, 1));
+    let (bits, entries) = stat_set(first_stat_set(&out).expect("Combo grants bit 107"));
+    assert_eq!(bits, vec![net::jobbuffs::CTS_COMBO]);
+    assert_eq!(entries[0].0, 1, "one orb-plus-one to start");
+    assert_eq!(entries[0].2, 0, "a toggle");
+    for expect in [2i16, 3, 4] {
+        let out = s.handle(&melee_packet());
+        let set = first_stat_set(&out).unwrap_or_else(|| panic!("orb {expect}: {out:?}"));
+        assert_eq!(stat_set(set).1[0].0, expect);
+    }
+    let out = s.handle(&melee_packet());
+    assert!(first_stat_set(&out).is_none(), "capped at y + 1 = 4: {out:?}");
+    assert_eq!(s.held_value(net::jobbuffs::CTS_COMBO), 4);
+    let out = s.handle(&skilled_swing(net::combat::USER_MELEE_ATTACK, 1_111_002));
+    assert_eq!(stat_set(first_stat_set(&out).expect("Coma resets")).1[0].0, 1);
+    assert_eq!(s.held_value(net::jobbuffs::CTS_COMBO), 1);
+}
+
+/// **Drain heals `x`% of the damage dealt when its `prop`% chance lands.** Level 30: 12%
+/// and 15%; the captured swing does 19, so a proc is exactly 2.
+#[test]
+fn drain_heals_a_share_of_the_damage_when_its_chance_lands() {
+    let Some((store, config, fields, account)) = adv_channel(1_000_000, 0) else { return };
+    let (mut s, _id) = adv_join(&store, &config, &fields, account, 410, &[(4_101_002, 30)]);
+    let mut chr = s.claimed_character().unwrap();
+    chr.hp = 500;
+    store.save_character_progress(&chr).unwrap();
+    s.rng = Xorshift(0x9E37_79B9_7F4A_7C15);
+    let mut procs = 0;
+    for _ in 0..300 {
+        let before = hp_of(&s);
+        let out = s.handle(&skilled_swing(net::combat::USER_MELEE_ATTACK, 4_101_002));
+        let after = hp_of(&s);
+        if after > before {
+            procs += 1;
+            assert_eq!(after - before, 2, "19 * 15 / 100: {out:?}");
+        }
+    }
+    assert!(procs > 0, "12% over 300 swings and not one proc - the roll is not running");
+    assert!(procs < 300, "and not every swing - prop is 12, not 100");
+}
+
+/// **MP Eater absorbs `x`% of the mob's max MP on a landed magic hit, then waits `cooltime`.**
+/// Level 20: 50% chance, 50% of the mob's 200.
+#[test]
+fn mp_eater_absorbs_a_share_of_the_mobs_max_mp_and_then_waits_five_seconds() {
+    let Some((store, config, fields, account)) = adv_channel(1_000_000, 200) else { return };
+    let (mut s, _id) = adv_join(&store, &config, &fields, account, 210, &[(2_100_000, 20)]);
+    let mut chr = s.claimed_character().unwrap();
+    chr.mp = 100;
+    store.save_character_progress(&chr).unwrap();
+    s.rng = Xorshift(42);
+    let mut first = None;
+    for i in 0..40u64 {
+        s.clock_ms = i * 100;
+        let before = mp_of(&s);
+        s.handle(&skilled_swing(net::combat::USER_MAGIC_ATTACK, 0));
+        if mp_of(&s) > before {
+            assert_eq!(mp_of(&s) - before, 100, "50% of the mob's 200");
+            first = Some(i);
+            break;
+        }
+    }
+    let first = first.expect("50% over 40 swings and not one proc");
+    for i in first + 1..first + 50 {
+        s.clock_ms = i * 100;
+        let before = mp_of(&s);
+        s.handle(&skilled_swing(net::combat::USER_MAGIC_ATTACK, 0));
+        assert_eq!(mp_of(&s), before, "inside the 5 s cooltime at {} ms", i * 100);
+    }
+    // A melee swing never feeds it, whatever the dice say.
+    s.clock_ms = 100_000;
+    let before = mp_of(&s);
+    for _ in 0..40 {
+        s.handle(&melee_packet());
+    }
+    assert_eq!(mp_of(&s), before, "melee is not a magic attack");
+}
+
+/// The Drake hit from `magic_guard_splits_incoming_damage_between_hp_and_mp`, with the damage
+/// set to `damage` and the mob object id to `mob`. Offsets are `net::userhit`'s own
+/// (`DAMAGE_AT 8`, `MOB_OBJECT_ID_AT 46`); the parse below is what pins them. A claim above
+/// the floor is the CLIENT's own arithmetic and the server applies it verbatim, which is what
+/// makes the guard arithmetic below exact rather than a window.
+fn drake_hit(damage: u32, mob: u32) -> Vec<u8> {
+    let mut body = hex("00000000ffffffff0100000002002100431e140f0000000000000000000001000000010000000100000001000000d3070000d307000001000000000000000000000000000000000000de0100008b010000000000000000000000000000ffffffff00000000ffffffff000000000000000002000000000000000000000000000000000000000100000000000000000000000000");
+    body[8..12].copy_from_slice(&damage.to_le_bytes());
+    body[46..50].copy_from_slice(&mob.to_le_bytes());
+    let hit = net::userhit::parse_user_hit(&body).expect("the fixture parses");
+    assert_eq!(hit.damage, damage, "DAMAGE_AT");
+    assert_eq!(hit.mob_object_id, mob, "MOB_OBJECT_ID_AT");
+    body
+}
+
+/// **Invincible and Meso Guard take their shares off a hit, in that order, before Magic
+/// Guard.** Level 1: Invincible 10%; Meso Guard blocks 30% at 50% of the blocked amount in
+/// mesos, and blocks nothing when the purse cannot pay.
+#[test]
+fn invincible_and_meso_guard_take_their_shares_off_a_hit() {
+    let Some((_st, mut s, _id)) = adv_session(230, &[], &[], 0) else { return };
+    s.on_user_hit(&drake_hit(200, 1));
+    assert_eq!(hp_of(&s), 800, "the control: the client's 200 is applied verbatim");
+
+    let Some((_st, mut s, _id)) = adv_session(230, &[(2_301_002, 1)], &[], 0) else { return };
+    s.on_skill_use(&skill_use_body(2_301_002, 1));
+    assert!(s.holds(net::jobbuffs::CTS_INVINCIBLE));
+    s.on_user_hit(&drake_hit(200, 1));
+    assert_eq!(hp_of(&s), 1000 - 180, "Invincible L1: 10% ignored");
+
+    let Some((store, mut s, id)) = adv_session(421, &[(4_211_000, 1)], &[], 10_000) else { return };
+    s.on_skill_use(&skill_use_body(4_211_000, 1));
+    assert!(s.holds(net::jobbuffs::CTS_MESO_GUARD));
+    let out = s.on_user_hit(&drake_hit(200, 1));
+    assert_eq!(hp_of(&s), 1000 - 140, "30% of 200 blocked");
+    assert_eq!(store.mesos(id).unwrap(), 10_000 - 30, "at 50% of the 60 blocked");
+    assert_eq!(count_of(&out, net::stats::STAT_CHANGED), 1, "HP and mesos in one packet");
+
+    let Some((store, mut s, id)) = adv_session(421, &[(4_211_000, 1)], &[], 20) else { return };
+    s.on_skill_use(&skill_use_body(4_211_000, 1));
+    s.on_user_hit(&drake_hit(200, 1));
+    assert_eq!(hp_of(&s), 800, "20 mesos cannot pay 30: nothing blocked");
+    assert_eq!(store.mesos(id).unwrap(), 20, "and nothing charged");
+}
+
+/// **Power Guard sends its share back to the mob that hit us**, through the same body a
+/// swing uses. Level 1: 20%.
+#[test]
+fn power_guard_reflects_its_share_onto_the_mob() {
+    let Some((store, config, fields, account)) = adv_channel(500, 0) else { return };
+    let (mut s, _id) = adv_join(&store, &config, &fields, account, 121, &[(1_211_005, 1)]);
+    s.on_skill_use(&skill_use_body(1_211_005, 1));
+    assert!(s.holds(net::jobbuffs::CTS_POWER_GUARD));
+    assert_eq!(fields.mob_hp(SHARED_MAP, 2002), Some(500), "the control");
+    let out = s.on_user_hit(&drake_hit(200, 2002));
+    assert_eq!(hp_of(&s), 1000 - 160, "20% of the hit never lands");
+    assert_eq!(fields.mob_hp(SHARED_MAP, 2002), Some(460), "and the 40 goes to the mob");
+    assert!(
+        out.iter().any(|r| r.what.starts_with("mob 2002 took 40")),
+        "the mob's bar is told through deal_to_mob: {out:?}"
+    );
+    // A hit from a mob that is not on this field reflects onto nothing and is otherwise the
+    // same hit - the reflected share is still not taken from the player.
+    let before = hp_of(&s);
+    s.on_user_hit(&drake_hit(200, 7777));
+    assert_eq!(hp_of(&s), before - 160);
+    assert_eq!(fields.mob_hp(SHARED_MAP, 2002), Some(460));
+}

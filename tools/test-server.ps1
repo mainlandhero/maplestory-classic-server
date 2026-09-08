@@ -185,6 +185,30 @@
     catch outside the predicted window drops it and goes back to fine. The repair stays on.
     Use -PoolSentry alone when the run is a MEASUREMENT rather than play.
 
+    T19 (NEW 2026-09-07). SECOND AND THIRD JOB SKILLS - 149 audited, most built, NONE on a
+    screen yet. research/second-third-job-audit-2026-09-07.md has a row per skill. Use !job
+    and !learn; test ONE at a time and say which. Each line is a claim that can come back false:
+      (a) SWORD BOOSTER: icon appears, swings speed up, AND BOTH HP and MP drop 30. Only MP
+          moving = the hpCon path is broken. No icon = bit 96 wrong (it was a name-table
+          positive control, so unlikely).
+      (b) HYPER BODY: max HP on the stat window +10%, and regen keeps going PAST the old max.
+          Icon but regen stops at the old max = the server ceiling is not reading the buff.
+      (c) POWER GUARD: get hit. You lose 80% of the number, the mob's bar drops by 20% of it.
+      (d) COMBO ATTACK: cast it and COUNT THE ORBS. Zero orbs = the value-1 convention is right;
+          one orb = the value is the orb count and every number is one high. Each hit adds one
+          up to 3; Coma clears them.
+      (e) SOUL ARROW: the arrow count stops moving. STRAFE takes 3 per cast, ARROW RAIN 8.
+      (f) HEAL at low HP: +40% of max and a blue number. Bless up: 41%.
+      (g) MAGIC GUARD stays on. It used to expire on the NEXT LOOP PASS - a toggle's expiry
+          was recorded as now+0 - so this is a regression check on a first-job skill.
+      (h) TELEPORT / FLASH JUMP: the MP stays spent. Before, a potion or regen "refunded" it.
+      (i) ELEMENT AMPLIFICATION on: Fire Arrow costs 16, not 14.
+      (j) MESO GUARD: a hit costs mesos and less HP; with 0 mesos it costs full HP.
+    NOT BUILT - if asked, say so rather than test it: summons/Puppet, Mystic Door, every mob
+    status (slow, seal, stun, freeze, bleed/DoT - no mob-stat packet is decoded), Pickpocket,
+    Meso Explosion, Meso Saver, Chakra, Critical/Nimble Recovery, Final Attack's HP absorb,
+    Steal's theft. A cast of those still costs MP and does nothing else, on purpose.
+
     T18 (NEW 2026-09-07). NAME THE WRITER, and it is THE run. -SentryWriteWatch, below at
     (C). The ticker probe rides along on the same launch. FIFTEEN IDLE MINUTES standing still
     on a map with mobs, then CLOSE THE CLIENT YOURSELF - the death is not needed and a
@@ -1987,6 +2011,21 @@ function Show-TestPlan {
         Write-Host '         -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,140ca61d0:hits=40"'
         Write-Host '         a ticker allocates with rdx=6; the login channel list is rdx=2.'
         Write-Host '       research/the-180-second-clock-2026-09-07.md'
+        Write-Host '    0l. 2ND/3RD JOB SKILLS: 149 audited, most built, NONE seen yet.' -ForegroundColor Yellow
+        Write-Host '       research/second-third-job-audit-2026-09-07.md. !job, !learn, ONE'
+        Write-Host '       at a time. (a) SWORD BOOSTER: icon, faster swings, HP AND MP -30.'
+        Write-Host '       (b) HYPER BODY: max HP +10% and regen goes PAST the old max.'
+        Write-Host '       (c) POWER GUARD: you take 80%, the mob bar drops 20% of the hit.'
+        Write-Host '       (d) COMBO: cast and COUNT ORBS - zero = value-1 convention right,'
+        Write-Host '           one = every number is one high. Hits add up to 3; Coma clears.'
+        Write-Host '       (e) SOUL ARROW: arrows stop moving. STRAFE takes 3, ARROW RAIN 8.'
+        Write-Host '       (f) HEAL: +40% of max, blue number; with Bless 41%.'
+        Write-Host '       (g) MAGIC GUARD STAYS ON - it used to expire on the next loop pass.'
+        Write-Host '       (h) TELEPORT MP stays spent. (i) Element Amp: Fire Arrow costs 16.'
+        Write-Host '       (j) MESO GUARD: a hit costs mesos and less HP; broke = full HP.'
+        Write-Host '       NOT BUILT (say so, do not test): summons, Puppet, Mystic Door, ALL'
+        Write-Host '       mob statuses (slow/seal/stun/freeze/DoT), Pickpocket, Meso'
+        Write-Host '       Explosion, Meso Saver, Chakra, Crit/Nimble Recovery, FA HP absorb.'
         Write-Host '    0k. THE OTHER FREE: -FreeGuard. NOT on the same run as 0j.'
         Write-Host '       The field crash died with the repair ON and the pool CLEAN: the'
         Write-Host '       same disease came out at a different free - PCOM handing a POOL'

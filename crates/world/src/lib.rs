@@ -34,6 +34,7 @@ pub mod drops;
 pub mod droptables;
 pub mod expcurve;
 pub mod fields;
+pub mod advbuffs;
 pub mod firstjob;
 pub mod consumables;
 pub mod damage;

@@ -1078,6 +1078,32 @@ pub struct CastNumbers {
     /// `mmpR` — Max MP Increase's percent of maximum MP. Same handling as
     /// [`CastNumbers::max_hp_percent`]; **[D]** by symmetry, the MP twin has not been watched.
     pub max_mp_percent: Option<u32>,
+    /// `noBulletConsume` — present, and `1`, on exactly three skills in the whole archive, all
+    /// of them hidden third-job archer hits (`3101005`, `3111006`, `3211006`): the shot takes
+    /// no arrow whatever `bulletCount` says. **[L]**
+    pub no_bullet_consume: bool,
+    /// `itemCon` / `itemConNo` — an item the cast consumes, and how many. Magic Rock
+    /// `4006000` for Spell Booster, Mystic Door and Meso Saver; Summoning Rock `4006001` for
+    /// Shadow Partner and the four summons. **[L]**
+    pub item_con: Option<u32>,
+    pub item_con_no: Option<u32>,
+    /// `moneyCon` — mesos per cast. Shadow Meso alone carries it, 200..500. **[L]**
+    pub money_con: Option<u32>,
+    /// `x` / `y` — **skill-specific, and the WZ never says which.** Booster's `x` is an attack
+    /// speed stage (`-2`), Power Guard's a percent reflected, Dragon Blood's an HP drain,
+    /// Hyper Body's nothing at all. Read them only beside the skill id that gives them a
+    /// meaning; `crate::advbuffs` is where those meanings are written down.
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    /// `prop` — a percent chance. Drain's absorb, MP Eater's proc, Mortal Blow's kill.
+    pub prop: Option<u32>,
+    /// `indieAcc` / `indieEva` — Bless's two flat grants, on CTS 88 and 89.
+    pub indie_acc: Option<i32>,
+    pub indie_eva: Option<i32>,
+    /// `indieMhpR` — Hyper Body's **percent** of max HP. Unlike `mhpR` (a passive the client
+    /// applies to its own drawing) this rides a temporary stat, so the server has to raise its
+    /// ceilings only **while the stat is held** — `session::pools` reads it off the held buff.
+    pub indie_mhp_r: Option<u32>,
 }
 
 /// One skill's rows, plus the columns that are constant across them.
@@ -1228,8 +1254,11 @@ const WANTED_MORE: [&str; 3] = ["attackCount", "mobCount", "bulletCount"];
 /// combat numbers. The cost of that leniency is bounded: a missing column reads as "the
 /// skill grants no such stat", which turns a party buff into a chat notice rather than into
 /// a wrong number.
-const OPTIONAL: [&str; 9] = [
+const OPTIONAL: [&str; 19] = [
     "indieSpeed", "indieJump", "indiePad", "indieMad", "indiePdd", "indieMdd", "ltX", "mhpR", "mmpR",
+    // Added 2026-09-07 for the second- and third-job audit. Same leniency, same bounded cost.
+    "noBulletConsume", "itemCon", "itemConNo", "moneyCon", "x", "y", "prop", "indieAcc", "indieEva",
+    "indieMhpR",
 ];
 
 /// Resolve the [`OPTIONAL`] columns that this header actually has.
@@ -1496,6 +1525,16 @@ fn parse_cast(
         indie_mdd: at_opt("indieMdd")?,
         max_hp_percent: at_opt("mhpR")?.map(|v| u32::try_from(v).unwrap_or(0)),
         max_mp_percent: at_opt("mmpR")?.map(|v| u32::try_from(v).unwrap_or(0)),
+        no_bullet_consume: at_opt("noBulletConsume")?.is_some_and(|v| v != 0),
+        item_con: at_opt("itemCon")?.map(|v| u32::try_from(v).unwrap_or(0)),
+        item_con_no: at_opt("itemConNo")?.map(|v| u32::try_from(v).unwrap_or(0)),
+        money_con: at_opt("moneyCon")?.map(|v| u32::try_from(v).unwrap_or(0)),
+        x: at_opt("x")?,
+        y: at_opt("y")?,
+        prop: at_opt("prop")?.map(|v| u32::try_from(v).unwrap_or(0)),
+        indie_acc: at_opt("indieAcc")?,
+        indie_eva: at_opt("indieEva")?,
+        indie_mhp_r: at_opt("indieMhpR")?.map(|v| u32::try_from(v).unwrap_or(0)),
     })
 }
 
@@ -2432,5 +2471,32 @@ mod tests {
             ColumnEvidence { has_damage: true, wz_type: Some(50), ..base };
         assert_eq!(disagree.type_column_agrees(), Some(false), "and it can say so");
         assert_eq!(base.type_column_agrees(), None, "an empty cell has no opinion");
+    }
+
+    /// The columns the 2026-09-07 audit added load for the rows that carry them, and read
+    /// absent - not zero - on the rows that do not.
+    #[test]
+    fn the_audit_columns_load_for_the_rows_that_carry_them() {
+        let Some(t) = real_table() else { return };
+        let l = |id: u32, lv: u32| t.level(id, lv).unwrap_or_else(|| panic!("{id} L{lv}"));
+        assert!(l(3_101_005, 1).no_bullet_consume, "the hidden Arrow Bomb hit");
+        assert!(!l(3_101_004, 1).no_bullet_consume, "and not Arrow Bomb itself");
+        assert_eq!(l(3_111_002, 1).bullet_consume, Some(8), "Arrow Rain L1");
+        assert_eq!(l(3_111_002, 30).bullet_consume, Some(4), "Arrow Rain L30");
+        assert_eq!(l(2_111_005, 1).item_con, Some(4_006_000), "Spell Booster: a Magic Rock");
+        assert_eq!(l(2_111_005, 1).item_con_no, Some(1));
+        assert_eq!(l(2_311_001, 1).item_con_no, Some(2), "Mystic Door L1: two");
+        assert_eq!(l(4_111_003, 1).money_con, Some(200), "Shadow Meso");
+        assert_eq!(l(1_311_005, 1).indie_mhp_r, Some(10), "Hyper Body");
+        assert_eq!(l(2_301_003, 1).indie_acc, Some(1), "Bless");
+        assert_eq!(l(2_301_003, 20).indie_eva, Some(20));
+        assert_eq!(l(1_101_002, 1).x, Some(-2), "Booster, signed");
+        assert_eq!(l(4_101_002, 1).prop, Some(2), "Drain");
+        assert_eq!(l(1_311_004, 1).y, Some(3), "Dragon Blood: every 3 s");
+        let ps = l(1_001_001, 1);
+        assert!(
+            !ps.no_bullet_consume && ps.item_con.is_none() && ps.money_con.is_none() && ps.indie_mhp_r.is_none(),
+            "Power Strike carries none of them"
+        );
     }
 }

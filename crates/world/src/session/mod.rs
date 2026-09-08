@@ -252,6 +252,11 @@ pub struct Session {
     /// be compared against a clock that no longer means the same thing. Losing buffs on
     /// relog is also what this game family does.
     buffs: Vec<crate::session::buff::ActiveBuff>,
+    /// When Dragon Blood next drains, in session milliseconds. Meaningful only while CTS 105
+    /// is held; `buff::dragon_blood_tick`.
+    dragon_blood_next_ms: u64,
+    /// When MP Eater may proc again: its row carries `cooltime 5`. `combat::mp_eater`.
+    mp_eater_ready_ms: u64,
 
     /// `skill id -> the session millisecond it may be cast again`. `Skill.wz`'s `cooltime`,
     /// which is **seconds** there and milliseconds here.
@@ -512,6 +517,8 @@ impl Session {
             open_shop: None,
             open_storage: None,
             buffs: Vec::new(),
+            dragon_blood_next_ms: 0,
+            mp_eater_ready_ms: 0,
             skill_ready_ms: std::collections::HashMap::new(),
             last_position: None,
             last_move_action: None,
@@ -617,6 +624,7 @@ impl Session {
         // Buffs whose time is up. After regen so a `0x007C` and a `0x007E` in the same
         // tick arrive in the order the client draws them.
         out.extend(self.buff_tick(now_ms));
+        out.extend(self.dragon_blood_tick(now_ms));
         if self.config.chatter_off {
             return out;
         }

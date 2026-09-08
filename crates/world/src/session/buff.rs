@@ -43,11 +43,46 @@ use super::*;
 pub(super) struct ActiveBuff {
     pub(super) bit: u32,
     pub(super) skill_id: u32,
+    /// `u64::MAX` for a toggle. See [`Session::grant_buff_with_tail`].
     pub(super) expires_ms: u64,
+    /// What the client was told the stat is worth. Read back by the server-side halves that
+    /// need it - Hyper Body's percent for the HP ceiling, Power Guard's for the reflection,
+    /// Combo's orb count - so the number the server acts on is the number the client drew.
+    pub(super) value: i16,
+}
+
+/// What one `0x013C` does, decided **before** anything is spent so that a refusal costs
+/// nothing and a success pays for exactly what it produced.
+enum CastEffect {
+    /// A temporary stat from one of the three buff tables.
+    Stat(net::buff::BuffLevel),
+    /// Beginner Recovery's heal-over-time.
+    Recovery(crate::skilltable::SkillLevel),
+    /// The Cleric's Heal - HP now, to the caster and the party on this field.
+    Heal,
+    /// A skill the client's table prices but the server grants nothing for: Teleport, Flash
+    /// Jump, the summons, Mystic Door. **The cost is still taken**, or the client - which
+    /// already spent it locally - has its MP silently restored by the next `0x007C`, which
+    /// is the exact bug the attack path fixed on 2026-08-28.
+    CostOnly,
 }
 
 impl Session {
     /// `0x013C` - the player pressed a skill.
+    ///
+    /// # Every cast pays, whether or not the server grants a stat (2026-09-07)
+    ///
+    /// Until the second- and third-job audit a skill with no buff table behind it - Teleport,
+    /// Flash Jump, every Booster's HP half, Spell Booster's Magic Rock - was answered with the
+    /// "does not grant" notice and **nothing was spent**. The client had already spent it
+    /// locally, so the next `0x007C` to carry the MP field handed it back: the same stale-total
+    /// bug the attack path fixed on 2026-08-28, on a second path. Now the client's own table
+    /// prices every cast (`mpCon`, `hpCon`, `itemCon`), and the price is taken through one
+    /// transition whatever comes after it.
+    ///
+    /// **Items are taken only when something was produced.** A Summoning Rock for a summon
+    /// this server cannot show would be an item gone for nothing; the MP still goes, because
+    /// the client's copy already did.
     pub(super) fn on_skill_use(&mut self, body: &[u8]) -> Vec<Reply> {
         let Some(mut chr) = self.claimed_character() else { return Vec::new() };
         let Some(req) = net::buff::parse_skill_use(body) else {
@@ -55,46 +90,48 @@ impl Session {
         };
         let (skill_id, asked) = (req.skill_id, req.level);
 
-        // **A skill this server grants nothing for still gets an answer on screen.** Three
-        // Snails is an attack and Disorder is a debuff on the mob, so neither has a packet to
-        // send - and "nothing happened" with no explanation is the symptom the owner reported twice
-        // for Nimble Feet. Saying so costs one chat line on a rare cast. Recovery used to be
-        // on that list and is not any more; see below.
-        //
-        // **Recovery is not a stat buff, so it does not come from the buff tables.** It has no
-        // CTS bit anybody has identified - which is why it used to fall into the notice below
-        // - but it does not need one: it is HP over time, and HP is the server's to give. The
-        // level row comes from the generated skill table instead, and everything after this
-        // (has-the-skill, cooldown, MP, spend) is shared with every other skill so the two
-        // cannot drift. `crate::session::recovery`.
+        // Recovery is HP over time rather than a stat, so it comes from the generated table
+        // instead of the buff tables; everything after this (has-the-skill, cooldown, the
+        // costs) is shared with every other skill so the two cannot drift.
+        // `crate::session::recovery`.
         let recovery_row = (skill_id == recovery::RECOVERY_SKILL_ID)
             .then(|| self.recovery_level(asked).cloned())
             .flatten();
+        let row = self.config.firstjob.level(skill_id, asked).copied();
 
-        let level = match (self.buff_level_for(skill_id, asked, &chr), &recovery_row) {
-            (Some(level), _) => level,
-            // Recovery: borrow the shared checks by presenting its costs in the same shape.
-            // `bit` and `value` are never read on this path - `start_recovery` is what runs -
-            // and `seconds` is the heal duration rather than a stat duration.
-            (None, Some(row)) => net::buff::BuffLevel {
-                mp_cost: u16::try_from(row.mp_con.unwrap_or(0)).unwrap_or(u16::MAX),
-                seconds: row.time_seconds.unwrap_or(0),
-                cooldown_seconds: row.cooltime_seconds.unwrap_or(0),
-                bit: 0,
-                value: 0,
-                second: None,
-                // Recovery HAS a `time` - 30 seconds - and it is the heal's duration rather
-                // than a stat's. Carrying it as `Seconds` keeps this row honest for the
-                // cooldown and MP checks above; nothing on this path builds a `0x007D`.
-                duration: net::buff::BuffDuration::Seconds(row.time_seconds.unwrap_or(0)),
-            },
-            (None, None) => {
+        let effect = match (self.buff_level_for(skill_id, asked, &chr), recovery_row, row) {
+            (Some(level), _, _) => CastEffect::Stat(level),
+            (None, Some(r), _) => CastEffect::Recovery(r),
+            (None, None, Some(_)) if skill_id == crate::advbuffs::HEAL => CastEffect::Heal,
+            (None, None, Some(_)) => CastEffect::CostOnly,
+            (None, None, None) => {
+                // Not in the client's own Skill.wz at all. Still answered - a `0x013C` does not
+                // latch (module docs), so a chat line is a complete answer.
                 return self.notice(format!(
-                    "This server does not grant skill {skill_id}'s effect yet. Three Snails is \
-                     an attack, and Disorder is a debuff on the MOB rather than a stat on you."
-                ))
+                    "This server does not know skill {skill_id}: it is not in this client's \
+                     Skill.wz. Three Snails is an attack, and Disorder is a debuff on the MOB \
+                     rather than a stat on you."
+                ));
             }
         };
+
+        // The price, from whichever table described the skill; the `hpCon` always from the
+        // generated row, because the buff tables never carried one and ten Boosters have it.
+        let (mp_cost, hp_cost, cooldown_seconds) = match (&effect, row) {
+            (CastEffect::Stat(l), r) => (
+                u32::from(l.mp_cost),
+                r.and_then(|r| r.hp_con).unwrap_or(0),
+                l.cooldown_seconds,
+            ),
+            (CastEffect::Recovery(r), _) => {
+                (r.mp_con.unwrap_or(0), 0, r.cooltime_seconds.unwrap_or(0))
+            }
+            (_, Some(r)) => {
+                (r.mp_con.unwrap_or(0), r.hp_con.unwrap_or(0), r.cooltime_seconds.unwrap_or(0))
+            }
+            (_, None) => (0, 0, 0),
+        };
+        let mp_cost = self.amplified_mp(skill_id, mp_cost);
 
         // **The client's claim about its own level is checked, not trusted.** It sends the
         // level it thinks it has, and nothing on this socket authenticates anybody.
@@ -116,50 +153,88 @@ impl Session {
         if let Some(ready) = self.skill_ready_ms.get(&skill_id).copied() {
             if now < ready {
                 let left = (ready - now).div_ceil(1000);
-                // Loud on purpose. The cooldown is 180 s out of `Skill.wz`, and a silent
-                // refusal here would be indistinguishable from the bug being fixed - which
-                // is exactly what this run is trying to tell apart.
+                // Loud on purpose. A silent refusal here would be indistinguishable from the
+                // bug being fixed - which is exactly what a run is trying to tell apart.
                 return self.notice(format!(
-                    "Skill {skill_id} is on cooldown for another {left}s (cooltime is {}s in \
-                     Skill.wz).",
-                    level.cooldown_seconds
+                    "Skill {skill_id} is on cooldown for another {left}s (cooltime is \
+                     {cooldown_seconds}s in Skill.wz)."
                 ));
             }
         }
-        if chr.mp < u32::from(level.mp_cost) {
+        if chr.mp < mp_cost {
             return self.notice(format!(
-                "Not enough MP: skill {skill_id} level {asked} costs {} and you have {}.",
-                level.mp_cost, chr.mp
+                "Not enough MP: skill {skill_id} level {asked} costs {mp_cost} and you have {}.",
+                chr.mp
             ));
+        }
+        // An item the cast consumes, and only for a cast that produces something.
+        let item = match effect {
+            CastEffect::CostOnly => None,
+            _ => row.and_then(|r| Some((r.item_con?, r.item_con_no.unwrap_or(1).max(1)))),
+        };
+        if let Some((item_id, n)) = item {
+            if !self.has_items(chr.id, store::InventoryType::Etc, item_id, n) {
+                return self.notice(format!(
+                    "Skill {skill_id} consumes {n} x item {item_id} and you do not have them. \
+                     Nothing was cast."
+                ));
+            }
         }
 
         // ---------------------------------------------------------------- the transition
-        chr.mp = chr.mp.saturating_sub(u32::from(level.mp_cost));
+        chr.mp = chr.mp.saturating_sub(mp_cost);
+        if hp_cost > 0 {
+            // Floored at 1, as the attack path floors Slash Blast: a skill's own price never
+            // kills its caster, and the client does not let the cast out at 1 HP anyway.
+            chr.hp = chr.hp.saturating_sub(hp_cost).max(1);
+        }
         if let Err(e) = self.store.save_character_progress(&chr) {
             return self.notice(format!("Could not spend the MP, so nothing was cast: {e}"));
         }
         self.skill_ready_ms
-            .insert(skill_id, now.saturating_add(u64::from(level.cooldown_seconds) * 1000));
+            .insert(skill_id, now.saturating_add(u64::from(cooldown_seconds) * 1000));
 
         let mut out = vec![Reply {
             opcode: net::stats::STAT_CHANGED,
-            body: net::stats::StatChange { mp: Some(chr.mp), ..Default::default() }.build(),
+            body: net::stats::StatChange {
+                mp: Some(chr.mp),
+                hp: (hp_cost > 0).then_some(chr.hp),
+                ..Default::default()
+            }
+            .build(),
             what: format!(
-                "StatChanged: skill {skill_id} level {asked} cost {} mp -> {}/{}",
-                level.mp_cost, chr.mp, chr.max_mp
+                "StatChanged: skill {skill_id} level {asked} cost {mp_cost} mp -> {}/{}{}",
+                chr.mp,
+                chr.max_mp,
+                if hp_cost > 0 {
+                    format!(" and {hp_cost} hp -> {}/{} (hpCon)", chr.hp, chr.max_hp)
+                } else {
+                    String::new()
+                }
             ),
         }];
-        // Recovery's effect is a heal-over-time, not a stat. Everything above - the level
-        // check, the cooldown, the MP spend, the `0x007C` that shows it - was shared; only
-        // this last step differs.
-        match &recovery_row {
-            Some(row) => out.extend(self.start_recovery(row, asked)),
-            None => {
+        if let Some((item_id, n)) = item {
+            out.extend(self.take_items(chr.id, store::InventoryType::Etc, item_id, n));
+        }
+        match effect {
+            CastEffect::Stat(level) => {
                 out.extend(self.grant_buff(skill_id, level, now));
                 // A party buff reaches the rest of the party on this field. Hung off the
                 // same transition as the caster's own grant: a refused cast shares nothing.
                 self.share_party_buff(skill_id, asked);
+                if skill_id == crate::advbuffs::DRAGON_BLOOD {
+                    let every = row.and_then(|r| r.y).and_then(|y| u64::try_from(y).ok()).unwrap_or(3);
+                    self.dragon_blood_next_ms = now.saturating_add(every * 1000);
+                }
             }
+            CastEffect::Recovery(r) => out.extend(self.start_recovery(&r, asked)),
+            CastEffect::Heal => out.extend(self.heal_cast(asked)),
+            CastEffect::CostOnly => crate::server::log(&format!(
+                "   cast: skill {skill_id} level {asked} - {mp_cost} mp{} taken, no stat \
+                 granted. Its effect is the client's own (Teleport, Flash Jump) or is not \
+                 built (summons, Mystic Door); research/second-third-job-audit-2026-09-07.md",
+                if hp_cost > 0 { format!(" and {hp_cost} hp") } else { String::new() }
+            )),
         }
         out
     }
@@ -285,11 +360,12 @@ impl Session {
             .or_else(|| self.table_buff_level(skill_id, level))
     }
 
-    /// A buff level read straight out of `gm-handbook/skills.txt`'s `indie*` columns.
+    /// A buff level read out of `gm-handbook/skills.txt` - the `indie*` columns, and since
+    /// 2026-09-07 the flag buffs `crate::advbuffs` names.
     ///
-    /// Built when the row has a `time` and one or two flat grants this server knows a CTS bit
-    /// for; `None` otherwise, which lands the keypress on the "does not grant" notice rather
-    /// than on a guess. The bit for each column:
+    /// Built when the row grants one or two stats this server knows a CTS bit for, and has
+    /// either a `time` or is a toggle; `None` otherwise, which lands the keypress on the
+    /// cost-only path rather than on a guess. The bit for each column:
     ///
     /// | column | bit | standing |
     /// |---|---|---|
@@ -299,32 +375,50 @@ impl Session {
     /// | `indieMad` | 85 | [D] - `net::jobbuffs::CTS_MAGIC_ATTACK` |
     /// | `indiePdd` | 86 | [D]/[L] - Iron Body's bit, drawn on a client |
     /// | `indieMdd` | 87 | [D] - Magic Armor's second bit |
+    /// | `indieAcc` | 88 | [L] - Focus's bit, `net::jobbuffs::CTS_ACCURACY` |
+    /// | `indieEva` | 89 | [D] - `net::jobbuffs::CTS_AVOIDABILITY` |
+    /// | `indieMhpR` | 94 | [D] - `net::jobbuffs::CTS_MAX_HP`, a percent |
+    ///
+    /// and for a skill in `advbuffs::flag_buff` - Boosters, Soul Arrow, Power Guard, the
+    /// Charges and the rest - that table's bit **goes first**, so `BuffLevel::bit` is the flag
+    /// and any `indie*` column the same row carries (Dragon Blood's `indiePad`) is the second.
     ///
     /// **More than two grants is refused, not truncated.** `BuffLevel` carries two, and
-    /// Bless-shaped skills carry six; granting the first two of six would be the half-a-buff
-    /// failure `BuffLevel::second`'s doc describes. Nothing in the Warrior, Archer or Rogue
-    /// books has more than two, so this refuses nothing the owner has asked for.
+    /// granting the first two of three would be the half-a-buff failure `BuffLevel::second`'s
+    /// doc describes. Bless is the closest call in the census - `indieAcc`, `indieEva` and an
+    /// `x` that is a heal bonus, not a stat - and it fits.
     ///
     /// A percent column (`indiePddR`, Iron Body) is not a grant and is not read here; the
     /// `jobbuffs` table resolves that one against the wearer's own defence and runs first.
     fn table_buff_level(&self, skill_id: u32, level: u32) -> Option<net::buff::BuffLevel> {
-        let row = self.config.firstjob.level(skill_id, level)?;
-        // No `time` means a toggle or a passive; neither is a timed stat this can build.
-        let seconds = row.time_seconds.filter(|s| *s > 0)?;
-        let grants: Vec<net::buff::StatGrant> = [
-            (row.indie_speed, net::buff::CTS_SPEED),
-            (row.indie_jump, net::jobbuffs::CTS_JUMP),
-            (row.indie_pad, net::jobbuffs::CTS_WEAPON_ATTACK),
-            (row.indie_mad, net::jobbuffs::CTS_MAGIC_ATTACK),
-            (row.indie_pdd, net::buff::CTS_WEAPON_DEFENCE),
-            (row.indie_mdd, net::buff::CTS_MAGIC_DEFENCE),
-        ]
-        .into_iter()
-        .filter_map(|(value, bit)| {
-            let value = value.filter(|v| *v != 0)?;
-            Some(net::buff::StatGrant { bit, value: i16::try_from(value).unwrap_or(i16::MAX) })
-        })
-        .collect();
+        let skill = self.config.firstjob.get(skill_id)?;
+        let row = skill.level(level)?;
+        let flag = crate::advbuffs::flag_buff(skill_id);
+        let mut grants: Vec<net::buff::StatGrant> = Vec::new();
+        if let Some(fb) = flag {
+            // A flag whose value column is missing is a refusal, not a zero: the client would
+            // read `0` as "off" for the very bit that was just set.
+            let value = fb.value.resolve(row, level)?;
+            grants.push(net::buff::StatGrant { bit: fb.bit, value });
+        }
+        grants.extend(
+            [
+                (row.indie_speed, net::buff::CTS_SPEED),
+                (row.indie_jump, net::jobbuffs::CTS_JUMP),
+                (row.indie_pad, net::jobbuffs::CTS_WEAPON_ATTACK),
+                (row.indie_mad, net::jobbuffs::CTS_MAGIC_ATTACK),
+                (row.indie_pdd, net::buff::CTS_WEAPON_DEFENCE),
+                (row.indie_mdd, net::buff::CTS_MAGIC_DEFENCE),
+                (row.indie_acc, net::jobbuffs::CTS_ACCURACY),
+                (row.indie_eva, net::jobbuffs::CTS_AVOIDABILITY),
+                (row.indie_mhp_r.map(|v| i32::try_from(v).unwrap_or(0)), net::jobbuffs::CTS_MAX_HP),
+            ]
+            .into_iter()
+            .filter_map(|(value, bit)| {
+                let value = value.filter(|v| *v != 0)?;
+                Some(net::buff::StatGrant { bit, value: i16::try_from(value).unwrap_or(i16::MAX) })
+            }),
+        );
         let (first, rest) = grants.split_first()?;
         if rest.len() > 1 {
             crate::server::log(&format!(
@@ -333,7 +427,15 @@ impl Session {
             ));
             return None;
         }
-        let duration = net::buff::BuffDuration::Seconds(seconds);
+        // A `time` is a duration. No `time` on a toggle row is a toggle. No `time` on anything
+        // else is a passive, and a passive is not a stat this can build.
+        let duration = match row.time_seconds.filter(|s| *s > 0) {
+            Some(seconds) => net::buff::BuffDuration::Seconds(seconds),
+            None if flag.is_some_and(|f| f.toggle) || skill.processtype == Some(113) => {
+                net::buff::BuffDuration::Toggle
+            }
+            None => return None,
+        };
         Some(net::buff::BuffLevel {
             mp_cost: u16::try_from(row.mp_con.unwrap_or(0)).unwrap_or(u16::MAX),
             seconds: duration.seconds(),
@@ -455,13 +557,21 @@ impl Session {
         // One holder per bit. Two entries for the same stat would leave the second expiry
         // clearing a buff the first had already replaced - and the client tracks one value
         // per bit, so our table has to as well.
+        // **A toggle has no expiry.** Found 2026-09-07 while adding five more of them: a
+        // `BuffDuration::Toggle` has `seconds 0`, so this used to record `expires_ms = now`,
+        // and `buff_tick` - which clears anything at or past its expiry - took Magic Guard
+        // off again on the very next pass of the session loop, `0x007E` and all. The one
+        // Magic Guard test grants and hits at the same instant, so it never saw a tick. A
+        // toggle is held until it is cast again or right-clicked, and `u64::MAX` is how
+        // `buff_tick` is told so.
+        let expires_ms = if level.duration.is_toggle() {
+            u64::MAX
+        } else {
+            now_ms.saturating_add(u64::from(stats[0].duration_ms))
+        };
         for stat in &stats {
             self.buffs.retain(|b| b.bit != stat.bit);
-            self.buffs.push(ActiveBuff {
-                bit: stat.bit,
-                skill_id,
-                expires_ms: now_ms.saturating_add(u64::from(stat.duration_ms)),
-            });
+            self.buffs.push(ActiveBuff { bit: stat.bit, skill_id, expires_ms, value: stat.value });
         }
         let stat = stats[0];
         let body = net::buff::temporary_stat_set_with_tail(&stats, tail);
@@ -576,6 +686,226 @@ impl Session {
             net::buff::TAIL_LEN,
             format!("cancelled by right-click on skill {}", req.skill_id),
         )
+    }
+
+    /// The value of a held temporary stat, or `0` when it is not held.
+    pub(super) fn held_value(&self, bit: u32) -> i16 {
+        self.buffs.iter().find(|b| b.bit == bit).map(|b| b.value).unwrap_or(0)
+    }
+
+    pub(super) fn holds(&self, bit: u32) -> bool {
+        self.buffs.iter().any(|b| b.bit == bit)
+    }
+
+    /// The level of the skill that put `bit` on, from the character's own record.
+    fn held_skill_level(&self, bit: u32) -> Option<(u32, u32)> {
+        let held = self.buffs.iter().find(|b| b.bit == bit)?;
+        let chr = self.claimed_character()?;
+        let level = self.store.skill_level(chr.id, held.skill_id).ok().filter(|l| *l > 0)?;
+        Some((held.skill_id, level))
+    }
+
+    /// **Element Amplification's MP side.** Its tooltip: *"MP cost increased to 120%"* - and
+    /// the column is `x = 20..50`, the **increase**, not the multiplier. The first version of
+    /// this read `x` as the multiplier, clamped it up to 100 and scaled nothing; the unit test
+    /// caught it (`CLAUDE.md`: the unit, not the arithmetic). The client raises what it spends
+    /// locally by the same amount while the toggle is on; if the server did not, the next
+    /// `0x007C` would hand the difference back. The toggle's own cast is not amplified. **[I]**
+    /// that it applies to every skill rather than only the attack spells; the tooltip says "MP
+    /// cost" without qualification.
+    pub(super) fn amplified_mp(&self, skill_id: u32, mp: u32) -> u32 {
+        if crate::advbuffs::ELEMENT_AMPLIFICATION.contains(&skill_id) {
+            return mp;
+        }
+        let Some((amp, level)) = self.held_skill_level(net::jobbuffs::CTS_ELEMENT_AMP) else {
+            return mp;
+        };
+        let Some(x) = self.config.firstjob.level(amp, level).and_then(|r| r.x) else { return mp };
+        let increase = u64::try_from(x).unwrap_or(0);
+        u32::try_from(u64::from(mp) * (100 + increase) / 100).unwrap_or(u32::MAX)
+    }
+
+    /// Does the character hold at least `n` of `item_id` in `inv`, across every stack?
+    pub(super) fn has_items(&self, chr_id: u32, inv: store::InventoryType, item_id: u32, n: u32) -> bool {
+        self.store
+            .bag_items(chr_id, inv)
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.item.item_id == item_id)
+            .map(|r| u32::from(r.item.kind.quantity()))
+            .sum::<u32>()
+            >= n
+    }
+
+    /// Take `n` of `item_id` from `inv`, lowest slot first, telling the client per stack -
+    /// the same drain `spend_attack_arrows` does for arrows. Check [`Self::has_items`] first;
+    /// a shortfall here takes what there is and logs it rather than refusing halfway.
+    pub(super) fn take_items(&mut self, chr_id: u32, inv: store::InventoryType, item_id: u32, n: u32) -> Vec<Reply> {
+        let Ok(stacks) = self.store.bag_items(chr_id, inv) else { return Vec::new() };
+        let mut remaining = n;
+        let mut out = Vec::new();
+        for row in stacks.iter().filter(|r| r.item.item_id == item_id) {
+            if remaining == 0 {
+                break;
+            }
+            let held = u32::from(row.item.kind.quantity());
+            if held == 0 {
+                continue;
+            }
+            let take = remaining.min(held);
+            if let Err(e) = self.store.remove_item(chr_id, inv, row.slot, Some(u16::try_from(take).unwrap_or(u16::MAX))) {
+                crate::server::log(&format!("   itemCon: could not take {take} x {item_id} from slot {}: {e}", row.slot));
+                break;
+            }
+            out.extend(self.stack_change_replies(inv, row.slot, u16::try_from(held - take).unwrap_or(0)));
+            remaining -= take;
+        }
+        crate::server::log(&format!(
+            "   itemCon: {} of {n} x {item_id} taken{}",
+            n - remaining,
+            if remaining > 0 { format!(" - SHORT by {remaining}") } else { String::new() }
+        ));
+        out
+    }
+
+    /// **Heal** (`2301001`): HP now, to the caster and to the party on this field.
+    ///
+    /// The amount is `x`% of the ceiling the client draws - *"Recovery rate 40%"* at level 1,
+    /// 100% at 30 - plus Bless's `x` while Bless is held (*"HP recovery from the Heal skill is
+    /// increased by 1%"*). **[I]** for reading the rate as a percent of max HP: the client's
+    /// own Heal formula is not decoded here, and this is the plainest reading of the tooltip's
+    /// number. Undead damage is not done - that half needs the target list the attack packet
+    /// carries, and no Heal has been captured on either opcode.
+    pub(super) fn heal_cast(&mut self, level: u32) -> Vec<Reply> {
+        let Some(row) = self.config.firstjob.level(crate::advbuffs::HEAL, level).copied() else {
+            return Vec::new();
+        };
+        let Some(x) = row.x.and_then(|x| u32::try_from(x).ok()) else { return Vec::new() };
+        let percent = x.saturating_add(self.bless_heal_bonus());
+        let out = self.heal_percent(percent, "Heal");
+        let Some(chr) = self.claimed_character() else { return out };
+        let members: Vec<u32> = self
+            .fields
+            .parties()
+            .party_of(chr.id)
+            .map(|p| p.members.clone())
+            .unwrap_or_default();
+        if members.is_empty() {
+            return out;
+        }
+        let Some(map) = self.bus().map_of(self.subscriber) else { return out };
+        let here = self.bus().characters_on(map, &members);
+        for member in here.into_iter().filter(|m| *m != chr.id) {
+            self.bus().send_to_character(
+                member,
+                crate::broadcast::Event::PartyHeal { percent, caster: chr.id },
+            );
+        }
+        out
+    }
+
+    /// Bless's heal bonus while Bless is held: its row's `x`, 1..10 percent. `0` otherwise.
+    fn bless_heal_bonus(&self) -> u32 {
+        self.buffs
+            .iter()
+            .find(|b| b.skill_id == crate::advbuffs::BLESS)
+            .and_then(|_| {
+                let chr = self.claimed_character()?;
+                let level = self.store.skill_level(chr.id, crate::advbuffs::BLESS).ok()?;
+                self.config.firstjob.level(crate::advbuffs::BLESS, level)?.x
+            })
+            .and_then(|x| u32::try_from(x).ok())
+            .unwrap_or(0)
+    }
+
+    /// Restore `percent` of the drawn ceiling, through `combat::heal_flat`. Nothing for the
+    /// dead - a heal is not a revive - and nothing when already full.
+    pub(super) fn heal_percent(&mut self, percent: u32, why: &str) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let cap = self.pools(&chr).max_hp;
+        let add = u32::try_from(u64::from(cap) * u64::from(percent) / 100).unwrap_or(u32::MAX);
+        self.heal_flat(add, &format!("{why} ({percent}% of {cap})"))
+    }
+
+    /// **Dragon Blood's drain**: `x` HP every `y` seconds while the toggle is held, floored at
+    /// 1 - the toggle's own price never kills its holder. `[L]` for the numbers (*"HP -40 every
+    /// 3 sec"*); the floor is the same rule as Slash Blast's `hpCon`.
+    pub(super) fn dragon_blood_tick(&mut self, now_ms: u64) -> Vec<Reply> {
+        if !self.holds(net::jobbuffs::CTS_DRAGON_BLOOD) || now_ms < self.dragon_blood_next_ms {
+            return Vec::new();
+        }
+        let Some((skill, level)) = self.held_skill_level(net::jobbuffs::CTS_DRAGON_BLOOD) else {
+            return Vec::new();
+        };
+        let Some(row) = self.config.firstjob.level(skill, level).copied() else { return Vec::new() };
+        let every = row.y.and_then(|y| u64::try_from(y).ok()).filter(|y| *y > 0).unwrap_or(3);
+        self.dragon_blood_next_ms = now_ms.saturating_add(every * 1000);
+        let Some(drain) = row.x.and_then(|x| u32::try_from(x).ok()) else { return Vec::new() };
+        let Some(mut chr) = self.claimed_character() else { return Vec::new() };
+        if chr.hp <= 1 {
+            return Vec::new();
+        }
+        chr.hp = chr.hp.saturating_sub(drain).max(1);
+        if self.store.save_character_progress(&chr).is_err() {
+            return Vec::new();
+        }
+        vec![Reply {
+            opcode: net::stats::STAT_CHANGED,
+            body: net::stats::StatChange { hp: Some(chr.hp), ..Default::default() }.build(),
+            what: format!("StatChanged: Dragon Blood drains {drain} hp every {every}s -> {}/{}", chr.hp, chr.max_hp),
+        }]
+    }
+
+    /// **Combo Attack gains an orb** on a swing that hit something, up to the row's `y` orbs.
+    ///
+    /// The value on the wire is orbs **plus one** - it starts at 1 on the cast and the client
+    /// draws `value - 1` orbs - which is the convention every reference server uses for this
+    /// bit and is **[I]** here until a screen shows the first orb. `y` is *"Max combo count
+    /// 3"* at level 1, 5 at 30.
+    pub(super) fn combo_hit(&mut self) -> Vec<Reply> {
+        let Some(held) = self.buffs.iter().find(|b| b.bit == net::jobbuffs::CTS_COMBO).copied() else {
+            return Vec::new();
+        };
+        let Some((skill, level)) = self.held_skill_level(net::jobbuffs::CTS_COMBO) else {
+            return Vec::new();
+        };
+        let max_orbs = self.config.firstjob.level(skill, level).and_then(|r| r.y).unwrap_or(0);
+        let ceiling = i16::try_from(max_orbs + 1).unwrap_or(i16::MAX);
+        if held.value >= ceiling {
+            return Vec::new();
+        }
+        self.set_held_value(net::jobbuffs::CTS_COMBO, held.value + 1)
+    }
+
+    /// Coma and Panic spend every orb: back to one.
+    pub(super) fn combo_spend(&mut self) -> Vec<Reply> {
+        if self.held_value(net::jobbuffs::CTS_COMBO) <= 1 {
+            return Vec::new();
+        }
+        self.set_held_value(net::jobbuffs::CTS_COMBO, 1)
+    }
+
+    /// Change a held stat's value and tell the client with a fresh `0x007D` carrying the time
+    /// it has left (`0` for a toggle, which is what the original cast sent).
+    fn set_held_value(&mut self, bit: u32, value: i16) -> Vec<Reply> {
+        let now = self.clock_ms;
+        let Some(held) = self.buffs.iter_mut().find(|b| b.bit == bit) else { return Vec::new() };
+        held.value = value;
+        let stat = net::buff::TemporaryStat {
+            bit,
+            value,
+            reason: held.skill_id,
+            duration_ms: if held.expires_ms == u64::MAX {
+                0
+            } else {
+                u32::try_from(held.expires_ms.saturating_sub(now)).unwrap_or(u32::MAX)
+            },
+        };
+        vec![Reply {
+            opcode: net::buff::TEMPORARY_STAT_SET,
+            body: net::buff::temporary_stat_set_with_tail(&[stat], net::buff::TAIL_LEN),
+            what: format!("TemporaryStatSet: CTS bit {bit} now {value} (skill {})", held.skill_id),
+        }]
     }
 
     /// One `0x007E`, with the length and the reason written into the log line.

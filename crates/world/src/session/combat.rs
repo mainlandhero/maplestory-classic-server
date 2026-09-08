@@ -185,9 +185,12 @@ impl Session {
         let Some(row) = self.config.firstjob.level(skill_id, level) else {
             return Vec::new(); // a skill this table does not describe
         };
-        let mp_cost = row.mp_con.unwrap_or(0);
+        // Element Amplification raises every MP cost while it is held - `buff::amplified_mp`.
+        let mp_cost = self.amplified_mp(skill_id, row.mp_con.unwrap_or(0));
         let hp_cost = row.hp_con.unwrap_or(0);
-        if mp_cost == 0 && hp_cost == 0 {
+        // `moneyCon`: Shadow Meso throws mesos, 200..500 a cast. **[L]**
+        let meso_cost = row.money_con.unwrap_or(0);
+        if mp_cost == 0 && hp_cost == 0 && meso_cost == 0 {
             return Vec::new(); // no cost column at all
         }
         let mp_short = mp_cost.saturating_sub(chr.mp);
@@ -200,11 +203,34 @@ impl Session {
         if let Err(e) = self.store.save_character_progress(&chr) {
             return self.notice(format!("Could not spend the MP for skill {skill_id}: {e}"));
         }
+        // The mesos, never refused: the throw has already left the hand on screen. A balance
+        // short of the cost pays what it has (the store refuses to go below zero, so this
+        // takes the whole balance in that case) and says so.
+        let meso_after = if meso_cost > 0 {
+            let have = self.store.mesos(chr.id).unwrap_or(0);
+            let pay = meso_cost.min(have);
+            match self.store.add_mesos(chr.id, -i64::from(pay)) {
+                Ok(left) => {
+                    crate::server::log(&format!(
+                        "   moneyCon: skill {skill_id} threw {pay} of {meso_cost} mesos -> {left}{}",
+                        if pay < meso_cost { format!(" (SHORT by {}, not refused)", meso_cost - pay) } else { String::new() }
+                    ));
+                    Some(left)
+                }
+                Err(e) => {
+                    crate::server::log(&format!("   moneyCon: could not take {pay} mesos for skill {skill_id}: {e}"));
+                    None
+                }
+            }
+        } else {
+            None
+        };
         vec![Reply {
             opcode: net::stats::STAT_CHANGED,
             body: net::stats::StatChange {
                 mp: Some(chr.mp),
                 hp: (hp_cost > 0).then_some(chr.hp),
+                meso: meso_after.map(u64::from),
                 ..Default::default()
             }
             .build(),
@@ -381,9 +407,16 @@ impl Session {
         };
 
         let shooting = opcode == net::combat::USER_SHOOT_ATTACK;
+        // **Soul Arrow: nothing is taken while it is held.** The client stops counting its
+        // own arrows down under CTS 104, so a server that kept taking them would drift by
+        // one per shot until the next bag refresh. Plain shots and skills alike.
+        if self.holds(net::jobbuffs::CTS_SOUL_ARROW) {
+            crate::server::log(&format!("   {ammo}: Soul Arrow is held - none taken"));
+            return Vec::new();
+        }
         let (cost, why): (u32, String) = match parsed.skill() {
             None => (u32::from(shooting), "a plain shot".to_string()),
-            Some((skill_id, _)) => match crate::firstjob::server_obligation(skill_id).map(|o| o.bullets) {
+            Some((skill_id, claimed)) => match crate::firstjob::server_obligation(skill_id).map(|o| o.bullets) {
                 Some(crate::firstjob::BulletDuty::Consume(n)) => {
                     (n, format!("skill {skill_id}: bulletConsume {n} [L]"))
                 }
@@ -398,10 +431,48 @@ impl Session {
                          charging one per projectile - the owner's attack-amount rule [I]"
                     ),
                 ),
-                None => (
-                    u32::from(shooting),
-                    format!("skill {skill_id}: not in the first-job book; plain-shot rule [I]"),
-                ),
+                // Outside the first-job book the row itself decides, in the order the three
+                // columns override one another: `noBulletConsume` (the three hidden third-job
+                // hits) beats everything; `bulletConsume` is the number the data states (Arrow
+                // Rain 8..4, Avenger 4, Mortal Blow 1); `bulletCount` with no consume column is
+                // one per projectile on the shoot opcode, the same reading Lucky Seven got from
+                // The owner's attack-amount rule (Strafe 3..4, Iron Arrow 1); and no column at all
+                // is the plain-shot rule. Second- and third-job audit, 2026-09-07.
+                None => {
+                    let level = self
+                        .store
+                        .skill_level(chr.id, skill_id)
+                        .ok()
+                        .filter(|l| *l > 0)
+                        .unwrap_or(u32::from(claimed));
+                    match self.config.firstjob.level(skill_id, level) {
+                        Some(r) if r.no_bullet_consume => {
+                            (0, format!("skill {skill_id}: noBulletConsume [L]"))
+                        }
+                        Some(r) if r.bullet_consume.is_some() => {
+                            let n = r.bullet_consume.unwrap_or(0);
+                            (n, format!("skill {skill_id}: bulletConsume {n} [L]"))
+                        }
+                        Some(r) if r.bullet_count.is_some() => {
+                            let fired = r.bullet_count.unwrap_or(0);
+                            (
+                                if shooting { fired } else { 0 },
+                                format!(
+                                    "skill {skill_id}: fires {fired} and the data has no \
+                                     bulletConsume; one per projectile [I]"
+                                ),
+                            )
+                        }
+                        Some(_) => (
+                            u32::from(shooting),
+                            format!("skill {skill_id}: no bullet column; plain-shot rule [I]"),
+                        ),
+                        None => (
+                            u32::from(shooting),
+                            format!("skill {skill_id}: not in the skill table; plain-shot rule [I]"),
+                        ),
+                    }
+                }
             },
         };
         if cost == 0 {
@@ -498,10 +569,12 @@ impl Session {
         // `the_broadcast_does_not_change_what_the_attacker_gets` pins.
         self.publish_user_attack(opcode, payload);
         let me = self.subscriber.get();
+        // The templates this swing actually damaged, for the per-swing effects below.
+        let mut landed: Vec<u32> = Vec::new();
         for target in &attack.targets {
-            let Some(hp_before) = self.fields.mob_hp(map, target.object_id) else {
+            if self.fields.mob_hp(map, target.object_id).is_none() {
                 continue; // not a mob of ours, or already dead and removed
-            };
+            }
             let template = self.fields.mob_template(map, target.object_id).unwrap_or(0);
 
             // **Whoever hits it, drives it - and the old holder is TOLD, which is what was
@@ -559,86 +632,231 @@ impl Session {
             }
 
             let damage = target.total_damage();
-            let hit = net::combat::apply_damage(hp_before, damage);
-            // The field owns the death: it removes the mob and books its spawn point to
-            // refill from the WZ's own mobTime. Nothing here has to remember a corpse.
-            // **Where it is, BEFORE it dies.** `hurt` removes the mob from the field, so
-            // asking afterwards returns nothing and every drop fell back to the player's
-            // feet - which is exactly what the owner saw twice. Read it first, hand it down.
-            let died_at = self.fields.mob_position(map, target.object_id);
-            let left =
-                self.fields.hurt(map, target.object_id, damage, chr_id, &self.config, self.clock_ms);
-            if let crate::fields::Hurt::Died(shares) = left {
-                // **The drops go to the top damager, not to whoever landed the last hit.**
-                // The owner, 2026-09-01: *"If multiple clients hit the mob, the one who dealt the
-                // most damage (without counting over-damage) will see the drops."*
-                // `LiveMob::credit` already caps at what landed and `shares()` already ranks;
-                // `drop_audience` adds no arithmetic to either, and `chr_id` terminates the
-                // walk because the killer is on this map by definition, having just swung.
-                let ranked = crate::mobshare::drop_audience(&shares, chr_id);
-                out.extend(self.drops_from_kill_for(
-                    template,
-                    target.object_id,
-                    died_at,
-                    &ranked,
-                    map,
-                    Some(chr_id),
-                ));
-                let (worth, why) = self.exp_for_kill(template);
-                out.extend(self.award_kill_experience(worth, &why, chr_id, &shares));
-                out.extend(self.credit_kill_to_quests(template, chr_id));
-                // The registry's entry for a mob that no longer exists. `reconcile` on the
-                // next field entry would catch it anyway - this is so the count in a log line
-                // means what it says between now and then.
-                self.fields.controllers().forget(map, target.object_id);
+            if damage > 0 {
+                landed.push(template);
             }
-            // The template's real maxHP, because 0x03F0 carries a PERCENTAGE.
-            let max_hp = self
-                .config
-                .mobs
-                .get(&map)
-                .and_then(|l| l.iter().find(|m| m.object_id == target.object_id))
-                .map(|m| m.hp)
-                .unwrap_or(hp_before);
-            for (opcode, body) in net::combat::mob_hit_replies(target.object_id, &hit, max_hp) {
-                let reply = Reply {
-                    opcode,
-                    body,
-                    what: format!(
-                        "mob {} took {} ({} -> {}){}",
-                        target.object_id,
-                        hit.damage_applied,
-                        hit.hp_before,
-                        hit.hp_after,
-                        if hit.died { " - DEAD, leaving the field" } else { "" }
-                    ),
-                };
-                // **The damage half of the owner's 2026-09-01 sentence**: *"All clients need to see
-                // other clients damages to mobs."* `0x03F0` is the health bar and `0x03D1` is
-                // the death, and both say exactly the same thing to every viewer.
-                //
-                // **Publish the SAME `(opcode, body)` the attacker gets. Do not recompute.**
-                // `0x03F0`'s hp field is a **percentage**, 0..100 - `net::combat::hp_percent`,
-                // `research/mob-hp-bar.md` - and the absolute went out once and drew a 45-HP
-                // snail at 27%. A second call site that looked `max_hp` up its own way is
-                // exactly how that unit error comes back. One body, two destinations.
-                //
-                // An observer whose pool has never held this object id is safe: the second
-                // dispatcher looks the id up and returns (`141d32b62 je 0x141d33432`), and
-                // `0x03D1` reads its whole body first and then does the same. **[L]**
-                let audience = crate::mobshare::audience_for(opcode, target.object_id);
-                if audience.is_map_wide() {
-                    self.bus().publish(
-                        self.subscriber,
-                        map,
-                        reply.clone(),
-                        audience.supersedes(),
-                    );
+            out.extend(self.deal_to_mob(map, target.object_id, damage, chr_id));
+        }
+
+        // ---------------------------------------------------------------------------------
+        // What hangs off this swing beyond the mob's HP. Second- and third-job audit,
+        // 2026-09-07. Every one of these reads a number the server owns (the character's HP,
+        // MP, a held stat's value) and none refuses the swing.
+        // ---------------------------------------------------------------------------------
+        let skill = net::attack::parse(opcode, payload).ok().and_then(|p| p.skill());
+        let mut finisher = false;
+        if let Some((skill_id, claimed)) = skill {
+            let level = self
+                .store
+                .skill_level(chr_id, skill_id)
+                .ok()
+                .filter(|l| *l > 0)
+                .unwrap_or(u32::from(claimed));
+            // **Heal, arriving as a magic attack.** The client may send it on `0x00E1` when
+            // undead are in range and on `0x013C` otherwise - no Heal has been captured on
+            // either - so both paths heal. Undead damage is the client's per-target lines,
+            // applied above like any other hit.
+            if skill_id == crate::advbuffs::HEAL {
+                out.extend(self.heal_cast(level));
+            }
+            // **Drain**: `prop`% chance to absorb `x`% of the damage dealt as HP. **[L]** for
+            // the columns (*"2% chance to absorb 5% of damage as HP"*).
+            if skill_id == crate::advbuffs::DRAIN {
+                let total: u64 = attack.targets.iter().map(|t| t.total_damage()).sum();
+                if let Some(row) = self.config.firstjob.level(skill_id, level).copied() {
+                    let prop = u64::from(row.prop.unwrap_or(0));
+                    let x = row.x.and_then(|x| u64::try_from(x).ok()).unwrap_or(0);
+                    if total > 0 && prop > 0 && self.rng.next() % 100 < prop {
+                        let heal = u32::try_from(total * x / 100).unwrap_or(u32::MAX);
+                        out.extend(self.heal_flat(heal, "Drain"));
+                    }
                 }
-                out.push(reply);
+            }
+            // Coma and Panic spend the Combo orbs rather than adding one.
+            if crate::advbuffs::COMBO_FINISHERS.contains(&skill_id) {
+                finisher = true;
+                out.extend(self.combo_spend());
+            }
+        }
+        if !landed.is_empty() {
+            if !finisher {
+                out.extend(self.combo_hit());
+            }
+            if opcode == net::combat::USER_MAGIC_ATTACK {
+                out.extend(self.mp_eater(&landed));
             }
         }
         out
+    }
+
+    /// **Apply `damage` to one mob and do everything a hit owes**: the HP bar and the death
+    /// to every viewer, and on a death the drops, the experience, the quest credit and the
+    /// controller registry. `on_attack` calls it per target; Power Guard's reflection calls it
+    /// once from `on_user_hit`. One body so the two cannot drift - the `0x03F0` percentage bug
+    /// (`research/mob-hp-bar.md`) is exactly what a second copy of this would grow.
+    ///
+    /// The **controller handover stays in `on_attack`**: a reflection is not a swing, and a
+    /// mob should not change hands because it walked into someone.
+    pub(super) fn deal_to_mob(&mut self, map: u32, object_id: u32, damage: u64, chr_id: u32) -> Vec<Reply> {
+        let mut out = Vec::new();
+        let Some(hp_before) = self.fields.mob_hp(map, object_id) else {
+            return out; // not a mob of ours, or already dead and removed
+        };
+        let template = self.fields.mob_template(map, object_id).unwrap_or(0);
+        let hit = net::combat::apply_damage(hp_before, damage);
+        // The field owns the death: it removes the mob and books its spawn point to
+        // refill from the WZ's own mobTime. Nothing here has to remember a corpse.
+        // **Where it is, BEFORE it dies.** `hurt` removes the mob from the field, so
+        // asking afterwards returns nothing and every drop fell back to the player's
+        // feet - which is exactly what the owner saw twice. Read it first, hand it down.
+        let died_at = self.fields.mob_position(map, object_id);
+        let left = self.fields.hurt(map, object_id, damage, chr_id, &self.config, self.clock_ms);
+        if let crate::fields::Hurt::Died(shares) = left {
+            // **The drops go to the top damager, not to whoever landed the last hit.**
+            // The owner, 2026-09-01: *"If multiple clients hit the mob, the one who dealt the
+            // most damage (without counting over-damage) will see the drops."*
+            // `LiveMob::credit` already caps at what landed and `shares()` already ranks;
+            // `drop_audience` adds no arithmetic to either, and `chr_id` terminates the
+            // walk because the killer is on this map by definition, having just swung.
+            let ranked = crate::mobshare::drop_audience(&shares, chr_id);
+            out.extend(self.drops_from_kill_for(
+                template,
+                object_id,
+                died_at,
+                &ranked,
+                map,
+                Some(chr_id),
+            ));
+            let (worth, why) = self.exp_for_kill(template);
+            out.extend(self.award_kill_experience(worth, &why, chr_id, &shares));
+            out.extend(self.credit_kill_to_quests(template, chr_id));
+            // The registry's entry for a mob that no longer exists. `reconcile` on the
+            // next field entry would catch it anyway - this is so the count in a log line
+            // means what it says between now and then.
+            self.fields.controllers().forget(map, object_id);
+        }
+        // The template's real maxHP, because 0x03F0 carries a PERCENTAGE.
+        let max_hp = self
+            .config
+            .mobs
+            .get(&map)
+            .and_then(|l| l.iter().find(|m| m.object_id == object_id))
+            .map(|m| m.hp)
+            .unwrap_or(hp_before);
+        for (opcode, body) in net::combat::mob_hit_replies(object_id, &hit, max_hp) {
+            let reply = Reply {
+                opcode,
+                body,
+                what: format!(
+                    "mob {} took {} ({} -> {}){}",
+                    object_id,
+                    hit.damage_applied,
+                    hit.hp_before,
+                    hit.hp_after,
+                    if hit.died { " - DEAD, leaving the field" } else { "" }
+                ),
+            };
+            // **The damage half of the owner's 2026-09-01 sentence**: *"All clients need to see
+            // other clients damages to mobs."* `0x03F0` is the health bar and `0x03D1` is
+            // the death, and both say exactly the same thing to every viewer.
+            //
+            // **Publish the SAME `(opcode, body)` the attacker gets. Do not recompute.**
+            // `0x03F0`'s hp field is a **percentage**, 0..100 - `net::combat::hp_percent`,
+            // `research/mob-hp-bar.md` - and the absolute went out once and drew a 45-HP
+            // snail at 27%. A second call site that looked `max_hp` up its own way is
+            // exactly how that unit error comes back. One body, two destinations.
+            //
+            // An observer whose pool has never held this object id is safe: the second
+            // dispatcher looks the id up and returns (`141d32b62 je 0x141d33432`), and
+            // `0x03D1` reads its whole body first and then does the same. **[L]**
+            let audience = crate::mobshare::audience_for(opcode, object_id);
+            if audience.is_map_wide() {
+                self.bus().publish(self.subscriber, map, reply.clone(), audience.supersedes());
+            }
+            out.push(reply);
+        }
+        out
+    }
+
+    /// **MP Eater**: on a magic attack that landed, `prop`% chance per mob hit to absorb `x`%
+    /// of that mob's **maximum** MP (*"absorb 30% of the enemy's Max MP"*; the mob's `maxMP`
+    /// is column 3 of `mobtemplates.txt`). One proc per swing, then the row's `cooltime` of
+    /// 5 s. All three copies of the passive (`2100000`, `2200000`, `2300000`) are one skill
+    /// with three ids; whichever the character has is read. **[L]** for the columns, **[I]**
+    /// that a mob with `maxMP 0` in its row gives nothing rather than a floor.
+    pub(super) fn mp_eater(&mut self, templates_hit: &[u32]) -> Vec<Reply> {
+        let Some(mut chr) = self.claimed_character() else { return Vec::new() };
+        let Some((skill, level)) = crate::advbuffs::MP_EATER.iter().find_map(|&s| {
+            self.store.skill_level(chr.id, s).ok().filter(|l| *l > 0).map(|l| (s, l))
+        }) else {
+            return Vec::new();
+        };
+        let now = self.clock_ms;
+        if now < self.mp_eater_ready_ms {
+            return Vec::new();
+        }
+        let Some(row) = self.config.firstjob.level(skill, level).copied() else { return Vec::new() };
+        let prop = u64::from(row.prop.unwrap_or(0));
+        let x = row.x.and_then(|x| u64::try_from(x).ok()).unwrap_or(0);
+        let cool = u64::from(row.cooltime_seconds.unwrap_or(5));
+        let cap = self.pools(&chr).max_mp;
+        for template in templates_hit {
+            if prop == 0 || self.rng.next() % 100 >= prop {
+                continue;
+            }
+            let mob_max_mp = self.config.mob_templates.get(template).map(|t| u64::from(t.max_mp)).unwrap_or(0);
+            let gain = u32::try_from(mob_max_mp * x / 100).unwrap_or(u32::MAX);
+            if gain == 0 || chr.mp >= cap {
+                continue;
+            }
+            let mp = chr.mp.saturating_add(gain).min(cap);
+            let gained = mp - chr.mp;
+            chr.mp = mp;
+            if self.store.save_character_progress(&chr).is_err() {
+                return Vec::new();
+            }
+            self.mp_eater_ready_ms = now.saturating_add(cool * 1000);
+            return vec![Reply {
+                opcode: net::stats::STAT_CHANGED,
+                body: net::stats::StatChange { mp: Some(chr.mp), ..Default::default() }.build(),
+                what: format!(
+                    "StatChanged: MP Eater absorbed {gained} mp ({x}% of template {template}'s {mob_max_mp}) -> {}/{cap}; next proc in {cool}s",
+                    chr.mp
+                ),
+            }];
+        }
+        Vec::new()
+    }
+
+    /// Restore a flat amount of HP, capped at the drawn ceiling, with the blue number. The
+    /// primitive behind `heal_percent`, Drain, and anything else that gives HP outside regen.
+    pub(super) fn heal_flat(&mut self, add: u32, why: &str) -> Vec<Reply> {
+        let Some(mut chr) = self.claimed_character() else { return Vec::new() };
+        if chr.hp == 0 || add == 0 {
+            return Vec::new();
+        }
+        let cap = self.pools(&chr).max_hp;
+        let hp = chr.hp.saturating_add(add).min(cap);
+        let healed = hp - chr.hp;
+        if healed == 0 {
+            return Vec::new();
+        }
+        chr.hp = hp;
+        if let Err(e) = self.store.save_character_progress(&chr) {
+            return self.notice(format!("Could not save the health {why} gave you: {e}"));
+        }
+        vec![
+            Reply {
+                opcode: net::stats::STAT_CHANGED,
+                body: net::stats::StatChange { hp: Some(chr.hp), ..Default::default() }.build(),
+                what: format!("StatChanged: {why} +{healed} hp -> {}/{cap}", chr.hp),
+            },
+            Reply {
+                opcode: net::stats::USER_EFFECT_LOCAL,
+                body: net::revive::recovery_number(healed as i32, 0),
+                what: format!("UserEffectLocal effect 0x41: the blue +{healed} from {why}"),
+            },
+        ]
     }
 
 
@@ -1069,10 +1287,15 @@ impl Session {
         let base = self.config.mob_exp.get(&template).copied().unwrap_or(0);
         let rate = self.rate(store::rates::RateKind::Exp);
         let worth = rate.apply(u64::from(base));
-        let why = if rate.is_normal() {
-            "a kill".to_string()
-        } else {
-            format!("a kill ({base} at {rate}x)")
+        // Holy Symbol: `x`% more while held - *"5%"* at level 1, 35% at 30. Self only in this
+        // client's data (no rectangle, `processtype 6`). **[L]** for the column.
+        let symbol = u64::try_from(self.held_value(net::jobbuffs::CTS_HOLY_SYMBOL)).unwrap_or(0);
+        let worth = worth.saturating_add(worth.saturating_mul(symbol) / 100);
+        let why = match (rate.is_normal(), symbol > 0) {
+            (true, false) => "a kill".to_string(),
+            (false, false) => format!("a kill ({base} at {rate}x)"),
+            (true, true) => format!("a kill ({base}, Holy Symbol +{symbol}%)"),
+            (false, true) => format!("a kill ({base} at {rate}x, Holy Symbol +{symbol}%)"),
         };
         (worth, why)
     }
@@ -1395,6 +1618,56 @@ impl Session {
         let client_computed_it = claimed > 1;
         let applied = if client_computed_it { claimed } else { computed.unwrap_or(claimed) };
 
+        // ---------------------------------------------------------------------------------
+        // **The held guards, in the order they take their share.** Second- and third-job
+        // audit, 2026-09-07. Each reads the value the client was told for its bit, so the
+        // number the server acts on is the number the icon promised.
+        // ---------------------------------------------------------------------------------
+        // Invincible: `x`% of physical damage ignored outright. **[L]** *"Physical damage -10%"*.
+        let invincible = u64::try_from(self.held_value(net::jobbuffs::CTS_INVINCIBLE)).unwrap_or(0);
+        let after_invincible =
+            applied - u32::try_from(u64::from(applied) * invincible.min(100) / 100).unwrap_or(0);
+        // Power Guard: `x`% of what is left is not taken and goes back to the mob, below,
+        // once the character's own bars are settled. **[L]** *"return 20% of the physical
+        // damage received"*.
+        let power_guard = u64::try_from(self.held_value(net::jobbuffs::CTS_POWER_GUARD)).unwrap_or(0);
+        let reflected =
+            u32::try_from(u64::from(after_invincible) * power_guard.min(100) / 100).unwrap_or(0);
+        let after_power_guard = after_invincible - reflected;
+        // Meso Guard: `x`% of what is left is paid in mesos at `y`% of the blocked amount -
+        // *"Blocks 30% of incoming damage using Meso; Consumes Meso equal to 50% of the
+        // blocked damage"*. Short of the price, nothing is blocked: the client's own gate is
+        // the same (it drops the toggle at zero mesos), and a partial block would be a number
+        // neither end agreed on.
+        let mut meso_after: Option<u32> = None;
+        let meso_guard = u64::try_from(self.held_value(net::jobbuffs::CTS_MESO_GUARD)).unwrap_or(0);
+        let applied = if meso_guard > 0 {
+            let blocked = u32::try_from(u64::from(after_power_guard) * meso_guard.min(100) / 100).unwrap_or(0);
+            let y = self
+                .store
+                .skill_level(chr.id, crate::advbuffs::MESO_GUARD)
+                .ok()
+                .and_then(|l| self.config.firstjob.level(crate::advbuffs::MESO_GUARD, l))
+                .and_then(|r| r.y)
+                .and_then(|y| u64::try_from(y).ok())
+                .unwrap_or(50);
+            let price = u32::try_from(u64::from(blocked) * y / 100).unwrap_or(u32::MAX);
+            let have = self.store.mesos(chr.id).unwrap_or(0);
+            if blocked > 0 && have >= price {
+                match self.store.add_mesos(chr.id, -i64::from(price)) {
+                    Ok(left) => {
+                        meso_after = Some(left);
+                        after_power_guard - blocked
+                    }
+                    Err(_) => after_power_guard,
+                }
+            } else {
+                after_power_guard
+            }
+        } else {
+            after_power_guard
+        };
+
         // **Magic Guard sends part of the damage to MP, and that split is the SERVER's job.**
         //
         // `research/magic-damage.md`: the client computes `mpLoss = guard% * damage / 100`
@@ -1438,6 +1711,7 @@ impl Session {
             body: net::stats::StatChange {
                 hp: Some(chr.hp),
                 mp: (to_mp > 0).then_some(chr.mp),
+                meso: meso_after.map(u64::from),
                 ..Default::default()
             }
             .build(),
@@ -1472,6 +1746,17 @@ impl Session {
                 }
             ),
         }];
+        // **Power Guard's reflection lands on the mob that hit us**, through the same body a
+        // swing uses, so the bar and the death reach every viewer the same way. Not a swing:
+        // no controller handover, no arrows, no combo orb.
+        if reflected > 0 {
+            let map = chr.map_id;
+            out.extend(self.deal_to_mob(map, hit.mob_object_id, u64::from(reflected), chr.id));
+            crate::server::log(&format!(
+                "   power guard: {reflected} of the hit went back to mob {} ({power_guard}%)",
+                hit.mob_object_id
+            ));
+        }
 
         // **Death.** The owner, 2026-08-21: *"My HP hit 0, I see the tombstone on my character,
         // but I do not see the revive confirmation."*

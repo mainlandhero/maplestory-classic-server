@@ -184,6 +184,12 @@ pub enum Event {
     /// defence), and only the recipient can say what it is worth to them. No MP is spent and
     /// no cooldown is stamped on the recipient - those were the caster's.
     PartyBuff { skill_id: u32, level: u32, caster: u32 },
+
+    /// A Cleric's **Heal** cast by `caster` on this field reaches this character: `percent`
+    /// of the recipient's own drawn ceiling, computed on the recipient's session for the same
+    /// reason a party buff crosses as a fact - only the owner knows its own maximum, and only
+    /// the owning session can move that client's bar. `Session::heal_cast`.
+    PartyHeal { percent: u32, caster: u32 },
 }
 
 /// One queued packet and whether a newer one may replace it.
@@ -1026,6 +1032,7 @@ mod tests {
                 Event::Experience { amount, .. } => *amount,
                 // These tests only ever queue EXP shares; a party buff here is a test bug.
                 Event::PartyBuff { skill_id, .. } => panic!("not an EXP share: skill {skill_id}"),
+                Event::PartyHeal { caster, .. } => panic!("not an EXP share: heal from {caster}"),
             })
             .collect()
     }

@@ -98,6 +98,9 @@ impl Session {
                 crate::broadcast::Event::Experience { amount, why, white } => {
                     out.extend(self.award_experience(amount, &why, white, false));
                 }
+                crate::broadcast::Event::PartyHeal { percent, caster } => {
+                    out.extend(self.heal_percent(percent, &format!("Heal from character {caster}")));
+                }
                 crate::broadcast::Event::PartyBuff { skill_id, level, caster } => {
                     out.extend(self.receive_party_buff(skill_id, level, caster));
                 }
