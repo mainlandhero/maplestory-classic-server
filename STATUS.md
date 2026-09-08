@@ -68,6 +68,15 @@ reset with every catch. Fixed (`window_due`, tested). Same recipe again.
 next 5 ms sweep. Fixed with `probe.rs`'s own trick - the page is open for one instruction (trap
 flag, re-protect on the step), so every write faults. §10 of the clock file. Same recipe again.
 
+**Run 5 died at 3.5 min on a DIFFERENT surface the write watch cannot reach**: the ResMan
+worker-thread teardown (`heap-wild-write.md` dump 2, exactly - not new), reading a `0x40`-class
+empty-map node through a pointer that was **+2**, the same increment signature as run 2 (§8, §11
+of the clock file). Bucket 2, a live node, a pointer not a header, before any window opened - so
+nothing built for the `0x20` pooled-free family covers it. Two of five write-watch runs (2, 5)
+died this way. The `0x20` write watch is still one door-close from its own writer (run 4);
+covering the `0x40`/worker surface needs the guard-page build, which is a deliberate schedule,
+not a window tweak.
+
 **The one run worth a launch is `-SentryWriteWatch`** (`research/naming-the-writer-2026-09-07.md`,
 `crates/grap-stub/src/writewatch.rs`). Around each *predicted* firing it puts bucket 1's pages
 read-only for 1.2 s, so the damaging store faults at its own instruction and the log names the

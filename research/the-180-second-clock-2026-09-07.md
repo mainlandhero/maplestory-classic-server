@@ -532,3 +532,60 @@ the log the next time.
 
 The close crashed at `0x141d12df0`, an address the archive has twice before; not the pool.
 Same recipe again.
+
+## 11. Run 5 died at 3.5 minutes on a surface the write watch cannot reach - and it is not new
+
+2026-09-07 23:43-23:47, process 362016. **Before the first writer firing** (only the initial
+`rdx=2` and one `rdx=7` at 90 s fired; the `rdx=5` clock's first tick was still ~90 s away),
+zero catches, zero windows, pool **0 damaged**. `0xC0000005` read at 23:47:13. `[L]`
+
+### 11.1 It is heap-wild-write.md's "dump 2", exactly
+
+Frames 2-5 are `14181d650+0x50`, `144eb76b0+0x12c`, `144e5ee89+0xaf`, `142c42f30+0x43b` -
+byte-for-byte `research/heap-wild-write.md`'s **dump 2**, the **worker-thread** ResMan/Themida
+teardown (frames `144eb76b0`/`144e5ee89` live only in Themida's function table). This is a
+documented surface older than the write-watch work, not a new family. My first read called it
+the game-stage tick; that was wrong - it is the worker thread. `[L]`
+
+### 11.2 The object, and the +2 - the run-2 signature again
+
+The fault: `cmp [rax+0x290],1` with `rax = [rdi+0x30]`, `rdi = 0x2f50471a`. Read out of the
+dump at `0x2f504710`: `[L]`
+
+```text
+0x2f504710  40 00 00 00 00 00 00 00      <- a POOL HEADER, the 0x40 class (bucket 2)
+0x2f504718  20 9e fe 39 ...              <- body: left  = 0x39fe9e20
+0x2f504720  20 9e fe 39 ... 20 9e fe 39  <- parent = right = 0x39fe9e20 (a clean empty map)
+0x2f504730  01 01 62 00 69 00 6c ...     <- _Color 1, _Isnil 1, then "...bility" (UTF-16)
+```
+
+The node at `0x2f504718` is a **clean empty-map head node** - the same structure run 2 (§8)
+died on, in the same `0x40` class. But `rdi = 0x2f504718 + 2`. `[rdi+0x30]` reads `0x6c` (the
+node's bytes shifted two along), `cmp [0x6c+0x290]` faults (`param[1] = 0x2fc`). So a **pointer
+to this map node was used +2** - two increments of a 32-bit field landing on a pointer's low
+byte, exactly run 2's mechanism and the `2` run 3 saw live in a `0x20` header. `[D]` that it is
+the same writer; the increment-by-2 is its signature across three size positions now (a `0x20`
+free header, a `0x40` node's own pointer, a pointer *to* a `0x40` node).
+
+### 11.3 Why no instrument here could have caught it, and what that means
+
+* **Wrong class.** The write watch protects bucket 1 (`0x20`). This is bucket 2 (`0x40`).
+* **No window was open.** It died before the first `rdx=5` firing, so a watch keyed to the
+  180 s clock had nothing armed - and runs 2 (9 min) and 5 (3.5 min) show this surface does
+  **not** keep the clock's cadence the way the `0x20` header damage does.
+* **Not a header and not a free slot.** `poolchain` checks slot-header high dwords and sees 0;
+  this is a `+2` on a *pointer*, to a *live* node. The repair, the pin, the guard-page build -
+  all of them key on the free/header surface.
+
+So **two of five write-watch runs (2 and 5) died on the ResMan worker-thread `0x40`+2 surface**,
+fast, and it is structurally outside everything built for the `0x20` pooled-free family. The
+write watch is still one door-close from the `0x20` writer (run 4 put the store on a protected
+page inside a live window). But it will never see this second surface. Naming *either* writer
+outright is the guard-page build; naming *this* one needs it on bucket 2 and on live nodes,
+which is a larger build than the `0x20` one and was not what §6 scoped.
+
+**Recommendation.** Keep the `0x20` write-watch runs - they are cheap and close. But stopping
+the crashes is now clearly two writers (or one writer on two surfaces) and the size-class watch
+covers only one. The honest next step for the `0x40`/worker-thread surface is the guard-page
+allocator, which catches a write wherever it lands rather than where we predicted - and that is
+a deliberate build to schedule, not another window tweak. The owner's call.
