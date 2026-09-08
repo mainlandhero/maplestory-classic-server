@@ -160,6 +160,38 @@ tests.
   because nobody has rendered those canvases, and a missing sprite is exactly the silent failure
   this repo keeps meeting. **That is the owner's call to reverse if they want a walk-up NPC.**
 
+**2026-09-08 OVERNIGHT RUN, 8m13s: THE POOL WAS CLEAN AND THE CLIENT DIED ANYWAY.**
+`research/the-writer-damages-live-objects-2026-09-08.md`. The most important result this
+project has had, and it invalidates how success has been measured.
+
+The dump says: `0xC0000005` reading `[rax+0x19]` in a **red-black tree descent**, with
+`rax = 0xffffffff301bad30` and **`rdx = 0x00000000301bad30` - the same pointer, uncorrupted, in
+another register** [L]. The victim is node `0x3a2f9a78`, a **`0x20`** slot, whose `_Left` holds
+the tree sentinel intact and whose `_Right` holds **the same sentinel with the high dword smashed
+to `-1`**. Same node, same value, one damaged. A scan of all 1216.9 MB found exactly 2 copies of
+the corrupted qword against 13 of the correct one as a positive control [L].
+
+And `tools/poolchain.py` over that dump: **0 damaged headers in 174 528 slots, all four
+buckets.** The sentry caught and repaired its one finding, and the pool went to its grave in
+perfect health.
+
+**So the damage that kills is inside a LIVE object's payload** (`body + 0x14` here), not on a
+free header. The sentry validates `body - 8` against the slot size and nothing else - it is not
+failing at this, it is structurally incapable of seeing it. **Every "pool clean, N repaired" line
+is true and says nothing about whether the client is about to die**, and the header family we
+have chased for weeks is only the part of the writer's output that happens to land on a header.
+
+`-1` is in the known value family (`1`, `2`, `-1`) and the offset is `+4` into an eight-byte
+field, exactly where `0x20` became `0x0000000100000020`. **[I]** a refcount at `+4` on a freed
+object explains `+1`, `+2`, `-1` and a 180 s timer in one mechanism.
+
+**Two instrument failures, one of them mine.** The run carried **no `guardpage=` token** - the
+session marker reads `mode=2,create=on`, so the guard page never armed and never logged. And it
+would not have mattered: `-GuardPage` defaults to bucket **`0x40`**, chosen from runs 2 and 5,
+while this victim is **`0x20`**. The flag was missing *and* aimed at the wrong class. The right
+run is **`-GuardPage -GuardBucket 0x20`**; budget ~230 MB extra committed (56 744 live `0x20`
+allocations at death) and read `FELL BACK` FIRST, not last.
+
 **2026-09-08: THE WRITER IS ON OTHER PEOPLE'S MACHINES, and it is killing live players.**
 Four hook logs off the live server (`research/live-client-crash-2026-09-08.md`). One is a crash,
 and it closes a question this project had left open. A live player's client - a different person,
