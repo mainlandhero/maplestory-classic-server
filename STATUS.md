@@ -102,6 +102,46 @@ reviewing: both pool frees read the one `HeapFree` slot (60 readers in all), the
 `0x100` header to that arm, `HeapFree` gets `body-8`, and the allocator overwrites `rax` before
 reading it, so the trampoline's clobber is safe. 97 grap-stub tests.
 
+**2026-09-08: five live-server fixes, all NEW and none seen on a client yet.** 2152 workspace
+tests.
+
+* **THE MESO DROP FROZE THE WHOLE INVENTORY, and it is the worst of the five.** The owner: *"I have
+  attempted to drop 10 mesos and 5000 mesos, none of these attempts worked, but I lose all
+  functionality in being able to interact with my inventory."* `0x0143` `UserDropMoneyRequest`
+  was **not handled at all** - it fell to `dispatch`'s `_ => Vec::new()`. The client's own
+  builder `FUN_142d4cb40` sets an exclusive-request latch at `player+0x2330` **the moment it
+  sends** [L], so silence there does not fail a drop, it kills the inventory, the ability-point
+  buttons, the cash shop and the item drop for the rest of the session. The unlock is `0x007C`
+  with `bExclRequestSent = 1` and an **empty mask**, and the client's handler does that unlock
+  as its literal first action, before any mask work [L]. Mesos still cannot be dropped;
+  `crate::mesodrop` refuses AND answers. **69 latching opcodes are now enumerated** and a
+  measured whitelist arm answers any of them that nothing else handles - `0x01FD` and `0x02F6`
+  have also arrived unhandled in the archive and froze a client each. Item drops never had the
+  bug (fixed 2026-08-19); mesos were simply never wired.
+* **MOB DROPS LANDED WHERE THE WALK BEGAN.** `on_mob_move` stored the `0x02FF` **path head**,
+  and the head is the position at the START of the path. The old comment granted that and called
+  it *"a few pixels for a snail"*; that was never measured and is wrong. Over **642 431
+  deduplicated** reports the head lags the mob by a **median 41 px**, and by more than 25 px -
+  half the client's own pick-up box - **62.8%** of the time. `tools/mobmove_lag.py` re-derives
+  it with three controls. Now the path END, plus `Fields::mob_site` so a mob that never reported
+  drops at its `Map.wz` spawn pixel instead of **at the player's feet**.
+* **QUEST ITEMS ONLY DROP FOR SOMEBODY WHO HAS THE QUEST.** The marker is item metadata the repo
+  already parses for the "quest items cannot be sold" rule, so the two rules cannot drift; 119
+  of 2785 items carry it. The ETC id range is **not** the marker and using it would have deleted
+  242 ordinary drops (Snail Shells, Mushroom Caps) that quests merely consume. 12 flagged ids sit
+  in the live table over 15 rows; 8 ids / 9 rows are filtered, the four Dark Marbles exempt
+  because `secondjob` already gates them more narrowly by mob and map.
+* **LEVEL-UP IS BROADCAST.** `0x02AF` `UserEffectRemote` effect 0, so other players on the map see
+  and hear it. Corroborated three ways: both client dispatch tables enumerated whole, and the net
+  crate already carried both the opcode and the effect id read off the client.
+* **THE MAPLE ADMINISTRATOR IS A QoL NPC** (template **9010000**, Henesys - the only one of five
+  same-named templates standing where a player can walk [L]). Three favours, one each per
+  character per **UTC** day: 1000 Leaf Points, one level, reset AP & SP. Claim state in
+  `daily_claim`, keyed `(scope, scope_id, perk)`, gated on `stored < today` so a backwards clock
+  cannot reopen it. Quest 500005 is deliberately no longer offered by them. The Leaf Point wallet
+  is **per account** while the claim is per character, so three characters bank 3000 LP a day -
+  a consequence of the requested scope, documented and tested rather than discovered.
+
 **2026-09-08: THE WRITER IS ON OTHER PEOPLE'S MACHINES, and it is killing live players.**
 Four hook logs off the live server (`research/live-client-crash-2026-09-08.md`). One is a crash,
 and it closes a question this project had left open. A live player's client - a different person,

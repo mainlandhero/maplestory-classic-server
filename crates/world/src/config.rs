@@ -217,6 +217,19 @@ pub struct Config {
     /// Generated from the client's own `Quest.wz`, so this is the client's data rather than
     /// a guess - unlike the drop chances or the level gains.
     pub quest_reqs: net::quest::QuestRequirementTable,
+    /// **Which items carry `info/quest`, and which quest wants each one.**
+    ///
+    /// The owner, from a screenshot of a full ETC tab: a quest item must only be offered to a
+    /// player who has the quest ACTIVE. Built at startup from
+    /// [`Config::shops`]`.item_data` (the flag) and `gm-handbook/questreq.txt` (the
+    /// mapping), so there is one parse of `itemdata.txt` in the process and the drop rule
+    /// and the "may not be sold" rule cannot disagree about what a quest item is.
+    ///
+    /// **Empty is legal and gates nothing** - `gm-handbook/` is generated and gitignored.
+    /// `QuestItems::is_armed` says which it is, and the startup banner prints it, because a
+    /// guard that quietly disappears is worse than one that refuses. See
+    /// [`crate::questitems`].
+    pub quest_items: crate::questitems::QuestItems,
     /// Every equip's template values, keyed by item id, from `gm-handbook/equips.txt`.
     ///
     /// The character record carries an item's stats and upgrade slots per *instance*, and a
@@ -1861,6 +1874,7 @@ impl Default for Config {
             mob_attack: HashMap::new(),
             mob_templates: HashMap::new(),
             quest_reqs: net::quest::QuestRequirementTable::default(),
+            quest_items: crate::questitems::QuestItems::default(),
             chatter_off: false,
             equips: HashMap::new(),
             npc_strings: NpcStringTable::default(),

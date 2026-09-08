@@ -223,6 +223,40 @@
     control PASS). FIXED: the pages of every header already caught are PINNED on every window.
     Given (1), the next window over a re-hit slot should catch the store.
 
+    T21 (NEW 2026-09-08). FIVE LIVE FIXES, none of them ever on a screen. Test ONE at a time
+    and say which. Each line is a claim that can come back false.
+      (a) MESOS - THE IMPORTANT ONE. Drop 10 mesos, then IMMEDIATELY try to move an item in
+          the bag.
+            refuses in words AND the bag still works -> fixed.
+            nothing happens and the bag is DEAD    -> the latch is still set and the 0x007C
+                                                      is not the unlock. This is the bug: the
+                                                      client latches when it SENDS, so silence
+                                                      kills the inventory, the AP buttons and
+                                                      the cash shop for the whole session.
+          Then try the AP buttons and the cash shop in the same session - all three share the
+          latch, so if the bag is dead they are too.
+      (b) MOB DROPS - kill a mob WHILE IT IS WALKING (a snail mid-stride, not a standing one).
+            the drop lands on the corpse            -> fixed.
+            it lands ~40 px BEHIND the walk         -> still the path head.
+          The arc matters as much as the landing: an item flying out of empty space behind the
+          mob is the same bug on a different field. Also kill a mob that has NEVER moved: it
+          must drop at the mob, not at your feet.
+      (c) QUEST ITEMS - kill Slimes/Octopuses without the Omok quest. NO Omok Piece may drop.
+          Then take the quest and kill again: it must drop. Dark Marbles are EXEMPT by design
+          and must keep dropping for a second-job run.
+      (d) LEVEL UP - needs TWO clients on ONE map. Level one and watch the OTHER screen for the
+          animation and sound. This cannot be confirmed from the server side: the client drops
+          the packet in silence if that observer does not already hold the leveller's spawn.
+      (e) MAPLE ADMINISTRATOR - Henesys, far left near the portal.
+            a list box with three lines            -> pick Level up: expect a level, an EXP
+                                                      line, +5 AP.
+            a box with NO clickable lines          -> dialog kind right, #L markup wrong; a
+                                                      6-byte 0x00F3 body in world.log says so.
+            no box at all                          -> the branch did not fire; grep world.log
+                                                      for 0x0151 and 0x00F2 on template 9010000.
+          Then click again the SAME session and pick the same option: it must REFUSE IN WORDS,
+          never go silent, and the log must say NOTHING PAID. The daily reset is UTC midnight.
+
     T20 (NEW 2026-09-08). THE OVERNIGHT RUN - SURVIVE, do not measure. The owner: "our goal is to
     leave the client running overnight without it exiting." That is a different run from every
     one below it, and it wants a different command:
@@ -2090,6 +2124,32 @@ function Show-TestPlan {
         Write-Host '       except within 5s of a predicted firing. The 180s period is LEARNED'
         Write-Host '       from the first two catches, so nothing is assumed, and a catch'
         Write-Host '       outside the window resets it. Keep the repair either way.'
+        Write-Host '    0h. FIVE LIVE FIXES - none has ever been on a screen. ONE at a time.' -ForegroundColor Green
+        Write-Host '       (a) MESOS, THE IMPORTANT ONE. Drop 10 mesos, then immediately try'
+        Write-Host '           to move an item in the bag.'
+        Write-Host '             refuses in words AND the bag works -> fixed'
+        Write-Host '             nothing happens and the bag is DEAD -> latch still set'
+        Write-Host '           The client latches when it SENDS, so an unanswered drop killed'
+        Write-Host '           the bag, the AP buttons and the cash shop for the whole'
+        Write-Host '           session. Try all three if the bag is dead.'
+        Write-Host '       (b) MOB DROPS. Kill a mob WHILE IT IS WALKING, not standing.'
+        Write-Host '             lands on the corpse      -> fixed'
+        Write-Host '             lands ~40px behind it    -> still the path head'
+        Write-Host '           Watch the ARC too: an item flying out of empty space behind'
+        Write-Host '           the mob is the same bug on a different field. Then kill a mob'
+        Write-Host '           that never moved - it must drop at the mob, not at your feet.'
+        Write-Host '       (c) QUEST ITEMS. Kill Slimes with no Omok quest: NO Omok Piece may'
+        Write-Host '           drop. Take the quest, kill again: it must. Dark Marbles are'
+        Write-Host '           EXEMPT by design and must keep dropping.'
+        Write-Host '       (d) LEVEL UP needs TWO clients on ONE map. Level one, watch the'
+        Write-Host '           OTHER screen. The server cannot confirm this one.'
+        Write-Host '       (e) MAPLE ADMINISTRATOR, Henesys, far left by the portal.'
+        Write-Host '             three clickable lines -> pick Level up: level, EXP, +5 AP'
+        Write-Host '             a box, no lines       -> #L markup wrong (6-byte 0x00F3)'
+        Write-Host '             no box at all         -> branch did not fire; grep world.log'
+        Write-Host '                                      for 0x0151 / 0x00F2 on 9010000'
+        Write-Host '           Click again the same session: it must REFUSE IN WORDS and log'
+        Write-Host '           NOTHING PAID. Daily reset is UTC midnight.'
         Write-Host '    0i. THE OVERNIGHT RUN - the goal is to SURVIVE, not to measure.' -ForegroundColor Green
         Write-Host '       -PoolSentry -SentryQuiet -SentryRepair -GuardPage -PinPatches'
         Write-Host '       and NO -SentryWriteWatch: the watch only observes, and overnight it'

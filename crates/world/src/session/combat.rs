@@ -69,8 +69,20 @@ impl Session {
         // refuses a writer that does not control the mob; the answer is used here rather than
         // logged and ignored, which is the mistake `CLAUDE.md` records under "a guard whose
         // answer is ignored is not a guard".
-        if !self.fields.note_position_from(map, req.object_id, (req.x, req.y), self.subscriber.get())
-        {
+        // **`(req.x, req.y)` is the path's HEAD - where the mob was when the walk BEGAN, not
+        // where it is now.** The comment here used to grant that and call the error "a few
+        // pixels for a snail"; that half was never measured and is wrong. Over 642 431
+        // deduplicated `0x02FF` events the head lags the mob by a median of 41 px and by more
+        // than 25 px - half the client's own pick-up box - 62.8% of the time, which is the owner's
+        // *"dropping from an awkward location not related to the current mob location"*.
+        // `crate::dropsite::reported_position` takes the path's END instead. Measured with its
+        // controls in that module's docs and re-derivable with `tools/mobmove_lag.py`.
+        if !self.fields.note_position_from(
+            map,
+            req.object_id,
+            crate::dropsite::reported_position(&req),
+            self.subscriber.get(),
+        ) {
             crate::server::log(&format!(
                 "   0x02FF for mob {} IGNORED: this connection ({}) does not control it \
                  (controller {:?}). Two controllers would be two independent wanders - the \
@@ -709,7 +721,12 @@ impl Session {
         // **Where it is, BEFORE it dies.** `hurt` removes the mob from the field, so
         // asking afterwards returns nothing and every drop fell back to the player's
         // feet - which is exactly what the owner saw twice. Read it first, hand it down.
-        let died_at = self.fields.mob_position(map, object_id);
+        // `mob_site`, not `mob_position`: a mob that has never reported a move still has the
+        // exact `Map.wz` spawn pixel on `LiveMob`, and falling through to `None` here put its
+        // drops at the PLAYER'S FEET, which can be a field away. `mob_position` stays the raw
+        // report because two controller-guard tests prove that guard by asserting it returns
+        // `None`, and a fallback inside it would make them pass whatever the guard did.
+        let died_at = self.fields.mob_site(map, object_id);
         let left = self.fields.hurt(map, object_id, damage, chr_id, &self.config, self.clock_ms);
         if let crate::fields::Hurt::Died(shares) = left {
             // **The drops go to the top damager, not to whoever landed the last hit.**
@@ -1039,6 +1056,31 @@ impl Session {
         // Read the meso rate ONCE, not once per drop: it is a database query, and it cannot
         // change between two items falling off the same mob.
         let meso_rate = self.rate(store::rates::RateKind::Meso);
+        // **Quest items are per-player.** The owner, 2026-09-08, with a screenshot of an ETC tab
+        // full of them: an item labelled "Quest Item" must only be offered to somebody who
+        // has that quest ACTIVE. Two players killing the same mob can legitimately differ, so
+        // this filters the ROLL - which belongs to this kill - and never the table, which is
+        // shared by the whole map.
+        //
+        // The audience is everyone this drop could reach: the party members present when the
+        // killer is in one, otherwise the damage ranking the walk below tries in order. One
+        // database read per character per KILL, taken here so the item loop takes none.
+        // `crate::questitems` owns every rule - the orphan policy and the Dark Marble
+        // exemption included; this call site owns only the consequence.
+        let quest_audience = crate::questitems::audience_for(
+            &self.store,
+            if party.is_some() { party_here.as_slice() } else { ranked },
+        );
+        let before = rolled.len();
+        self.config.quest_items.filter_roll(&mut rolled, &quest_audience);
+        if rolled.len() != before {
+            crate::server::log(&format!(
+                "   {} of {before} rolled item(s) from template {template} are quest items that \
+                 nobody in {:?} has the quest for, and were not offered",
+                before - rolled.len(),
+                quest_audience.iter().map(|(id, _)| *id).collect::<Vec<_>>()
+            ));
+        }
         // **Stagger them.** The owner, with a screenshot of the live server: *"the items that
         // drop should also be slightly staggered from each other"*. Three items landing on
         // exactly the same pixel render as one. Centred on the mob so a single drop is
@@ -1132,6 +1174,17 @@ impl Session {
                 first_reply.what.push_str(&note);
                 let mut shown_to = Vec::new();
                 for &member in &party_here {
+                    // **A party drop is still per-player when it is a quest item.** The enter
+                    // packet names the owner, not the recipient, so the bytes are the same for
+                    // everyone - but a member with no quest for it must not be shown it, or an
+                    // item they can never hand in is on their screen and inside their reach.
+                    if !self
+                        .config
+                        .quest_items
+                        .may_receive_in(r.item_id, member, &quest_audience)
+                    {
+                        continue;
+                    }
                     if Some(member) == me {
                         out.push(first_reply.clone());
                         shown_to.push(member);
@@ -1150,6 +1203,18 @@ impl Session {
             // this map. `ranked[0]` already owns it, so the first iteration never re-addresses.
             let mut winner = None;
             for (rank, candidate) in ranked.iter().enumerate() {
+                // **The recipient has to be eligible for THIS item.** `filter_roll` only
+                // guaranteed that SOMEBODY in the audience is; the walk is where one candidate
+                // is chosen, so it is where a quest item stops at the right person instead of
+                // at the top damager. Leaving `winner` as None here is the EXISTING "reached
+                // NOBODY" path, whose log line already covers it - not a new class of leak.
+                if !self
+                    .config
+                    .quest_items
+                    .may_receive_in(r.item_id, *candidate, &quest_audience)
+                {
+                    continue;
+                }
                 let mut reply = if rank == 0 {
                     first_reply.clone()
                 } else {
@@ -1503,6 +1568,22 @@ impl Session {
             change.hp = Some(chr.hp);
             change.mp = Some(chr.mp);
             change.ap = Some(chr.ap);
+            // **Everyone else on the map sees and hears it.** The owner, 2026-09-08: *"the level up
+            // sound was not broadcast to other players"*. The leveller's own animation is
+            // client-side off the 0x007C below and is untouched - this is only for observers,
+            // and `Bus::publish` excludes this connection by construction rather than by a
+            // filter here, because a filter here is the thing that gets forgotten.
+            //
+            // Hung off the transition and placed AFTER `save_character_progress`, so a refused
+            // save cannot broadcast a level nobody kept - `CLAUDE.md`'s Heena rule. Every
+            // source of levelling funnels through here (kills, `!exp`, quest turn-ins, and
+            // party shares collected off the bus), so this one hook covers all of them.
+            let seen_by = crate::leveleffect::publish_level_up(self.bus(), self.subscriber, chr.id);
+            crate::server::log(&format!(
+                "   level: {} ({}) reached {} - 0x02AF UserEffectRemote effect 0 sent to \
+                 {seen_by} other player(s) on this map",
+                chr.name, chr.id, chr.level
+            ));
         }
         let mut out = vec![Reply {
             opcode: net::stats::STAT_CHANGED,

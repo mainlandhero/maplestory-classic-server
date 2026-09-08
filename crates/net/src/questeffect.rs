@@ -167,7 +167,12 @@ pub const EFFECT_LEVEL_UP: u8 = crate::stats::EFFECT_LEVEL_UP;
 /// # Two ways it does nothing, in silence
 ///
 /// Both sit between the handler's two switches and apply to **every** effect, level-up
-/// included. Effects `0x4F`, `0x50` and `0x52` bypass them; 15 does not. **[L]**
+/// included. Effects `0x4F`, `0x50` and `0x51` bypass them; 15 does not, and neither does 0.
+/// **[L]** - corrected 2026-09-08, it read `0x52` here for days. The ladder subtracts as it
+/// goes, so only the first comparison is against a literal effect id:
+/// `sub ecx,0x4f; je` is `0x4F`, then `sub ecx,1; je` is `0x50`, and `cmp ecx,1; je` matches
+/// when `ecx` already holds `effect - 0x50`, so it is **`0x51`**. Reading the third
+/// comparison's operand as an effect id is what produced the wrong row.
 ///
 /// ```text
 /// 14278bd29  call 0x141892840      ; the current field

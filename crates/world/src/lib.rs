@@ -30,6 +30,10 @@
 pub mod broadcast;
 pub mod commodity;
 pub mod config;
+/// The Maple Administrator's three once-a-day favours, and the words they say about them.
+/// The gate itself is `store::dailyperks`; the grants are in `session::npc`.
+pub mod dailyperks;
+pub mod dropsite;
 pub mod drops;
 pub mod droptables;
 pub mod expcurve;
@@ -42,10 +46,13 @@ pub mod footholds;
 pub mod itemrecovery;
 pub mod jobguide;
 pub mod jobs;
+pub mod leveleffect;
 pub mod magic;
+pub mod mesodrop;
 pub mod mobattack;
 pub mod mobshare;
 pub mod party;
+pub mod questitems;
 pub mod remoteattack;
 pub mod returnscroll;
 pub mod secondjob;
