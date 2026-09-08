@@ -219,7 +219,13 @@ Both sit between the two switches, at `0x14278bd29`..`0x14278bd7d`, and both app
 14278bd75  test dl,dl / je <exit>    ; dl == 0 -> NOTHING HAPPENS
 ```
 
-Effects `0x4F`, `0x50` and `0x52` bypass the gate; **15 does not**. So:
+Effects `0x4F`, `0x50` and `0x51` bypass the gate; **15 does not**, and neither does 0. So:
+
+> **Corrected 2026-09-08.** This read `0x52` for days, and `crates/net/src/questeffect.rs`
+> carried the same wrong row. The ladder subtracts as it goes, so only the FIRST comparison is
+> against a literal effect id: `sub ecx,0x4f; je` is `0x4F`, then `sub ecx,1; je` is `0x50`, and
+> `cmp ecx,1; je` matches when `ecx` already holds `effect - 0x50`, so it is **`0x51`** [L].
+> Reading the third comparison's operand as an effect id is what produced the wrong row.
 
 * **send it only from a settled field.** No field object → `bl = 1` → the effect is dropped
   in silence. This is the same rule `research/quest-state.md` already imposes on `0x0089`.

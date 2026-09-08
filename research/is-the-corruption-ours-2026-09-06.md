@@ -12,6 +12,18 @@ comparison the owner is asking for has never been made and cannot be made from t
 
 ---
 
+> **UPDATE 2026-09-08: §1's "control that does not exist" now exists, and it clears us.** Four
+> hook logs came off the LIVE server from other people's machines. One is a crash, and that
+> client reported the **identical** damage - `0x0000000100000020` on a `0x20` header - which the
+> sentry found and repaired [L]. Different person, different computer, same signature. **The
+> writer is not something our environment does to the client.** See
+> `research/live-client-crash-2026-09-08.md`.
+>
+> Everything below stands as the reasoning that was available before that, and §3's list of what
+> we do that retail does not is still worth keeping: the reachability `__fastfail` we stub is a
+> genuine second corruption path that only our environment reaches, and it is unrelated to this
+> family.
+
 ## 0. The short version
 
 | claim | tag |
