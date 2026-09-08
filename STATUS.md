@@ -59,6 +59,35 @@ ways: `FUN_141b267c0` switches on `result + 1`, so `case 8` is wire 7 - and `cas
 table is `notRegisteredID`, which this repo already knew is wire result 5, so the offset is
 checked against something that can disagree [L]. **Nobody has put that dialog on a screen yet.**
 
+**2026-09-08: the guard-page quarantine now SHIPS in the launcher, and it has a kill switch
+that needs no rebuild.** The owner: *"work under the assumption that if this works, all of the clients
+should have it."* `launcher::client::DEFAULT_SESSION` is now
+`mode=2,create=on,guardpage=0x20+0x40`, so **every** Start Game arms it - not only
+`tools/test-server.ps1 -GuardPage`, which writes a pin and only ever reached the owner's machine.
+That gap is exactly why the 01:33 overnight run carried no `guardpage=` token.
+
+`0x20+0x40` and not `all`: those are the two classes damage has been seen on, and the shared
+8 M-slot cursor is 2.8x one measured first window at two classes but only **1.4x** at four -
+below the floor `render_armed` itself shouts about, so `all` would ship a client that falls back
+mid-session and looks healthy doing it.
+
+**To turn it off for one player: create `maplecw-hook.guardpage.off` beside their
+`MapleStory.exe`.** For a whole install: `guardpage = "off"` in `maplecw-launcher.toml`. Absent
+means ON. Either one makes the launcher write a session marker with **no `guardpage=` term at
+all**, which is byte-for-byte the client that ran before the feature existed, and the log pane
+says which way it went in words a player can read back. `--print-paths` prints `guardpage on` /
+`guardpage OFF` with both switches consulted. Both directions are tested; a pin still overrides
+the default and the off switch still wins on that one token.
+
+Cost to a player: 32 GiB of *reserved* address space (no commit charge), ~350 MB of working set
+[D/I], and two patches to the client. **Every failure path in `guardpage::arm` was read and
+leaves the client unpatched - except one, which was a real shipping bug and is now fixed**:
+`identity::install_detour`'s read-back check returned `None` *after* the jump bytes were already
+over the live prologue, so "None means nothing was patched" was a comment describing a guarantee
+rather than enforcing it. It now restores the original prologue from the trampoline's verbatim
+copy, under the same thread-parking discipline, and **reads it back** rather than claiming a
+success it has not seen. **It has run on exactly one machine, the owner's.**
+
 **This client crashes mid-session, so the state is a LEASE and not a flag**
 (`crates/store/src/presence.rs`). It is held by a live connection and released when the socket
 closes - **including when it closes because the process died**, which is the common case here -
@@ -352,8 +381,9 @@ function**, its other teardown loop; and the live one fired 4 m 53 s into an **i
 so the "close-time" label was wrong. Second, the nodes are `0x38` bytes freed through
 `operator delete` at `0x140205820`, which loads the pool context `0x143AD68A0` and calls the
 pool free `0x14019bb50` [L] - so they are **pool bucket-2 objects, the `0x40` class**. That is
-exactly what `-GuardPage` quarantines by default, and **it has never been shipped to these
-users**.
+exactly what the quarantine covers by default - and **as of 2026-09-08 it ships**: the
+launcher's `DEFAULT_SESSION` carries `guardpage=0x20+0x40`, so these users get it on their next
+launcher build. See START HERE for the kill switch.
 
 Still circumstantial, and the artifact that settles it exists: a **1.2 GB dump on that player's
 machine** (`C:\Users\wes10\…\dumps\`). The faulting `rcx` is the whole question - off by 1 or

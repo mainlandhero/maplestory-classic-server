@@ -64,12 +64,60 @@ pub const HOOK_LOG: &str = "maplecw-hook.log";
 /// blocks the per-frame tick that enables the Login button.
 pub const DEFAULT_PROBE: &str = "watch@1415db360:ret,141b2a280:rdx=0,141b36f60,142ef3e44:hits=8";
 
-/// `tools/test-server.ps1`'s `-Session` default.
+/// The size classes the shipped guard page quarantines, spelled the way
+/// `grap_stub::guardpage::parse_classes` reads them: `+`-joined, **never** comma-joined,
+/// because the session marker is itself comma-separated and a comma here would arm half of
+/// what was asked for.
+///
+/// **`0x20+0x40` and not `all`**, for two measured reasons:
+///
+/// * these are the two classes the damage has actually been seen on - a `0x20` red-black tree
+///   node on the 2026-09-08 overnight run and a `0x40` map node / vtable pointer on the
+///   2026-09-07 runs and the 1 h 57 m run. `0x10` and `0x80` have never been a victim.
+/// * the reserve is shared across classes and sized from **one** measured class. The 12:01 run
+///   measured `0x20` at a 627 172-slot first-minute burst and 1 560/s after it, so one class
+///   needs ~1.47 M slots for its first retirement window. The 8 M-slot cursor is 2.8x that for
+///   two classes and only **1.4x** for four - below the 1.5x floor
+///   `guardpage::render_armed` shouts about, and a spent cursor means allocations fall back to
+///   the client's own pool and the class silently stops being covered.
+///
+/// The other two classes' churn is still unmeasured; the heartbeat's `pool allocations seen by
+/// class` counters are what would justify widening this, and they cost no launch of their own.
+pub const SHIPPED_GUARDPAGE_CLASSES: &str = "0x20+0x40";
+
+/// The token itself, as it appears in the session marker.
+pub const GUARDPAGE_PREFIX: &str = "guardpage=";
+
+/// `tools/test-server.ps1`'s `-Session` default, and **what every launcher launch writes**.
 ///
 /// `mode=2` also routes `0x000B` to the classic handler, which is load-bearing; `create=on`
 /// sets the protected flag gating "Create a character", re-armed on every login result
 /// because the client's handshake zeroes it.
-pub const DEFAULT_SESSION: &str = "mode=2,create=on";
+///
+/// # `guardpage=` ships here as of 2026-09-08, and that is a change of blast radius
+///
+/// The owner: *"work under the assumption that if this works, all of the clients should have it."*
+/// The quarantine was previously armed only by `tools/test-server.ps1 -GuardPage`, which writes
+/// a session **pin**. Players do not run that script - they run this launcher - so before this
+/// change a player's client had no guard page at all, which is exactly why the 2026-09-08 01:33
+/// overnight run carried no `guardpage=` token.
+///
+/// What is measured and what is not, so the risk is sized honestly:
+///
+/// * `[L]` It has armed on a client, passed its own control, and run 1 h 57 m quarantining
+///   `0x20`, against a previous best of 1 h 57 m and a worst of 8 minutes. A second run with
+///   `0x20+0x40` was at 1 h 22 m with zero damage, zero catches and zero fall-back when this
+///   was written.
+/// * `[L]` It has run on **exactly one machine, the owner's.** Never on a player's.
+/// * `[D]` It costs 32 GiB of *reserved* address space (never committed as a whole), ~100 MB of
+///   live pages per quarantined class, a 32 MB retirement ring, and lazily-committed metadata
+///   that grows with the cursor.
+/// * `[L]` It patches the client: one inline hook on the pool allocator, and a `HeapFree`
+///   pointer swap. Every failure path in `guardpage::arm` reverts to an unpatched client.
+///
+/// Because of the last two, it has a kill switch that needs no rebuild - see
+/// [`HOOK_GUARDPAGE_OFF_MARKER`] and the `guardpage` key in `maplecw-launcher.toml`.
+pub const DEFAULT_SESSION: &str = "mode=2,create=on,guardpage=0x20+0x40";
 
 /// A stub smaller than this is not a DLL. Checked before anything is displaced, the same way
 /// `setup-client.ps1` does it.
@@ -288,6 +336,29 @@ pub const HOOK_SENTRY_MARKER: &str = "maplecw-hook.sentry";
 /// shipping-settings run and quietly discard the dumps it was asked for.
 pub const SHIPPED_SENTRY: &str = "dumps=0,stacks=off,coarse=2000,repair=on";
 
+/// **The kill switch for the guard-page quarantine, and it needs no rebuild.**
+///
+/// # Why a file and not a flag
+///
+/// The quarantine ships on by default (see [`DEFAULT_SESSION`]) and has run on exactly one
+/// machine. If it misbehaves on somebody else's, the fix has to be reachable by a person who
+/// has a launcher `.exe` and a chat window - not a Rust toolchain. So:
+///
+/// * **Absent means ON.** Forgetting the file is not a way to lose the mitigation, the same
+///   rule `crate::config::LauncherConfig::firewall` states for the outbound block.
+/// * **Present means OFF**, whatever it contains. Contents are ignored as a *setting* and
+///   echoed into the log pane as a note, so "off because Pixel's client stuttered, 2026-09-09"
+///   can be written inside it and read back later. A file called `.off` that could itself say
+///   `on` is a switch with two states and three meanings.
+/// * Turning it off writes a session marker with **no `guardpage=` token at all**, which is
+///   byte-for-byte what a client ran before this feature existed. `guardpage::install` then
+///   logs `NOT ARMED` and hooks nothing.
+///
+/// One player: put the file in that player's client folder. Everyone: `guardpage = "off"` in
+/// `maplecw-launcher.toml`, which is the same shape as `firewall = "off"` and is what an
+/// installer can write. Either alone is enough; neither needs a new binary.
+pub const HOOK_GUARDPAGE_OFF_MARKER: &str = "maplecw-hook.guardpage.off";
+
 /// A one-launch override for [`HOOK_PROBE_MARKER`], written by `tools/test-server.ps1`.
 pub const HOOK_PROBE_PIN: &str = "maplecw-hook.probe.pin";
 /// The same for [`HOOK_SESSION_MARKER`].
@@ -346,11 +417,84 @@ fn take_pin(client_dir: &Path, name: &str, default: &str, steps: &mut Steps) -> 
     body
 }
 
+/// Remove every `guardpage=` term from a comma-separated session string.
+///
+/// Returns the string and whether anything was taken out. Pure, and it is the whole of what
+/// "off" means: `grap_stub::session::marker_token` splits the marker on commas and
+/// `guardpage::install` arms only if it finds the prefix, so a marker with no such term leaves
+/// the client with nothing hooked - not a disabled hook, no hook.
+///
+/// It strips **every** occurrence rather than the first, because a session string assembled
+/// from a default plus a pin could carry two and stopping at one would leave the feature on
+/// while the log said it was off.
+pub fn strip_guardpage(session: &str) -> (String, bool) {
+    let kept: Vec<&str> = session
+        .split(',')
+        .filter(|t| !t.trim().to_ascii_lowercase().starts_with(GUARDPAGE_PREFIX))
+        .collect();
+    let removed = kept.len() != session.split(',').count();
+    (kept.join(","), removed)
+}
+
+/// Why the guard page is on or off for this launch, in one sentence a player could read back
+/// over chat.
+///
+/// `config_allows` is the `guardpage` key from `maplecw-launcher.toml` (absent = `true`). The
+/// marker beside the client is checked here, so **either** switch alone turns it off and a
+/// launcher with no config file still has a working kill switch.
+pub fn guardpage_decision(client_dir: &Path, config_allows: bool) -> (bool, String) {
+    let marker = client_dir.join(HOOK_GUARDPAGE_OFF_MARKER);
+    let note = std::fs::read_to_string(&marker).ok();
+    if let Some(note) = note {
+        let note = note.trim().to_string();
+        let because = if note.is_empty() {
+            String::new()
+        } else {
+            format!(" The file says: {note:?}.")
+        };
+        return (
+            false,
+            format!(
+                "WARNING: the heap quarantine (guard page) is OFF for this launch because \
+                 {} exists.{because} Delete that file to turn it back on. This client runs \
+                 exactly as it did before the quarantine existed: nothing is hooked, and \
+                 whatever was making it die every few minutes will do so again",
+                marker.display()
+            ),
+        );
+    }
+    if !config_allows {
+        return (
+            false,
+            format!(
+                "WARNING: the heap quarantine (guard page) is OFF for this launch because \
+                 guardpage = \"off\" is set in {}. Remove that line, or set it to \"on\", to \
+                 turn it back on. This client runs exactly as it did before the quarantine \
+                 existed: nothing is hooked",
+                crate::config::CONFIG_FILE_NAME
+            ),
+        );
+    }
+    (
+        true,
+        format!(
+            "heap quarantine ON ({GUARDPAGE_PREFIX}{SHIPPED_GUARDPAGE_CLASSES}): freed memory \
+             of those two size classes is held back for ten minutes so a stale write faults \
+             where it is made instead of killing the client minutes later. To turn it OFF \
+             without a new launcher, create an empty file called {HOOK_GUARDPAGE_OFF_MARKER} \
+             beside MapleStory.exe (or put guardpage = \"off\" in {}) and start the game again"
+            ,
+            crate::config::CONFIG_FILE_NAME
+        ),
+    )
+}
+
 pub fn write_markers(
     client_dir: &Path,
     probe: &str,
     session: &str,
     dump_dir: &Path,
+    guardpage_allowed: bool,
 ) -> Result<Steps, String> {
     let mut steps = Steps::new();
 
@@ -361,8 +505,43 @@ pub fn write_markers(
     };
 
     // **A pin overrides this launch's defaults, once.** See [`take_pin`].
+    let was_pinned = client_dir.join(HOOK_SESSION_PIN).is_file();
     let probe = take_pin(client_dir, HOOK_PROBE_PIN, probe, &mut steps);
     let session = take_pin(client_dir, HOOK_SESSION_PIN, session, &mut steps);
+
+    // **The kill switch is applied AFTER the pin, and it is the last word on this one token.**
+    //
+    // The two rules it has to satisfy pull in opposite directions only when both are present.
+    // A pin still replaces the default wholesale - that is how a measurement run works and
+    // `tools/test-server.ps1` depends on it. But "off" has to mean the marker carries no
+    // `guardpage=` term, or it is not a kill switch; a switch that a leftover pin could defeat
+    // is exactly the guard-whose-answer-is-ignored `CLAUDE.md` has a section about. So the pin
+    // wins on everything else and this wins on `guardpage=`, and when it takes the token out of
+    // a PIN it says so at WARNING rather than quietly disagreeing with the person who wrote it.
+    let (on, why) = guardpage_decision(client_dir, guardpage_allowed);
+    let session = if on {
+        session
+    } else {
+        let (stripped, removed) = strip_guardpage(&session);
+        if removed && was_pinned {
+            steps.push(
+                "WARNING: the off switch also removed the guardpage= term from the SESSION PIN \
+                 this launch was given. The rest of the pin stands. Delete the off switch if \
+                 this was a measurement run"
+                    .to_string(),
+            );
+        }
+        if stripped.trim().is_empty() {
+            steps.push(
+                "WARNING: with guardpage= removed there is nothing left in the session marker, \
+                 so mode=2 and create=on are NOT set either - that is what the pin asked for \
+                 minus the guard page, and the client will behave accordingly"
+                    .to_string(),
+            );
+        }
+        stripped
+    };
+    steps.push(why);
     let probe = probe.as_str();
     let session = session.as_str();
 
@@ -691,7 +870,7 @@ mod tests {
         let t = TempDir::new("markers-mc");
         let client = fake_client(&t);
         let dumps = t.path().join("dumps");
-        let steps = write_markers(&client, "probe", "session", &dumps).expect("markers");
+        let steps = write_markers(&client, "probe", "session", &dumps, true).expect("markers");
         assert!(
             client.join(HOOK_MULTICLIENT_MARKER).is_file(),
             "the marker file must exist beside the client"
@@ -893,7 +1072,7 @@ mod tests {
         std::fs::write(client.join(HOOK_PROBE_PIN), mine).unwrap();
         std::fs::write(client.join(HOOK_SESSION_PIN), "mode=2").unwrap();
 
-        let steps = write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps).expect("first");
+        let steps = write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps, true).expect("first");
         assert_eq!(
             std::fs::read_to_string(client.join(HOOK_PROBE_MARKER)).unwrap(),
             mine,
@@ -913,7 +1092,7 @@ mod tests {
         );
 
         // The second launch, same directory, no pin: the defaults come back.
-        write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps).expect("second");
+        write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps, true).expect("second");
         assert_eq!(
             std::fs::read_to_string(client.join(HOOK_PROBE_MARKER)).unwrap(),
             DEFAULT_PROBE
@@ -936,7 +1115,7 @@ mod tests {
         let client = t.dir("client");
         let dumps = t.dir("dumps");
 
-        let steps = write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps).expect("first");
+        let steps = write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps, true).expect("first");
         let written = std::fs::read_to_string(client.join(HOOK_SENTRY_MARKER)).unwrap();
         assert_eq!(written, SHIPPED_SENTRY);
         assert!(written.contains("repair=on"), "the whole point is the repair: {written}");
@@ -946,7 +1125,7 @@ mod tests {
         // A marker already there is a measurement run being set up. Leave it.
         let mine = "dumps=4,repair=on";
         std::fs::write(client.join(HOOK_SENTRY_MARKER), mine).unwrap();
-        let steps = write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps).expect("second");
+        let steps = write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps, true).expect("second");
         assert_eq!(
             std::fs::read_to_string(client.join(HOOK_SENTRY_MARKER)).unwrap(),
             mine,
@@ -963,7 +1142,7 @@ mod tests {
         let dumps = t.dir("dumps");
         std::fs::write(client.join(HOOK_PROBE_PIN), "   \r\n  ").unwrap();
 
-        let steps = write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps).expect("markers");
+        let steps = write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps, true).expect("markers");
         assert_eq!(
             std::fs::read_to_string(client.join(HOOK_PROBE_MARKER)).unwrap(),
             DEFAULT_PROBE,
@@ -979,7 +1158,7 @@ mod tests {
         let client = t.dir("client");
         let dumps = t.dir("dumps");
 
-        let steps = write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps).expect("markers");
+        let steps = write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps, true).expect("markers");
         assert!(steps.iter().any(|s| s.contains(DEFAULT_PROBE)), "{steps:?}");
 
         let enable = std::fs::read(client.join(HOOK_ENABLE_MARKER)).unwrap();
@@ -994,6 +1173,162 @@ mod tests {
             assert_ne!(&raw[..raw.len().min(3)], b"\xef\xbb\xbf", "{name} has a BOM");
             assert_eq!(String::from_utf8(raw).unwrap(), expected, "{name}");
         }
+    }
+
+    // -- the guard page and its kill switch ---------------------------------------------
+
+    /// **The shipped default carries the quarantine, spelled the way the hook parses it.**
+    ///
+    /// The launcher does not depend on `grap-stub` - they meet only through files in the client
+    /// directory - so nothing but this test and its twin in
+    /// `grap_stub::guardpage::tests::the_class_set_the_launcher_ships_parses` connects the two
+    /// spellings. In particular the classes are joined with `+`: a comma would be split by
+    /// `session::marker_token` and would arm `0x20` while the log said `0x20+0x40`.
+    #[test]
+    fn the_shipped_session_arms_the_guard_page_on_the_two_damaged_classes() {
+        assert!(DEFAULT_SESSION.contains("mode=2"));
+        assert!(DEFAULT_SESSION.contains("create=on"));
+        assert_eq!(
+            DEFAULT_SESSION,
+            format!("mode=2,create=on,{GUARDPAGE_PREFIX}{SHIPPED_GUARDPAGE_CLASSES}"),
+            "a player's client gets the quarantine because THIS string is what the launcher \
+             writes; test-server.ps1's -GuardPage pin only ever reached the owner's machine"
+        );
+        assert!(
+            !SHIPPED_GUARDPAGE_CLASSES.contains(','),
+            "a comma would be split by the session marker's own separator and arm half of it"
+        );
+    }
+
+    /// `strip_guardpage` is what "off" means, so it is pinned on its own: every occurrence,
+    /// case-insensitively, and nothing else disturbed.
+    #[test]
+    fn stripping_removes_every_guardpage_term_and_leaves_the_rest_alone() {
+        assert_eq!(
+            strip_guardpage(DEFAULT_SESSION),
+            ("mode=2,create=on".to_string(), true)
+        );
+        // Nothing to take out: unchanged, and it says so.
+        assert_eq!(
+            strip_guardpage("mode=2,create=on"),
+            ("mode=2,create=on".to_string(), false)
+        );
+        // Two of them, and one in the middle. Stopping at the first would leave the feature
+        // ON while the log pane said OFF - the worst of the three possible outcomes.
+        assert_eq!(
+            strip_guardpage("guardpage=0x20,mode=2,GUARDPAGE=all,create=on"),
+            ("mode=2,create=on".to_string(), true)
+        );
+        // A key that merely starts the same way is not this key.
+        assert_eq!(
+            strip_guardpage("guardpages=1,mode=2"),
+            ("guardpages=1,mode=2".to_string(), false)
+        );
+    }
+
+    /// **The switch, in both directions, through the function that actually writes the file.**
+    ///
+    /// A switch that has never turned anything off is a switch nobody has tested, so the
+    /// assertion that matters is the second half: the marker on disk must contain no
+    /// `guardpage=` at all. Not `guardpage=off`, not `guardpage=none` - absent, because
+    /// `guardpage::install` arms on finding the prefix and logs `NOT ARMED` when it does not,
+    /// which is byte-for-byte the client that ran before this feature existed.
+    #[test]
+    fn the_off_marker_takes_the_guard_page_out_of_the_session_and_says_so() {
+        let t = TempDir::new("gpoff");
+        let client = t.dir("client");
+        let dumps = t.dir("dumps");
+
+        // ON: the shipped default reaches the marker the hook reads.
+        let steps = write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps, true).expect("on");
+        let written = std::fs::read_to_string(client.join(HOOK_SESSION_MARKER)).unwrap();
+        assert!(written.contains(GUARDPAGE_PREFIX), "{written}");
+        assert!(
+            steps.iter().any(|s| s.contains("heap quarantine ON")),
+            "the log pane must say which way it went: {steps:?}"
+        );
+        assert!(
+            steps.iter().any(|s| s.contains(HOOK_GUARDPAGE_OFF_MARKER)),
+            "and must name the file that turns it off, because that is the whole support \
+             procedure: {steps:?}"
+        );
+
+        // OFF, by the marker file. Contents are a note, not a setting.
+        std::fs::write(
+            client.join(HOOK_GUARDPAGE_OFF_MARKER),
+            "stuttering on Pixel's box 2026-09-09",
+        )
+        .unwrap();
+        let steps = write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps, true).expect("off");
+        let written = std::fs::read_to_string(client.join(HOOK_SESSION_MARKER)).unwrap();
+        assert!(
+            !written.contains(GUARDPAGE_PREFIX),
+            "the off switch did not reach the marker the hook reads: {written:?}"
+        );
+        assert_eq!(written, "mode=2,create=on", "and nothing else may be lost with it");
+        let said = steps.iter().find(|s| s.contains("quarantine (guard page) is OFF")).expect(
+            "the log pane must say it is off, in words a player could read back over chat",
+        );
+        assert!(said.starts_with("WARNING"), "and at WARNING, not buried in green: {said}");
+        assert!(said.contains("Pixel"), "the note in the file is echoed: {said}");
+
+        // ...and back ON when the file is gone. A switch that only latches is not a switch.
+        std::fs::remove_file(client.join(HOOK_GUARDPAGE_OFF_MARKER)).unwrap();
+        write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps, true).expect("on again");
+        assert!(std::fs::read_to_string(client.join(HOOK_SESSION_MARKER))
+            .unwrap()
+            .contains(GUARDPAGE_PREFIX));
+    }
+
+    /// The other half of the switch: `guardpage = "off"` in the config file, for a whole
+    /// machine or a whole install, with no file to place by hand.
+    #[test]
+    fn the_config_switch_alone_also_turns_it_off() {
+        let t = TempDir::new("gpcfg");
+        let client = t.dir("client");
+        let dumps = t.dir("dumps");
+
+        let steps = write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps, false).expect("off");
+        let written = std::fs::read_to_string(client.join(HOOK_SESSION_MARKER)).unwrap();
+        assert_eq!(written, "mode=2,create=on");
+        assert!(
+            steps
+                .iter()
+                .any(|s| s.starts_with("WARNING") && s.contains(crate::config::CONFIG_FILE_NAME)),
+            "the log must name the file the setting is in, or nobody can undo it: {steps:?}"
+        );
+        assert!(!client.join(HOOK_GUARDPAGE_OFF_MARKER).exists(), "and it wrote no marker");
+    }
+
+    /// **A leftover pin must not defeat the kill switch, and the switch must not silently
+    /// discard the rest of a pin.**
+    ///
+    /// The pin is how a measurement run works and it still overrides the default wholesale.
+    /// But `off` has to mean *no `guardpage=` term reaches the hook*, or it is a guard whose
+    /// answer can be ignored - the shape `CLAUDE.md` has a whole section about. So the pin wins
+    /// on everything else, this wins on that one token, and the disagreement is announced
+    /// rather than resolved in silence.
+    #[test]
+    fn the_off_switch_outranks_a_session_pin_on_the_guardpage_token_only() {
+        let t = TempDir::new("gppin");
+        let client = t.dir("client");
+        let dumps = t.dir("dumps");
+        std::fs::write(client.join(HOOK_GUARDPAGE_OFF_MARKER), "").unwrap();
+        std::fs::write(client.join(HOOK_SESSION_PIN), "mode=2,create=on,guardpage=all,chat=on")
+            .unwrap();
+
+        let steps = write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps, true).expect("pin");
+        assert_eq!(
+            std::fs::read_to_string(client.join(HOOK_SESSION_MARKER)).unwrap(),
+            "mode=2,create=on,chat=on",
+            "the pin's other terms must survive; only guardpage= is taken out"
+        );
+        assert!(
+            steps.iter().any(|s| s.starts_with("WARNING") && s.contains("SESSION PIN")),
+            "taking a term out of somebody's pin must be said out loud: {steps:?}"
+        );
+        // The pin is still read-once, exactly as before.
+        assert!(!client.join(HOOK_SESSION_PIN).exists());
     }
 
     /// The credential is written verbatim: no BOM, no newline, no quoting. `grap_stub::identity`

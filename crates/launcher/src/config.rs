@@ -38,6 +38,7 @@ pub const KNOWN_KEYS: &[&str] = &[
     "auth_fingerprint",
     "identity",
     "firewall",
+    "guardpage",
 ];
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -57,12 +58,26 @@ pub struct LauncherConfig {
     /// the rule is what keeps a modified client off the internet, so it is not something to
     /// lose by forgetting a key. See `crate::firewall`.
     pub firewall: Option<bool>,
+    /// `off` stops the launcher putting `guardpage=` in the session marker, so the client runs
+    /// with the heap quarantine not merely disabled but **not installed**. **Absent means ON**,
+    /// the same rule as `firewall` and for the same reason: the mitigation is what keeps the
+    /// client alive for hours instead of minutes, and forgetting a key must not be a way to
+    /// lose it. See `crate::client::HOOK_GUARDPAGE_OFF_MARKER` for the per-machine switch that
+    /// needs no config file at all.
+    pub guardpage: Option<bool>,
     /// Lines that could not be used, with a reason. Surfaced in the UI; never fatal.
     pub problems: Vec<String>,
 }
 
 impl LauncherConfig {
     /// Did the file actually set anything?
+    ///
+    /// **The switches count.** `resolve_from` turns a `true` here into "this file is present
+    /// but sets nothing", which is the right complaint about a typo and exactly the wrong one
+    /// about a file whose entire contents are `guardpage = "off"` - the shape a support
+    /// instruction produces, and the one case where the person reading the line is already
+    /// dealing with a client that misbehaves. `firewall` and `identity` were missing here for
+    /// the same reason and are now counted too.
     pub fn is_empty(&self) -> bool {
         self.client_dir.is_none()
             && self.stub_path.is_none()
@@ -70,6 +85,9 @@ impl LauncherConfig {
             && self.port.is_none()
             && self.auth_port.is_none()
             && self.auth_fingerprint.is_none()
+            && self.identity.is_none()
+            && self.firewall.is_none()
+            && self.guardpage.is_none()
     }
 }
 
@@ -120,6 +138,17 @@ pub fn parse(text: &str) -> LauncherConfig {
                 _ => cfg.problems.push(format!(
                     "line {line_no}: `firewall` takes on or off, not {value:?} - leaving the \
                      rule ON, because that is the safe way to misread it"
+                )),
+            },
+            // Same shape and same default as `firewall`, deliberately: two switches with
+            // opposite spellings would be two things to remember under pressure, and this one
+            // is reached for exactly when something is going wrong on a machine nobody can see.
+            "guardpage" => match value.to_ascii_lowercase().as_str() {
+                "off" | "false" | "no" | "0" => cfg.guardpage = Some(false),
+                "on" | "true" | "yes" | "1" => cfg.guardpage = Some(true),
+                _ => cfg.problems.push(format!(
+                    "line {line_no}: `guardpage` takes on or off, not {value:?} - leaving the \
+                     heap quarantine ON, because that is the safe way to misread it"
                 )),
             },
             // Accepted and IGNORED rather than rejected. Every installer written before
@@ -259,6 +288,47 @@ mod tests {
         let cfg = parse("Client_Dir = client\nPORT = 1234");
         assert_eq!(cfg.client_dir.as_deref(), Some("client"));
         assert_eq!(cfg.port, Some(1234));
+    }
+
+    /// **Absent means ON, and a value nobody can read means ON.**
+    ///
+    /// This key is reached for when a player's client is misbehaving and nobody can see the
+    /// machine, so the two failure directions are not symmetric: leaving the quarantine on when
+    /// somebody meant to turn it off costs one more round trip, and turning it off because a
+    /// value was misread costs the mitigation with nothing on screen to say so.
+    #[test]
+    fn guardpage_defaults_to_on_and_only_a_readable_off_turns_it_off() {
+        assert_eq!(parse("").guardpage, None, "absent is ON, decided by the caller");
+        for off in ["off", "OFF", "false", "no", "0"] {
+            assert_eq!(parse(&format!("guardpage = {off}")).guardpage, Some(false), "{off}");
+        }
+        for on in ["on", "true", "yes", "1"] {
+            assert_eq!(parse(&format!("guardpage = {on}")).guardpage, Some(true), "{on}");
+        }
+        let cfg = parse("guardpage = maybe");
+        assert_eq!(cfg.guardpage, None, "an unreadable value must not turn it off");
+        assert_eq!(cfg.problems.len(), 1);
+        assert!(cfg.problems[0].contains("guardpage"), "{:?}", cfg.problems);
+    }
+
+    /// A key that is not in `KNOWN_KEYS` is reported by name and the message lists what would
+    /// have worked - so a typo'd `guard_page` costs one line, not a support round trip.
+    /// A file whose whole contents are the kill switch is not an empty file. Otherwise the UI
+    /// answers a support instruction with "present but sets nothing".
+    #[test]
+    fn a_config_that_only_turns_the_guard_page_off_is_not_reported_as_setting_nothing() {
+        let cfg = parse("guardpage = off");
+        assert!(!cfg.is_empty());
+        assert!(cfg.problems.is_empty(), "{:?}", cfg.problems);
+        assert!(!parse("firewall = off").is_empty());
+    }
+
+    #[test]
+    fn guardpage_is_a_known_key() {
+        assert!(KNOWN_KEYS.contains(&"guardpage"));
+        let cfg = parse("guard_page = off");
+        assert_eq!(cfg.guardpage, None);
+        assert!(cfg.problems[0].contains("guardpage"), "{:?}", cfg.problems);
     }
 
     #[test]

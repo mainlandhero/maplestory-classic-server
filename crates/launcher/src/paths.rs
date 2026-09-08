@@ -129,6 +129,11 @@ pub struct Layout {
     /// in the config file turns it off: forgetting a key must not be a way to lose the rule
     /// that keeps a modified client off the internet. See `crate::firewall`.
     pub firewall: bool,
+    /// Put `guardpage=` in the session marker at Start Game. **Defaults to true** - the heap
+    /// quarantine ships - and `guardpage = "off"` in the config file turns it off for this
+    /// machine. It is only half the switch: `crate::client::HOOK_GUARDPAGE_OFF_MARKER` beside
+    /// the client turns it off with no config file at all, and either alone is enough.
+    pub guardpage: bool,
     /// Where the sign-in service listens - `crates/auth`, default 8480.
     ///
     /// Separate from `port`, which is the GAME port the client is handed. They are two
@@ -208,6 +213,14 @@ impl Layout {
         out.push_str(&format!("output    {}\n", self.data_root.display()));
         out.push_str(&format!("archives  {}\n", self.previous_runs_dir().display()));
         out.push_str(&format!("dumps     {}\n", self.dumps_dir().display()));
+        // **The kill switch, resolved rather than described.** `--print-paths` is the only way
+        // to read this machine's state without opening a window, which is exactly the check
+        // needed when the machine belongs to somebody else and the question is "is the
+        // quarantine actually off on your box?". Both halves of the switch are consulted, so
+        // the line answers that question rather than repeating what the config file said.
+        let (on, why) = crate::client::guardpage_decision(&self.client_dir, self.guardpage);
+        out.push_str(&format!("guardpage {}\n", if on { "on" } else { "OFF" }));
+        out.push_str(&format!("  why     {why}\n"));
         out.push_str(&format!("game      {}:{}\n", self.server_ip, self.port));
         out.push_str(&format!("sign-in   {}:{} (TLS)\n", self.server_ip, self.auth_port));
         match &self.auth_fingerprint {
@@ -294,6 +307,7 @@ pub fn resolve_from(exe_dir: &Path) -> Layout {
         port: DEFAULT_PORT,
         identity: None,
         firewall: true,
+        guardpage: true,
         auth_port: DEFAULT_AUTH_PORT,
         auth_fingerprint: None,
         auth_fingerprint_from: String::new(),
@@ -491,6 +505,10 @@ fn apply_config(layout: &mut Layout, cfg: &LauncherConfig, exe_dir: &Path) {
     if let Some(v) = cfg.firewall {
         layout.firewall = v;
         layout.config_applied.push(format!("firewall = {}", if v { "on" } else { "off" }));
+    }
+    if let Some(v) = cfg.guardpage {
+        layout.guardpage = v;
+        layout.config_applied.push(format!("guardpage = {}", if v { "on" } else { "off" }));
     }
 }
 

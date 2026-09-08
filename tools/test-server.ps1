@@ -284,6 +284,14 @@
 
     -GuardBucket now DEFAULTS to 0x20+0x40. Do not type it.
 
+    AND AS OF THIS AFTERNOON THE LAUNCHER SHIPS IT ANYWAY: DEFAULT_SESSION is
+    mode=2,create=on,guardpage=0x20+0x40, so a plain launcher launch is already quarantining
+    both classes. -GuardPage still matters here because this script writes a session PIN that
+    replaces that default. If the guard page ever needs to come off a machine, the switch is
+    maplecw-hook.guardpage.off beside MapleStory.exe - and it wins over a pin on that one
+    token, so DELETE IT before a measurement run or the marker read-back below will refuse
+    the launch.
+
     AND NOTHING ELSE. NO -Probe WATCHES ON THIS RUN.
     2026-09-08 14:47: this command plus five watch@ targets was run, and the client closed
     the instant it entered the field - the first death in this whole investigation with NO
@@ -396,7 +404,12 @@
     allocated from A freed from F" - R is the 0x40 writer. "GUARD PAGE ARMED ... control PASS"
     confirms it armed; "control FAIL" or a prologue-mismatch line means it stood down and the
     client is unpatched by it. The guard writes to the client (an allocator inline hook + a
-    HeapFree pointer swap), off unless -GuardPage; -GuardBucket picks the class (default 0x40).
+    HeapFree pointer swap). -GuardBucket picks the classes here (default 0x20+0x40).
+    2026-09-08: THE LAUNCHER NOW SHIPS IT. maplecw-launcher's DEFAULT_SESSION carries
+    guardpage=0x20+0x40, so an ordinary Start Game arms it with no flag at all; -GuardPage
+    only matters on this script's pinned/direct path. To turn it off on any machine without a
+    rebuild: create maplecw-hook.guardpage.off beside MapleStory.exe, or set
+    guardpage = "off" in maplecw-launcher.toml. Absent means ON.
 
     RUN 4 (22:45-23:35, closed by hand): 11 windows, one every cycle; pinned pages grew to 8;
     9 catches in 15 firings (six stores landed where the sentry cannot see, as the run-2 death
@@ -2296,6 +2309,14 @@ function Show-TestPlan {
         Write-Host '    0i. THE OVERNIGHT RUN - the goal is to SURVIVE, not to measure.' -ForegroundColor Green
         Write-Host '       -PoolSentry -SentryQuiet -SentryRepair -PinPatches -GuardPage'
         Write-Host '       -GuardBucket now DEFAULTS to 0x20+0x40 - TWO classes. Type nothing.' -ForegroundColor Yellow
+        Write-Host '       NEW TODAY: the LAUNCHER now ships the guard page - DEFAULT_SESSION is' -ForegroundColor Green
+        Write-Host '       mode=2,create=on,guardpage=0x20+0x40, so an ordinary Start Game arms' -ForegroundColor Green
+        Write-Host '       it with no flag. -GuardPage still matters HERE because this script' -ForegroundColor Green
+        Write-Host '       writes a session PIN that replaces that default.'
+        Write-Host '       KILL SWITCH, no rebuild: create maplecw-hook.guardpage.off beside' -ForegroundColor Yellow
+        Write-Host '       MapleStory.exe (or guardpage = "off" in maplecw-launcher.toml).' -ForegroundColor Yellow
+        Write-Host '       Absent means ON. DELETE IT before a measurement run: it wins over a' -ForegroundColor Yellow
+        Write-Host '       pin on that token, and the marker read-back below will then refuse.' -ForegroundColor Yellow
         Write-Host '       AND NOTHING ELSE. NO -Probe WATCHES ON THIS RUN.' -ForegroundColor Red
         Write-Host '       14:47 today: this command PLUS five watch@ targets, and the client' -ForegroundColor Red
         Write-Host '       closed the instant it entered the field - the first death here with' -ForegroundColor Red

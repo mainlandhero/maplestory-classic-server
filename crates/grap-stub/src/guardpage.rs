@@ -1382,6 +1382,39 @@ mod tests {
         assert!(!accept_ra(0, base, exec));
     }
 
+    /// **The exact string the launcher ships to every player, parsed by the code that has to
+    /// read it.**
+    ///
+    /// `launcher::client::DEFAULT_SESSION` is `"mode=2,create=on,guardpage=0x20+0x40"` as of
+    /// 2026-09-08, and the launcher does not depend on this crate - the two binaries meet only
+    /// through files in the client directory, so nothing but this test and its twin
+    /// (`launcher::client::tests::the_shipped_session_arms_the_guard_page_on_the_two_damaged_classes`)
+    /// connects the two spellings. A mismatch does not fail to compile; it produces a token
+    /// this module rejects and a mitigation that is silently off on every player's machine,
+    /// which is the failure mode `CLAUDE.md` calls indistinguishable from the code not
+    /// existing.
+    #[test]
+    fn the_class_set_the_launcher_ships_parses() {
+        const SHIPPED: &str = "0x20+0x40";
+        let mask = parse_classes(SHIPPED).expect("the shipped class set must parse");
+        assert_eq!(mask, (1 << 1) | (1 << 2), "0x20 and 0x40, and nothing else");
+        assert_eq!(mask_text(mask), SHIPPED, "and it round-trips to the same words");
+        assert!(mask.count_ones() == 2);
+
+        // The headroom the shipped set gets, from the model rather than from prose: two
+        // classes clear the 1.5x floor `render_armed` shouts below, four do not - which is why
+        // `all` is not what ships.
+        let need = first_window_slots(MEASURED_BURST_60S, MEASURED_STEADY_PER_S, REUSE_AFTER_MS);
+        let tenths = |n: usize| MAX_SLOTS * 10 / need / n;
+        assert!(tenths(2) >= 15, "two classes: {} tenths", tenths(2));
+        assert!(tenths(4) < 15, "four would print the NOT-enough-headroom shout");
+
+        // A comma is the one separator that must NOT work: the session marker is itself
+        // comma-separated, so `guardpage=0x20,0x40` reaches here as `0x20` and arms half of
+        // what was asked for, silently, with a log line that says the whole set.
+        assert!(parse_classes("0x20,0x40").is_err());
+    }
+
     /// **The reserve must be a working set, not a budget.** A slot is reusable only after
     /// `REUSE_AFTER_MS`, which is more than three periods of the writer's 180 s clock.
     #[test]
