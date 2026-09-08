@@ -141,6 +141,25 @@ const MAX_SLOTS: usize = RESERVE_BYTES / PAGE_BYTES;
 const SLOT_BODY_OFF: usize = 0x10;
 const SLOT_HEADER_OFF: usize = SLOT_BODY_OFF - 8;
 
+/// **How long a freed slot's address stays retired before it may be handed out again.**
+///
+/// The original design never reused an address, which is the strongest possible guarantee and
+/// cannot last a night: the cursor only advances, so the reserve is a budget of total
+/// allocations. 512 K of them at even a thousand a second is under nine minutes, after which
+/// the module falls back to the client's own allocator and the protection is silently gone.
+/// The owner, 2026-09-08: *"Our goal is to leave the client running overnight without it exiting."*
+///
+/// So a page is reused only after this long. The number comes from the writer itself: it fires
+/// on an exact **180 s** clock (`research/the-180-second-clock-2026-09-07.md`), and the stale
+/// pointers it holds have been seen to survive several periods, so 600 s covers three firings
+/// of any pointer taken at the moment of a free. A stale write inside that window still lands
+/// on a decommitted page and is caught; one after it lands on a live quarantined slot, which is
+/// the same exposure the client's own pool has after a few milliseconds.
+///
+/// The trade, stated: this exchanges an absolute guarantee that lasts nine minutes for a
+/// 600-second guarantee that lasts as long as the client runs.
+const REUSE_AFTER_MS: u64 = 600_000;
+
 /// The header value stamped on a quarantined slot: **greater than `0x80`**, so the client's
 /// free ladders past `0x10/0x20/0x40/0x80` and takes the `HeapFree` arm we intercept, instead
 /// of pushing our slot onto the pool's free list. `research/heapfix-did-not-hold.md` §1.
@@ -255,6 +274,8 @@ struct Meta {
     alloc_ra: AtomicU64,
     free_ra: AtomicU64,
     alloc_tick: AtomicU64,
+    /// When the slot was freed, for [`REUSE_AFTER_MS`]. Zero while live.
+    freed_tick: AtomicU64,
     /// 0 never used, 1 live, 2 quarantined (decommitted), 3 caught (recommitted after a stale
     /// write).
     state: AtomicU32,
@@ -262,6 +283,86 @@ struct Meta {
 }
 
 static META: AtomicUsize = AtomicUsize::new(0); // *mut Meta, MAX_SLOTS long
+
+// ---------------------------------------------------------------------------------------
+// The retirement queue
+// ---------------------------------------------------------------------------------------
+//
+// Freed slots in the order they were freed, so the oldest is the first candidate for reuse.
+// A `u32` slot index per entry, `MAX_SLOTS` of them (2 MB), reserved and committed with the
+// metadata. Head and tail are guarded by one spinlock: the critical section is a bounds check
+// and one store, shorter than the `lock cmpxchg` the client's own pool takes on every
+// allocation, and it is never held across a page operation or a log.
+
+static RING: AtomicUsize = AtomicUsize::new(0); // *mut u32, MAX_SLOTS long
+static RING_HEAD: AtomicUsize = AtomicUsize::new(0); // pop here
+static RING_TAIL: AtomicUsize = AtomicUsize::new(0); // push here
+static RING_LOCK: AtomicBool = AtomicBool::new(false);
+static RECYCLED: AtomicU64 = AtomicU64::new(0);
+
+struct RingGuard;
+impl Drop for RingGuard {
+    fn drop(&mut self) {
+        RING_LOCK.store(false, Ordering::Release);
+    }
+}
+fn ring_lock() -> RingGuard {
+    while RING_LOCK
+        .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        std::hint::spin_loop();
+    }
+    RingGuard
+}
+
+/// Push a freed slot onto the tail of the retirement queue.
+unsafe fn retire(i: usize) {
+    let ring = RING.load(Ordering::SeqCst);
+    if ring == 0 {
+        return;
+    }
+    let _g = ring_lock();
+    let tail = RING_TAIL.load(Ordering::Relaxed);
+    let head = RING_HEAD.load(Ordering::Relaxed);
+    // Full is impossible - the queue holds at most MAX_SLOTS entries and every entry is a
+    // distinct slot - but a wrap that would collide is dropped rather than corrupting the
+    // queue. A dropped entry is a slot that is simply never reused, the old behaviour.
+    if tail.wrapping_sub(head) >= MAX_SLOTS {
+        return;
+    }
+    *((ring as *mut u32).add(tail % MAX_SLOTS)) = i as u32;
+    RING_TAIL.store(tail.wrapping_add(1), Ordering::Relaxed);
+}
+
+/// Take the oldest retired slot **if it has been retired for [`REUSE_AFTER_MS`]**, else
+/// `None`. The queue is in free order, so the head is the oldest and one look decides it.
+unsafe fn take_reusable(now: u64) -> Option<usize> {
+    let ring = RING.load(Ordering::SeqCst);
+    if ring == 0 {
+        return None;
+    }
+    let _g = ring_lock();
+    let head = RING_HEAD.load(Ordering::Relaxed);
+    if head == RING_TAIL.load(Ordering::Relaxed) {
+        return None;
+    }
+    let i = *((ring as *const u32).add(head % MAX_SLOTS)) as usize;
+    if i >= MAX_SLOTS {
+        RING_HEAD.store(head.wrapping_add(1), Ordering::Relaxed);
+        return None;
+    }
+    if !reusable_at(meta(i).freed_tick.load(Ordering::SeqCst), now) {
+        return None; // the oldest is not old enough, so none of them is
+    }
+    RING_HEAD.store(head.wrapping_add(1), Ordering::Relaxed);
+    Some(i)
+}
+
+/// Whether `freed` is old enough to hand out again at `now`. Pure, for the tests.
+pub(crate) fn reusable_at(freed_tick: u64, now: u64) -> bool {
+    freed_tick != 0 && now.saturating_sub(freed_tick) >= REUSE_AFTER_MS
+}
 
 unsafe fn meta(i: usize) -> &'static Meta {
     &*((META.load(Ordering::SeqCst) as *const Meta).add(i))
@@ -304,16 +405,31 @@ unsafe extern "system" fn alloc_detour(ctx: usize, size: usize) -> usize {
     }
 }
 
-/// Take the next page, commit it, stamp the header, and return the body.
+/// Take a page - the oldest one retired longer than [`REUSE_AFTER_MS`] ago, or a fresh one
+/// from the cursor - commit it, stamp the header, and return the body.
 unsafe fn quarantine_alloc(alloc_ra: usize) -> Option<usize> {
     let base = RESERVE_BASE.load(Ordering::SeqCst);
     if base == 0 {
         return None;
     }
-    let i = CURSOR.fetch_add(1, Ordering::SeqCst);
-    if i >= MAX_SLOTS {
-        return None; // reserve exhausted; caller falls back
-    }
+    let now = GetTickCount64();
+    // A slot retired long enough ago is preferred over a fresh one, so the cursor advances
+    // only while nothing has aged out and the reserve becomes a working set rather than a
+    // budget of total allocations.
+    let i = match take_reusable(now) {
+        Some(i) => {
+            RECYCLED.fetch_add(1, Ordering::SeqCst);
+            i
+        }
+        None => {
+            let i = CURSOR.fetch_add(1, Ordering::SeqCst);
+            if i >= MAX_SLOTS {
+                CURSOR.store(MAX_SLOTS, Ordering::SeqCst); // do not wrap the counter
+                return None; // nothing aged out and no fresh slot: caller falls back
+            }
+            i
+        }
+    };
     let page = base + i * PAGE_BYTES;
     if VirtualAlloc(page as *mut c_void, PAGE_BYTES, MEM_COMMIT, PAGE_READWRITE).is_null() {
         return None;
@@ -323,7 +439,8 @@ unsafe fn quarantine_alloc(alloc_ra: usize) -> Option<usize> {
     let m = meta(i);
     m.alloc_ra.store(alloc_ra as u64, Ordering::SeqCst);
     m.free_ra.store(0, Ordering::SeqCst);
-    m.alloc_tick.store(GetTickCount64(), Ordering::SeqCst);
+    m.alloc_tick.store(now, Ordering::SeqCst);
+    m.freed_tick.store(0, Ordering::SeqCst);
     m.state.store(1, Ordering::SeqCst);
     SERVED.fetch_add(1, Ordering::SeqCst);
     Some(body)
@@ -341,9 +458,12 @@ unsafe extern "system" fn heapfree_shim(heap: usize, flags: u32, mem: usize) -> 
         let page = page_of(mem);
         let m = meta(i);
         m.free_ra.store(caller_ra() as u64, Ordering::SeqCst);
+        m.freed_tick.store(GetTickCount64(), Ordering::SeqCst);
         m.state.store(2, Ordering::SeqCst);
-        // Decommit: the address is retired for good. A later write here faults in the VEH.
+        // Decommit: the address is retired. A write here faults in the VEH until the slot has
+        // aged out of the retirement queue - see REUSE_AFTER_MS.
         VirtualFree(page as *mut c_void, PAGE_BYTES, MEM_DECOMMIT);
+        retire(i);
         FREED.fetch_add(1, Ordering::SeqCst);
         return 1; // BOOL TRUE, as HeapFree returns on success
     }
@@ -561,6 +681,14 @@ unsafe fn arm(watched: usize) {
         log("***** GUARD PAGE: could not reserve 2 GB of address space - NOT armed *****");
         return;
     }
+    let ring_bytes = MAX_SLOTS * std::mem::size_of::<u32>();
+    let ring_ptr = VirtualAlloc(std::ptr::null_mut(), ring_bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) as usize;
+    if ring_ptr == 0 {
+        VirtualFree(reserve as *mut c_void, 0, 0x8000);
+        log("***** GUARD PAGE: could not commit the retirement queue - NOT armed *****");
+        return;
+    }
+    RING.store(ring_ptr, Ordering::SeqCst);
     let meta_bytes = MAX_SLOTS * std::mem::size_of::<Meta>();
     let meta_ptr = VirtualAlloc(std::ptr::null_mut(), meta_bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) as usize;
     if meta_ptr == 0 {
@@ -622,12 +750,14 @@ unsafe fn arm(watched: usize) {
             MODE.store(MODE_ARMED, Ordering::SeqCst);
             log(&format!(
                 "***** GUARD PAGE ARMED: size class {watched:#x} is served one-slot-per-page \
-                 from a 2 GB reserve at {reserve:#x} and DECOMMITTED on free, never reused. A \
+                 from a 2 GB reserve at {reserve:#x} and DECOMMITTED on free, its address held \
+                 back for {}s before it can be handed out again. A \
                  stale write or read into a freed slot faults at the instruction that makes it, \
                  which the handler logs (RIP, target, who allocated, who freed) and recommits so \
                  the client continues. control PASS. The pool's own chain, free list and \
                  counters are untouched - our slots take the HeapFree arm. This is the writer's \
-                 arbitrary stale-pointer surface, the one the write watch cannot reach *****"
+                 arbitrary stale-pointer surface, the one the write watch cannot reach *****",
+                REUSE_AFTER_MS / 1000
             ));
         }
         None => {
@@ -648,11 +778,24 @@ unsafe fn register_veh() -> bool {
     !AddVectoredExceptionHandler(1, veh as *const c_void).is_null()
 }
 
-/// `(served, freed, live, catches, fallback)` for the heartbeat.
-pub(crate) fn counters() -> (u64, u64, u64, u64, u64) {
+/// `(served, freed, live, catches, fallback, recycled, cursor)` for the heartbeat.
+///
+/// `fallback` is the one to read on a long run: it counts allocations that went to the
+/// client's own pool because nothing had aged out and the cursor was spent. A rising fallback
+/// means the quarantine is no longer covering the class, which is the failure that looks
+/// exactly like a quiet, healthy run.
+pub(crate) fn counters() -> (u64, u64, u64, u64, u64, u64, usize) {
     let served = SERVED.load(Ordering::SeqCst);
     let freed = FREED.load(Ordering::SeqCst);
-    (served, freed, served.saturating_sub(freed), CATCHES.load(Ordering::SeqCst), FALLBACK.load(Ordering::SeqCst))
+    (
+        served,
+        freed,
+        served.saturating_sub(freed),
+        CATCHES.load(Ordering::SeqCst),
+        FALLBACK.load(Ordering::SeqCst),
+        RECYCLED.load(Ordering::SeqCst),
+        CURSOR.load(Ordering::SeqCst).min(MAX_SLOTS),
+    )
 }
 
 pub(crate) fn armed() -> bool {
@@ -694,6 +837,47 @@ mod tests {
         // Outside every module.
         assert!(!accept_ra(0x7ffe_0000_0000, base, exec));
         assert!(!accept_ra(0, base, exec));
+    }
+
+    /// **The reserve must be a working set, not a budget.** The original design never reused
+    /// an address, so 512 K allocations ended the protection - at a thousand a second, nine
+    /// minutes, against a goal of eight hours. A slot is now reusable only after
+    /// `REUSE_AFTER_MS`, which is more than three periods of the writer's 180 s clock.
+    #[test]
+    fn a_retired_slot_is_reusable_only_after_three_firings_of_the_writers_clock() {
+        assert!(
+            REUSE_AFTER_MS >= 3 * 180_000,
+            "the delay must cover three 180 s firings of any pointer taken at the free"
+        );
+        let freed = 1_000_000u64;
+        assert!(!reusable_at(freed, freed), "just freed");
+        assert!(!reusable_at(freed, freed + REUSE_AFTER_MS - 1), "one tick short");
+        assert!(reusable_at(freed, freed + REUSE_AFTER_MS), "exactly old enough");
+        assert!(reusable_at(freed, freed + REUSE_AFTER_MS * 10));
+        // A slot that has never been freed is live and must never be handed out again.
+        assert!(!reusable_at(0, u64::MAX), "freed_tick 0 means live");
+        // GetTickCount64 is monotonic, but a clock that went backwards must not make a live
+        // slot look ancient.
+        assert!(!reusable_at(freed, freed - 1_000));
+    }
+
+    /// How long the quarantine lasts at a churn rate, which is the number the overnight goal
+    /// turns on. Before the retirement queue this was `MAX_SLOTS / rate` outright.
+    #[test]
+    fn the_quarantine_outlasts_a_night_once_addresses_are_recycled() {
+        // Without reuse: the reserve is a budget of total allocations.
+        let budget_seconds = |rate: usize| MAX_SLOTS / rate;
+        assert!(budget_seconds(1000) < 600, "512 K slots at 1000/s is under ten minutes");
+        // With reuse: what must fit is the allocations made during ONE retirement window,
+        // because everything older has aged out and come back.
+        let live_window = |rate: usize| rate * (REUSE_AFTER_MS as usize / 1000);
+        assert!(
+            live_window(800) < MAX_SLOTS,
+            "800 allocations a second sustained still fits in the reserve"
+        );
+        // And the failure is graceful and loud rather than silent: above that the module falls
+        // back to the client's own allocator and the heartbeat says FELL BACK.
+        assert!(live_window(2000) > MAX_SLOTS);
     }
 
     #[test]

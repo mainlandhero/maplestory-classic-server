@@ -102,7 +102,22 @@ reviewing: both pool frees read the one `HeapFree` slot (60 readers in all), the
 `0x100` header to that arm, `HeapFree` gets `body-8`, and the allocator overwrites `rax` before
 reading it, so the trampoline's clobber is safe. 97 grap-stub tests.
 
-**The one run worth a launch is `-SentryWriteWatch`** (`research/naming-the-writer-2026-09-07.md`,
+**2026-09-08, the goal changed: the owner wants the client to survive a night, not to be measured.**
+That is test plan **T20** and a different command -
+`-SetFieldProbe -PoolSentry -SentryQuiet -SentryRepair -GuardPage -PinPatches`, with **no**
+write watch (it observes and protects nothing, at ~160 windows of read-only pages over eight
+hours). Checking the guard page against that goal found it could not have lasted: the cursor only
+advanced, so the 2 GB reserve was a budget of 512 K *total* allocations - under nine minutes at a
+thousand a second - after which it silently fell back to the client's pool. The justification for
+"the reserve is far more than a long session needs" rested on a **misread counter**: the pool
+field at `ctx+i*4+0x14` is `inc`/`dec`ed around alloc and free [L], so 18 758 is `0x40` objects
+*live*, not allocations served in 50 minutes. Fixed with a retirement queue: an address comes
+back only after **600 s**, three firings of the 180 s clock, so what must fit is one 600-second
+window (~800/s) rather than a whole night. Exhaustion is now loud in the heartbeat
+(`FELL BACK - the class is NO LONGER COVERED`), because a fallen-back run looks exactly like a
+protected one. `research/guard-page-2026-09-08.md` §7. 99 grap-stub tests, 2049 workspace.
+
+**The one run worth a launch when MEASURING is `-SentryWriteWatch`** (`research/naming-the-writer-2026-09-07.md`,
 `crates/grap-stub/src/writewatch.rs`). Around each *predicted* firing it puts bucket 1's pages
 read-only for 1.2 s, so the damaging store faults at its own instruction and the log names the
 RIP. It writes nothing to the client. **It is also the first instrument that can answer "is any

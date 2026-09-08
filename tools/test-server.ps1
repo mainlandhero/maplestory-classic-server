@@ -223,6 +223,49 @@
     control PASS). FIXED: the pages of every header already caught are PINNED on every window.
     Given (1), the next window over a re-hit slot should catch the store.
 
+    T20 (NEW 2026-09-08). THE OVERNIGHT RUN - SURVIVE, do not measure. The owner: "our goal is to
+    leave the client running overnight without it exiting." That is a different run from every
+    one below it, and it wants a different command:
+
+      -SetFieldProbe -PoolSentry -SentryQuiet -SentryRepair -GuardPage -PinPatches
+
+    NO -SentryWriteWatch. The write watch only OBSERVES: it makes pool pages read-only around
+    each predicted firing and single-steps every write through them, up to 20 000 faults per
+    window, ~160 windows in eight hours. It cannot prevent anything, and overnight it is pure
+    risk and CPU. -SentryQuiet is the long-run cadence (no dumps, no 68-thread stack scan,
+    2 s walk except near a firing) and it KEEPS the repair.
+
+    The two surfaces are covered by different mechanisms, and both are prevention, not
+    observation:
+      0x20 pool headers -> the sentry finds the damaged header and REPAIRS it before the free
+                           that would be fatal. Proven: runs 3 and 4 ended with a clean pool.
+      0x40 map nodes    -> the guard page. The writer's damage only becomes fatal when the
+                           pool hands its stale address to a LIVE object (run 2: an empty
+                           map's head node, +2 through a recycled address). The quarantine
+                           never hands a 0x40 address back within 10 minutes, so the increment
+                           lands on a decommitted page nobody owns, is logged, and the page is
+                           recommitted. The live object is never touched.
+
+    WHAT TO READ IN THE MORNING, in client-patched\maplecw-hook.log:
+      "GUARD PAGE ARMED ... control PASS"  - it armed. "control FAIL" or a prologue-mismatch
+                    line means it stood down and the client ran unpatched by it.
+      the "guard page:" heartbeat, every 60 s. "N recycled" climbing after the first ten
+                    minutes is the intended steady state.
+      "***** N FELL BACK - the class is NO LONGER COVERED *****" - THE ONE FAILURE THAT LOOKS
+                    LIKE A HEALTHY RUN. It means allocation outran the 10-minute retirement
+                    queue and the 0x40 class went back to the client's own pool. Any number
+                    above zero and the rest of the night is uncovered. Report the number.
+      "GUARD PAGE - STALE WRITE at X ... RIP R" - the writer, named, AND neutralised. Several
+                    of these with the client still up is the run succeeding, not failing.
+      "SENTRY REPAIR" lines - the 0x20 half doing its job.
+    If the client is still up in the morning, say for how long and paste those counters. If it
+    is not, client-exit.log and the last heartbeat say which surface gave way.
+
+    UNKNOWN, said plainly: no run has passed 70 minutes, so eight hours is a long extrapolation
+    from a short measurement, and nothing rules out a cause that only shows up at hour three.
+    The retirement queue, the thread parking and the whole guard page have never run on a
+    client - this is their first launch as well as the first survival attempt.
+
     RUN 5 (2026-09-08 build). NAME THE WRITER ON BOTH SURFACES IN ONE LAUNCH. The write watch
     (0x20 headers, windows) and the GUARD PAGE (0x40, quarantine) are complementary and run
     together. Run 5 died at 3.5 min on a 0x40 map node used +2 (heap-wild-write dump 2) - a
@@ -2047,6 +2090,28 @@ function Show-TestPlan {
         Write-Host '       except within 5s of a predicted firing. The 180s period is LEARNED'
         Write-Host '       from the first two catches, so nothing is assumed, and a catch'
         Write-Host '       outside the window resets it. Keep the repair either way.'
+        Write-Host '    0i. THE OVERNIGHT RUN - the goal is to SURVIVE, not to measure.' -ForegroundColor Green
+        Write-Host '       -PoolSentry -SentryQuiet -SentryRepair -GuardPage -PinPatches'
+        Write-Host '       and NO -SentryWriteWatch: the watch only observes, and overnight it'
+        Write-Host '       is 160 windows of read-only pages and single-stepped writes for no'
+        Write-Host '       protection at all. -SentryQuiet keeps the repair and drops the'
+        Write-Host '       dumps, the stack scan and the 100ms walk.'
+        Write-Host '       Both surfaces are PREVENTED, by different means:'
+        Write-Host '         0x20 headers -> the sentry repairs the header before the free'
+        Write-Host '                         that would be fatal (runs 3 and 4: clean pool).'
+        Write-Host '         0x40 nodes   -> the guard page never hands a freed address back'
+        Write-Host '                         within 10 min, so the writer increments a dead'
+        Write-Host '                         page instead of a live map node (the run-2 death).'
+        Write-Host '       In the morning, in client-patched\maplecw-hook.log:'
+        Write-Host '         "GUARD PAGE ARMED ... control PASS"  -> it armed'
+        Write-Host '         the "guard page:" heartbeat, "N recycled" climbing = steady state'
+        Write-Host '         "N FELL BACK - NO LONGER COVERED"    -> THE FAILURE THAT LOOKS' -ForegroundColor Yellow
+        Write-Host '                  HEALTHY. Allocation outran the queue; report the number.' -ForegroundColor Yellow
+        Write-Host '         "GUARD PAGE - STALE WRITE ... RIP R" -> the writer, named AND'
+        Write-Host '                  neutralised. Several of these with the client still up'
+        Write-Host '                  is the run WORKING.'
+        Write-Host '       UNKNOWN: no run has passed 70 min, so 8 hours is a long guess from a'
+        Write-Host '       short measurement - and the guard page has never run on a client.'
         Write-Host '    0j. NAME THE WRITER - two surfaces, one launch (2026-09-08).' -ForegroundColor Yellow
         Write-Host '       -SentryWriteWatch (0x20 headers) AND -GuardPage (0x40 quarantine)'
         Write-Host '       together. The guard serves the 0x40 class one-slot-per-page and'

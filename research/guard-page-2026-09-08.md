@@ -35,10 +35,13 @@ While armed for a chosen size class (default `0x40`):
   runs on to the next one.
 
 The 2 GB reserve is 512 K one-page slots. It is address space only; committed memory is one 4 KB
-page per *live* slot, and a decommitted page costs nothing but its address. Bucket 2 served
-18 758 allocations in a 50-minute run (`dumps/…-358616…`), so the reserve is far more than a
-long session needs; if the cursor exhausts it, allocation falls back to the client's own and the
-heartbeat says so.
+page per *live* slot, and a decommitted page costs nothing but its address.
+
+**A retired address comes back after 600 s** (`REUSE_AFTER_MS`), and §7 is why: without that the
+reserve is a budget of *total* allocations rather than a working set, and it does not last a
+night. The delay is three firings of the writer's own 180 s clock, so a stale pointer taken at
+the moment of a free still faults for three periods after it. Beyond the delay, a page comes
+back and the exposure returns to what the client's own pool has after a few milliseconds.
 
 ## 2. Why this is safe on the client's hottest subsystem
 
@@ -180,3 +183,81 @@ finds, and the review found them; what a run will add is whether Themida objects
 allocator's first fifteen bytes changing (the prologue check and the `identity:` line will say)
 and whether a `0x40` class served from guard pages changes the client's behaviour in any way the
 write watch or the sentry can see.
+
+---
+
+## 7. Overnight: the reserve was a nine-minute budget, and a wrong number said otherwise
+
+The owner, 2026-09-08: *"Our goal is to leave the client running overnight without it exiting."*
+
+That is a different goal from naming the writer, and checking the build against it found the
+module could not have lasted the night.
+
+### 7.1 The wrong number
+
+§1 said *"bucket 2 served 18 758 allocations in a 50-minute run, so the reserve is far more than
+a long session needs."* **That is a live-object count, not a rate.** The pool's counter at
+`ctx + i*4 + 0x14` is `inc`remented at `0x14019b8ca` on allocate and `dec`remented at
+`0x14019bc36` on free [L] - it is how many `0x40` objects were alive at the instant of the dump.
+Cumulative allocations over those 50 minutes are **unmeasured**, and every map change, mob spawn
+and despawn churns this class.
+
+`tools/poolchain.py` prints the field as `allocations served`, and its own header calls it
+*"allocations served / objects live"* - an ambiguity read the wrong way, then written into the
+design's justification as a fact. `CLAUDE.md`'s rule about units, one more time: **the field's
+meaning came from a label, and the label was not checked against the listing.**
+
+### 7.2 What that meant
+
+The cursor only ever advanced, so the reserve was a budget of 512 K total allocations of the
+class. At a thousand a second - a rate nobody has measured but which is unremarkable for map
+nodes - that is **under nine minutes**, after which every allocation falls back to the client's
+own pool and the quarantine covers nothing. Against an eight-hour goal, and with no measurement
+of the rate either way, that is not a risk worth taking on a run that costs the owner a night.
+
+The failure mode is the one this project keeps meeting: it is **silent**. A fallen-back run
+looks exactly like a protected one, right up to the death it was meant to prevent.
+
+### 7.3 The fix
+
+A retirement queue. Freed slots are pushed in free order; an allocation takes the head **only if
+it was freed more than `REUSE_AFTER_MS` (600 s) ago**, and otherwise takes a fresh page from the
+cursor. The queue is in free order, so one look at the head decides it. What must now fit in the
+reserve is not every allocation of the night but the allocations made **during one 600-second
+window** - about 800 a second sustained. The delay is three periods of the 180 s clock.
+
+The trade is stated rather than hidden: an absolute guarantee that lasted nine minutes becomes a
+600-second guarantee that lasts as long as the client runs. A stale pointer older than ten
+minutes writes into a live quarantined slot, which is the exposure the client's own pool has
+after milliseconds.
+
+And the exhaustion is now **loud**: the heartbeat prints
+`***** N FELL BACK - the class is NO LONGER COVERED *****` rather than a quiet `N fell back`,
+because that counter above zero is the difference between a protected night and an unprotected
+one, and nothing else on screen would say which happened.
+
+### 7.4 The overnight run is not the measuring run
+
+`-SentryWriteWatch` **observes**; it protects nothing. Overnight it is ~160 windows of read-only
+pool pages and single-stepped writes, up to 20 000 faults each. The survival recipe drops it and
+takes `-SentryQuiet` (no dumps, no 68-thread stack scan, a 2 s walk except near a predicted
+firing), which keeps the repair. Test plan item T20.
+
+Both death surfaces are then covered by *prevention*, not observation:
+
+| surface | mechanism | evidence it works |
+|---|---|---|
+| `0x20` pool header | the sentry repairs the header before the free that would be fatal | runs 3 and 4 ended with a clean pool |
+| `0x40` map node | the address is not handed back, so the increment lands on a dead page instead of a live node | **none - this is its first launch** |
+
+The `0x40` row is the honest one. Run 2's death was the writer incrementing an *empty map's head
+node* through an address the pool had recycled into it; the quarantine breaks that by refusing to
+recycle. That is an argument, not a measurement.
+
+### 7.5 What is still unknown
+
+No run has passed 70 minutes. Eight hours is a long extrapolation from a short measurement, and
+nothing in this file rules out a cause that first appears at hour three - including the two
+close-time faults (`0x14094e190`, `0x141d12df0`) that were recorded and never chased. The
+allocation rate of the `0x40` class is still unmeasured; the first night's `recycled` and
+`fell back` counters will measure it.
