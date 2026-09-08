@@ -137,6 +137,43 @@ reviewing: both pool frees read the one `HeapFree` slot (60 readers in all), the
 `0x100` header to that arm, `HeapFree` gets `body-8`, and the allocator overwrites `rax` before
 reading it, so the trampoline's clobber is safe. 97 grap-stub tests.
 
+**2026-09-08: DECOMPILING FOUND FIVE CANDIDATE WRITERS, and it cost no client run.**
+`research/the-180-second-tick-family-2026-09-08.md`. Scanning `.text` for the 180 000 ms
+immediate (with 60 s and 30 s as controls, 98 and 154 hits) finds 42 sites, **16** of which are
+the ticker template `FUN_1408fcaa0(last, 180000, now)` with `LAST := now` on the firing branch -
+the shape predicted from timing alone last week, now read off the listing. **Five of the sixteen
+allocate a small array, take element 0's address, add a fixed offset, then LOAD a 32-bit value,
+INCREMENT or DECREMENT it, and STORE it back** [L]:
+
+| function | op | offset |
+|---|---|---|
+| `FUN_140c93530` | inc | `+0x90` |
+| `FUN_140c936a0` | inc | `+0x94` |
+| `FUN_140c93810` | dec | `+0xc0` |
+| `FUN_140c93b70` | dec | `+0xe4` |
+| `FUN_140c93930` | dec | `+0x220` |
+
+**Two increments and three decrements explain the observed value family `1`, `2`, `-1`**, which
+no single-operation hypothesis does. Each calls `FUN_140ca61d0` with `edx=5` - the 28-byte
+allocation already fingerprinted as firing 180 s apart ~100 ms before every catch, 14/14. Found
+first by watching the client, now found again by reading it. The controls are what make it mean
+something: 240 s has 3 tick functions and **0** with this shape, 90 s has 0, 60 s has 22 and
+**1**. All five are live code with real call sites.
+
+**NOT established, and the file says so at length**: none has been observed executing - the live
+caller recorded in the runs is `0x14491cafd`, inside `.themida`, so [I] Themida likely runs a
+copy and `.text` gives us the logic rather than the instruction. And the tempting overrun reading
+(`+0x90` is 144 bytes past a 28-byte buffer) **could not be confirmed against either crash dump**,
+because the buffer is a per-tick local that is freed at the bottom of the tick - by crash time
+that memory has churned, so the dump cannot see what was there. A negative from an instrument
+that cannot observe the thing is not evidence. Mechanism still open between an overrun and a
+stale base pointer.
+
+**What it buys**: five addresses to watch, free, on a run that is already planned -
+`-Probe "watch@140c93530,watch@140c936a0,watch@140c93810,watch@140c93b70,watch@140c93930"`.
+They fire and the writer is one of five known instructions; they never fire and the Themida copy
+is what executes, which closes this direction cheaply. Either answer is progress.
+
 **2026-09-08: five live-server fixes, all NEW and none seen on a client yet.** 2152 workspace
 tests.
 
