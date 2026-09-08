@@ -247,15 +247,24 @@
       (d) LEVEL UP - needs TWO clients on ONE map. Level one and watch the OTHER screen for the
           animation and sound. This cannot be confirmed from the server side: the client drops
           the packet in silence if that observer does not already hold the leveller's spawn.
-      (e) MAPLE ADMINISTRATOR - Henesys, far left near the portal.
-            a list box with three lines            -> pick Level up: expect a level, an EXP
-                                                      line, +5 AP.
-            a box with NO clickable lines          -> dialog kind right, #L markup wrong; a
-                                                      6-byte 0x00F3 body in world.log says so.
-            no box at all                          -> the branch did not fire; grep world.log
-                                                      for 0x0151 and 0x00F2 on template 9010000.
-          Then click again the SAME session and pick the same option: it must REFUSE IN WORDS,
-          never go silent, and the log must say NOTHING PAID. The daily reset is UTC midnight.
+      (e) !tool - type it in chat on a NON-GM account. It is a public command.
+            a box with the Maple Administrator's PORTRAIT and three numbered lines
+                                                   -> the whole chain works. Pick Level up:
+                                                      expect a level, an EXP line, +5 AP.
+            three lines but NO PORTRAIT            -> the speaker template is not resolving.
+                                                      This is the ONE thing the tests cannot
+                                                      see, so look at the portrait on purpose.
+            "is not a command"                     -> the dispatcher never reached it.
+            nothing at all                         -> worse than a refusal; check world.log for
+                                                      the 0x00E7 and whether anything went back.
+          Then run !tool again the SAME session and pick the same option: it must REFUSE IN
+          WORDS, never go silent, and the log must say NOTHING PAID. Reset is UTC midnight.
+          Leaf Points are per ACCOUNT (a second character is refused); Level up and the AP/SP
+          reset are per CHARACTER (a second character still gets its own).
+      (f) THE MAPLE ADMINISTRATOR HERSELF - Henesys, far left near the portal. Click them.
+          They must give their QUEST or their greeting and NEVER the favours menu. That is the
+          point of (e) being a command: the client's click fork is keyed on their TEMPLATE, so
+          a summoned copy of their would send bytes identical to clicking them.
 
     T20 (NEW 2026-09-08). THE OVERNIGHT RUN - SURVIVE, do not measure. The owner: "our goal is to
     leave the client running overnight without it exiting." That is a different run from every
@@ -2143,13 +2152,21 @@ function Show-TestPlan {
         Write-Host '           EXEMPT by design and must keep dropping.'
         Write-Host '       (d) LEVEL UP needs TWO clients on ONE map. Level one, watch the'
         Write-Host '           OTHER screen. The server cannot confirm this one.'
-        Write-Host '       (e) MAPLE ADMINISTRATOR, Henesys, far left by the portal.'
-        Write-Host '             three clickable lines -> pick Level up: level, EXP, +5 AP'
-        Write-Host '             a box, no lines       -> #L markup wrong (6-byte 0x00F3)'
-        Write-Host '             no box at all         -> branch did not fire; grep world.log'
-        Write-Host '                                      for 0x0151 / 0x00F2 on 9010000'
-        Write-Host '           Click again the same session: it must REFUSE IN WORDS and log'
-        Write-Host '           NOTHING PAID. Daily reset is UTC midnight.'
+        Write-Host '       (e) !tool - type it in chat on a NON-GM account (it is public).'
+        Write-Host '             box with their PORTRAIT + 3 lines -> works. Pick Level up:'
+        Write-Host '                                                level, EXP line, +5 AP'
+        Write-Host '             3 lines but NO PORTRAIT -> speaker template not resolving.'
+        Write-Host '                                        The ONE thing tests cannot see -'
+        Write-Host '                                        look at the portrait on purpose.'
+        Write-Host '             "is not a command"      -> dispatcher never reached it'
+        Write-Host '             nothing at all          -> check world.log for the 0x00E7'
+        Write-Host '           Run !tool again the same session: it must REFUSE IN WORDS and'
+        Write-Host '           log NOTHING PAID. Reset is UTC midnight. Leaf Points are per'
+        Write-Host '           ACCOUNT; Level up and the AP/SP reset are per CHARACTER.'
+        Write-Host '       (f) THE ADMINISTRATOR HERSELF, Henesys. Click them: they must give'
+        Write-Host '           their QUEST or their greeting, NEVER the favours menu. That is why'
+        Write-Host '           (e) is a command - the click fork is keyed on their TEMPLATE, so'
+        Write-Host '           a summoned copy would send bytes identical to clicking them.'
         Write-Host '    0i. THE OVERNIGHT RUN - the goal is to SURVIVE, not to measure.' -ForegroundColor Green
         Write-Host '       -PoolSentry -SentryQuiet -SentryRepair -GuardPage -PinPatches'
         Write-Host '       and NO -SentryWriteWatch: the watch only observes, and overnight it'

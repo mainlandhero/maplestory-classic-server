@@ -1,31 +1,31 @@
-//! **The Maple Administrator's three daily favours, driven through the real dispatcher.**
+//! **`!tool`'s three daily favours, driven through the real dispatcher.**
 //!
 //! `crate::dailyperks`'s own unit tests cover the table, the menu markup and the words;
-//! `store::dailyperks`'s cover the UTC-midnight boundary. Neither of them proves that clicking
-//! the NPC produces a menu, or that clicking a line produces a grant - and `CLAUDE.md` records
-//! what happens to a subsystem that is fully decoded, implemented, tested and never connected:
-//! *"on screen they look identical to not existing."*
+//! `store::dailyperks`'s cover the UTC-midnight boundary. Neither of them proves that typing
+//! the command produces a menu, or that clicking a line produces a grant - and `CLAUDE.md`
+//! records what happens to a subsystem that is fully decoded, implemented, tested and never
+//! connected: *"on screen they look identical to not existing."*
 //!
 //! So every test here goes in through `Session::handle` with a real packet, opcode and all,
 //! and asserts on **the database** rather than on the sentence that was sent. A test that
 //! checks the reply and not the row is a test of the words.
 //!
-//! # Why the click arrives as `0x0151` and not `0x00F2`
+//! # The entry point is a chat line, and it used to be a click
 //!
-//! Both reach the same handler and this file uses the quest-request one because it carries the
-//! NPC **template** in the packet, so no map placement has to be faked. The `0x00F2` path
-//! resolves an *object* id through `config.npcs[map]` first; that mapping is `on_npc_click`'s
-//! and is exercised by the taxi and shop features already.
-//!
-//! **`0x0151` is also the packet that would have been missed.** Quest 500005 names this NPC,
-//! so the client sends the quest-shaped request rather than the click-shaped one whenever it
-//! thinks that quest is offerable - the same fork that made Phil arrive as either packet.
+//! Until 2026-09-08 this feature was reached by clicking template 9010000, which swallowed the
+//! Maple Administrator's own quest 500005. The owner asked for the quest back and for a public
+//! `!tool` command instead, so every test that used to open the menu with a `0x0151` now sends
+//! a real `0x00E7` chat packet - and one new test asserts the opposite direction: that a click
+//! on 9010000 goes to their quest and produces **no** menu.
 //!
 //! # What is NOT covered here, named rather than left implicit
 //!
 //! * **The screen.** Nobody has watched this menu draw. It is the same type-6 box the taxis
 //!   are proven on (`research/fixtures/type6-menu-renders-and-taxi-rides-world.log`), which is
-//!   why it was chosen, but that is a **[D]** for this NPC and not an **[L]**.
+//!   why it was chosen, but that is a **[D]** for this speaker template and not an **[L]**.
+//! * **`!help` naming `!tool`.** `PLAYER_COMMANDS` lives in `session::mod.rs`, which this work
+//!   did not own. The command dispatches - `the_tool_command_is_public_and_not_gm_gated` proves
+//!   it - but a player is not yet *told* it exists.
 //! * **The UTC rollover against a real clock.** `store::dailyperks` tests the boundary
 //!   arithmetic directly at 23:59:59Z and 00:00:00Z; here it is simulated by moving the stored
 //!   claim day back one, which is the same state a real midnight produces.
@@ -82,12 +82,33 @@ fn character(store: &Store, account_id: i64, id: u32) -> Character {
         .expect("the character exists")
 }
 
-/// A `0x0151` naming an NPC template. The 9-byte fixed head and nothing after it, which
-/// `parse_quest_request` accepts and reports with both optionals `None`.
-fn click(template: u32) -> Vec<u8> {
+/// A real `0x00E7` chat line, built the way `session::gm`'s own tests build one: a `u32`, the
+/// text with a `u16` length, and the trailing byte.
+fn chat(text: &str) -> Vec<u8> {
+    let mut b = net::opcode::CLIENT_CHAT.to_le_bytes().to_vec();
+    b.extend_from_slice(&[0u8; 4]);
+    b.extend_from_slice(&(text.len() as u16).to_le_bytes());
+    b.extend_from_slice(text.as_bytes());
+    b.push(3);
+    b
+}
+
+/// **The entry point**: `!tool`, exactly as the player types it. Built from the constant rather
+/// than spelled out, so renaming the command breaks the dispatcher and these tests together
+/// instead of leaving the tests passing against a word nobody can type.
+fn tool() -> Vec<u8> {
+    chat(world::dailyperks::COMMAND_TYPED)
+}
+
+/// A `0x0151` naming a quest and an NPC template. The 9-byte fixed head and nothing after it,
+/// which `parse_quest_request` accepts and reports with both optionals `None`.
+///
+/// Only the restoration test uses this now: the daily favours are no longer reachable by
+/// clicking anybody.
+fn quest_click(template: u32, quest: u32) -> Vec<u8> {
     let mut b = net::script::CLIENT_QUEST_REQUEST.to_le_bytes().to_vec();
     b.push(net::script::QUEST_ACTION_START);
-    b.extend_from_slice(&0u32.to_le_bytes()); // quest id - never read on this branch
+    b.extend_from_slice(&quest.to_le_bytes());
     b.extend_from_slice(&template.to_le_bytes());
     b
 }
@@ -113,8 +134,8 @@ fn close_menu() -> Vec<u8> {
 
 /// Open the menu and take a favour, in the two packets a player sends.
 fn take(s: &mut Session, perk: Perk) -> Vec<world::Reply> {
-    let menu = s.handle(&click(ADMIN_TEMPLATE));
-    assert_eq!(menu.len(), 1, "the click must answer with exactly one box");
+    let menu = s.handle(&tool());
+    assert_eq!(menu.len(), 1, "the command must answer with exactly one box");
     s.handle(&pick(perk.selection()))
 }
 
@@ -155,17 +176,19 @@ fn rewind_claim(store: &Store, account_id: i64, character_id: u32, perk: Perk) {
 // The menu
 // ---------------------------------------------------------------------------------------
 
-/// **The click is answered, and with the menu.** This is the wiring test: everything else in
-/// this feature could be right and this one branch missing, and on screen that is an NPC who
-/// says nothing.
+/// **The command is answered, and with the menu.** This is the wiring test: everything else in
+/// this feature could be right and this one dispatcher arm missing, and on screen that is a
+/// command that does nothing - which `session::gm`'s own module doc records as having cost
+/// client launches before.
 #[test]
-fn clicking_the_administrator_opens_the_three_option_menu() {
+fn the_tool_command_opens_the_three_option_menu() {
     let (mut s, _store, _acct, _id) = session();
-    let out = s.handle(&click(ADMIN_TEMPLATE));
+    let out = s.handle(&tool());
     assert_well_formed(&out);
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].opcode, net::script::SCRIPT_MESSAGE);
-    // The body is a type-6 box from this template, decoded rather than trusted.
+    // The body is a type-6 box spoken by the Administrator's template - which is the ICON, the
+    // portrait beside the text, and not a routing key. Decoded rather than trusted.
     assert_eq!(out[0].body, net::script::npc_menu(ADMIN_TEMPLATE, &world::dailyperks::menu_text([false; 3])));
     let text = world::dailyperks::menu_text([false; 3]);
     assert!(text.contains("Gain 1000 Leaf Points"));
@@ -174,20 +197,109 @@ fn clicking_the_administrator_opens_the_three_option_menu() {
     assert_eq!(text.matches("#L").count(), 3, "exactly three options, no more");
 }
 
-/// **Another NPC is untouched.** The branch matches one template and must not swallow a click
-/// meant for anybody else - a QoL NPC that ate every conversation would be a worse bug than no
-/// QoL NPC.
+/// **The command is PUBLIC.** The owner, 2026-09-08: *"Introduce a new public command !tool"*. The
+/// account in this harness has no GM flag, so if the arm ever slipped below the `is_gm` gate in
+/// `on_chat` this text would come back as an ordinary `UserChat` line - a player saying
+/// "!tool" out loud - which is exactly what happens to `!item` today.
+///
+/// Both halves are asserted: that the account really is not a GM (without which the test proves
+/// nothing), and that the answer is a script box and not chat.
+#[test]
+fn the_tool_command_is_public_and_not_gm_gated() {
+    let (mut s, store, account_id, _id) = session();
+    assert!(!store.is_gm(account_id).unwrap(), "positive control: this account is NOT a GM");
+    let out = s.handle(&tool());
+    assert_well_formed(&out);
+    assert!(
+        out.iter().all(|r| r.opcode != net::userchat::USER_CHAT),
+        "a gated command is said out loud instead of run: {out:?}"
+    );
+    assert!(out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE), "{out:?}");
+}
+
+/// **The Maple Administrator has their quest back.** The owner, 2026-09-08: *"instead of losing the
+/// Maple Admin quest"*. For one day template 9010000 was claimed by this feature and quest
+/// 500005 was never offered; this is the regression that says it is not claimed any more.
+///
+/// Three effects, not one - the failure this could have is a *partial* restoration:
+/// the quest row is written, the reply is not a daily-perk menu, and no favour was claimed.
+#[test]
+fn clicking_the_placed_administrator_runs_her_own_quest_and_not_the_menu() {
+    let (mut s, store, acct, id) = session();
+    let quest = world::dailyperks::ADMIN_QUEST;
+    let out = s.handle(&quest_click(ADMIN_TEMPLATE, quest));
+    assert_well_formed(&out);
+    assert!(
+        store.quest_row(id, quest).unwrap().is_some(),
+        "quest {quest} was not written down - they are still swallowed"
+    );
+    for r in &out {
+        assert!(!r.what.contains("MENU (type 6)"), "the daily menu answered their click: {}", r.what);
+        assert_ne!(
+            r.body,
+            net::script::npc_menu(ADMIN_TEMPLATE, &world::dailyperks::menu_text([false; 3])),
+            "the daily menu answered their click"
+        );
+    }
+    for perk in PERKS {
+        assert_eq!(
+            store
+                .daily_claim_day(perk.scope(), claim_row(perk, acct, id), perk.store_key())
+                .unwrap(),
+            None,
+            "{perk:?} was claimed by clicking an NPC"
+        );
+    }
+}
+
+/// **Another NPC is untouched**, and now so is every NPC: nothing in the click chain can reach
+/// the daily menu at all. A QoL NPC that ate a conversation would be a worse bug than no QoL
+/// NPC, and the way that used to be possible was a template match.
 #[test]
 fn another_npc_does_not_get_the_daily_menu() {
     let (mut s, _store, _acct, _id) = session();
-    let out = s.handle(&click(2100)); // Heena
+    let out = s.handle(&quest_click(2100, 0)); // Heena
     for r in &out {
         assert!(
-            !r.what.contains("MENU (type 6) from the Maple Administrator"),
+            !r.what.contains("MENU (type 6)"),
             "the daily menu answered a click on NPC 2100: {}",
             r.what
         );
     }
+}
+
+/// **Ten `!tool`s in a row leak nothing.** The command was asked to *create an NPC*, and it
+/// deliberately creates none - so the thing that could go wrong is an object, a conversation or
+/// a claim accumulating per invocation. All three are checked: every call answers with exactly
+/// one script box, no call ever sends an NPC-pool packet, and the day is untouched throughout.
+#[test]
+fn ten_tools_in_a_row_spawn_nothing_and_claim_nothing() {
+    let (mut s, store, acct, id) = session();
+    for round in 0..10 {
+        let out = s.handle(&tool());
+        assert_well_formed(&out);
+        assert_eq!(out.len(), 1, "round {round} answered with {} packets", out.len());
+        assert_eq!(out[0].opcode, net::script::SCRIPT_MESSAGE, "round {round}");
+        for r in &out {
+            assert_ne!(r.opcode, net::opcode::NPC_ENTER_FIELD, "round {round} spawned an NPC object");
+            assert_ne!(
+                r.opcode,
+                net::opcode::NPC_CHANGE_CONTROLLER,
+                "round {round} spawned an NPC object the other way"
+            );
+        }
+    }
+    for perk in PERKS {
+        assert_eq!(
+            store
+                .daily_claim_day(perk.scope(), claim_row(perk, acct, id), perk.store_key())
+                .unwrap(),
+            None,
+            "{perk:?} was claimed by opening the box"
+        );
+    }
+    // And the favours still work after all that, so the repeats did not wedge the conversation.
+    assert!(log_of(&take(&mut s, Perk::LeafPoints)).contains("LeafPoints PAID"));
 }
 
 /// Closing the box takes nothing and leaves no conversation behind for the next reply to walk
@@ -208,7 +320,7 @@ fn claim_row(perk: Perk, account_id: i64, character_id: u32) -> i64 {
 #[test]
 fn closing_the_menu_claims_nothing() {
     let (mut s, store, acct, id) = session();
-    s.handle(&click(ADMIN_TEMPLATE));
+    s.handle(&tool());
     assert!(s.handle(&close_menu()).is_empty(), "a deliberate close needs no answer");
     for perk in PERKS {
         assert_eq!(
@@ -230,7 +342,7 @@ fn closing_the_menu_claims_nothing() {
 fn an_out_of_range_selection_is_answered_and_claims_nothing() {
     let (mut s, store, _acct, id) = session();
     for selection in [PERKS.len() as u32, 99, u32::MAX, u32::MAX - 1] {
-        s.handle(&click(ADMIN_TEMPLATE));
+        s.handle(&tool());
         let out = s.handle(&pick(selection));
         assert_well_formed(&out);
         assert!(log_of(&out).contains("NOTHING CLAIMED"), "selection {selection}");
@@ -251,7 +363,7 @@ fn an_out_of_range_selection_is_answered_and_claims_nothing() {
 fn the_menu_marks_what_has_been_used_without_moving_anything() {
     let (mut s, _store, _acct, _id) = session();
     take(&mut s, Perk::LevelUp);
-    let out = s.handle(&click(ADMIN_TEMPLATE));
+    let out = s.handle(&tool());
     assert_eq!(out.len(), 1);
     assert_eq!(
         out[0].body,
@@ -567,7 +679,7 @@ fn all_three_can_be_taken_once_each_in_a_day_and_no_more() {
     assert_eq!(after_all.level, 2);
 
     // The menu now shows all three used, and every one refuses.
-    let menu = s.handle(&click(ADMIN_TEMPLATE));
+    let menu = s.handle(&tool());
     assert_eq!(
         menu[0].body,
         net::script::npc_menu(ADMIN_TEMPLATE, &world::dailyperks::menu_text([true; 3]))
@@ -672,7 +784,7 @@ fn no_path_through_this_feature_is_silent_except_a_deliberate_close() {
     // Open, take, re-open, be refused - twice round, for each option.
     for _round in 0..2 {
         for perk in PERKS {
-            assert_well_formed(&s.handle(&click(ADMIN_TEMPLATE)));
+            assert_well_formed(&s.handle(&tool()));
             assert_well_formed(&s.handle(&pick(perk.selection())));
         }
     }
@@ -680,6 +792,6 @@ fn no_path_through_this_feature_is_silent_except_a_deliberate_close() {
     // design and is safe: the dialog is already gone and `0x00F3` holds no latch.
     assert!(s.handle(&pick(0)).is_empty());
     // And the deliberate close.
-    s.handle(&click(ADMIN_TEMPLATE));
+    s.handle(&tool());
     assert!(s.handle(&close_menu()).is_empty());
 }

@@ -1,11 +1,15 @@
-//! **The Maple Administrator's three daily favours**: 1000 Leaf Points, a level, and an
-//! AP/SP reset. Level-up and the reset are once per **character** per UTC day; Leaf Points are
-//! once per **account** - see [`Perk::scope`].
+//! **`!tool`'s three daily favours**: 1000 Leaf Points, a level, and an AP/SP reset. Level-up
+//! and the reset are once per **character** per UTC day; Leaf Points are once per **account** -
+//! see [`Perk::scope`].
 //!
 //! The owner, 2026-09-08: *"repurpose the 'MapleStory Administrator' NPC into a quality-of-life
 //! NPC ... Gain 1000 Leaf Points / Level up (grant exactly the EXP needed to reach the next
 //! level) / Reset AP & SP ... each option is usable once per day, and the daily
 //! allowance resets at UTC midnight."*
+//!
+//! And later the same day, which is what this module now implements: *"instead of losing the
+//! Maple Admin quest. Introduce a new public command `!tool` to create a new NPC template so
+//! that this can be created. Just use MapleStory administrator as the NPC icon."*
 //!
 //! Labels are the project's: **[L]** read off this client's listing, its WZ or a capture,
 //! **[D]** derived from two or more [L] facts, **[I]** inferred - policy nothing on this
@@ -43,19 +47,56 @@
 //!  idle1  "Feel free to talk to me anytime you need my help."
 //! ```
 //!
-//! ## They have a quest, and this deliberately swallows it
+//! ## They have a quest, they keep it, and that is why this is a command
 //!
 //! Quest **500005** names `9010000` as both its start and its turn-in NPC, and its own
 //! `QuestInfo.2` reads *"I've already collected all the mysterious letters and exchanged them
 //! for a gift today. Let's visit the Maple Administrator in Henesys again tomorrow."* **[L]**
-//! So the client's own data already makes this NPC a **daily** one - which is a pleasing
-//! corroboration of the design and also a hazard, because a client that thinks they have an
-//! offerable quest sends `0x0151` instead of `0x00F2` (`research/npc-click.md`, and the same
-//! fork that made Phil arrive as either packet).
 //!
-//! The owner asked to *repurpose* them, so both packets are claimed and quest 500005 is never
-//! offered. Recorded rather than silently done: if that quest is ever wanted back, this is the
-//! branch that took it.
+//! For one day this feature *swallowed* that quest: both click packets were claimed for
+//! template 9010000 and 500005 was never offered. The owner asked for it back, so the placed
+//! Administrator in Henesys is now untouched by this module - `session::npc` has no branch on
+//! their template at all - and the favours are reached by typing [`COMMAND`] instead.
+//!
+//! ## Why a command and not a summoned NPC object, which is what was asked for
+//!
+//! The literal reading of *"create a new NPC template"* is a second NPC **object** - a distinct
+//! object id drawn from template 9010000 - summoned onto the map beside the player. A runtime
+//! spawn is genuinely possible: `!npcecho` sent two extra NPCs with server-chosen object ids
+//! `6000` / `6001` long after field entry and **they appeared on screen**
+//! (`research/fixtures/damage-stub-and-npcecho-faded-world-extract.log`, 2026-08-21 00:16:09,
+//! *"the copies still faded"*). **[L]**
+//!
+//! It is the **click** that cannot be routed, and `research/npc-click.md` §2 says why. The
+//! client picks which packet a click sends inside `FUN_1428de280`, off its **own** tables:
+//!
+//! ```text
+//!   FUN_141e39b50(npc)   "this NPC has a non-empty script name"
+//!                        -> [npc+0x1f0], filled AT CONSTRUCTION from the quest singleton
+//!                           by TEMPLATE id (141e362dc..141e362f3)
+//!     yes -> FUN_141e3c5d0 -> the quest menu -> 0x0151  { u32 questId, u32 npcTEMPLATEid }
+//!     no  ------------------------------------> 0x00F2  { u32 npcOBJECTid, ... }
+//! ```
+//!
+//! **[L]** Only `0x00F2` carries an object id. Whenever the client thinks 9010000 has an
+//! offerable quest - which is exactly when the owner wants quest 500005 to work - the click arrives
+//! as `0x0151` carrying the template and nothing else, and a summoned copy drawn as 9010000 is
+//! **byte-for-byte indistinguishable from the real Administrator standing in Henesys**. Giving
+//! their quest back and routing a summoned copy's click to this menu are the same fork pointing
+//! two ways.
+//!
+//! Four other templates share the name *Maple Administrator* and have no quest - `800016`,
+//! `900000`, `900001`, `900002` - and one of those would fork to `0x00F2` and be routable. That
+//! is a real option and it is **not** taken here: it changes the icon to a template whose
+//! canvas nobody has rendered, it costs a client run to find out, and it buys a walk-and-click
+//! where a command already puts the box on screen instantly. Written down rather than left
+//! implicit, because it is the design the owner's sentence describes.
+//!
+//! So the "new NPC" this feature creates is a **speaker**, not a field object: a `0x055B` whose
+//! speaker field is [`ADMIN_TEMPLATE`], which is the portrait - *"just use MapleStory
+//! administrator as the NPC icon"* - and whose answers are told apart from every other NPC's by
+//! [`MENU_PATH`] rather than by any template or object id. Nothing is spawned, so nothing can
+//! leak across a map change, a relog, or ten [`COMMAND`]s in a row.
 //!
 //! # The menu is `0x055B` message type 6, and its indices are FIXED
 //!
@@ -91,7 +132,27 @@ use store::dailyperks::{utc_date, SCOPE_ACCOUNT, SCOPE_CHARACTER};
 
 /// The `Npc.wz` template id of the Maple Administrator in Henesys. **[L]** - see the module
 /// docs for how this was told apart from the four other templates of the same name.
+///
+/// **Since 2026-09-08 this is an ICON and nothing else.** It is the speaker field of every
+/// `0x055B` this feature sends, which is the portrait beside the text; it is *not* a template
+/// this server routes clicks on. The NPC that stands on that template in Henesys belongs to
+/// quest [`ADMIN_QUEST`] again and `session::npc` has no branch on them.
 pub const ADMIN_TEMPLATE: u32 = 9_010_000;
+
+/// The chat word that opens the menu, **without its `!`**: `!tool`.
+///
+/// **Public.** The owner, 2026-09-08: *"Introduce a new public command !tool"*. It is answered in
+/// `session::gm::on_chat` **before** the GM gate, beside `!rates` and `!help`, so every account
+/// can run it - see that function for why a refused command is said out loud instead.
+///
+/// What stops it being abused is that it grants nothing: it draws a box. The three favours
+/// behind it are gated on a database row per UTC day, so a player who types this a thousand
+/// times gets a thousand boxes and one day's allowance.
+pub const COMMAND: &str = "tool";
+
+/// [`COMMAND`] as the player types it, for help text and log lines. One constant so the `!`
+/// cannot end up in one place and not the other.
+pub const COMMAND_TYPED: &str = "!tool";
 
 /// What `String.wz/Npc.img/9010000/name` calls them. For log lines and for the greeting.
 pub const ADMIN_NAME: &str = "Maple Administrator";
@@ -101,9 +162,15 @@ pub const ADMIN_NAME: &str = "Maple Administrator";
 /// than quietly on screen.
 pub const ADMIN_MAP: u32 = 10_001_000;
 
-/// The quest this NPC carries in the client's own data, and which this feature swallows.
-/// **[L]** `gm-handbook/questlines.txt` rows `500005 Check 0.npc` and `500005 Check 1.npc`.
-pub const SWALLOWED_QUEST: u32 = 500_005;
+/// The quest the placed Administrator carries in the client's own data. **[L]**
+/// `gm-handbook/questlines.txt` rows `500005 Check 0.npc` and `500005 Check 1.npc`.
+///
+/// **This feature no longer touches it.** It was swallowed for one day - both click packets on
+/// template [`ADMIN_TEMPLATE`] were claimed - and the owner asked for it back on 2026-09-08:
+/// *"instead of losing the Maple Admin quest"*. The constant survives the change because the
+/// reason this is a command rather than a summoned NPC is precisely that this quest exists; see
+/// the module doc.
+pub const ADMIN_QUEST: u32 = 500_005;
 
 // ---------------------------------------------------------------------------------------
 // The three numbers that are policy
@@ -444,6 +511,53 @@ mod tests {
         assert_eq!(in_towns, vec![ADMIN_TEMPLATE], "only one of them stands in a town");
     }
 
+    /// **The command word, pinned.** `on_chat` splits on the `!` and then on whitespace, so a
+    /// word carrying either would be unreachable - and it is matched against a `&str` literal
+    /// arm, so a word with an upper-case letter would simply never fire. None of those failures
+    /// says anything on screen; they all read as "the command does nothing".
+    #[test]
+    fn the_command_word_is_something_the_chat_dispatcher_can_reach() {
+        assert_eq!(COMMAND, "tool", "the owner asked for !tool by name");
+        assert_eq!(COMMAND_TYPED, format!("!{COMMAND}"), "the two must not drift");
+        assert!(!COMMAND.contains('!'), "on_chat strips the ! before matching");
+        assert!(!COMMAND.contains(char::is_whitespace), "on_chat splits the name off at the first space");
+        assert!(COMMAND.chars().all(|c| c.is_ascii_lowercase()), "the match arm is case-sensitive");
+        assert!(!COMMAND.is_empty(), "the empty name is already the dispatcher's error arm");
+    }
+
+    /// **The quest is the Administrator's again, and this module only names it.** Nothing here
+    /// may route a click, so the one thing worth asserting is that the constant still points at
+    /// the quest whose existence is the whole reason this is a command - see the module doc.
+    /// Degrades to a no-op on a clean checkout, so it asserts a positive control first.
+    #[test]
+    fn the_administrators_own_quest_is_real_and_starts_and_ends_at_her() {
+        let quests = std::path::Path::new("../../gm-handbook/questlines.txt");
+        if !quests.exists() {
+            return;
+        }
+        let text = std::fs::read_to_string(quests).expect("questlines.txt");
+        let quest = ADMIN_QUEST.to_string();
+        let template = ADMIN_TEMPLATE.to_string();
+        let rows: Vec<Vec<&str>> = text.lines().map(|l| l.split('\t').collect()).collect();
+        assert!(rows.len() > 1_000, "positive control: {} rows loaded", rows.len());
+        let npc_rows: Vec<&Vec<&str>> = rows
+            .iter()
+            .filter(|f| f.len() == 4 && f[0] == quest && f[1] == "Check")
+            .filter(|f| f[2] == "0.npc" || f[2] == "1.npc")
+            .collect();
+        assert!(
+            !npc_rows.is_empty(),
+            "quest {ADMIN_QUEST} names no NPC - the reason this feature is a command has gone"
+        );
+        for row in npc_rows {
+            assert_eq!(
+                row[3], template,
+                "quest {ADMIN_QUEST} {} is not template {ADMIN_TEMPLATE}",
+                row[2]
+            );
+        }
+    }
+
     // -- the menu ------------------------------------------------------------------------
 
     /// **The selection number is the index into [`PERKS`], in both directions.** Everything
@@ -527,6 +641,10 @@ mod tests {
             all.push(claim_note(perk, 200, 20_704));
         }
         all.push(ADMIN_NAME.to_string());
+        // The command word reaches the screen twice - in `!help` and in the log line that says
+        // who opened the box - so it is held to the same rule as every sentence.
+        all.push(COMMAND.to_string());
+        all.push(COMMAND_TYPED.to_string());
         for s in all {
             assert!(s.is_ascii(), "not ASCII: {s:?}");
         }
