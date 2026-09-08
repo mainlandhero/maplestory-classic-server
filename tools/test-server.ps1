@@ -277,80 +277,95 @@
           point of (e) being a command: the client's click fork is keyed on their TEMPLATE, so
           a summoned copy of their would send bytes identical to clicking them.
 
-    T20 (NEW 2026-09-08). THE OVERNIGHT RUN - SURVIVE, do not measure. The owner: "our goal is to
-    leave the client running overnight without it exiting." That is a different run from every
-    one below it, and it wants a different command:
+    T20 (2026-09-08, REWRITTEN AFTER THE 12:01 RUN). THE OVERNIGHT RUN - SURVIVE, do not
+    measure. The owner: "our goal is to leave the client running overnight without it exiting."
 
-      -SetFieldProbe -PoolSentry -SentryQuiet -SentryRepair -GuardPage -GuardBucket 0x20 -PinPatches
+      -SetFieldProbe -PoolSentry -SentryQuiet -SentryRepair -GuardPage -PinPatches
 
-    -GuardBucket 0x20 IS NOT OPTIONAL AND THE DEFAULT IS WRONG FOR THIS. The 2026-09-08 run
-    died on a 0x20 slot; the default 0x40 came from runs 2 and 5 and would have quarantined
-    the wrong class. Budget ~230 MB extra committed memory for it.
+    -GuardBucket now DEFAULTS to 0x20+0x40. Do not type it.
 
-    THE MARKER IS NOW CHECKED FOR YOU. The launcher reads maplecw-hook.session back after
-    writing it and REFUSES to launch if a flag you asked for is not in it, printing
-    "SESSION MARKER: ..." either way. That guard is tested both directions - it refuses the
-    exact 2026-09-08 marker and accepts a correct one. The hook also now logs
-    "guard page: NOT ARMED - ... no guardpage= token" instead of returning in silence.
+    SETTLED AT 12:01 TODAY, DO NOT RE-TEST. The guard page armed on a client for the first
+    time ("GUARD PAGE ARMED: size class 0x20 ... control PASS"), and the client then ran
+    12:01:18 -> 13:58:14, 1h57m, the longest session this project has had. An inline hook on
+    the pool allocator, called from thirty threads thousands of times a second, does not
+    destabilise the client. That question is closed and no run needs to re-open it.
 
-    RUN IT FOR FIVE MINUTES FIRST. THEN leave it overnight.
-    The guard page has never run on a client. It puts an inline hook on the pool allocator,
-    which thirty threads call thousands of times a second, and it can stand down on its own
-    (prologue mismatch, or a failed self-test) - in which case the night is another plain
-    sentry run. Five minutes settles all of it:
-      "GUARD PAGE ARMED ... control PASS"  -> armed and self-tested. Go.
-      "control FAIL" / prologue mismatch  -> it stood down and REVERTED; the client is
-                                             unpatched by it. Do not leave it overnight,
-                                             report the line.
-      "guard page: NOT ARMED"             -> the token never arrived (should now be
-                                             impossible; the launcher refuses first).
-      the client dies within five minutes -> the hook itself is the problem. Relaunch
-                                             without -GuardPage and say so.
-      heartbeat "guard page: N served"    -> N climbing is the instrument working.
-                                             "0 recycled" for the first ten minutes is
-                                             CORRECT - nothing has aged out yet.
-      "FELL BACK" at any point            -> the class is uncovered from that moment.
-                                             Report the number; it is the churn measurement
-                                             nobody has.
-    Arming costs ~44 MB immediately (metadata and the retirement queue) and grows to roughly
-    230 MB as bucket-1 slots go live. That is the price of quarantining the hottest class.
+    TWO THINGS IT DID NOT DO, and both are what this build changes.
 
-    NO -SentryWriteWatch. The write watch only OBSERVES: it makes pool pages read-only around
-    each predicted firing and single-steps every write through them, up to 20 000 faults per
-    window, ~160 windows in eight hours. It cannot prevent anything, and overnight it is pure
-    risk and CPU. -SentryQuiet is the long-run cadence (no dumps, no 68-thread stack scan,
-    2 s walk except near a firing) and it KEEPS the repair.
+    (1) IT RAN OUT OF RESERVE AT SIX MINUTES. From the heartbeats: 627172 slots served in the
+    FIRST MINUTE (a startup burst, ~10000/s), then a steady 1560/s. The 1048576-slot cursor
+    was spent at 06:00 - four minutes before anything could age out of the 10-minute
+    retirement queue - and 419588 allocations fell back to the client's own pool before
+    recycling began at 10:00. Steady state alone (1560 x 600 = 936000) would have FITTED; the
+    burst is what broke it. FIXED by growing the cursor, not by shortening the window:
+    8388608 slots, 32 GB of address space (which is nearly free), and the 40-byte-a-slot
+    metadata array - 320 MB if committed up front, and the real reason the reserve could not
+    grow - is now committed lazily as the cursor advances. REUSE_AFTER_MS stays at 600 s: it
+    comes from the writer's 180 s clock (three firings), not from the reserve.
 
-    The two surfaces are covered by different mechanisms, and both are prevention, not
-    observation:
-      0x20 pool headers -> the sentry finds the damaged header and REPAIRS it before the free
-                           that would be fatal. Proven: runs 3 and 4 ended with a clean pool.
-      0x40 map nodes    -> the guard page. The writer's damage only becomes fatal when the
-                           pool hands its stale address to a LIVE object (run 2: an empty
-                           map's head node, +2 through a recycled address). The quarantine
-                           never hands a 0x40 address back within 10 minutes, so the increment
-                           lands on a decommitted page nobody owns, is logged, and the page is
-                           recommitted. The live object is never touched.
+    (2) IT DIED ON A CLASS WE WERE NOT QUARANTINING. The fatal object is a 0x40 slot whose
+    vtable pointer was incremented by 2 (it reads 0x143406c02; 0x143406c00 is the genuine
+    vtable). The writer holds a stale ADDRESS, not a class - whichever bucket's chunk is later
+    carved over that address is the victim - so one class is whack-a-mole. The guard now
+    quarantines a SET, and the default is 0x20+0x40, which contains all three deaths on
+    record: 0x40 map node +2 (runs 2 and 5), 0x20 tree node set to -1 (the overnight run),
+    0x40 vtable +2 (12:01). One shared reserve serves both, because the header stamp 0x100 is
+    above every rung of all three of the client's free ladders and those ladders read the
+    HEADER and nothing else - so one stamp covers every class at once.
 
-    WHAT TO READ IN THE MORNING, in client-patched\maplecw-hook.log:
-      "GUARD PAGE ARMED ... control PASS"  - it armed. "control FAIL" or a prologue-mismatch
-                    line means it stood down and the client ran unpatched by it.
-      the "guard page:" heartbeat, every 60 s. "N recycled" climbing after the first ten
-                    minutes is the intended steady state.
-      "***** N FELL BACK - the class is NO LONGER COVERED *****" - THE ONE FAILURE THAT LOOKS
-                    LIKE A HEALTHY RUN. It means allocation outran the 10-minute retirement
-                    queue and the 0x40 class went back to the client's own pool. Any number
-                    above zero and the rest of the night is uncovered. Report the number.
-      "GUARD PAGE - STALE WRITE at X ... RIP R" - the writer, named, AND neutralised. Several
-                    of these with the client still up is the run succeeding, not failing.
-      "SENTRY REPAIR" lines - the 0x20 half doing its job.
-    If the client is still up in the morning, say for how long and paste those counters. If it
-    is not, client-exit.log and the last heartbeat say which surface gave way.
+    RUN FIVE MINUTES FIRST, then leave it overnight. TWO classes at once has never run.
 
-    UNKNOWN, said plainly: no run has passed 70 minutes, so eight hours is a long extrapolation
-    from a short measurement, and nothing rules out a cause that only shows up at hour three.
-    The retirement queue, the thread parking and the whole guard page have never run on a
-    client - this is their first launch as well as the first survival attempt.
+    WHAT TO READ, in client-patched\maplecw-hook.log:
+      "GUARD PAGE ARMED ... 0x20+0x40 ... control PASS"
+                    -> armed on both. The line prints the sizing model, the measurement it
+                       came from, and its headroom. "NOT enough headroom" inside it means a
+                       fall-back is expected - say so rather than reporting a clean arm.
+      "control FAIL" / prologue mismatch
+                    -> it stood down and REVERTED; the client is unpatched by it. Report the
+                       line, do not leave it overnight.
+      "the FIRST free of class 0x40 came back through our HeapFree shim"
+                    -> THE NEW CONTROL, expected within seconds. 0x40 has never been
+                       quarantined, and 53 of the client's 56 free sites are inlined and
+                       untraced, so "0x40 frees reach us" is a GUESS until this line appears.
+      "***** NEVER FREED ... does NOT reach our shim *****"
+                    -> that control did not come and the class is leaking a page per
+                       allocation. Stop the run and report it.
+      "***** N FELL BACK - NO LONGER COVERED *****"
+                    -> should now be ZERO for the whole night. Any number, and say WHICH
+                       CLASS: the heartbeat prints the classes apart on purpose, because a
+                       total hides which one is exhausting the shared cursor.
+      "pool allocations seen by class: 0x10 N, 0x20 N, 0x40 N, 0x80 N"
+                    -> THE MEASUREMENT THIS RUN MAKES EVEN IF IT DIES. Only 0x20 has ever been
+                       measured (1560/s after a 627172 burst); these four numbers decide
+                       whether all four classes can be quarantined at once (-GuardBucket all).
+                       Paste them whatever happens.
+      "GUARD PAGE - STALE WRITE at X ... RIP R ... allocated from A freed from F"
+                    -> THE ANSWER: the writer, named AND neutralised. It now also says how
+                       many ms ago the slot was allocated and freed, which tests the 180 s
+                       clock directly. Several of these with the client still up is the run
+                       working, not failing.
+      "SENTRY REPAIR" lines - the header half doing its job.
+
+    COST: ~33 MB at arm (32 MB retirement ring + the first metadata block), plus ~100 MB of
+    committed pages per class - MEASURED, not predicted: the 12:01 run held ~26000 live 0x20
+    slots all afternoon, against the ~230 MB predicted beforehand. Retired pages are
+    decommitted and cost only address space. Memory is not the constraint; the cursor was.
+
+    NO -SentryWriteWatch. The write watch only OBSERVES: read-only pages and single-stepped
+    writes, ~160 windows in eight hours, and it cannot prevent anything. -SentryQuiet is the
+    long-run cadence (no dumps, no 68-thread stack scan, 2 s walk except near a firing) and it
+    KEEPS the repair.
+
+    A CLEAN POOL IS NOT SUCCESS. The 01:33 run died with 0 damaged headers in 174528 slots:
+    the writer damages LIVE objects, and the sentry only ever checks free headers. Every
+    "pool clean, N repaired" line is true and says nothing about whether the client will live.
+
+    IF THE CLIENT DIES INSIDE FIVE MINUTES: relaunch with -GuardBucket 0x20, the configuration
+    that already survived 1h57m, and say which of the two it was. Change ONE thing.
+
+    UNKNOWN, said plainly: the longest run is 1h57m, so eight hours is still an extrapolation.
+    Multi-class serving, the lazy metadata commit, the reserve ladder and the first-free
+    control have never run on a client.
 
     RUN 5 (2026-09-08 build). NAME THE WRITER ON BOTH SURFACES IN ONE LAUNCH. The write watch
     (0x20 headers, windows) and the GUARD PAGE (0x40, quarantine) are complementary and run
@@ -1352,7 +1367,17 @@ param(
     # whose child pointer had its high dword smashed to -1 - and the pool's HEADERS were
     # perfectly clean at the time. 0x40 was the default until then, chosen from runs 2 and 5,
     # and it would have quarantined the wrong class.
-    [string]$GuardBucket = '0x20',
+    # Which classes the guard quarantines. One (0x20), several joined with + (0x20+0x40),
+    # or `all`. NOT commas - the session marker is comma-separated and a comma would arm half
+    # of what was asked for, silently.
+    #
+    # DEFAULT 0x20+0x40, TWO classes. The writer holds a stale ADDRESS, not a class: the three
+    # deaths on record are a 0x40 map node +2, a 0x20 tree node set to -1, and a 0x40 vtable
+    # pointer +2 - the last one on 2026-09-08 while 0x20 ALONE was quarantined. Quarantining
+    # one class is whack-a-mole. 0x10 and 0x80 are left out because their churn has never been
+    # measured; the heartbeat's "pool allocations seen by class" counters are what would
+    # justify adding them, and -GuardBucket all is the flag if they do.
+    [string]$GuardBucket = '0x20+0x40',
     # Clear user+0x544a. OFF by default and MEASURED INERT on 2026-08-28: the contact path
     # bails before the gate is ever reached, because it is gated on a WZ node no mob has.
     # Kept because it may matter for a mob ATTACK-SKILL hit, which has never been observed.
@@ -2255,55 +2280,66 @@ function Show-TestPlan {
         Write-Host '           (e) is a command - the click fork is keyed on their TEMPLATE, so'
         Write-Host '           a summoned copy would send bytes identical to clicking them.'
         Write-Host '    0i. THE OVERNIGHT RUN - the goal is to SURVIVE, not to measure.' -ForegroundColor Green
-        Write-Host '       -PoolSentry -SentryQuiet -SentryRepair -PinPatches'
-        Write-Host '       -GuardPage -GuardBucket 0x20   <- 0x20, NOT the 0x40 default:' -ForegroundColor Yellow
-        Write-Host '           the 2026-09-08 death was a 0x20 slot. Costs ~230 MB.' -ForegroundColor Yellow
-        Write-Host '       The marker is CHECKED FOR YOU now - the launcher reads it back'
-        Write-Host '       and refuses to start if a flag you asked for is missing. It'
-        Write-Host '       prints "SESSION MARKER: ..." either way.'
-        Write-Host '       RUN FIVE MINUTES FIRST, THEN leave it overnight:' -ForegroundColor Yellow
-        Write-Host '         "GUARD PAGE ARMED ... control PASS" -> armed. Go.'
-        Write-Host '         "control FAIL" / prologue mismatch  -> stood down and REVERTED;'
-        Write-Host '                                               do not leave it, report it'
-        Write-Host '         client dies inside 5 min            -> the hook IS the problem;'
-        Write-Host '                                               relaunch without -GuardPage'
-        Write-Host '         heartbeat "guard page: N served"    -> N climbing = working.'
-        Write-Host '                                               "0 recycled" for the first'
-        Write-Host '                                               10 min is CORRECT.'
-        Write-Host '         "FELL BACK"                         -> uncovered from then on.'
-        Write-Host '                                               Report the number - it is'
-        Write-Host '                                               the churn nobody has measured'
-        Write-Host '       Costs ~44 MB at arm, growing to ~230 MB as bucket 1 goes live.'
-        Write-Host '       A CLEAN POOL IS NOT SUCCESS. That run died with 0 damaged headers' -ForegroundColor Yellow
-        Write-Host '       in 174528 slots: the writer damages LIVE objects too, and the' -ForegroundColor Yellow
-        Write-Host '       sentry only ever checks free headers.' -ForegroundColor Yellow
-        Write-Host '       and NO -SentryWriteWatch: the watch only observes, and overnight it'
-        Write-Host '       is 160 windows of read-only pages and single-stepped writes for no'
-        Write-Host '       protection at all. -SentryQuiet keeps the repair and drops the'
-        Write-Host '       dumps, the stack scan and the 100ms walk.'
-        Write-Host '       Both surfaces are PREVENTED, by different means:'
-        Write-Host '         0x20 headers -> the sentry repairs the header before the free'
-        Write-Host '                         that would be fatal (runs 3 and 4: clean pool).'
-        Write-Host '         0x40 nodes   -> the guard page never hands a freed address back'
-        Write-Host '                         within 10 min, so the writer increments a dead'
-        Write-Host '                         page instead of a live map node (the run-2 death).'
-        Write-Host '       In the morning, in client-patched\maplecw-hook.log:'
-        Write-Host '         "GUARD PAGE ARMED ... control PASS"  -> it armed'
-        Write-Host '         the "guard page:" heartbeat, "N recycled" climbing = steady state'
-        Write-Host '         "N FELL BACK - NO LONGER COVERED"    -> THE FAILURE THAT LOOKS' -ForegroundColor Yellow
-        Write-Host '                  HEALTHY. Allocation outran the queue; report the number.' -ForegroundColor Yellow
-        Write-Host '         "GUARD PAGE - STALE WRITE ... RIP R" -> the writer, named AND'
-        Write-Host '                  neutralised. Several of these with the client still up'
-        Write-Host '                  is the run WORKING.'
-        Write-Host '       UNKNOWN: no run has passed 70 min, so 8 hours is a long guess from a'
-        Write-Host '       short measurement - and the guard page has never run on a client.'
-        Write-Host '    0j. NAME THE WRITER - two surfaces, one launch (2026-09-08).' -ForegroundColor Yellow
-        Write-Host '       -SentryWriteWatch (0x20 headers) AND -GuardPage (0x40 quarantine)'
-        Write-Host '       together. The guard serves the 0x40 class one-slot-per-page and'
-        Write-Host '       decommits on free, so a stale pointer into a freed 0x40 slot - the'
-        Write-Host '       run-2/run-5 death the window watch cannot reach - faults at the'
-        Write-Host '       writer. Watch for "GUARD PAGE ARMED ... control PASS", the heartbeat'
-        Write-Host '       "guard page:" line, and "GUARD PAGE - STALE ... RIP R" (the answer).'
+        Write-Host '       -PoolSentry -SentryQuiet -SentryRepair -PinPatches -GuardPage'
+        Write-Host '       -GuardBucket now DEFAULTS to 0x20+0x40 - TWO classes. Type nothing.' -ForegroundColor Yellow
+        Write-Host '       SETTLED 12:01 TODAY, do NOT re-test: the guard page armed on a client' -ForegroundColor Green
+        Write-Host '       for the first time, control PASSed, and the client ran 1h57m - the' -ForegroundColor Green
+        Write-Host '       longest session this project has had. The allocator inline hook does' -ForegroundColor Green
+        Write-Host '       not destabilise the client. That question is closed.' -ForegroundColor Green
+        Write-Host '       IT STILL DIED, on a class we were NOT quarantining: a 0x40 slot whose'
+        Write-Host '       vtable pointer had been incremented by 2. The writer holds a stale'
+        Write-Host '       ADDRESS, not a class, so one class is whack-a-mole - hence two.'
+        Write-Host '       AND IT RAN OUT OF RESERVE AT SIX MINUTES: 0x20 burst to 627172'
+        Write-Host '       allocations in its FIRST minute then ran at 1560/s, so the 1048576'
+        Write-Host '       cursor was spent before anything could age out at ten minutes, and'
+        Write-Host '       419588 allocations fell back to the client pool. FIXED: 8388608 slots'
+        Write-Host '       (32 GB of address space, which is nearly free) and the 40-byte-a-slot'
+        Write-Host '       metadata is committed lazily instead of 320 MB up front.'
+        Write-Host '       WHAT TO WATCH, in client-patched\maplecw-hook.log:'
+        Write-Host '         "GUARD PAGE ARMED ... 0x20+0x40 ... control PASS"'
+        Write-Host '                  -> armed on BOTH classes. The line states the sizing model'
+        Write-Host '                     and its headroom; "NOT enough headroom" inside it means'
+        Write-Host '                     expect a fall-back, and say so.'
+        Write-Host '         "the FIRST free of class 0x40 came back through our HeapFree shim"'
+        Write-Host '                  -> THE NEW CONTROL, expected within seconds. 0x40 has' -ForegroundColor Yellow
+        Write-Host '                     never been quarantined, and 53 of the client''s 56 free' -ForegroundColor Yellow
+        Write-Host '                     sites are inlined and untraced - until this line' -ForegroundColor Yellow
+        Write-Host '                     appears, "0x40 frees reach us" is a GUESS.' -ForegroundColor Yellow
+        Write-Host '         "NEVER FREED" -> that control did NOT come. The class is leaking a'
+        Write-Host '                     page per allocation. Stop the run and report it.'
+        Write-Host '         "N FELL BACK" -> should now be ZERO all night. Any number at all,'
+        Write-Host '                     say WHICH CLASS - the heartbeat prints them apart now.'
+        Write-Host '         "pool allocations seen by class: 0x10 N, 0x20 N, 0x40 N, 0x80 N"'
+        Write-Host '                  -> THE MEASUREMENT THIS RUN MAKES EVEN IF IT DIES. Only' -ForegroundColor Yellow
+        Write-Host '                     0x20 has ever been measured (1560/s); these four' -ForegroundColor Yellow
+        Write-Host '                     numbers decide whether all four classes can be' -ForegroundColor Yellow
+        Write-Host '                     quarantined at once. Paste them whatever happens.' -ForegroundColor Yellow
+        Write-Host '         "GUARD PAGE - STALE WRITE ... RIP R" -> THE ANSWER: the writer,'
+        Write-Host '                     named AND neutralised. It now also says how long ago the'
+        Write-Host '                     slot was allocated and freed, which tests the 180s clock'
+        Write-Host '                     directly. Several of these with the client still up is'
+        Write-Host '                     the run WORKING, not failing.'
+        Write-Host '       RUN FIVE MINUTES FIRST, then leave it overnight. TWO classes at once'
+        Write-Host '       has never run: if the client dies inside five minutes, relaunch with'
+        Write-Host '       -GuardBucket 0x20 - the configuration that already survived 1h57m -'
+        Write-Host '       and say which of the two it was.'
+        Write-Host '       Costs ~33 MB at arm and ~100 MB of live pages per class; the metadata'
+        Write-Host '       grows with the cursor. Retired pages are decommitted and cost nothing.'
+        Write-Host '       A CLEAN POOL IS NOT SUCCESS. That death had 0 damaged headers in' -ForegroundColor Yellow
+        Write-Host '       174528 slots: the writer damages LIVE objects, and the sentry only' -ForegroundColor Yellow
+        Write-Host '       ever checks free headers.' -ForegroundColor Yellow
+        Write-Host '       NO -SentryWriteWatch: it only OBSERVES, and overnight it is 160'
+        Write-Host '       windows of read-only pages and single-stepped writes for no'
+        Write-Host '       protection at all. -SentryQuiet keeps the repair and drops the dumps,'
+        Write-Host '       the stack scan and the 100ms walk.'
+        Write-Host '    0j. WHAT THE GUARD PAGE NOW COVERS, and what it does not.' -ForegroundColor Yellow
+        Write-Host '       It quarantines a SET of pool size classes, not one: every allocation'
+        Write-Host '       of a watched class gets its own page and its free decommits that page'
+        Write-Host '       and holds the address back for 600s. All three deaths on record -'
+        Write-Host '       0x40 map node +2, 0x20 tree node set to -1, 0x40 vtable +2 - are'
+        Write-Host '       inside 0x20+0x40. 0x10 and 0x80 are NOT watched by default and their'
+        Write-Host '       churn is unmeasured; the "seen by class" counters are what would'
+        Write-Host '       justify adding them, and -GuardBucket all is the flag if they do.'
         Write-Host '       History below.'
         Write-Host '    0j. NAME THE WRITER. RUN 1 (70 min) MISSED THE STORE and found three' -ForegroundColor Yellow
         Write-Host '       things: the writer RE-HITS slots it hit before (3 of 12 repaired'
@@ -2746,23 +2782,39 @@ if ($HeapFix) { $Session = "$Session,heapfix=on" }
 if ($ClientHitNumberPatch) { $Session = "$Session,hitnumber=off" }
 if ($FreeGuard) { $Session = "$Session,freeguard=on" }
 elseif ($FreeGuardObserve) { $Session = "$Session,freeguard=observe" }
-if ($GuardPage) { $Session = "$Session,guardpage=$GuardBucket" }
+if ($GuardPage) {
+    # Refuse a class list the hook would reject, HERE, rather than three minutes into a launch.
+    # The hook logs "guardpage=... rejected" and stands down; that is a wasted manual launch.
+    foreach ($term in ($GuardBucket -split '[+|]')) {
+        if ($GuardBucket.Trim().ToLower() -eq 'all') { break }
+        if ($term.Trim() -notmatch '^(0x)?(10|20|40|80|16|32|64|128)$') {
+            throw "-GuardBucket '$GuardBucket': '$term' is not one of 0x10/0x20/0x40/0x80 (or 'all', or a +-joined list). Commas are NOT allowed - the session marker is comma-separated."
+        }
+    }
+    $Session = "$Session,guardpage=$GuardBucket"
+}
 
 if ($GuardPage) {
     if (-not $PinPatches) {
         Write-Host 'GUARD PAGE needs -PinPatches to reach a launcher run: the launcher writes' -ForegroundColor Yellow
         Write-Host '  maplecw-hook.session with its OWN defaults and would overwrite this.' -ForegroundColor Yellow
     }
-    Write-Host "GUARD PAGE: quarantining size class $GuardBucket." -ForegroundColor Cyan
-    Write-Host '  Each allocation of that class gets its OWN page; its free DECOMMITS the page' -ForegroundColor Cyan
-    Write-Host '  and never reuses it. A stale write/read into a freed slot FAULTS at the' -ForegroundColor Cyan
-    Write-Host '  instruction that makes it - on any clock, not just the 180s window.' -ForegroundColor Cyan
-    Write-Host '  In the hook log: "GUARD PAGE ARMED ... control PASS", a heartbeat line' -ForegroundColor Cyan
-    Write-Host '  ("N served, M freed, K live, ... CATCH(es)"), and on a hit:' -ForegroundColor Cyan
-    Write-Host '  "GUARD PAGE - STALE WRITE/READ at X ... RIP R ... allocated from A freed from F".' -ForegroundColor Cyan
-    Write-Host '  R is THE ANSWER for the 0x40 surface. Pair with -SentryWriteWatch (0x20).' -ForegroundColor Cyan
+    Write-Host "GUARD PAGE: quarantining size class(es) $GuardBucket." -ForegroundColor Cyan
+    Write-Host '  Each allocation of those classes gets its OWN page; its free DECOMMITS the' -ForegroundColor Cyan
+    Write-Host '  page and holds the address back 600s. A stale write/read into a freed slot' -ForegroundColor Cyan
+    Write-Host '  FAULTS at the instruction that makes it - on any clock, not just the 180s' -ForegroundColor Cyan
+    Write-Host '  window. Sized from the 12:01 run: 0x20 bursts to 627172 allocations in its' -ForegroundColor Cyan
+    Write-Host '  first minute then runs at 1560/s, so the reserve is 8388608 slots (32 GB of' -ForegroundColor Cyan
+    Write-Host '  address space) and the metadata is committed lazily. ~33 MB at arm, ~100 MB' -ForegroundColor Cyan
+    Write-Host '  of live pages per class.' -ForegroundColor Cyan
+    Write-Host '  In the hook log: "GUARD PAGE ARMED ... control PASS" (it states the sizing' -ForegroundColor Cyan
+    Write-Host '  model and its headroom), a per-class heartbeat line, "the FIRST free of class' -ForegroundColor Cyan
+    Write-Host '  0x40 came back through our HeapFree shim" (the control that a NEWLY watched' -ForegroundColor Cyan
+    Write-Host '  class is actually intercepted), and on a hit "GUARD PAGE - STALE WRITE at X' -ForegroundColor Cyan
+    Write-Host '  ... RIP R ... allocated from A freed from F". R is THE ANSWER.' -ForegroundColor Cyan
     Write-Host '  It writes to the client (an inline hook on the allocator + a HeapFree swap);' -ForegroundColor Cyan
-    Write-Host '  it stands down if the allocator prologue does not match or its self-test fails.' -ForegroundColor Cyan
+    Write-Host '  it stands down and REVERTS if the prologue does not match or the self-test' -ForegroundColor Cyan
+    Write-Host '  fails, and says which.' -ForegroundColor Cyan
 }
 
 if ($FreeGuard -or $FreeGuardObserve) {

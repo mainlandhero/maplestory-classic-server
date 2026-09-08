@@ -1565,31 +1565,13 @@ unsafe fn run(cfg: Config) {
             } else {
                 line
             };
-            // The guard-page quarantine, if it is armed. `catches` is the payload: a stale
-            // write or read into a retired slot, caught at the instruction. `live` climbing
-            // without bound would mean the class never frees.
-            //
-            // **`fell back` is the line to read on an overnight run.** It counts allocations
-            // the quarantine did not serve because no address had aged out of the retirement
-            // queue and the cursor was spent. Any number above zero means the class is no
-            // longer covered, and nothing else on screen would say so: an uncovered run looks
-            // exactly like a quiet one. `recycled` beside it says the queue is turning over,
-            // which is the intended steady state after the first ten minutes.
+            // The guard-page quarantine, if it is armed: per class, never summed, because with
+            // several classes sharing one cursor a total hides which one is exhausting it.
+            // The text is built in `guardpage::render_heartbeat`, which is pure and has a test
+            // that renders it and reads it - this line is read once a minute at 03:00 and a
+            // quoting bug in it is not something a parse check would catch.
             let line = if crate::guardpage::armed() {
-                let (served, freed, live, catches, fallback, recycled, cursor) =
-                    crate::guardpage::counters();
-                let fell_back = if fallback == 0 {
-                    "0 fell back".to_string()
-                } else {
-                    format!(
-                        "***** {fallback} FELL BACK - the class is NO LONGER COVERED *****"
-                    )
-                };
-                format!(
-                    "{line} | guard page: {served} served, {freed} freed, {live} live, \
-                     {recycled} recycled, {cursor} fresh pages used, {catches} STALE-ACCESS \
-                     CATCH(es), {fell_back}"
-                )
+                format!("{line} | {}", crate::guardpage::heartbeat_line())
             } else {
                 line
             };
