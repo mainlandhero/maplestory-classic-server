@@ -91,7 +91,7 @@ decremented through a stale pointer is what a **refcount on a freed object** loo
 would explain `+1`, `+2` and `-1` in one mechanism, and a 180 s timer touching a cached object
 would explain the clock.
 
-## 4. The finding that moves everything: the pool was CLEAN
+## 4. The finding that moves everything: every header the walk could reach was CLEAN
 
 `tools/poolchain.py` over the death dump [L]:
 
@@ -102,11 +102,31 @@ would explain the clock.
 | 2 (`0x40`) | 33 360 | **0** |
 | 3 (`0x80`) | 16 944 | **0** |
 
-**Zero damaged headers in 174 528 slots.** The sentry found one damaged header at 01:40:18 and
-repaired it, and the pool went to its grave in perfect health.
+~~**Zero damaged headers in 174 528 slots.**~~ **Zero damaged headers in the ~70% of the
+pool this walk can reach** - see the box below.
 
-So the client died with a clean pool, and two things follow that this project has not said
-before:
+> **CORRECTED 2026-09-08 evening, and the correction is about the instrument, not the pool.**
+> `tools/poolchain.py` and the live sentry follow **one chunk list per bucket**, from the pool
+> context. There are **819** chunk lists [L]. Enumerating by chunk *shape* instead finds 3.1-3.4x
+> more chunks in every dump, with the walked chunks a strict subset of them.
+> `research/damage-enumeration-2026-09-08.md`.
+>
+> **The proof is this very dump**: the `0x40` object at `0x3b69a4a8` whose vtable pointer was
+> incremented by 2 - the object that KILLED the 12:01 run, found by hand in §3 - is **not on the
+> chunk list the sentry walks**. Verified by walking that list from the context head: 1967
+> chunks, victim not among them [L].
+>
+> So "0 damaged" here, and in every sentry heartbeat ever printed, means *0 damaged where we
+> looked*, and we looked at about seventy per cent. **14 of the 59 damaged objects now confirmed
+> across 37 dumps sit where the sentry cannot see them.**
+>
+> **What survives unchanged**: the conclusion of this file. The object that killed this run was
+> damaged in its PAYLOAD (`body+0x14`), not on a free header, so "the damage that kills is
+> inside live objects and the sentry checks headers only" is if anything strengthened - the
+> sentry is blind in two ways at once, by field and by chunk.
+
+The sentry found one damaged header at 01:40:18 and repaired it, and every header it could
+reach was intact at the end. Two things follow that this project has not said before:
 
 * **The damage that kills is inside a LIVE object's payload**, at `body + 0x14` here — not on a
   free block's header. The sentry validates `body − 8` against the slot size and **nothing
