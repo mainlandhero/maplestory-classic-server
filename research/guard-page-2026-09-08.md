@@ -2,9 +2,17 @@
 
 The owner, 2026-09-08: *"Build the guard-page allocator and also the write watch."*
 
-`crates/grap-stub/src/guardpage.rs`, armed by `-GuardPage`. No client run has exercised it yet;
-this file is the design and the argument for it. Tags: **[L]** read off this client's data or
-listing, **[D]** derived, **[I]** inferred.
+> **PARTLY SUPERSEDED, 2026-09-08 evening. Read this for the design and the argument; do NOT
+> take its numbers.** Four things here are now wrong, and each is corrected in place below:
+> the default class, the reserve size, the slot count, and "not yet on a client". The current
+> state is in `research/the-writer-damages-live-objects-2026-09-08.md` (the overnight death, and
+> why a clean pool proves nothing) and in `STATUS.md`'s entries for the 12:01 and 14:47 runs.
+> **It has run on a client since**: armed, `control PASS`, 1 h 57 m, and at the time of writing a
+> second run is past 1 h 20 m with zero damage.
+
+`crates/grap-stub/src/guardpage.rs`, armed by `-GuardPage`. This file is the design and the
+argument for it. Tags: **[L]** read off this client's data or listing, **[D]** derived,
+**[I]** inferred.
 
 ---
 
@@ -22,7 +30,8 @@ memory that is **never handed out twice**.
 
 ## 1. The mechanism
 
-While armed for a chosen size class (default `0x40`):
+While armed for a chosen size class (**default since 2026-09-08 evening: `0x20+0x40`, a SET;
+this file was written when it was one class, `0x40`**):
 
 * **Allocation** of that class is served from its own **one-slot page** inside a private 2 GB
   reservation, not from the pool.
@@ -34,8 +43,15 @@ While armed for a chosen size class (default `0x40`):
   **allocated** the slot and the one that **freed** it, then recommits the page so the client
   runs on to the next one.
 
-The 2 GB reserve is 512 K one-page slots. It is address space only; committed memory is one 4 KB
-page per *live* slot, and a decommitted page costs nothing but its address.
+The reserve is address space only; committed memory is one 4 KB page per *live* slot, and a
+decommitted page costs nothing but its address.
+
+> **The numbers in this paragraph were 2 GB and 512 K slots and are now 32 GB and 8 388 608.**
+> The 12:01 run measured the churn this had to survive - a 627 172-allocation burst in the first
+> minute and then 1 560/s - and the old cursor was spent at six minutes, four minutes before
+> anything could age out. The binding constraint was never memory; live slots held at ~26 000,
+> about 104 MB. It was the 40-byte-a-slot metadata array, 320 MB if committed eagerly, which is
+> why the reserve could not grow until that array was made lazy.
 
 **A retired address comes back after 600 s** (`REUSE_AFTER_MS`), and §7 is why: without that the
 reserve is a budget of *total* allocations rather than a working set, and it does not last a
@@ -98,7 +114,12 @@ run; `0x40` is the default because it is uncovered and low-traffic, `-GuardBucke
   faulting into our handler. `0x40` slots are small objects and map nodes, not I/O buffers, so
   this is unlikely, but it is the one path where the quarantine changes behaviour instead of
   observing it.
-* **Not yet on a client.** Compile and 97 unit tests only. The launch is the test.
+* ~~**Not yet on a client.** Compile and 97 unit tests only. The launch is the test.~~
+  **It has run since (2026-09-08 12:01):** armed, `control PASS`, and the client ran 1 h 57 m -
+  the longest session this project has had. An inline hook on the pool allocator, called from
+  thirty threads thousands of times a second, does not destabilise the client. That question is
+  closed. What was still first-launch code afterwards is multi-class serving, the lazy metadata
+  commit, the reserve ladder and the first-free control.
 
 ## 6. The review before the first launch (2026-09-08)
 

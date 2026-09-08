@@ -227,7 +227,16 @@ damage - 36 231 mob-move acks against five damaged slots in the run measured her
 
 **But the other half is open, and it is the half the owner is really pointing at.** This family has
 only ever been observed in *our* environment; there is no unhooked or non-MapleCW run anywhere
-in the archive (`research/is-the-corruption-ours-2026-09-06.md` §1). And this client demonstrably
+in the archive (`research/is-the-corruption-ours-2026-09-06.md` §1).
+
+> **ANSWERED 2026-09-08, and the answer is no.** A live player's client - a different person, a
+> different computer, on the live server - reported the **identical** damage signature
+> `0x0000000100000020` on a bucket-1 `0x20` header, found and repaired by the sentry [L]
+> (`research/live-client-crash-2026-09-08.md`). **The writer is a property of this client, not of
+> our machine, our network or our server.** The paragraph below is left as written because the
+> reasoning was sound and the caution was right; only its conclusion is now superseded. The
+> reachability `__fastfail` remains a real second corruption path that only our environment
+> reaches, so `1415db360:ret` is still not optional. And this client demonstrably
 *does* have a memory-corruption path that only our environment reaches: the reachability check
 that overruns its own stack buffer when nothing is reachable, which is why `1415db360:ret` is
 not optional. So *"our setup puts the client somewhere it was never meant to be"* is very much

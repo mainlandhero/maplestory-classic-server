@@ -1,8 +1,18 @@
 # `0xC0000374` — the heap corruption, four sightings and what to do next
 
-**Status: not diagnosed, and a post-mortem stack cannot diagnose it.** This file exists so
-the next person does not spend a client run re-establishing what is already known, and so the
-one instrument that *would* answer it is written down.
+> **SUPERSEDED as a status, 2026-09-08. Still accurate as the earliest sighting record.**
+> Much of what this file calls undiagnosed has since been measured. Read in this order:
+> `the-180-second-clock-2026-09-07.md` (the writer runs on an exact 180 s clock),
+> `live-client-crash-2026-09-08.md` (the same damage on OTHER PEOPLE's machines, so it is the
+> client's bug and not our environment's), `the-writer-damages-live-objects-2026-09-08.md` (the
+> damage that KILLS is inside live objects, so a clean pool proves nothing), and
+> `the-180-second-tick-family-2026-09-08.md` (five candidate writers, found by decompiling).
+> There is now a mitigation that has run on a client: the guard-page quarantine, `-GuardPage`.
+> **Do not take this file's "what to do next" - it is two weeks out of date.**
+
+**Status when written: not diagnosed, and a post-mortem stack cannot diagnose it.** This file
+exists so the next person does not spend a client run re-establishing what is already known, and
+so the one instrument that *would* answer it is written down.
 
 ## What it is
 
