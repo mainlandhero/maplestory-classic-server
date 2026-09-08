@@ -102,6 +102,36 @@ reviewing: both pool frees read the one `HeapFree` slot (60 readers in all), the
 `0x100` header to that arm, `HeapFree` gets `body-8`, and the allocator overwrites `rax` before
 reading it, so the trampoline's clobber is safe. 97 grap-stub tests.
 
+**2026-09-08: THE WRITER IS ON OTHER PEOPLE'S MACHINES, and it is killing live players.**
+Four hook logs off the live server (`research/live-client-crash-2026-09-08.md`). One is a crash,
+and it closes a question this project had left open. A live player's client - a different person,
+a different computer - reported **the identical damage signature**, `0x0000000100000020` on a
+bucket-1 `0x20` header, found and repaired by the sentry at 00:03:35.
+`research/the-180-second-clock-2026-09-07.md` had recorded the worry plainly: the writer *"has
+only ever been observed in our environment"*. It is a property of the client, not of the owner's
+machine, network or server.
+
+The repair worked and **was not enough**: 80.5 s later the same client died of `0xC0000005` at
+`0x14094e1d0`, which is `FUN_14094e150`, a **destructor** walking a linked list -
+`mov rbx,[rcx]` reading a node's `next` pointer through a bad `rcx`. Two things follow. First,
+`0x14094e190` - filed here as a *close-time* fault, "recorded, not chased" - is **the same
+function**, its other teardown loop; and the live one fired 4 m 53 s into an **idle** session,
+so the "close-time" label was wrong. Second, the nodes are `0x38` bytes freed through
+`operator delete` at `0x140205820`, which loads the pool context `0x143AD68A0` and calls the
+pool free `0x14019bb50` [L] - so they are **pool bucket-2 objects, the `0x40` class**. That is
+exactly what `-GuardPage` quarantines by default, and **it has never been shipped to these
+users**.
+
+Still circumstantial, and the artifact that settles it exists: a **1.2 GB dump on that player's
+machine** (`C:\Users\wes10\…\dumps\`). The faulting `rcx` is the whole question - off by 1 or
+2 in the low dword is the writer's signature and nothing else's. Also free and worth adopting:
+`os error 10054` per session in `world.log` is the **server-side fingerprint of a client dying**
+(a clean logout closes gracefully), and in the one window the server logs cover it was 2 of 2.
+The server logs supplied do **not** cover the crash window (a gap between 22:09 and 05:58 UTC).
+
+**Nothing authenticates.** Login now carries a one-time identity token kept only as SHA-256, but
+the **game socket still carries no credentials** - and these peers include a public address.
+
 **2026-09-08, the goal changed: the owner wants the client to survive a night, not to be measured.**
 That is test plan **T20** and a different command -
 `-SetFieldProbe -PoolSentry -SentryQuiet -SentryRepair -GuardPage -PinPatches`, with **no**
