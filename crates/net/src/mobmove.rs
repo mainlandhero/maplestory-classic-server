@@ -476,7 +476,26 @@ pub fn parse_mob_move(body: &[u8]) -> Option<MobMoveRequest> {
     if element_count < 0 {
         return None;
     }
-    c.skip(element_count as usize * MOB_PATH_ELEMENT_LEN)?;
+    // **The element is NOT uniform, and skipping 21 for every one of them ran this slice into
+    // the body's tail.** `FUN_1404b2630` reads a leading COMMAND byte and dispatches through
+    // the 79-entry jump table at `0x1404b2f24` - which is `crate::usermove::element_len`, read
+    // off the image on 2026-08-29 for the player's `0x00D9` and never applied here, although
+    // `FUN_141d57c60` hands both paths to the same `FUN_1404b2000`. Built is not wired, inside
+    // one packet.
+    //
+    // A jump is command `0x01` and **nine** bytes, not 21. Measured over 860 656 deduplicated
+    // archived `0x02FF`: 3.04% of bodies carry a short element, and with the type-aware walk
+    // 860 656 of 860 656 close exactly on the 30-byte tail against 96.9% for the uniform one.
+    // The consequence on screen was the owner's *"when a mob is jumping, the loot drops below the
+    // current platform"* - 92% of short-element paths decoded low, by a modal 300-600 px.
+    //
+    // The old skip also had a cliff: a body with THREE short elements would overrun the tail
+    // and return `None`, so the mob's position would simply stop updating. Never observed (the
+    // maximum seen is two, in 489 bodies) but it was one jump away.
+    for _ in 0..element_count {
+        let command = *body.get(c.pos)?;
+        c.skip(crate::usermove::element_len(command))?;
+    }
     let path = body.get(path_start..c.pos)?.to_vec();
 
     Some(MobMoveRequest {
