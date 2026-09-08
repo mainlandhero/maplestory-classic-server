@@ -136,10 +136,18 @@ fn assert_well_formed(replies: &[world::Reply]) {
 }
 
 /// Move a claim back one UTC day - the state a real midnight leaves behind.
-fn rewind_claim(store: &Store, character_id: u32, perk: Perk) {
+/// Move a claim back one UTC day, on **the row that perk actually spends** - the account for
+/// Leaf Points, the character for the other two. Rewinding the character row for an
+/// account-scoped perk silently does nothing and reads as "a new day did not reopen it".
+fn rewind_claim(store: &Store, account_id: i64, character_id: u32, perk: Perk) {
     let today = store::today();
     store
-        .release_daily_perk(perk.scope(), i64::from(character_id), perk.store_key(), Some(today - 1))
+        .release_daily_perk(
+            perk.scope(),
+            claim_row(perk, account_id, character_id),
+            perk.store_key(),
+            Some(today - 1),
+        )
         .unwrap();
 }
 
@@ -185,14 +193,28 @@ fn another_npc_does_not_get_the_daily_menu() {
 /// Closing the box takes nothing and leaves no conversation behind for the next reply to walk
 /// into. Silence is correct here and it is measured - `0x00F3` does not hold the client's
 /// one-request latch (`research/script-reply.md` §5.1).
+/// **The row a perk's claim lives on.** Leaf Points are account-scoped and the other two are
+/// per character, so a test that hard-codes the character id reads the wrong row for one of the
+/// three and reports `None` - which looks exactly like "nothing was claimed". Every assertion
+/// below goes through here so the tests follow `Perk::scope` rather than restating it.
+fn claim_row(perk: Perk, account_id: i64, character_id: u32) -> i64 {
+    if perk.scope() == store::SCOPE_ACCOUNT {
+        account_id
+    } else {
+        i64::from(character_id)
+    }
+}
+
 #[test]
 fn closing_the_menu_claims_nothing() {
-    let (mut s, store, _acct, id) = session();
+    let (mut s, store, acct, id) = session();
     s.handle(&click(ADMIN_TEMPLATE));
     assert!(s.handle(&close_menu()).is_empty(), "a deliberate close needs no answer");
     for perk in PERKS {
         assert_eq!(
-            store.daily_claim_day(perk.scope(), i64::from(id), perk.store_key()).unwrap(),
+            store
+                .daily_claim_day(perk.scope(), claim_row(perk, acct, id), perk.store_key())
+                .unwrap(),
             None,
             "{perk:?} was claimed by closing the box"
         );
@@ -258,7 +280,11 @@ fn leaf_points_credits_the_wallet_once_and_says_so() {
     assert_eq!(after.nx, before.nx, "NX is a DIFFERENT pot and must not move");
     assert_eq!(
         store
-            .daily_claim_day(Perk::LeafPoints.scope(), i64::from(id), Perk::LeafPoints.store_key())
+            .daily_claim_day(
+                Perk::LeafPoints.scope(),
+                claim_row(Perk::LeafPoints, account_id, id),
+                Perk::LeafPoints.store_key(),
+            )
             .unwrap(),
         Some(store::today()),
         "the claim is stamped with today's UTC day"
@@ -306,7 +332,7 @@ fn leaf_points_pays_again_the_next_utc_day() {
     take(&mut s, Perk::LeafPoints);
     let after_one = store.cash_wallet(account_id).unwrap().maple_points;
 
-    rewind_claim(&store, id, Perk::LeafPoints);
+    rewind_claim(&store, account_id, id, Perk::LeafPoints);
     let out = take(&mut s, Perk::LeafPoints);
     assert!(log_of(&out).contains("LeafPoints PAID"), "{}", log_of(&out));
     assert_eq!(
@@ -566,12 +592,16 @@ fn all_three_can_be_taken_once_each_in_a_day_and_no_more() {
     assert_eq!(character(&store, account_id, id).level, after_all.level);
 }
 
-/// **The allowance is per character.** A second character on the same account has its own three
-/// - which is the owner's stated scope, and which for Leaf Points means the account-wide wallet
-/// receives the grant once per character. Asserted rather than left as a footnote, because it
-/// is the one consequence of the scope that is worth knowing before it is discovered.
+/// **Leaf Points are per ACCOUNT; the other two are per character.** The owner, 2026-09-08: *"Make
+/// leaf point claim per account."* A second character on the same account is refused the Leaf
+/// Points a first character already took, and the wallet stays at one grant - but that same
+/// second character still has its own level-up, because an account-wide allowance there would
+/// mean levelling one character spent the other five's turn.
+///
+/// Both halves are in one test deliberately. Asserting only the refusal would pass against a
+/// version that made every perk account-scoped, which is the coupling this scope must not have.
 #[test]
-fn a_second_character_has_its_own_allowance_and_the_leaf_wallet_is_shared() {
+fn leaf_points_are_one_per_account_while_the_other_perks_stay_per_character() {
     let (mut s, store, account_id, id) = session();
     take(&mut s, Perk::LeafPoints);
     assert_eq!(store.cash_wallet(account_id).unwrap().maple_points, LEAF_POINTS_PER_CLAIM);
@@ -588,17 +618,28 @@ fn a_second_character_has_its_own_allowance_and_the_leaf_wallet_is_shared() {
     let mut s2 = Session::new(store.clone(), Arc::new(config()));
     assert!(s2.claim_for_character(other).contains("claimed the migration"));
 
+    // The SECOND character is refused the Leaf Points the first one already took.
     let out = take(&mut s2, Perk::LeafPoints);
-    assert!(log_of(&out).contains("LeafPoints PAID"), "{}", log_of(&out));
+    assert!(log_of(&out).contains("NOTHING PAID"), "{}", log_of(&out));
     assert_eq!(
         store.cash_wallet(account_id).unwrap().maple_points,
-        2 * LEAF_POINTS_PER_CLAIM,
-        "per-CHARACTER claim into a per-ACCOUNT wallet - the documented consequence of the scope"
+        LEAF_POINTS_PER_CLAIM,
+        "one grant for the account, not one per character - the wallet must not have moved"
     );
-    // And the first character is still refused.
+    // The first character is refused too, so the refusal is about the ACCOUNT's spent day and
+    // not about either character in particular.
     let refused = take(&mut s, Perk::LeafPoints);
     assert!(log_of(&refused).contains("NOTHING PAID"), "{}", log_of(&refused));
-    assert_ne!(id, other, "two characters, two allowances");
+
+    // **But the second character still has its own level-up.** Without this, the test above
+    // would pass against a version that scoped all three to the account.
+    let levelled = take(&mut s2, Perk::LevelUp);
+    assert!(
+        log_of(&levelled).contains("LevelUp PAID"),
+        "a per-character perk must survive the account-scoped one being spent: {}",
+        log_of(&levelled)
+    );
+    assert_ne!(id, other, "two characters, one Leaf Point allowance between them");
 }
 
 /// A relog is not a new day. The gate is a database row, not session state - which is the
