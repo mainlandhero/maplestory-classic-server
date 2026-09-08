@@ -36,7 +36,7 @@ const GM_COMMANDS: &str =
 
 /// What a player who is not a GM is shown by `!help`, and all they may run. The owner,
 /// 2026-09-06: *"A player should only be shown commands that they are allowed to execute."*
-const PLAYER_COMMANDS: &str = "Commands: !rates, !help";
+const PLAYER_COMMANDS: &str = "Commands: !tool, !rates, !help";
 
 /// One packet to send, plus what it is - the label goes in the log.
 #[derive(Debug, Clone, PartialEq, Eq)]

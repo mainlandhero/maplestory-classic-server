@@ -134,13 +134,31 @@ tests.
 * **LEVEL-UP IS BROADCAST.** `0x02AF` `UserEffectRemote` effect 0, so other players on the map see
   and hear it. Corroborated three ways: both client dispatch tables enumerated whole, and the net
   crate already carried both the opcode and the effect id read off the client.
-* **THE MAPLE ADMINISTRATOR IS A QoL NPC** (template **9010000**, Henesys - the only one of five
-  same-named templates standing where a player can walk [L]). Three favours, one each per
-  character per **UTC** day: 1000 Leaf Points, one level, reset AP & SP. Claim state in
+* **`!tool` IS A PUBLIC COMMAND** giving three daily favours: 1000 Leaf Points (per **account**
+  per UTC day), one level, and reset AP & SP (each per **character** per UTC day). Claim state in
   `daily_claim`, keyed `(scope, scope_id, perk)`, gated on `stored < today` so a backwards clock
-  cannot reopen it. Quest 500005 is deliberately no longer offered by them. The Leaf Point wallet
-  is **per account** while the claim is per character, so three characters bank 3000 LP a day -
-  a consequence of the requested scope, documented and tested rather than discovered.
+  cannot reopen it; the claim is one `BEGIN IMMEDIATE` and a failed grant releases the day.
+  **The placed Maple Administrator keeps their quest 500005** - they have no branch on their template
+  anywhere in `session/npc.rs` any more.
+
+  **Why a command and not a summoned NPC, which is what was asked for.** The client's click fork
+  is keyed on the **template**, not the object id [L] (`research/npc-click.md` §2): an NPC whose
+  template has an offerable quest sends `0x0151 {questId, npc TEMPLATE id}`, and only the
+  quest-less path sends `0x00F2 {npc OBJECT id, ...}`. A summoned copy drawn as 9010000 would
+  therefore send bytes **identical** to clicking the real Administrator, so restoring their quest
+  and routing a copy's click are the same fork pointing two ways - you can have one. A runtime
+  spawn itself is fine and proven (`!npcecho` put object ids 6000/6001 on screen after field
+  entry [L]); it is the *click* that cannot be told apart. So the "new NPC" is a **speaker, not a
+  field object**: `0x055B`'s speaker field is the icon loader, so the box carries the Maple
+  Administrator's portrait literally, and the conversation is told apart by
+  `Conversation::path == "dailyperk.menu"`. Nothing is spawned, so nothing leaks across a map
+  change, a relog or ten `!tool`s.
+
+  **The escape hatch, named and not taken.** Four other templates are also called Maple
+  Administrator and carry no quest - `800016`, `900000`, `900001`, `900002` - so one of them
+  would fork to `0x00F2` and be routable by object id as a real walk-up NPC. It was declined
+  because nobody has rendered those canvases, and a missing sprite is exactly the silent failure
+  this repo keeps meeting. **That is the owner's call to reverse if they want a walk-up NPC.**
 
 **2026-09-08: THE WRITER IS ON OTHER PEOPLE'S MACHINES, and it is killing live players.**
 Four hook logs off the live server (`research/live-client-crash-2026-09-08.md`). One is a crash,

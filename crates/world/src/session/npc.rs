@@ -68,21 +68,18 @@ impl Session {
                 return replies;
             }
         }
-        // **The Maple Administrator arrives as EITHER packet, for the same reason Phil does.**
-        // The client forks on whether the NPC has an offerable quest, and 9010000 has one:
-        // quest `500005` names them as both its start and its turn-in NPC
-        // (`crate::dailyperks::SWALLOWED_QUEST`, **[L]** `gm-handbook/questlines.txt`). So a
-        // handler hooked only into `on_npc_click` would do nothing for anybody the client
-        // thinks can take that quest.
+        // **There is deliberately no branch on the Maple Administrator here.** There was one for
+        // a day: template 9010000 was claimed for `crate::dailyperks` and quest
+        // `crate::dailyperks::ADMIN_QUEST` (500005) was never offered or turned in. The owner,
+        // 2026-09-08: *"instead of losing the Maple Admin quest. Introduce a new public command
+        // !tool"*. So they fall through to the ordinary quest path below like every other NPC,
+        // and the favours are reached by typing the command - `Session::open_daily_perks`.
         //
-        // **Unlike Phil's, this branch does NOT let the quest run first.** The owner asked to
-        // *repurpose* them, so 500005 is never offered and never turned in. Recorded rather than
-        // silently done - this is the one line that takes it.
-        if req.npc_template_id == crate::dailyperks::ADMIN_TEMPLATE {
-            if let Some(replies) = self.open_daily_perks_for(req.npc_template_id) {
-                return replies;
-            }
-        }
+        // Removing the branch is the whole restoration: 500005 has no `Say.0` in this client's
+        // `Quest.wz` (only `Say.1.stop.item.0`), so the chain below lands on `path = None` and
+        // their own `d0` - *"Hello! Welcome to Maple World!"* - which is exactly what they did
+        // before the repurposing.
+
         // Which half of the quest's Say tree the action selects. With no quest state, a
         // start and an opening script both land on "0".
         let state = match req.action {
@@ -713,14 +710,9 @@ impl Session {
             return replies;
         }
 
-        // **And the Maple Administrator hands out the daily favours instead of talking.**
-        // Template 9010000 in Henesys, and no other NPC in the game - see
-        // `crate::dailyperks`'s module doc for how that template was told apart from the four
-        // others with the same name. Order against every other branch is irrelevant: none of
-        // them can name this template.
-        if let Some(replies) = self.open_daily_perks_for(template) {
-            return replies;
-        }
+        // **There is deliberately no daily-favour branch here either**, and it is the same
+        // removal as the one in `on_quest_request`: clicking the Maple Administrator is a click
+        // on the Maple Administrator again. `!tool` is what opens the favours now.
 
         // **And an instructor advances the job instead of talking.** Same shape again, and
         // the same failure it fixes: `world::jobs` has decided this correctly since it was
@@ -1403,36 +1395,50 @@ impl Session {
     }
 
     // -----------------------------------------------------------------------------------
-    // The Maple Administrator's three daily favours
+    // `!tool` - the three daily favours
     //
     // The decision, the table and every sentence live in `crate::dailyperks`; the gate lives
     // in `store::dailyperks`. What is here is the part that needs `&mut Session`: the wallet,
     // `award_experience`, and the two reset commands.
+    //
+    // **This used to hang off template 9010000 and no longer does.** The placed Maple
+    // Administrator has quest 500005 back; nothing above this line names their template. The
+    // entry point is `open_daily_perks`, called from the chat dispatcher.
     // -----------------------------------------------------------------------------------
 
-    /// **Put the daily-favour menu on screen.** `None` for any NPC that is not the Maple
-    /// Administrator, so the click chain carries on.
+    /// **`!tool` - put the daily-favour menu on screen.** The one entry point into this
+    /// feature.
     ///
-    /// Once the template matches this **never returns `None`**, even with no character
-    /// claimed. Both call sites are answering a click, and `on_quest_request`'s is a `0x0151`
-    /// - which the client *does* block on. `CLAUDE.md`'s *always answer*.
+    /// This **never returns nothing**, even with no character claimed. It is a reply to typed
+    /// chat, which holds no latch - but a command that silently does nothing and a command that
+    /// silently works look identical on screen, and telling those apart has cost client
+    /// launches (`session::gm`'s own module doc). So the empty case is a sentence.
+    ///
+    /// **The speaker is [`crate::dailyperks::ADMIN_TEMPLATE`], and that is the icon, not a
+    /// routing key.** `0x055B`'s speaker field goes straight into the `Npc/%07d.img` loader
+    /// (`research/npc-click.md` §3.2), so it is the portrait beside the text and nothing more -
+    /// The owner: *"Just use MapleStory administrator as the NPC icon."* No NPC object is spawned:
+    /// see the module doc in `crate::dailyperks` for the measurement that says a runtime spawn
+    /// would work and the listing that says its click could not be told from theirs.
     ///
     /// `awaiting_yes_no` is deliberately `false`: a menu is not a yes/no box, and if this
     /// branch were ever skipped a stray reply must not be mistaken for a quest Accept.
-    pub(super) fn open_daily_perks_for(&mut self, template: u32) -> Option<Vec<Reply>> {
-        if template != crate::dailyperks::ADMIN_TEMPLATE {
-            return None;
-        }
+    pub(super) fn open_daily_perks(&mut self) -> Vec<Reply> {
+        let template = crate::dailyperks::ADMIN_TEMPLATE;
         let Some(chr) = self.claimed_character() else {
-            // A dialogue rather than silence. There is nothing to offer, but the box still has
-            // to appear or the client sits on a click that did nothing.
-            return Some(self.admin_says(
+            // A dialogue rather than silence. There is nothing to offer, but saying so is the
+            // difference between a command that refused and a command that is not wired.
+            return self.admin_says(
                 template,
                 "I cannot find your record just now. Nothing has been used up - try me again.",
                 "no character is claimed on this connection",
-            ));
+            );
         };
         let used = self.daily_perks_used(chr.id);
+        // **Replaced rather than added to.** Ten `!tool`s in a row are ten boxes and one
+        // conversation: the field holds a single `Option`, so nothing accumulates here, on the
+        // map, or in the database. That is the whole lifetime story - there is no object to
+        // clean up on a map change or a relog, because none was created.
         self.conversation = Some(Conversation {
             npc_template: template,
             quest_id: None,
@@ -1442,20 +1448,21 @@ impl Session {
             sent_with_next: false,
         });
         let text = crate::dailyperks::menu_text(used);
-        Some(vec![Reply {
+        vec![Reply {
             opcode: net::script::SCRIPT_MESSAGE,
             body: net::script::npc_menu(template, &text),
             what: format!(
-                "ScriptMessage MENU (type 6) from the {} (template {template}) to character {}: {} of {} favours already used on UTC day {} ({}). Quest {} is deliberately NOT offered - this NPC is repurposed",
-                crate::dailyperks::ADMIN_NAME,
+                "ScriptMessage MENU (type 6) opened by {} for character {}: {} of {} favours already used on UTC day {} ({}). Speaker template {template} is the {}'s PORTRAIT only - the NPC standing in Henesys keeps quest {}",
+                crate::dailyperks::COMMAND_TYPED,
                 chr.id,
                 used.iter().filter(|u| **u).count(),
                 crate::dailyperks::PERKS.len(),
                 store::today(),
                 store::utc_date(store::today()),
-                crate::dailyperks::SWALLOWED_QUEST,
+                crate::dailyperks::ADMIN_NAME,
+                crate::dailyperks::ADMIN_QUEST,
             ),
-        }])
+        }]
     }
 
     /// Which of the three this character has already had today, in `PERKS` order.

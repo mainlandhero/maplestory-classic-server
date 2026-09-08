@@ -78,15 +78,23 @@ impl Session {
             Some((n, a)) => (n, a.trim()),
             None => (command, ""),
         };
-        // **Two commands are for everyone.** The owner, 2026-09-06: *"`!rates` should be kept
+        // **Three commands are for everyone.** The owner, 2026-09-06: *"`!rates` should be kept
         // because it should be a public command that anyone can execute"*, and *"`!help`
         // should also display the commands that the player/GM can execute. A player should
-        // only be shown commands that they are allowed to execute."* So these two are
+        // only be shown commands that they are allowed to execute."* So these are
         // answered before the gate, and `!help` answers from the list that matches the
         // caller - a player is never told which GM words exist.
+        //
+        // **`!tool` is the third, and it is public on purpose.** The owner, 2026-09-08: *"Introduce
+        // a new public command !tool"*. It must sit above the `is_gm` gate or a player typing it
+        // would have it said out loud as ordinary chat, which is what happens to every GM word.
+        // It grants nothing by itself - it draws a box - and the three favours behind it are
+        // gated per UTC day in the database, so spamming the command costs boxes and not
+        // allowance. `crate::dailyperks::COMMAND`.
         let is_gm = self.account_is_gm();
         match name {
             "rates" => return self.gm_rates(),
+            crate::dailyperks::COMMAND => return self.open_daily_perks(),
             "help" => {
                 return self.gm_ack(if is_gm { GM_COMMANDS.to_string() } else { PLAYER_COMMANDS.to_string() })
             }
