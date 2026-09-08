@@ -617,13 +617,69 @@ pub unsafe fn install_detour(
     let mut want = [0u8; 12];
     write_abs_jmp(want.as_mut_ptr(), detour);
     if back != want {
+        // **`None` has to mean "nothing was patched", and on THIS path alone it did not.**
+        //
+        // Found reviewing the guard page before it shipped to players, 2026-09-08. Every other
+        // refusal above returns before a byte of `target` is written, so the caller's undo -
+        // `guardpage::arm` reverts the HeapFree swap and releases its reserve - is enough. Here
+        // the twelve bytes are already in, and the read-back disagreeing means something
+        // changed them underneath us: either it restored the whole prologue (in which case
+        // nothing is patched and all is well) or it restored PART of it, which is a client
+        // executing the middle of our immediate. The doc block above promised the first
+        // reading for both, which is a comment describing a guarantee rather than enforcing it
+        // - and this was a test-only instrument when that was written and is not any more.
+        //
+        // The original bytes are not gone: the trampoline's first `stolen` bytes are a verbatim
+        // copy of them, taken before anything was written. So put them back, read them back,
+        // and say which of the three outcomes happened. Best-effort by construction - a page
+        // that is fighting us may win - but "we tried and here is what is there now" is a very
+        // different report from silence.
+        let restored = restore_prologue(target, t, stolen, expect);
         log(&format!(
             "identity: the jump at {target:#x} DID NOT TAKE - found {back:02x?}. Something is \
-             guarding this page; treat any result from this run as unarmed"
+             guarding this page; treat any result from this run as unarmed. {restored}"
         ));
         return None;
     }
     Some(tramp as usize)
+}
+
+/// Put the original prologue back from the copy in the trampoline, and say what is there now.
+///
+/// Only ever called from the read-back failure above, so it is off every path that works. It
+/// parks the other threads for the same reason the install does - the bytes it writes are a
+/// live function's first instructions - and it never reports success it has not read back.
+unsafe fn restore_prologue(target: usize, tramp: *mut u8, stolen: usize, expect: &[u8]) -> String {
+    let now = std::slice::from_raw_parts(target as *const u8, stolen);
+    if now == expect {
+        return "The bytes at that address are the ORIGINAL prologue, so nothing is patched and \
+                the client is exactly as it was."
+            .to_string();
+    }
+    let mut old = 0u32;
+    if VirtualProtect(target as *mut c_void, stolen, PAGE_EXECUTE_READWRITE, &mut old) == 0 {
+        return "***** AND THE ADDRESS COULD NOT BE MADE WRITABLE TO PUT THE ORIGINAL BYTES \
+                BACK - the prologue is neither ours nor the client's. Expect a fault. *****"
+            .to_string();
+    }
+    let parked = park_other_threads_outside(target, target + stolen);
+    std::ptr::copy_nonoverlapping(tramp, target as *mut u8, stolen);
+    if let Some(handles) = parked {
+        release_parked(handles);
+    }
+    VirtualProtect(target as *mut c_void, stolen, old, &mut old);
+    let after = std::slice::from_raw_parts(target as *const u8, stolen);
+    if after == expect {
+        "The original prologue has been written back from the trampoline's copy and reads \
+         correctly, so the client is unpatched."
+            .to_string()
+    } else {
+        format!(
+            "***** AND THE ORIGINAL PROLOGUE COULD NOT BE RESTORED - {after:02x?} is at \
+             {target:#x} and it is neither our jump nor the client's own bytes. Expect a \
+             fault. *****"
+        )
+    }
 }
 
 /// Our stand-in for `FUN_142c50400`. Fills the field, then runs the real getter.

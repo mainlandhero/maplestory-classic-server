@@ -160,11 +160,18 @@ pub fn prepare(
     }
 
     // 6. The markers.
+    //
+    // `layout.guardpage` is the config file's half of the heap-quarantine kill switch; the
+    // other half is a marker file beside the client, which `write_markers` checks for itself.
+    // Either alone turns it off, and the step it pushes says which - in words a player can
+    // read back over chat, because on a machine nobody can see that log line is the only
+    // evidence of which way it went.
     for step in client::write_markers(
         client_dir,
         client::DEFAULT_PROBE,
         client::DEFAULT_SESSION,
         &dumps,
+        layout.guardpage,
     )? {
         let level = if step.starts_with("WARNING") { Level::Warn } else { Level::Good };
         log(level, step);
@@ -521,6 +528,62 @@ mod tests {
         let layout = installed(&t);
         prepare(&layout, Some("   "), &mut |_, _| {}).expect("prepare");
         assert!(!layout.client_dir.join(client::HOOK_IDENTITY_MARKER).exists());
+    }
+
+    /// **The whole point of this change, end to end: a player's Start Game arms the
+    /// quarantine, and one file beside the client takes it away again.**
+    ///
+    /// `prepare` is the only path a player has - `tools/test-server.ps1` is the owner's - so this
+    /// asserts on the marker the hook actually reads rather than on any constant, and it
+    /// asserts on the log pane too, because on a machine nobody can see that line is the only
+    /// evidence of which way the launch went.
+    #[test]
+    fn a_players_launch_arms_the_guard_page_and_the_off_file_disarms_it() {
+        let t = TempDir::new("prepgp");
+        let layout = installed(&t);
+        let marker = layout.client_dir.join(client::HOOK_SESSION_MARKER);
+
+        let mut lines: Vec<(Level, String)> = Vec::new();
+        prepare(&layout, Some(TEST_TOKEN), &mut |l, s| lines.push((l, s))).expect("on");
+        assert!(
+            std::fs::read_to_string(&marker).unwrap().contains(client::GUARDPAGE_PREFIX),
+            "an ordinary launch must arm it; before 2026-09-08 no player's client ever did"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|(l, s)| *l == Level::Good && s.contains("heap quarantine ON")),
+            "{lines:?}"
+        );
+
+        // The kill switch, with no rebuild and no config file.
+        std::fs::write(layout.client_dir.join(client::HOOK_GUARDPAGE_OFF_MARKER), "").unwrap();
+        lines.clear();
+        prepare(&layout, Some(TEST_TOKEN), &mut |l, s| lines.push((l, s))).expect("off");
+        assert_eq!(
+            std::fs::read_to_string(&marker).unwrap(),
+            "mode=2,create=on",
+            "off means NO guardpage= term at all - the client the world had before this feature"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|(l, s)| *l == Level::Warn && s.contains("is OFF for this launch")),
+            "and the log pane says so at Warn: {lines:?}"
+        );
+    }
+
+    /// The config file's half of the same switch, for a whole install.
+    #[test]
+    fn guardpage_off_in_the_config_reaches_the_session_marker() {
+        let t = TempDir::new("prepgpcfg");
+        let mut layout = installed(&t);
+        layout.guardpage = false;
+        prepare(&layout, None, &mut |_, _| {}).expect("prepare");
+        assert_eq!(
+            std::fs::read_to_string(layout.client_dir.join(client::HOOK_SESSION_MARKER)).unwrap(),
+            "mode=2,create=on"
+        );
     }
 
     #[test]

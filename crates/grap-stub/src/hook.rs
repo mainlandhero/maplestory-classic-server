@@ -556,8 +556,12 @@ pub unsafe fn install() {
     // See crates/grap-stub/src/freeguard.rs.
     crate::freeguard::install();
     // Quarantine one pool size class so a stale write into freed memory faults at the writer.
-    // Gated on `guardpage=<hex slot size>` in the session marker; absent, it hooks nothing and
-    // starts no thread. See crates/grap-stub/src/guardpage.rs.
+    // Gated on `guardpage=<class set>` in the session marker - `0x20`, `0x20+0x40` or `all`.
+    // The launcher ships `0x20+0x40` in its default session string as of 2026-09-08, so this
+    // is now armed on every ordinary launch and not only under `test-server.ps1 -GuardPage`;
+    // `maplecw-hook.guardpage.off` beside the client is the switch that takes it away again.
+    // Absent, it hooks nothing and starts no thread.
+    // See crates/grap-stub/src/guardpage.rs.
     crate::guardpage::install();
 
     log("install: hook active");
