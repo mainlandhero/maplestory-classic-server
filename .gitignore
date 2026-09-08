@@ -95,3 +95,8 @@ scratchpad/
 # scratch directory and flakes under concurrent `cargo test`; a killed run leaves a
 # dump beside the crate. They are up to 1.3 GB and none of them belongs in git.
 crates/**/*.dmp
+
+# Whole world logs kept as evidence but too large for git history (136 MB the pair).
+# The -extract.log siblings carry the mob-move reports the measurement rests on.
+/research/fixtures/mob-move-head-is-the-path-START-136px-walk-world.log
+/research/fixtures/mob-move-head-is-120px-above-the-mobs-real-feet-world.log
