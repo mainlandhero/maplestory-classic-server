@@ -475,3 +475,29 @@ Nothing in the instrument. The run ended before the fixes of §7 were exercised 
 re-hit, no window - so run 1 is still to be run again, twenty minutes or more. This death is
 recorded so the next one of its shape is compared rather than re-derived, and because it is the
 first sign of the writer's increment landing outside the `0x20` class.
+
+## 9. Run 3: the repair now catches every firing, and the watch opened one window
+
+2026-09-07 21:57-22:39, process 356516, closed by hand. `[L]`
+
+**Twelve firings, twelve catches, none silent** - 22:03:54 to 22:36:54, every 180 s - and the
+re-hits are now in the log rather than in a corpse: `0x696fde0` at #2, #3 and #5; `0x2ecbb280`
+at #6 and #7; `0x2ec7e678` at #11 and #12. Eight distinct addresses in twelve firings. The pool
+at close: **0 damaged of 173 416 slots**, all four buckets. So `forget_reported` does what §7.1
+asked, and the writer's re-use of its pointers is a measured rate now, not a reading of a dump:
+**a third of firings land on an address already hit this session.**
+
+**One window in 42 minutes**, opened 22:06:53.473 for catch #2 (a new address, so nothing was
+pinned yet but #1's page, which duly took 16 body writes - the mechanism works). Then none. The
+guard compared the firing *index* alone; every catch re-anchors the clock, so the next firing is
+index 1 from the new anchor - the index the previous window had - and it was skipped every time.
+Fixed and tested (`window_due`; keyed by anchor and index). With windows opening every cycle,
+this run would have had pinned pages under catches #3, #5, #7 and #12.
+
+**The close crashed**: `0xC0000005` at `0x14094e150+0x40` reading `0x87d0`, a shutdown-time
+read through a near-null object; a new address in the archive, and not the pool (0 damaged).
+Recorded; not chased.
+
+Same recipe again. The expectation is now specific: the first re-hit came at catch #3 in this
+run and at #3 in run 1, so the first pinned-page window with a re-hit under it should be about
+ten minutes in.

@@ -57,6 +57,12 @@ and freed - **fixed, a repaired slot is reported again**; the 28-byte allocation
 the watch covered only 10% of the pool - **fixed, caught headers' pages are pinned**. Run it
 again. `research/the-180-second-clock-2026-09-07.md` §7.
 
+**Runs 2 and 3 (same evening)**: run 2 died at nine minutes on an unrelated surface (an empty
+`std::map`'s head-node pointer incremented by 2 in a `0x40` slot - §8 of the clock file); run 3
+went 42 minutes, **12 firings, 12 catches, none silent, pool clean at close** - the re-hit fix
+works and a third of firings re-hit - but the watch opened **one** window: its re-arm guard
+reset with every catch. Fixed (`window_due`, tested). Same recipe again.
+
 **The one run worth a launch is `-SentryWriteWatch`** (`research/naming-the-writer-2026-09-07.md`,
 `crates/grap-stub/src/writewatch.rs`). Around each *predicted* firing it puts bucket 1's pages
 read-only for 1.2 s, so the damaging store faults at its own instruction and the log names the

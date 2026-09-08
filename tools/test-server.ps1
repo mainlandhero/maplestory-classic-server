@@ -223,8 +223,12 @@
     control PASS). FIXED: the pages of every header already caught are PINNED on every window.
     Given (1), the next window over a re-hit slot should catch the store.
 
-    RUN 1 AGAIN with the fixes, same recipe, and let it run past 20 minutes - the re-hits
-    started at catch #3. The probe's hit cap is raised so it logs the whole run:
+    RUN 3 (21:57-22:39, closed by hand): 12 firings, 12 catches, none silent - the re-hit fix
+    works, and a THIRD of firings land on an address already hit (0x696fde0 three times). Pool
+    clean at close. But ONE window opened in 42 minutes: the re-arm guard compared the firing
+    index alone, and every catch re-anchors the clock to index 1 again. FIXED (window_due,
+    tested). AGAIN, same recipe; the first re-hit has come at catch #3 both times, so expect a
+    pinned-page window with a re-hit under it about ten minutes in. The probe cap is 400:
 
       -SetFieldProbe -ServersOnly -PoolSentry -SentryRepair -SentryWriteWatch -PinPatches
       -Probe "watch@1415db360:ret,141b2a280:rdx=0,140ca61d0:hits=400"
@@ -2014,8 +2018,10 @@ function Show-TestPlan {
         Write-Host '       the 28-byte alloc from 0x14491cafd fires 180s apart ~100ms before'
         Write-Host '       every catch (14/14); and the watch covered only 10% of the pool'
         Write-Host '       (FIXED - pages of caught headers are pinned every window).'
-        Write-Host '       RUN IT AGAIN, same recipe, 20+ minutes. Nothing arms until the'
-        Write-Host '       FIRST catch; re-hits began at catch #3 last time.'
+        Write-Host '       RUN 3: 12 firings, 12 catches, re-hits now caught (one address'
+        Write-Host '       three times), pool clean at close - but ONE window in 42 min: the'
+        Write-Host '       re-arm guard reset with every catch (FIXED, tested). AGAIN, same'
+        Write-Host '       recipe, 20+ min; expect a pinned window over a re-hit ~10 min in.'
         Write-Host '         "THE WRITER: ... from RIP R"  -> THE ANSWER. R is the instruction,'
         Write-Host '                    and the module it sits in also settles "is this OURS"'
         Write-Host '         "saw a write into a watched page" -> liveness. Expect several'

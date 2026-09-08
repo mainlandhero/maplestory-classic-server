@@ -1093,6 +1093,25 @@ fn firing_index(last: Instant, period: Duration, at: Instant) -> u64 {
     (elapsed / p).floor() as u64
 }
 
+/// Should a write window open now for the firing `lead` ahead, given the one already armed?
+///
+/// Returns the key to record when it should. Keyed by **anchor and index**: every catch
+/// re-anchors the clock, so "index 1" recurs every cycle, and a guard that compared indices
+/// alone opened exactly one window in a 42-minute run with twelve catches (2026-09-07 21:57).
+fn window_due(
+    armed: Option<(Instant, u64)>,
+    last: Instant,
+    period: Duration,
+    at: Instant,
+) -> Option<(Instant, u64)> {
+    let idx = firing_index(last, period, at);
+    if idx >= 1 && armed != Some((last, idx)) {
+        Some((last, idx))
+    } else {
+        None
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -1307,9 +1326,15 @@ unsafe fn run(cfg: Config) {
     // rather than assumed: a hard-coded 180 s would be this file asserting its own conclusion.
     let mut last_fire: Option<Instant> = None;
     let mut period: Option<Duration> = None;
-    // Which predicted firing the write window has already been opened for, so one firing
-    // arms one window however many walks fall inside the lead.
-    let mut write_armed_for: u64 = 0;
+    // Which predicted firing the write window has already been opened for - keyed by the
+    // anchor it was predicted FROM as well as the index, so one firing arms one window however
+    // many walks fall inside the lead, and a new anchor starts afresh.
+    //
+    // The first version kept only the index. Every catch re-anchors `last_fire`, so the next
+    // firing is index 1 from the new anchor - the same index the previous window had - and the
+    // guard skipped it. Run of 2026-09-07 21:57-22:39: twelve catches, ONE window. Found by
+    // counting windows against catches in the heartbeat.
+    let mut write_armed_for: Option<(Instant, u64)> = None;
     // Every header this run has caught, whether or not it has since been repaired. The writer
     // re-hits them (see `BucketWalk::forget_reported`), so the write watch pins their pages on
     // every window rather than hoping the fully-contained rule happens to cover them.
@@ -1344,9 +1369,8 @@ unsafe fn run(cfg: Config) {
         // notices the damage the fault let through.
         if cfg.write {
             if let (Some(last), Some(p)) = (last_fire, period.or(Some(ASSUMED_PERIOD))) {
-                let idx = firing_index(last, p, started + cfg.write_lead);
-                if idx >= 1 && idx != write_armed_for {
-                    write_armed_for = idx;
+                if let Some(key) = window_due(write_armed_for, last, p, started + cfg.write_lead) {
+                    write_armed_for = Some(key);
                     let bases = walks[DAMAGE_CLASS].sorted_bases();
                     let chunks = bases.len();
                     match crate::writewatch::arm_for(bases, ever_damaged.clone(), cfg.write_window, cfg.write_burst) {
@@ -2416,6 +2440,34 @@ mod tests {
         );
         assert_eq!(parse_config("writeburst=0").unwrap().write_burst, d.write_burst);
         assert_eq!(parse_config("writelead=99999").unwrap().write_lead, d.write_lead);
+    }
+
+    /// **A new catch re-anchors the clock, and the window must open again from it.** The run
+    /// of 2026-09-07 21:57 had twelve catches and one window because the guard compared the
+    /// firing index alone, and after every catch the next firing is index 1 again.
+    #[test]
+    fn a_window_opens_every_cycle_when_each_catch_re_anchors_the_clock() {
+        // `window_due` is handed `now + lead`, as `run` hands it, so a window opens `lead`
+        // before the firing: the moment `now + lead` crosses the firing instant.
+        let p = Duration::from_secs(180);
+        let lead = Duration::from_millis(500);
+        let a = Instant::now() - Duration::from_secs(1000);
+        let at = |anchor: Instant, since: Duration| anchor + since + lead;
+        // Cycle one: nothing until `lead` before the first firing, then exactly once.
+        assert_eq!(window_due(None, a, p, at(a, Duration::from_secs(100))), None);
+        let k1 = window_due(None, a, p, at(a, p - lead + Duration::from_millis(1))).expect("opens");
+        assert_eq!(k1.1, 1);
+        assert_eq!(window_due(Some(k1), a, p, at(a, p - Duration::from_millis(100))), None, "not twice");
+        // The catch at the firing re-anchors to `b`. Index 1 again - and it MUST open again.
+        let b = a + p;
+        assert_eq!(window_due(Some(k1), b, p, at(b, Duration::from_secs(10))), None, "too early");
+        let k2 = window_due(Some(k1), b, p, at(b, p - lead + Duration::from_millis(1)))
+            .expect("the bug: same index, new anchor, must open");
+        assert_eq!(k2, (b, 1));
+        assert_ne!(k1, k2);
+        // A missed catch (no re-anchor) still steps to index 2 from the old anchor.
+        let k3 = window_due(Some(k2), b, p, at(b, 2 * p - lead + Duration::from_millis(1))).expect("index 2");
+        assert_eq!(k3.1, 2);
     }
 
     #[test]
