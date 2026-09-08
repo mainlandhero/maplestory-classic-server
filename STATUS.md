@@ -380,6 +380,35 @@ run is **`-GuardPage`** with the new default `0x20+0x40`. The ~230 MB budget was
 than a factor of two: the 12:01 run measured ~26 000 live `0x20` slots, ~104 MB [L]. `FELL BACK`
 was indeed the first number to read, and it was **419 588**.
 
+**2026-09-08 EVENING: THE POOL WALK HAS ONLY EVER SEEN ~70% OF THE POOL.**
+`research/damage-enumeration-2026-09-08.md`. `tools/poolchain.py` **and the live sentry** follow
+one chunk list per bucket from the pool context. There are **819** chunk lists [L]; enumerating
+by chunk shape finds 3.1-3.4x more chunks, the walked ones a strict subset. **Proof, in the dump
+I analysed myself**: the `0x40` object whose vtable pointer was incremented by 2 - the one that
+killed the 12:01 run - is **not on the walked list** (1967 chunks walked from the context head,
+victim not among them) [L]. So **every "N slots, 0 damaged" line this project has printed means
+"0 damaged where we looked"**, and my own "the pool was clean at death, 0 in 174 528 slots" is
+corrected in place. 14 of the 59 damaged objects now confirmed across 37 dumps sit where the
+sentry cannot look, **which also means the sentry's REPAIR misses them** - that is a live defect
+in shipping code, not just in analysis.
+
+**The enumeration answered the questions the single-victim studies could not:**
+* **0 to 13 damaged objects per session, 59 across 37 dumps.** Single digits - not one, not
+  hundreds. Two processes are clean with their controls intact.
+* **The offsets are consistent once you look from the WRITER's object, not the victim's.** The
+  two populations are `body-4` (29 headers) and `body+0x14` (32 `_Tree` `_Right` fields), which
+  looked contradictory. But `body_k + 0x24 == header_{k+1} + 4`, so **one object with 32-bit
+  counters at `+0x14` (decremented) and `+0x24` (incremented) explains both** - and `+0x24` on a
+  `0x20` slot is exactly the 4-byte overrun `poolsentry.rs` hypothesised months ago. The two
+  competing readings were the same write pair all along.
+* **A read-modify-write, watched directly across successive dumps of one process**: `-1 -> -2 ->
+  -2 -> -3` on one `_Right` high dword, and `+1 -> +1 -> +3` on one header [L]. Nothing heals,
+  nothing moves.
+* **A strong TYPE cluster, no address cluster**: 11 of 16 are MSVC `_Tree` nodes, 7 of them empty
+  -container head nodes, and the damaged field is `_Right` every time.
+* Corrects another published number: "14 of 14 identical `0x0000000100000020`" is **23 of 29**
+  over 37 dumps; the rest are `+2` and `+3`.
+
 **2026-09-08 EVENING: THE 180-SECOND FAMILY IS THE CLIENT'S ANTI-CHEAT, AND THE CORRUPTION
 LOOKS DELIBERATE.** `research/the-180-second-family-is-anti-cheat-2026-09-08.md`. **This forces
 a correction to the entry below it - read both.**
@@ -388,7 +417,8 @@ The module holding the five (now six) 180 s tick functions carries **deliberatel
 strings [L], verified independently by me with a tolerant search after a plain one found
 nothing: `Crc Fail Alert!!`, `CheatEngine`, `AccountId`, `RegOpenKeyTransactedA`, and three
 cheat-tool names spliced with CR/TAB bytes so a `strings` dump misses them -
-`Ji	n6	4.dl	l` is `Jin64.dll`, and likewise `ROYAL Connector` and
+`J
+i	n6	4.dl	l` is `Jin64.dll`, and likewise `ROYAL Connector` and
 `Royal.Secure.Runtime`. **My earlier "no strings referenced in the surrounding 96 KB" was
 wrong twice over**: a linear disassembly sweep desyncs the moment it crosses data, and the
 string test would have rejected these anyway because of the embedded control bytes.

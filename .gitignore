@@ -100,3 +100,6 @@ crates/**/*.dmp
 # The -extract.log siblings carry the mob-move reports the measurement rests on.
 /research/fixtures/mob-move-head-is-the-path-START-136px-walk-world.log
 /research/fixtures/mob-move-head-is-120px-above-the-mobs-real-feet-world.log
+
+# damagescan output is derived and regenerable with tools/damagescan_all.py
+/research/damagescan/
