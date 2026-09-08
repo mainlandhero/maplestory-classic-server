@@ -276,10 +276,33 @@
     died on a 0x20 slot; the default 0x40 came from runs 2 and 5 and would have quarantined
     the wrong class. Budget ~230 MB extra committed memory for it.
 
-    AND CHECK THE SESSION MARKER BEFORE WALKING AWAY. The 2026-09-08 run carried no
-    guardpage= token at all - client-patched\maplecw-hook.session read "mode=2,create=on" -
-    so the guard page never armed and never logged a line. `type` that file after launch:
-    if it has no guardpage=, the flag did not reach the client and the night is wasted.
+    THE MARKER IS NOW CHECKED FOR YOU. The launcher reads maplecw-hook.session back after
+    writing it and REFUSES to launch if a flag you asked for is not in it, printing
+    "SESSION MARKER: ..." either way. That guard is tested both directions - it refuses the
+    exact 2026-09-08 marker and accepts a correct one. The hook also now logs
+    "guard page: NOT ARMED - ... no guardpage= token" instead of returning in silence.
+
+    RUN IT FOR FIVE MINUTES FIRST. THEN leave it overnight.
+    The guard page has never run on a client. It puts an inline hook on the pool allocator,
+    which thirty threads call thousands of times a second, and it can stand down on its own
+    (prologue mismatch, or a failed self-test) - in which case the night is another plain
+    sentry run. Five minutes settles all of it:
+      "GUARD PAGE ARMED ... control PASS"  -> armed and self-tested. Go.
+      "control FAIL" / prologue mismatch  -> it stood down and REVERTED; the client is
+                                             unpatched by it. Do not leave it overnight,
+                                             report the line.
+      "guard page: NOT ARMED"             -> the token never arrived (should now be
+                                             impossible; the launcher refuses first).
+      the client dies within five minutes -> the hook itself is the problem. Relaunch
+                                             without -GuardPage and say so.
+      heartbeat "guard page: N served"    -> N climbing is the instrument working.
+                                             "0 recycled" for the first ten minutes is
+                                             CORRECT - nothing has aged out yet.
+      "FELL BACK" at any point            -> the class is uncovered from that moment.
+                                             Report the number; it is the churn measurement
+                                             nobody has.
+    Arming costs ~44 MB immediately (metadata and the retirement queue) and grows to roughly
+    230 MB as bucket-1 slots go live. That is the price of quarantining the hottest class.
 
     NO -SentryWriteWatch. The write watch only OBSERVES: it makes pool pages read-only around
     each predicted firing and single-steps every write through them, up to 20 000 faults per
@@ -1314,7 +1337,11 @@ param(
     # Which size class the guard quarantines: 0x10, 0x20, 0x40 or 0x80. Default 0x40 (bucket 2),
     # the lowest-traffic class and the one with no window coverage. Pair with -SentryWriteWatch
     # on 0x20 and the two surfaces are both covered in one launch.
-    [string]$GuardBucket = '0x40',
+    # DEFAULT 0x20, not 0x40. The 2026-09-08 death was a 0x20 slot - a red-black tree node
+    # whose child pointer had its high dword smashed to -1 - and the pool's HEADERS were
+    # perfectly clean at the time. 0x40 was the default until then, chosen from runs 2 and 5,
+    # and it would have quarantined the wrong class.
+    [string]$GuardBucket = '0x20',
     # Clear user+0x544a. OFF by default and MEASURED INERT on 2026-08-28: the contact path
     # bails before the gate is ever reached, because it is gated on a WZ node no mob has.
     # Kept because it may matter for a mob ATTACK-SKILL hit, which has never been observed.
@@ -2180,10 +2207,22 @@ function Show-TestPlan {
         Write-Host '       -PoolSentry -SentryQuiet -SentryRepair -PinPatches'
         Write-Host '       -GuardPage -GuardBucket 0x20   <- 0x20, NOT the 0x40 default:' -ForegroundColor Yellow
         Write-Host '           the 2026-09-08 death was a 0x20 slot. Costs ~230 MB.' -ForegroundColor Yellow
-        Write-Host '       THEN CHECK THE MARKER before walking away:'
-        Write-Host '         type "client-patched\maplecw-hook.session"'
-        Write-Host '       No guardpage= in it means the guard never armed and the night is'
-        Write-Host '       wasted - that is exactly what happened on 2026-09-08.'
+        Write-Host '       The marker is CHECKED FOR YOU now - the launcher reads it back'
+        Write-Host '       and refuses to start if a flag you asked for is missing. It'
+        Write-Host '       prints "SESSION MARKER: ..." either way.'
+        Write-Host '       RUN FIVE MINUTES FIRST, THEN leave it overnight:' -ForegroundColor Yellow
+        Write-Host '         "GUARD PAGE ARMED ... control PASS" -> armed. Go.'
+        Write-Host '         "control FAIL" / prologue mismatch  -> stood down and REVERTED;'
+        Write-Host '                                               do not leave it, report it'
+        Write-Host '         client dies inside 5 min            -> the hook IS the problem;'
+        Write-Host '                                               relaunch without -GuardPage'
+        Write-Host '         heartbeat "guard page: N served"    -> N climbing = working.'
+        Write-Host '                                               "0 recycled" for the first'
+        Write-Host '                                               10 min is CORRECT.'
+        Write-Host '         "FELL BACK"                         -> uncovered from then on.'
+        Write-Host '                                               Report the number - it is'
+        Write-Host '                                               the churn nobody has measured'
+        Write-Host '       Costs ~44 MB at arm, growing to ~230 MB as bucket 1 goes live.'
         Write-Host '       A CLEAN POOL IS NOT SUCCESS. That run died with 0 damaged headers' -ForegroundColor Yellow
         Write-Host '       in 174528 slots: the writer damages LIVE objects too, and the' -ForegroundColor Yellow
         Write-Host '       sentry only ever checks free headers.' -ForegroundColor Yellow
@@ -2881,6 +2920,46 @@ New-Item -ItemType Directory -Path $dumpDir -Force | Out-Null
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.dumpdir') -Value $dumpDir -Encoding ascii
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.probe') -Value $Probe -Encoding ascii
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.session') -Value $Session -Encoding ascii
+
+# **READ THE MARKER BACK AND PROVE THE FLAGS ARE IN IT.**
+#
+# 2026-09-08: an overnight run was spent with no guard page because `-GuardPage` never reached
+# this file. The marker read `mode=2,create=on`, the hook found no `guardpage=` token, and
+# every other line in the log looked healthy. Writing a file is not evidence that it says what
+# you meant; this reads it back and refuses the launch if a flag that was asked for is missing.
+# The same rule as everywhere else here - verify the instrument before believing it.
+#
+# **And this guard was itself driven both ways before it shipped**, because a guard that has
+# never refused anything is a guard nobody has tested. Five cases, all passing: it refuses the
+# exact 2026-09-08 marker (`mode=2,create=on` with -GuardPage asked for); it accepts a correct
+# one; it refuses `guardpage=0x40` when 0x20 was asked for, which is the subtler version of the
+# same loss and the one that would look right at a glance; it leaves a plain run alone; and it
+# catches a missing `heapfix=on` too. Re-drive it by copying this block into a scratch .ps1 with
+# $ClientDir, $Session and the switches defined - the same way the Write-Host plan is rendered.
+$markerPath = Join-Path $ClientDir 'maplecw-hook.session'
+$markerBack = (Get-Content -Path $markerPath -Raw -ErrorAction SilentlyContinue)
+if ($null -eq $markerBack) { throw "the session marker was not written to $markerPath" }
+$markerBack = $markerBack.Trim()
+$wanted = @()
+if ($GuardPage) { $wanted += "guardpage=$GuardBucket" }
+if ($HeapFix) { $wanted += 'heapfix=on' }
+if ($FreeGuard) { $wanted += 'freeguard=on' }
+elseif ($FreeGuardObserve) { $wanted += 'freeguard=observe' }
+$missing = @($wanted | Where-Object { $markerBack -notlike "*$_*" })
+Write-Host ''
+Write-Host "SESSION MARKER: $markerBack" -ForegroundColor Cyan
+if ($missing.Count -gt 0) {
+    Write-Host ''
+    Write-Host 'THE SESSION MARKER IS MISSING A FLAG YOU ASKED FOR.' -ForegroundColor Red
+    foreach ($m in $missing) { Write-Host "  missing: $m" -ForegroundColor Red }
+    Write-Host '  The client would run WITHOUT it and the log would look healthy - which is'
+    Write-Host '  exactly how the 2026-09-08 overnight run was spent. Refusing to launch.'
+    throw 'session marker does not carry the requested flags'
+}
+if ($GuardPage) {
+    Write-Host "  guardpage=$GuardBucket is in the marker. In the hook log expect either" -ForegroundColor Cyan
+    Write-Host '  "GUARD PAGE ARMED ... control PASS" or a line saying why it stood down.' -ForegroundColor Cyan
+}
 # **Only maplecw-launcher can mint a client credential, because only it signs in.** This
 # path is a direct run, so clear any leftover: presenting a stale token is refused, and a
 # refusal downgrades the connection to the --account fallback silently.

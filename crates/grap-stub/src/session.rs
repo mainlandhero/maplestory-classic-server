@@ -173,6 +173,16 @@ fn mode() -> Option<String> {
         .map(|t| t.trim().to_ascii_lowercase())
 }
 
+/// The whole marker as written, for a module that has to report **why** it did not arm.
+///
+/// A module that reads a token it cannot find and returns silently is indistinguishable from
+/// a module that is not in the build. On 2026-09-08 that cost an overnight run: `-GuardPage`
+/// never reached the launcher, `guardpage::install` found no token and returned without a
+/// word, and the log looked exactly like a healthy run with no guard page compiled in.
+pub(crate) fn marker_raw() -> Option<String> {
+    mode()
+}
+
 /// One comma-separated option out of the marker, e.g. `mode=2,create=on`.
 ///
 /// The marker used to hold exactly one setting. It now carries more than one, and splitting

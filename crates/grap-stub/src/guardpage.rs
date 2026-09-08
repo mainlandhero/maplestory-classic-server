@@ -131,9 +131,17 @@ extern "system" {
 // Sizing and the pure core
 // ---------------------------------------------------------------------------------------
 
-/// 2 GB of address space: 512 K one-page slots. Reserved, not committed; a decommitted page
+/// 4 GB of address space: 1 M one-page slots. Reserved, not committed; a decommitted page
 /// costs only its slot in this range.
-const RESERVE_BYTES: usize = 2 * 1024 * 1024 * 1024;
+///
+/// **Sized for bucket 1, the hottest class.** The 2026-09-08 death dump has **56 744 live
+/// `0x20` allocations** [L], and what has to fit here is not that but every `0x20` allocation
+/// made inside one [`REUSE_AFTER_MS`] window - everything older has aged out and come back. At
+/// 1 M slots that is about **1700 allocations a second sustained** before the cursor is spent
+/// and the class falls back to the client's own pool. The doubling costs only address space
+/// plus the metadata below; the committed cost is one page per LIVE slot, ~230 MB for that
+/// bucket, which is the real price of quarantining it.
+const RESERVE_BYTES: usize = 4 * 1024 * 1024 * 1024;
 const MAX_SLOTS: usize = RESERVE_BYTES / PAGE_BYTES;
 
 /// Where in a guard page the slot sits. The header the client reads at `body − 8` lands at
@@ -640,6 +648,16 @@ pub fn install() {
         return;
     }
     let Some(tok) = crate::session::marker_token("guardpage=") else {
+        // **Say so.** This exact silence cost the overnight run of 2026-09-08: the flag never
+        // reached the launcher, the marker carried no token, this returned without a word, and
+        // the log was indistinguishable from a build with no guard page in it at all. One line
+        // per run is the price of never spending a night that way again.
+        log(&format!(
+            "guard page: NOT ARMED - the session marker carries no `guardpage=` token, so \
+             nothing was quarantined this run. The marker reads {:?}. If you passed -GuardPage \
+             and are reading this, the flag did not reach the client",
+            crate::session::marker_raw().unwrap_or_default()
+        ));
         return;
     };
     let watched = tok
@@ -861,23 +879,38 @@ mod tests {
         assert!(!reusable_at(freed, freed - 1_000));
     }
 
-    /// How long the quarantine lasts at a churn rate, which is the number the overnight goal
-    /// turns on. Before the retirement queue this was `MAX_SLOTS / rate` outright.
+    /// **The reserve has to hold bucket 1, which is the hottest class and the one that killed
+    /// the client on 2026-09-08.**
+    ///
+    /// Two different quantities, and confusing them is what made the first sizing wrong:
+    /// without address reuse the reserve is a budget of *every allocation ever made*, and with
+    /// it what must fit is only the allocations made inside one [`REUSE_AFTER_MS`] window.
     #[test]
-    fn the_quarantine_outlasts_a_night_once_addresses_are_recycled() {
-        // Without reuse: the reserve is a budget of total allocations.
-        let budget_seconds = |rate: usize| MAX_SLOTS / rate;
-        assert!(budget_seconds(1000) < 600, "512 K slots at 1000/s is under ten minutes");
-        // With reuse: what must fit is the allocations made during ONE retirement window,
-        // because everything older has aged out and come back.
-        let live_window = |rate: usize| rate * (REUSE_AFTER_MS as usize / 1000);
+    fn the_reserve_holds_bucket_one_for_a_night() {
+        /// Live `0x20` allocations in the 2026-09-08 death dump, from
+        /// `tools/poolchain.py` [L]. The committed cost is one page each, ~230 MB.
+        const MEASURED_LIVE_BUCKET_1: usize = 56_744;
         assert!(
-            live_window(800) < MAX_SLOTS,
-            "800 allocations a second sustained still fits in the reserve"
+            MEASURED_LIVE_BUCKET_1 * 4 < MAX_SLOTS,
+            "the measured live set must fit with room to spare, not just fit"
         );
-        // And the failure is graceful and loud rather than silent: above that the module falls
-        // back to the client's own allocator and the heartbeat says FELL BACK.
-        assert!(live_window(2000) > MAX_SLOTS);
+
+        // Without reuse the reserve is a budget of TOTAL allocations, and a budget runs out.
+        // At a thousand a second even 1 M slots is under twenty minutes, which is why the
+        // retirement queue exists at all rather than being an optimisation.
+        assert!(MAX_SLOTS / 1000 < 1_200, "a total-allocation budget cannot last a night");
+
+        // With reuse, only one retirement window has to fit.
+        let one_window = |rate: usize| rate * (REUSE_AFTER_MS as usize / 1000);
+        assert!(
+            one_window(1_700) < MAX_SLOTS,
+            "1700 allocations a second sustained still fits: {} vs {MAX_SLOTS}",
+            one_window(1_700)
+        );
+        // Above that it falls back to the client's own allocator - gracefully, and LOUDLY:
+        // the heartbeat prints FELL BACK rather than a quiet count, because an uncovered run
+        // is otherwise indistinguishable from a protected one.
+        assert!(one_window(2_000) > MAX_SLOTS);
     }
 
     #[test]
