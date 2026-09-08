@@ -283,11 +283,30 @@ mod tests {
         assert_eq!(level_up_remote(0x1234_5678).body, vec![0x78, 0x56, 0x34, 0x12, 0]);
     }
 
-    /// The effect byte is bounded by `14278bd7d cmp ebx,0x54 / ja <exit>`; above it the
-    /// handler leaves without doing anything.
+    /// **The effect id is 0, and that is the fact worth pinning.**
+    ///
+    /// This used to assert `EFFECT_LEVEL_UP <= 0x54` against the client's
+    /// `14278bd7d cmp ebx,0x54 / ja <exit>` bound. Clippy was right to refuse it: the constant
+    /// is `0`, the minimum of its type, so the comparison is **always true** and could not have
+    /// failed if the id were wrong. That is `CLAUDE.md`'s "a test that pins what the code
+    /// already does is not a check", in one line.
+    ///
+    /// So this asserts the id itself - which can disagree, and would if somebody read the
+    /// effect table differently - and exercises the bound against a sibling that is *not* the
+    /// type's minimum, so the bound assertion is a real one.
     #[test]
-    fn the_effect_byte_is_inside_the_switchs_bound() {
-        const { assert!(EFFECT_LEVEL_UP <= 0x54, "14278bd7d cmp ebx,0x54 / ja") };
+    fn the_effect_id_is_zero_and_the_switch_bound_holds_for_a_sibling_too() {
+        const BOUND: u8 = 0x54; // 14278bd7d cmp ebx,0x54 / ja <exit>
+        assert_eq!(
+            EFFECT_LEVEL_UP, 0,
+            "the level-up effect is index 0 of the client's effect table - Effect/BasicEff.img/\
+             LevelUp is reached by the switch's case 0 arm at 0x14278bd99"
+        );
+        // Non-vacuous: quest-clear is 15, so this comparison has two possible answers.
+        assert!(
+            net::questeffect::EFFECT_QUEST_CLEAR <= BOUND,
+            "a sibling effect must also sit inside the switch bound"
+        );
     }
 
     /// **The bug, in one test.** Someone levels; the other player on the map hears it and
