@@ -270,7 +270,16 @@
     leave the client running overnight without it exiting." That is a different run from every
     one below it, and it wants a different command:
 
-      -SetFieldProbe -PoolSentry -SentryQuiet -SentryRepair -GuardPage -PinPatches
+      -SetFieldProbe -PoolSentry -SentryQuiet -SentryRepair -GuardPage -GuardBucket 0x20 -PinPatches
+
+    -GuardBucket 0x20 IS NOT OPTIONAL AND THE DEFAULT IS WRONG FOR THIS. The 2026-09-08 run
+    died on a 0x20 slot; the default 0x40 came from runs 2 and 5 and would have quarantined
+    the wrong class. Budget ~230 MB extra committed memory for it.
+
+    AND CHECK THE SESSION MARKER BEFORE WALKING AWAY. The 2026-09-08 run carried no
+    guardpage= token at all - client-patched\maplecw-hook.session read "mode=2,create=on" -
+    so the guard page never armed and never logged a line. `type` that file after launch:
+    if it has no guardpage=, the flag did not reach the client and the night is wasted.
 
     NO -SentryWriteWatch. The write watch only OBSERVES: it makes pool pages read-only around
     each predicted firing and single-steps every write through them, up to 20 000 faults per
@@ -2168,7 +2177,16 @@ function Show-TestPlan {
         Write-Host '           (e) is a command - the click fork is keyed on their TEMPLATE, so'
         Write-Host '           a summoned copy would send bytes identical to clicking them.'
         Write-Host '    0i. THE OVERNIGHT RUN - the goal is to SURVIVE, not to measure.' -ForegroundColor Green
-        Write-Host '       -PoolSentry -SentryQuiet -SentryRepair -GuardPage -PinPatches'
+        Write-Host '       -PoolSentry -SentryQuiet -SentryRepair -PinPatches'
+        Write-Host '       -GuardPage -GuardBucket 0x20   <- 0x20, NOT the 0x40 default:' -ForegroundColor Yellow
+        Write-Host '           the 2026-09-08 death was a 0x20 slot. Costs ~230 MB.' -ForegroundColor Yellow
+        Write-Host '       THEN CHECK THE MARKER before walking away:'
+        Write-Host '         type "client-patched\maplecw-hook.session"'
+        Write-Host '       No guardpage= in it means the guard never armed and the night is'
+        Write-Host '       wasted - that is exactly what happened on 2026-09-08.'
+        Write-Host '       A CLEAN POOL IS NOT SUCCESS. That run died with 0 damaged headers' -ForegroundColor Yellow
+        Write-Host '       in 174528 slots: the writer damages LIVE objects too, and the' -ForegroundColor Yellow
+        Write-Host '       sentry only ever checks free headers.' -ForegroundColor Yellow
         Write-Host '       and NO -SentryWriteWatch: the watch only observes, and overnight it'
         Write-Host '       is 160 windows of read-only pages and single-stepped writes for no'
         Write-Host '       protection at all. -SentryQuiet keeps the repair and drops the'
