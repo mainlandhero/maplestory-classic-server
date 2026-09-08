@@ -380,6 +380,50 @@ run is **`-GuardPage`** with the new default `0x20+0x40`. The ~230 MB budget was
 than a factor of two: the 12:01 run measured ~26 000 live `0x20` slots, ~104 MB [L]. `FELL BACK`
 was indeed the first number to read, and it was **419 588**.
 
+**2026-09-08 EVENING: THE 180-SECOND FAMILY IS THE CLIENT'S ANTI-CHEAT, AND THE CORRUPTION
+LOOKS DELIBERATE.** `research/the-180-second-family-is-anti-cheat-2026-09-08.md`. **This forces
+a correction to the entry below it - read both.**
+
+The module holding the five (now six) 180 s tick functions carries **deliberately obfuscated**
+strings [L], verified independently by me with a tolerant search after a plain one found
+nothing: `Crc Fail Alert!!`, `CheatEngine`, `AccountId`, `RegOpenKeyTransactedA`, and three
+cheat-tool names spliced with CR/TAB bytes so a `strings` dump misses them -
+`Ji	n6	4.dl	l` is `Jin64.dll`, and likewise `ROYAL Connector` and
+`Royal.Secure.Runtime`. **My earlier "no strings referenced in the surrounding 96 KB" was
+wrong twice over**: a linear disassembly sweep desyncs the moment it crosses data, and the
+string test would have rejected these anyway because of the embedded control bytes.
+
+The writes are **out-of-bounds by construction** [L]: each tick allocates a small `int` array
+from the pool, and writes a fixed compile-time offset **past its end** - `+0x90` is `v[36]` of a
+5-element array. There is no pointer to be stale. And the agent traced the chain: a cheat-name
+detector sets a writer's enable flag, sends a report packet, and sets that writer's start clock
+to **now + 0x2BF20 (180 000 ms)**. Detect, report, then 180 s later begin corrupting the heap.
+
+**Which of them fires, measured in two dumps by me** [L]: the six readable ones are gated on a
+list size that reads **1** and they need **>= 7**, so they have never fired. The gate for the
+**virtualised** sibling `FUN_140c93c80` (whose `.text` body is a `jmp` into `.themida`) reads
+**2** and needs **>= 2** - it passes. The archived `rdx=0x5` allocation that precedes every
+finding by ~74 ms comes from a Themida return address, which is why `callers.py` could never
+find its caller.
+
+**THE CORRECTION.** The entry below says the live player's crash proves the writer is "a
+property of this client, not of our machine, network or server". **That was too strong and I
+committed it.** That player runs our launcher, our patched client and our injected hook, so
+they were never an independent control - `is-the-corruption-ours` §1's missing control is still
+missing. What the live crash does establish is that it is not specific to the owner's *machine*. It
+does **not** separate "the client does this unprompted" from "our tampering trips the client's
+own anti-cheat, which then sabotages the heap on purpose". With `Crc Fail Alert!!` sitting in
+this module and our hook patching `.text`, the second reading is now live and was not before.
+Against it: the two gate values are byte-identical across separate sessions, which reads more
+like configuration than a detection count [I].
+
+**What follows.** If tampering is the trigger, the fix is to stop tripping it, and the whole
+quarantine becomes unnecessary. The proposed probe is to write `0` to the gate at
+`0x143AC7F3C` from the hook - four bytes of DATA, nothing in `.text`, so no code CRC can see
+it - and watch whether the 180 s `rdx=0x5` allocations and the findings both stop. It is
+self-verifying either way. **Risk, stated:** a module that answers detection by corrupting the
+heap on a timer may answer interference the same way, on a delay.
+
 **2026-09-08: THE WRITER IS ON OTHER PEOPLE'S MACHINES, and it is killing live players.**
 Four hook logs off the live server (`research/live-client-crash-2026-09-08.md`). One is a crash,
 and it closes a question this project had left open. A live player's client - a different person,

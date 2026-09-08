@@ -101,8 +101,24 @@ anywhere"*. The crashing session settles it:
 
 **The identical value, in the identical size class, on a different person's computer.**
 `0x0000000100000020` is the same signature as every damaged header in both of the owner's crash
-dumps. The writer is a property of this client, not of this machine, this network or this
-server.
+dumps. ~~The writer is a property of this client, not of this machine, this network or this
+server.~~
+
+> **THAT LAST SENTENCE WAS TOO STRONG, and it is struck. Narrowed 2026-09-08 evening.**
+> That player runs our launcher, our patched client and our injected hook, so this was **never
+> an independent control** - `is-the-corruption-ours-2026-09-06.md` §1's missing control is
+> still missing. What the observation *does* establish is that the writer is not specific to
+> **The owner's machine, network or server**, which is worth having. What it does **not** do is
+> separate *"the client does this unprompted"* from *"our tampering trips the client's own
+> anti-cheat"*.
+>
+> That second reading was not available when this was written and is now:
+> `research/the-180-second-family-is-anti-cheat-2026-09-08.md` shows the module doing the
+> writing is **anti-cheat** - `Crc Fail Alert!!`, `CheatEngine`, and three cheat-tool names
+> stored with CR/TAB bytes spliced through them so a plain search misses them [L] - and that it
+> writes **out of bounds by construction** after a detect-report-then-wait-180 s chain. Our hook
+> patches `.text`. Against the reading: the two gate values are byte-identical across separate
+> sessions, which looks more like configuration than a detection count [I].
 
 The repair worked: no `0xC0000374` heap-corruption death followed. The client died **80.5 s
 later** of `0xC0000005` instead - which is the same pattern as local runs 2 and 5, where the
