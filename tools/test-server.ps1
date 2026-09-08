@@ -246,19 +246,28 @@
                                                       the cash shop for the whole session.
           Then try the AP buttons and the cash shop in the same session - all three share the
           latch, so if the bag is dead they are too.
-      (b) MOB DROPS - kill a mob WHILE IT IS WALKING (a snail mid-stride, not a standing one).
-            the drop lands on the corpse            -> fixed.
-            it lands ~40 px BEHIND the walk         -> still the path head.
-          The arc matters as much as the landing: an item flying out of empty space behind the
-          mob is the same bug on a different field. Also kill a mob that has NEVER moved: it
-          must drop at the mob, not at your feet.
-      (c) QUEST ITEMS - kill Slimes/Octopuses without the Omok quest. NO Omok Piece may drop.
-          Then take the quest and kill again: it must drop. Dark Marbles are EXEMPT by design
-          and must keep dropping for a second-job run.
+      (b) MOB DROPS - WALKING IS FIXED, JUMPING IS NOT. The owner, 2026-09-08 on a live client:
+          "the drops so far are good ... particularly when a mob is jumping, the loot drops
+          BELOW the current platform." So do not re-test a walking snail; that half is done.
+          Kill a mob MID-JUMP and watch where the loot lands.
+            it lands on the corpse, on the platform -> the jump half is fixed too.
+            it lands BELOW the platform             -> still wrong, and the interesting
+                                                       question is whether the y came out
+                                                       mid-air or the foothold snap searched
+                                                       down past the platform.
+          Say WHICH platform it landed on relative to the mob - one below, or the ground.
+      (c) QUEST ITEMS - CONFIRMED ON A SCREEN 2026-09-08. The owner played a live session with no
+          Omok quest and no quest item dropped. Nothing to re-test unless it regresses; the
+          remaining half nobody has watched is the POSITIVE case - take the Omok quest and
+          confirm the piece starts dropping again. Dark Marbles are EXEMPT by design.
       (d) LEVEL UP - needs TWO clients on ONE map. Level one and watch the OTHER screen for the
           animation and sound. This cannot be confirmed from the server side: the client drops
           the packet in silence if that observer does not already hold the leveller's spawn.
-      (e) !tool - type it in chat on a NON-GM account. It is a public command.
+      (e) !tool - CONFIRMED WORKING ON A SCREEN 2026-09-08 ("!tool seems to be working
+          correctly"). The steps below are kept only for a regression; do not spend a run on
+          them. The one thing still unwatched is the daily REFUSAL - run it twice in one day
+          and confirm it refuses in words rather than going silent.
+          Original steps: type it in chat on a NON-GM account. It is a public command.
             a box with the Maple Administrator's PORTRAIT and three numbered lines
                                                    -> the whole chain works. Pick Level up:
                                                       expect a level, an EXP line, +5 AP.
@@ -2280,18 +2289,23 @@ function Show-TestPlan {
         Write-Host '           The client latches when it SENDS, so an unanswered drop killed'
         Write-Host '           the bag, the AP buttons and the cash shop for the whole'
         Write-Host '           session. Try all three if the bag is dead.'
-        Write-Host '       (b) MOB DROPS. Kill a mob WHILE IT IS WALKING, not standing.'
-        Write-Host '             lands on the corpse      -> fixed'
-        Write-Host '             lands ~40px behind it    -> still the path head'
-        Write-Host '           Watch the ARC too: an item flying out of empty space behind'
-        Write-Host '           the mob is the same bug on a different field. Then kill a mob'
-        Write-Host '           that never moved - it must drop at the mob, not at your feet.'
-        Write-Host '       (c) QUEST ITEMS. Kill Slimes with no Omok quest: NO Omok Piece may'
-        Write-Host '           drop. Take the quest, kill again: it must. Dark Marbles are'
-        Write-Host '           EXEMPT by design and must keep dropping.'
+        Write-Host '       (b) MOB DROPS. WALKING IS FIXED. JUMPING IS NOT.' -ForegroundColor Yellow
+        Write-Host '           the owner on a live client: "the drops so far are good ... when a'
+        Write-Host '           mob is JUMPING, the loot drops BELOW the current platform."'
+        Write-Host '           Do NOT re-test a walking snail. Kill a mob MID-JUMP.'
+        Write-Host '             lands on the corpse, on the platform -> jump half fixed'
+        Write-Host '             lands BELOW the platform             -> still wrong'
+        Write-Host '           Say WHICH platform it landed on: one below, or the ground.'
+        Write-Host '       (c) QUEST ITEMS - CONFIRMED ON A SCREEN 2026-09-08. No quest item' -ForegroundColor Green
+        Write-Host '           dropped in a live session with no Omok quest. Do not re-test.'
+        Write-Host '           Still unwatched: the POSITIVE case - take the quest and confirm'
+        Write-Host '           the piece starts dropping again.'
         Write-Host '       (d) LEVEL UP needs TWO clients on ONE map. Level one, watch the'
         Write-Host '           OTHER screen. The server cannot confirm this one.'
-        Write-Host '       (e) !tool - type it in chat on a NON-GM account (it is public).'
+        Write-Host '       (e) !tool - CONFIRMED WORKING ON A SCREEN 2026-09-08. Do not spend' -ForegroundColor Green
+        Write-Host '           a run on it. Still unwatched: the daily REFUSAL - run it twice'
+        Write-Host '           in one day and confirm it refuses IN WORDS, never silently.'
+        Write-Host '           Original steps: type it in chat on a NON-GM account (public).'
         Write-Host '             box with their PORTRAIT + 3 lines -> works. Pick Level up:'
         Write-Host '                                                level, EXP line, +5 AP'
         Write-Host '             3 lines but NO PORTRAIT -> speaker template not resolving.'

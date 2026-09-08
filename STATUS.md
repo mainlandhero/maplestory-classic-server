@@ -273,6 +273,22 @@ stale base pointer.
 They fire and the writer is one of five known instructions; they never fire and the Themida copy
 is what executes, which closes this direction cheaply. Either answer is progress.
 
+**2026-09-08 EVENING, three of the five have now been ON A SCREEN.** The owner, from a live
+session: *"The drops so far are good, I have not seen a quest item drop ... !tool seems to be
+working correctly."* So **quest-item filtering is CONFIRMED** (the negative case - no quest item
+dropped without the quest; the positive case, taking the quest and seeing the piece return, is
+still unwatched) and **`!tool` is CONFIRMED** (its daily refusal is still unwatched). Drops in
+general are confirmed good.
+
+**One is confirmed still BROKEN, and the report names the case**: *"Mob drop placement is still
+wonky, particularly when a mob is jumping, the loot drops below the current platform."* The
+walking half is fixed - taking the path END instead of the head removed the median 41 px lag -
+but a JUMPING mob still places wrongly, and downward. **[I] the likely cause is the path element
+decode**: `dropsite.rs` treats movement path elements as uniform with xy at a fixed offset, and
+MapleStory path elements carry a type with different bodies per type, so the "last element" read
+lands on the wrong bytes for a jump. The original measurement's unexplained **2.9% residue** is
+the thing to check that against. Under investigation.
+
 **2026-09-08: five live-server fixes, all NEW and none seen on a client yet.** 2152 workspace
 tests.
 
