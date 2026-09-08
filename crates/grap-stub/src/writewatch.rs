@@ -288,6 +288,39 @@ pub(crate) fn page_runs(bases: &[usize], b: &Bucket) -> Vec<(usize, usize)> {
     runs
 }
 
+/// The page of every header in `headers`, as one-page runs - the **pinned** set.
+///
+/// Run of 2026-09-07: fourteen windows protected only the pages that lay entirely inside pool
+/// chunks - 73 of roughly 700 - because a `0x508`-byte chunk is one NT-heap block among many
+/// and a whole page rarely belongs to the pool alone. Every store landed elsewhere. The same
+/// run showed the writer **re-hits headers it has hit before** (three of twelve repaired slots
+/// were damaged again by the end), so the pages of every header the sentry has caught are
+/// protected on every window whether or not the fully-contained rule covers them. They are
+/// pool pages by definition - a caught header sits in a chunk on the live chain - which keeps
+/// the kernel-write caveat where it was.
+pub(crate) fn header_pages(headers: &[usize]) -> Vec<(usize, usize)> {
+    let mut pages: Vec<usize> = headers.iter().map(|h| (h / PAGE_BYTES) * PAGE_BYTES).collect();
+    pages.sort_unstable();
+    pages.dedup();
+    pages.into_iter().map(|p| (p, PAGE_BYTES)).collect()
+}
+
+/// Sort and coalesce runs that touch or overlap, so two sources of pages become one table.
+pub(crate) fn merge_runs(mut runs: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+    runs.sort_unstable();
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    for (start, len) in runs {
+        match out.last_mut() {
+            Some(last) if start <= last.0 + last.1 => {
+                let end = (start + len).max(last.0 + last.1);
+                last.1 = end - last.0;
+            }
+            _ => out.push((start, len)),
+        }
+    }
+    out
+}
+
 /// The chunk containing `target`, by binary search over sorted bases.
 fn find_chunk(bases: &[usize], target: usize, b: &Bucket) -> Option<usize> {
     let span = b.chunk_bytes() + 8;
@@ -607,6 +640,8 @@ pub(crate) struct Armed {
     pub runs: usize,
     pub pages: usize,
     pub protected: usize,
+    /// Pages protected because a header on them was caught earlier this run.
+    pub pinned: usize,
     pub note: Option<String>,
 }
 
@@ -618,6 +653,7 @@ pub(crate) struct Armed {
 /// thing that notices the damage the fault let through.
 pub(crate) fn arm_for(
     bases: Vec<usize>,
+    caught_headers: Vec<usize>,
     window: Duration,
     burst: Duration,
 ) -> Option<Armed> {
@@ -627,7 +663,11 @@ pub(crate) fn arm_for(
     STOP.store(false, Ordering::SeqCst);
 
     let b = &BUCKETS[DAMAGE_CLASS];
-    let runs = page_runs(&bases, b);
+    let pinned_runs = header_pages(&caught_headers);
+    let pinned = pinned_runs.len();
+    let mut runs = page_runs(&bases, b);
+    runs.extend(pinned_runs);
+    let runs = merge_runs(runs);
     let pages: usize = runs.iter().map(|r| r.1 / PAGE_BYTES).sum();
 
     let mut note = None;
@@ -661,6 +701,7 @@ pub(crate) fn arm_for(
                 runs: 0,
                 pages: 0,
                 protected: 0,
+                pinned: 0,
                 note,
             });
         }
@@ -712,6 +753,7 @@ pub(crate) fn arm_for(
         runs: armed_runs,
         pages,
         protected,
+        pinned,
         note,
     })
 }
@@ -891,8 +933,13 @@ mod tests {
             let bodies_before = BODY_WRITES.load(Ordering::SeqCst);
             let hits_before = HIT_COUNT.load(Ordering::SeqCst);
 
-            let armed = arm_for(bases.clone(), Duration::from_millis(600), Duration::from_millis(5))
-                .expect("no window should already be open");
+            let armed = arm_for(
+                bases.clone(),
+                Vec::new(),
+                Duration::from_millis(600),
+                Duration::from_millis(5),
+            )
+            .expect("no window should already be open");
             assert!(
                 armed.protected > 0,
                 "nothing was protected, so the rest of this test would pass vacuously: {:?}",
@@ -984,6 +1031,30 @@ mod tests {
         // The span is 11 * 0x508 + 8 = 0x3728 + 8 bytes from 0x100000, so three whole pages.
         assert_eq!(start, 0x10_0000);
         assert_eq!(len, 3 * PAGE_BYTES);
+    }
+
+    /// **A caught header's page is protected even when no whole page lies inside its chunk.**
+    /// The run of 2026-09-07: 73 pages of ~700 covered, every store elsewhere, and the writer
+    /// re-hitting slots it had hit before. A lone chunk yields no run on its own (the test
+    /// above); with one of its headers in the caught list, its page is a run.
+    #[test]
+    fn a_caught_headers_page_is_pinned_even_when_the_chunk_alone_yields_nothing() {
+        let b = b1();
+        let base = 0x10_0008;
+        assert!(page_runs(&[base], &b).is_empty(), "the control: no whole page in one chunk");
+        let header = base + 8 + 5 * b.stride();
+        let pinned = header_pages(&[header, header + b.stride()]);
+        assert_eq!(pinned, vec![(0x10_0000, PAGE_BYTES)], "two headers on one page: one run");
+        let all = merge_runs([page_runs(&[base], &b), pinned].concat());
+        assert_eq!(all, vec![(0x10_0000, PAGE_BYTES)]);
+        // And pinned pages coalesce with the ordinary runs around them rather than doubling.
+        let bases: Vec<usize> = (0..11).map(|i| 0x20_0008 + i * 0x508).collect();
+        let runs = page_runs(&bases, &b);
+        let with_pin = merge_runs([runs.clone(), header_pages(&[0x20_0008 + 8])].concat());
+        assert_eq!(with_pin, runs, "a header inside an already-covered run adds nothing");
+        let with_edge = merge_runs([runs.clone(), header_pages(&[0x20_3fff])].concat());
+        assert_eq!(with_edge.len(), 1, "an adjacent page extends the run");
+        assert_eq!(with_edge[0].1, runs[0].1 + PAGE_BYTES);
     }
 
     #[test]

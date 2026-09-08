@@ -536,6 +536,19 @@ impl BucketWalk {
         self.reported.insert(f.header_va);
     }
 
+    /// **A slot that has been repaired is a slot that can be damaged again - and it is.**
+    ///
+    /// Run of 2026-09-07 19:40-20:50: twelve catches, twelve repairs, and the death dump shows
+    /// **three of those twelve headers damaged again** - one of them reading
+    /// `0x0000000200000020`, hit twice more after the repair. The writer re-uses its stale
+    /// pointers. `reported` suppressed every re-hit (21 firings in 63 minutes, 12 caught, 9
+    /// silent), so the re-hit on catch #12's slot went unrepaired and its free killed the
+    /// client. Called after a successful repair, so the next damage to the same address is a
+    /// new finding, a new repair, and a new window for the write watch.
+    pub(crate) fn forget_reported(&mut self, header_va: usize) {
+        self.reported.remove(&header_va);
+    }
+
     /// The allocator's own control: chunks walked × slots per chunk must equal the `slots
     /// carved` counter. A short walk shows up here rather than as a clean, confident zero.
     ///
@@ -1297,6 +1310,10 @@ unsafe fn run(cfg: Config) {
     // Which predicted firing the write window has already been opened for, so one firing
     // arms one window however many walks fall inside the lead.
     let mut write_armed_for: u64 = 0;
+    // Every header this run has caught, whether or not it has since been repaired. The writer
+    // re-hits them (see `BucketWalk::forget_reported`), so the write watch pins their pages on
+    // every window rather than hoping the fully-contained rule happens to cover them.
+    let mut ever_damaged: Vec<usize> = Vec::new();
 
     loop {
         let mut nap = nap_for(&cfg, last_fire, period);
@@ -1332,14 +1349,15 @@ unsafe fn run(cfg: Config) {
                     write_armed_for = idx;
                     let bases = walks[DAMAGE_CLASS].sorted_bases();
                     let chunks = bases.len();
-                    match crate::writewatch::arm_for(bases, cfg.write_window, cfg.write_burst) {
+                    match crate::writewatch::arm_for(bases, ever_damaged.clone(), cfg.write_window, cfg.write_burst) {
                         Some(a) => log(&format!(
-                            "***** POOL WRITE WATCH: window #{} open for {} ms over {} run(s)                              ({} page(s), {} protected) covering {chunks} bucket-{DAMAGE_CLASS}                              chunks, {} ms before the predicted firing ({} period, {:.3} s).                              Reads are untouched; a WRITE into this memory now faults at the                              instruction that made it.{}{} *****",
+                            "***** POOL WRITE WATCH: window #{} open for {} ms over {} run(s)                              ({} page(s), {} protected, {} of them PINNED under headers this run already caught) covering {chunks} bucket-{DAMAGE_CLASS}                              chunks, {} ms before the predicted firing ({} period, {:.3} s).                              Reads are untouched; a WRITE into this memory now faults at the                              instruction that made it.{}{} *****",
                             crate::writewatch::armed_windows(),
                             cfg.write_window.as_millis(),
                             a.runs,
                             a.pages,
                             a.protected,
+                            a.pinned,
                             cfg.write_lead.as_millis(),
                             if period.is_some() { "measured" } else { "ASSUMED" },
                             p.as_secs_f64(),
@@ -1408,6 +1426,9 @@ unsafe fn run(cfg: Config) {
                 let mut confirmed = f;
                 confirmed.value = value;
                 walks[i].mark_reported(&confirmed);
+                if !ever_damaged.contains(&confirmed.header_va) {
+                    ever_damaged.push(confirmed.header_va);
+                }
 
                 // Learn the cadence. A finding that arrived while we were walking COARSE means
                 // the prediction was wrong, so the period is dropped rather than refined - the
@@ -1452,6 +1473,9 @@ unsafe fn run(cfg: Config) {
                     match repair_header(&confirmed) {
                         Ok(now) => {
                             REPAIRS.fetch_add(1, Ordering::SeqCst);
+                            // Repaired, so damageable again: let the next hit on this address
+                            // be a finding rather than a silence.
+                            walks[i].forget_reported(confirmed.header_va);
                             log(&format!(
                                 "***** POOL SENTRY REPAIR: {:#x} was {:#018x}, now {now:#018x}. \
                                  The next free of this slot goes back on the pool's own list \
@@ -2055,6 +2079,15 @@ mod tests {
             // and it fires once
             walk.mark_reported(&f);
             assert!(walk.scan().0.is_empty(), "the same slot fired twice");
+            // **But a repaired slot that is damaged AGAIN fires again.** Three of twelve did
+            // on 2026-09-07 and the silence on the third killed the client.
+            pool.damage(17, 23, 0x20);
+            walk.forget_reported(at);
+            assert!(walk.scan().0.is_empty(), "repaired and clean: nothing to report");
+            pool.damage(17, 23, KNOWN_DAMAGE);
+            let again = walk.scan().0;
+            assert_eq!(again.len(), 1, "the re-hit is a new finding: {again:?}");
+            assert_eq!(again[0].header_va, at);
         }
     }
 

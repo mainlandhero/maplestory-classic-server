@@ -48,6 +48,15 @@ dying at 23 minutes the night before. **It is a mitigation, not a fix**, and the
 teardown during a map change - where the repair structurally cannot reach
 (`research/second-crash-family-2026-09-07.md`).
 
+**Run 1 of the write watch (2026-09-07 19:40-20:50) missed the store and moved three
+things**: the writer **re-hits** slots it has hit before (three of twelve repaired headers were
+damaged again, one twice - the increment, on a stable stale pointer); the sentry's
+report-once rule suppressed every re-hit and that silence let catch #12's slot be re-damaged
+and freed - **fixed, a repaired slot is reported again**; the 28-byte allocation from
+`0x14491cafd` (Themida region) fires every 180 s ~100 ms before every catch, 14 of 14; and
+the watch covered only 10% of the pool - **fixed, caught headers' pages are pinned**. Run it
+again. `research/the-180-second-clock-2026-09-07.md` §7.
+
 **The one run worth a launch is `-SentryWriteWatch`** (`research/naming-the-writer-2026-09-07.md`,
 `crates/grap-stub/src/writewatch.rs`). Around each *predicted* firing it puts bucket 1's pages
 read-only for 1.2 s, so the damaging store faults at its own instruction and the log names the

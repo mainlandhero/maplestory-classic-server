@@ -347,3 +347,74 @@ instrument has to be able to do.
   in the two sessions, which differ by 174.3 s - not a multiple of 180. So the clock does not
   start at process start, and predicting the *first* catch needs another session. Predicting
   the *next* one, once one has happened, is exact.
+
+## 7. Run 1 of the write watch: the store was not caught, and three things moved
+
+2026-09-07, 19:40:40 to 20:50:55, process 322016, `-PoolSentry -SentryRepair -SentryWriteWatch
+-PinPatches` with the `140ca61d0` probe. 70 minutes, twelve catches, twelve repairs, fourteen
+windows, `control PASS`, 208 write faults handled - **0 on a slot header**. Then `0xC0000374` in
+the pooled free at 20:50:55. `[L]` for all of it, `client-patched\maplecw-hook.log`.
+
+### 7.1 The writer re-hits slots it has already hit, and the repair was blind to it
+
+`tools/poolchain.py` on the death dump: three damaged slots, **all three of them headers the
+sentry had already caught and repaired** - `0x34d428b8` (catch #3), `0x340b9248` (catch #7,
+reading **`0x0000000200000020`**: hit twice more after its repair), and `0x3457c280` (catch #12,
+the one that was freed). `[L]`
+
+`BucketWalk::mark_reported` records a header address so a slot fires once, and nothing ever
+un-recorded it. So every re-hit was silent: **21 firings in 63 minutes (19:46:51 to 20:49:51,
+exactly 180 s apart), 12 caught, 9 suppressed** - every gap in the catch list is a re-hit on an
+address already in the set. The re-hit on catch #12's slot at 20:49:52 went unrepaired, and its
+free at 20:50:55 is the death. `[D]`
+
+Fixed: a successful repair now forgets the address (`forget_reported`), so the next damage to it
+is a finding and a repair. The `2` is worth its own sentence: the repair wrote `0x20`, and the
+slot then read `0x0000000200000020`. That is **two increments after a reset**, which is the
+counter reading (`heap-corruption-2026-09-06.md` §1.1) observed live rather than inferred from a
+dump - and it says the stale pointer is **stable across periods**.
+
+### 7.2 The allocation before every catch is named by cadence
+
+The probe on `FUN_140ca61d0(out, n)` logged 40 hits. Three callers, three clocks: `[L]`
+
+```text
+  rdx=5  from 0x14491cafd   every 180 s   19:46:51.408  19:49:51.430  ... 20:25:51.785   (14 hits)
+  rdx=6  from 0x14490d430   every 240 s   19:44:51.374  19:48:51.398  ... 20:24:51.654   (11 hits)
+  rdx=7  from 0x144938bf7   every  90 s   19:44:21.377  19:47:51.407  ...                (13 hits)
+```
+
+and the `rdx=5` hit lands **~100 ms before every catch, fourteen for fourteen**:
+
+```text
+  rdx=5 19:46:51.408   FINDING #1 19:46:51.515   +107 ms
+  rdx=5 19:49:51.430   FINDING #2 19:49:51.536   +106 ms
+  rdx=5 20:07:51.610   FINDING #3 20:07:51.742   +132 ms
+  rdx=5 20:22:51.752   FINDING #7 20:22:51.809    +57 ms
+```
+
+A 100 ms walk reports a write up to 106 ms late, so the store is at or immediately after that
+call. `n = 5` is `5*4 + 8 = 28` bytes - **the `0x20` class** - which §5a guessed for the `n = 6`
+callers; those are on a 240 s clock and are not it. `0x14491cafd` sits in the Themida-virtualised
+region, which is why no listing could read the ticker that owns it. `[D]` that it is the writer's
+own ticker rather than a neighbour on the same frame; the write watch is what settles that.
+
+### 7.3 The watch covered a tenth of the pool
+
+Fourteen windows opened on time - 500 ms before the predicted firing, with the catch landing
+inside each window - and every one protected **73 pages of roughly 700**: only the pages lying
+entirely inside pool chunks, and a `0x508`-byte chunk is one NT-heap block among many. The
+liveness control was real (208 faults, all body writes at `0x3a43de20` from a handful of client
+RIPs), and the store landed on an unprotected page every time. `[L]`
+
+Fixed: the pages of every header the sentry has caught this run are **pinned** - protected on
+every window whether or not the containment rule covers them. They are pool pages by
+definition, so the kernel-write caveat is unchanged. Given §7.1, the next window over a re-hit
+slot should catch the store; the first re-hit last time came at catch #3, twenty minutes in.
+
+### 7.4 What this does to the plan
+
+Run 1 again, same recipe, twenty minutes or more. The free-guard run (`-FreeGuardObserve`) is
+still worth doing - it guards the other death, the PCOM map-change free, which did not occur
+here - but this run is now the one with a specific address to watch and a mechanism that says
+it will be hit again.

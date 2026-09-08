@@ -209,13 +209,25 @@
     Meso Explosion, Meso Saver, Chakra, Critical/Nimble Recovery, Final Attack's HP absorb,
     Steal's theft. A cast of those still costs MP and does nothing else, on purpose.
 
-    T18 (NEW 2026-09-07). NAME THE WRITER, and it is THE run. -SentryWriteWatch, below at
-    (C). The ticker probe rides along on the same launch. FIFTEEN IDLE MINUTES standing still
-    on a map with mobs, then CLOSE THE CLIENT YOURSELF - the death is not needed and a
-    deliberate end keeps the sample unbiased. start-servers.cmd with these, then the launcher:
+    T18 (2026-09-07). NAME THE WRITER. RUN 1 DONE (19:40-20:50, 70 min): the store was NOT
+    caught, and the run still moved three things. (1) THE WRITER RE-HITS SLOTS IT HAS HIT: three
+    of twelve repaired headers read damaged again in the death dump, one of them 0x..02..20 -
+    hit TWICE more. The sentry's "report once per address" rule suppressed every re-hit (21
+    firings, 12 caught, 9 silent) and the re-hit on catch #12's slot went unrepaired; its free
+    killed the client at 20:50:55. FIXED: a repaired slot is reported and repaired again.
+    (2) THE ALLOCATION BEFORE EVERY CATCH IS NAMED BY CADENCE: 140ca61d0(out, 5) - 28 bytes,
+    the 0x20 class - from 0x14491cafd, every 180 s, ~100 ms before each catch, 14 of 14. Not the
+    n=6 caller (that one is on 240 s). 0x14491cafd is in the Themida region, which is why no
+    listing reads it. (3) THE WATCH COVERED 10%: only 73 of ~700 pool pages lie entirely inside
+    chunks, so every store landed on an unprotected page (208 body writes, 0 header writes;
+    control PASS). FIXED: the pages of every header already caught are PINNED on every window.
+    Given (1), the next window over a re-hit slot should catch the store.
+
+    RUN 1 AGAIN with the fixes, same recipe, and let it run past 20 minutes - the re-hits
+    started at catch #3. The probe's hit cap is raised so it logs the whole run:
 
       -SetFieldProbe -ServersOnly -PoolSentry -SentryRepair -SentryWriteWatch -PinPatches
-      -Probe "watch@1415db360:ret,141b2a280:rdx=0,140ca61d0:hits=40"
+      -Probe "watch@1415db360:ret,141b2a280:rdx=0,140ca61d0:hits=400"
 
     (A) -SentryRepair writes a confirmed damaged header back to the slot size, so the pool's
     free recognises the slot as the 0x20 slot it still is and puts it on its own list instead
@@ -227,7 +239,10 @@
     zeroing it changes what the writer sees next. Expect FOUR repairs; the heartbeat counts
     them. Say the flag was on in any result that depends on the client having stayed alive.
 
-    (B) The 180 s clock is a FAMILY OF FIFTEEN near-identical tickers at 0x140c93530..95095,
+    (B) RUN 1 SETTLED THIS BY CADENCE: the rdx=5 caller 0x14491cafd (28 bytes, the 0x20
+    class) fires every 180 s, ~100 ms before each catch, 14 of 14; rdx=6 is on 240 s and is
+    not it. The paragraph below is the static reading it replaced, kept for its working.
+    The 180 s clock is a FAMILY OF FIFTEEN near-identical tickers at 0x140c93530..95095,
     seven of them called straight from the frame tick 0x142ce0130. Each seeds a timestamp on
     its first call and RE-ARMS IT ON THE FIRING BRANCH, which is what makes the period exact
     rather than drifting - verified in the listing, not taken on trust. Six of them call
@@ -1992,14 +2007,15 @@ function Show-TestPlan {
         Write-Host '       except within 5s of a predicted firing. The 180s period is LEARNED'
         Write-Host '       from the first two catches, so nothing is assumed, and a catch'
         Write-Host '       outside the window resets it. Keep the repair either way.'
-        Write-Host '    0j. NAME THE WRITER. THIS IS THE RUN. -SentryWriteWatch.' -ForegroundColor Yellow
-        Write-Host '       Everything so far could say WHEN. This makes the STORE fault at the'
-        Write-Host '       instruction that makes it: around each PREDICTED firing, bucket 1'
-        Write-Host '       goes read-only for ~1.2s. Reads are untouched. A write faults, we'
-        Write-Host '       log RIP and the address, unprotect, and the write RE-EXECUTES - so'
-        Write-Host '       the client keeps running, and we write nothing to it.'
-        Write-Host '       Stand still on a map with mobs for FIFTEEN MINUTES, then close the'
-        Write-Host '       client yourself. Nothing arms until the FIRST catch, ~5 min in.'
+        Write-Host '    0j. NAME THE WRITER. RUN 1 (70 min) MISSED THE STORE and found three' -ForegroundColor Yellow
+        Write-Host '       things: the writer RE-HITS slots it hit before (3 of 12 repaired'
+        Write-Host '       slots damaged again, one twice); the sentry ignored re-hits and'
+        Write-Host '       that silence killed the client (FIXED - re-hits are repaired again);'
+        Write-Host '       the 28-byte alloc from 0x14491cafd fires 180s apart ~100ms before'
+        Write-Host '       every catch (14/14); and the watch covered only 10% of the pool'
+        Write-Host '       (FIXED - pages of caught headers are pinned every window).'
+        Write-Host '       RUN IT AGAIN, same recipe, 20+ minutes. Nothing arms until the'
+        Write-Host '       FIRST catch; re-hits began at catch #3 last time.'
         Write-Host '         "THE WRITER: ... from RIP R"  -> THE ANSWER. R is the instruction,'
         Write-Host '                    and the module it sits in also settles "is this OURS"'
         Write-Host '         "saw a write into a watched page" -> liveness. Expect several'
@@ -2007,9 +2023,9 @@ function Show-TestPlan {
         Write-Host '         windows but ZERO write faults -> say exactly that. It is the'
         Write-Host '                    instrument, NOT evidence the client did not write'
         Write-Host '         no window at all -> no catch, so there was no phase to predict'
-        Write-Host '       Same launch also answers: is the ticker family the writer?'
-        Write-Host '         -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,140ca61d0:hits=40"'
-        Write-Host '         a ticker allocates with rdx=6; the login channel list is rdx=2.'
+        Write-Host '       The probe rides along; its rdx=5 hit from 0x14491cafd should keep'
+        Write-Host '         -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,140ca61d0:hits=400"'
+        Write-Host '         landing ~100ms before each catch. rdx=6 is the 240s clock, not it.'
         Write-Host '       research/the-180-second-clock-2026-09-07.md'
         Write-Host '    0l. 2ND/3RD JOB SKILLS: 149 audited, most built, NONE seen yet.' -ForegroundColor Yellow
         Write-Host '       research/second-third-job-audit-2026-09-07.md. !job, !learn, ONE'
