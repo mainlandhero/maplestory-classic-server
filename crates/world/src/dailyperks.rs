@@ -1,9 +1,10 @@
 //! **The Maple Administrator's three daily favours**: 1000 Leaf Points, a level, and an
-//! AP/SP reset - one of each per character per UTC day.
+//! AP/SP reset. Level-up and the reset are once per **character** per UTC day; Leaf Points are
+//! once per **account** - see [`Perk::scope`].
 //!
 //! The owner, 2026-09-08: *"repurpose the 'MapleStory Administrator' NPC into a quality-of-life
 //! NPC ... Gain 1000 Leaf Points / Level up (grant exactly the EXP needed to reach the next
-//! level) / Reset AP & SP ... each option is usable once per day per character, and the daily
+//! level) / Reset AP & SP ... each option is usable once per day, and the daily
 //! allowance resets at UTC midnight."*
 //!
 //! Labels are the project's: **[L]** read off this client's listing, its WZ or a capture,
@@ -82,7 +83,7 @@
 //! wallet - and live in `crates/world/src/session/npc.rs` beside the taxi and second-job
 //! handlers, which is the same split `crate::taxi` uses.
 
-use store::dailyperks::{utc_date, SCOPE_CHARACTER};
+use store::dailyperks::{utc_date, SCOPE_ACCOUNT, SCOPE_CHARACTER};
 
 // ---------------------------------------------------------------------------------------
 // The NPC
@@ -178,22 +179,29 @@ impl Perk {
         }
     }
 
-    /// **Which allowance this perk spends: per character, for all three.**
+    /// **Which allowance this perk spends: the account for Leaf Points, the character for the
+    /// other two.**
     ///
-    /// The owner's wording is *"once per day per character"* and that is what ships. The one place
-    /// it is worth arguing about is [`Perk::LeafPoints`]: the cash wallet is per **account**
-    /// (`store::cash`, and `!lp`'s own help line says so), so a player with three characters
-    /// banks 3 x [`LEAF_POINTS_PER_CLAIM`] a day into one shared pot. That is a real
-    /// consequence of the requested scope rather than an accident, and it is written down here
-    /// so the next reader does not have to rediscover it.
+    /// The owner, 2026-09-08: *"Make leaf point claim per account."* The reason the question came up
+    /// at all is that the pot and the allowance were on different footings: the cash wallet is
+    /// per **account** (`store::cash`, and `!lp`'s own help line says so), so while the claim
+    /// was per character a player with three characters banked 3 x [`LEAF_POINTS_PER_CLAIM`] a
+    /// day into one shared wallet. Now the allowance is on the same footing as the pot it pays
+    /// into, and 1000 a day means 1000 a day however many characters the account has.
     ///
-    /// Changing it is this one arm - `Perk::LeafPoints => store::SCOPE_ACCOUNT` - and the
-    /// caller passing the account id instead of the character id. No migration: the claim
-    /// table is keyed on `(scope, scope_id, perk)` precisely so this stays a one-line
-    /// decision.
+    /// **Level-up and the AP/SP reset stay per character on purpose.** Both change one
+    /// character's own row, so an account-wide allowance would mean levelling one character
+    /// spends the other five's turn - a coupling nobody asked for. The rule that falls out is
+    /// worth stating: *a perk's allowance belongs to whatever its grant actually modifies.*
+    ///
+    /// No migration was needed for the switch, because the claim table is keyed on
+    /// `(scope, scope_id, perk)` and the two scopes are different rows. An account that had
+    /// already spent a character-scoped Leaf Point claim today therefore got one more that
+    /// day, once. That is a one-off, on a feature that has never been on a client.
     pub fn scope(self) -> &'static str {
         match self {
-            Perk::LeafPoints | Perk::LevelUp | Perk::ResetApSp => SCOPE_CHARACTER,
+            Perk::LeafPoints => SCOPE_ACCOUNT,
+            Perk::LevelUp | Perk::ResetApSp => SCOPE_CHARACTER,
         }
     }
 
@@ -359,13 +367,16 @@ pub fn grant_failed_day_returned(perk: Perk, why: &str) -> String {
 }
 
 /// A log label for a claim that was taken, said the way `world.log` wants to read it.
-pub fn claim_note(perk: Perk, character_id: u32, day: i64) -> String {
+pub fn claim_note(perk: Perk, scope_id: i64, day: i64) -> String {
+    // Names the row it actually stamped. This used to say "for character {id}" unconditionally
+    // and print "scope account" beside it, which is a line that contradicts itself in a log
+    // somebody will one day read to answer "why did this player get two".
     format!(
-        "daily perk {:?} CLAIMED for character {character_id}, UTC day {day} ({}) - scope {}. \
-         This is the transition; every effect below hangs off it",
+        "daily perk {:?} CLAIMED for {} {scope_id}, UTC day {day} ({}). This is the \
+         transition; every effect below hangs off it",
         perk,
-        utc_date(day),
-        perk.scope()
+        perk.scope(),
+        utc_date(day)
     )
 }
 
@@ -536,12 +547,21 @@ mod tests {
         assert_eq!(keys.len(), PERKS.len(), "two perks sharing a key would share an allowance");
     }
 
-    /// The scope that ships is per character, for all three - which is the owner's wording. Stated
-    /// as a test so a change to `Perk::scope` is a deliberate act rather than a side effect.
+    /// **A perk's allowance belongs to whatever its grant modifies.** Leaf Points pay into an
+    /// account-wide wallet, so the allowance is account-wide; the other two change one
+    /// character's own row, so they are per character. Stated as a test in BOTH directions, so
+    /// that flipping either one is a deliberate act rather than a side effect - asserting only
+    /// the Leaf Point half would pass against a version that made all three account-scoped and
+    /// silently coupled the six characters' level-ups.
     #[test]
-    fn every_perk_ships_scoped_to_the_character() {
-        for perk in PERKS {
-            assert_eq!(perk.scope(), store::SCOPE_CHARACTER, "{perk:?}");
+    fn leaf_points_are_scoped_to_the_account_and_the_other_two_to_the_character() {
+        assert_eq!(Perk::LeafPoints.scope(), store::SCOPE_ACCOUNT);
+        for perk in [Perk::LevelUp, Perk::ResetApSp] {
+            assert_eq!(
+                perk.scope(),
+                store::SCOPE_CHARACTER,
+                "{perk:?} changes one character's own row, so it must not spend the account's turn"
+            );
         }
         assert_ne!(store::SCOPE_CHARACTER, store::SCOPE_ACCOUNT);
     }

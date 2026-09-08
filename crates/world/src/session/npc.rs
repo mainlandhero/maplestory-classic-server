@@ -1589,8 +1589,9 @@ impl Session {
                 template,
                 &crate::dailyperks::already_used_today(perk, day),
                 &format!(
-                    "{perk:?} REFUSED: character {} already claimed it on UTC day {day} ({}). NOTHING PAID",
-                    chr.id,
+                    "{perk:?} REFUSED: {} {} already claimed it on UTC day {day} ({}).                      NOTHING PAID",
+                    perk.scope(),
+                    self.daily_perk_scope_id(perk, chr.id).unwrap_or(i64::from(chr.id)),
                     store::utc_date(day)
                 ),
             );
@@ -1631,8 +1632,9 @@ impl Session {
                 template,
                 &crate::dailyperks::already_used_today(perk, outcome.day()),
                 &format!(
-                    "{perk:?} REFUSED: character {} already claimed it on UTC day {} ({}). NOTHING PAID",
-                    chr.id,
+                    "{perk:?} REFUSED: {} {scope_id} already claimed it on UTC day {} ({}). \
+                     NOTHING PAID",
+                    scope,
                     outcome.day(),
                     store::utc_date(outcome.day())
                 ),
@@ -1640,7 +1642,7 @@ impl Session {
         };
 
         // 3. The grant. Nothing above this line has paid anything.
-        crate::server::log(&crate::dailyperks::claim_note(perk, chr.id, day));
+        crate::server::log(&crate::dailyperks::claim_note(perk, scope_id, day));
         match self.apply_daily_perk(template, perk, &chr) {
             Ok(replies) => replies,
             Err(why) => {
@@ -1718,10 +1720,11 @@ impl Session {
         match perk {
             // ---- 1000 Leaf Points ----------------------------------------------------
             //
-            // **The wallet is per ACCOUNT** (`store::cash`), while this claim is per
-            // character - so a player with several characters banks the allowance once per
-            // character into one shared pot. That is the scope the owner asked for; see
-            // `dailyperks::Perk::scope` for the one-line change if it should be per account.
+            // **The wallet is per ACCOUNT** (`store::cash`) and so, since 2026-09-08, is the
+            // allowance - the owner: *"Make leaf point claim per account."* 1000 a day means 1000 a
+            // day however many characters the account has. `daily_perk_scope_id` returns the
+            // account id for this perk, so the row this spends is the same one every character
+            // on the account reads.
             //
             // Nothing pushes a wallet update to the client: the balance travels in the
             // `0x05AD` that goes out with `SetCashShop`, and the client's own poll is
