@@ -1565,6 +1565,18 @@ unsafe fn run(cfg: Config) {
             } else {
                 line
             };
+            // The guard-page quarantine, if it is armed. `catches` is the payload: a stale
+            // write or read into a retired slot, caught at the instruction. `live` climbing
+            // without bound would mean the class never frees; `fallback` climbing means the
+            // 2 GB reserve ran out.
+            let line = if crate::guardpage::armed() {
+                let (served, freed, live, catches, fallback) = crate::guardpage::counters();
+                format!(
+                    "{line} | guard page: {served} served, {freed} freed, {live} live,                      {catches} STALE-ACCESS CATCH(es), {fallback} fell back"
+                )
+            } else {
+                line
+            };
             // Say which cadence is in force. A run that quietly walked coarse the whole time
             // would under-count findings and look identical to a quiet client.
             let line = match (cfg.coarse, period) {

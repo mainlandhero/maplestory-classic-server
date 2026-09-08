@@ -223,6 +223,23 @@
     control PASS). FIXED: the pages of every header already caught are PINNED on every window.
     Given (1), the next window over a re-hit slot should catch the store.
 
+    RUN 5 (2026-09-08 build). NAME THE WRITER ON BOTH SURFACES IN ONE LAUNCH. The write watch
+    (0x20 headers, windows) and the GUARD PAGE (0x40, quarantine) are complementary and run
+    together. Run 5 died at 3.5 min on a 0x40 map node used +2 (heap-wild-write dump 2) - a
+    surface the window watch structurally cannot reach. The guard page covers it: it serves the
+    0x40 class one-slot-per-page and decommits on free, so a stale pointer into a freed 0x40
+    slot faults at the writer on any clock. Recipe now:
+
+      -SetFieldProbe -ServersOnly -PoolSentry -SentryRepair -SentryWriteWatch -GuardPage
+      -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,140ca61d0:hits=400"
+
+    In the hook log: the sentry heartbeat gains a "guard page: N served, M freed, K live, C
+    STALE-ACCESS CATCH(es)" line; on a catch, "GUARD PAGE - STALE WRITE at X ... RIP R ...
+    allocated from A freed from F" - R is the 0x40 writer. "GUARD PAGE ARMED ... control PASS"
+    confirms it armed; "control FAIL" or a prologue-mismatch line means it stood down and the
+    client is unpatched by it. The guard writes to the client (an allocator inline hook + a
+    HeapFree pointer swap), off unless -GuardPage; -GuardBucket picks the class (default 0x40).
+
     RUN 4 (22:45-23:35, closed by hand): 11 windows, one every cycle; pinned pages grew to 8;
     9 catches in 15 firings (six stores landed where the sentry cannot see, as the run-2 death
     predicted). And the decisive pair: catches #3 and #4 were the SAME slot, its page PINNED,
@@ -1192,6 +1209,17 @@ param(
     # Same guard, but it logs and frees anyway - so the false-positive rate can be measured
     # without changing what the client does. Expect the client to still die on the map change.
     [switch]$FreeGuardObserve,
+    # QUARANTINE one pool size class: each allocation of that class gets its own page, and its
+    # free DECOMMITS the page and never reuses the address. A stale pointer into freed memory -
+    # the writer's habit - then faults at the instruction that uses it, on ANY clock, and the
+    # handler logs RIP + who allocated + who freed and recommits so the client runs on. This is
+    # the surface runs 2 and 5 died on (a 0x40 map node used +2) that the write watch cannot
+    # reach. Needs -PinPatches. Default class 0x40. crates/grap-stub/src/guardpage.rs.
+    [switch]$GuardPage,
+    # Which size class the guard quarantines: 0x10, 0x20, 0x40 or 0x80. Default 0x40 (bucket 2),
+    # the lowest-traffic class and the one with no window coverage. Pair with -SentryWriteWatch
+    # on 0x20 and the two surfaces are both covered in one launch.
+    [string]$GuardBucket = '0x40',
     # Clear user+0x544a. OFF by default and MEASURED INERT on 2026-08-28: the contact path
     # bails before the gate is ever reached, because it is gated on a WZ node no mob has.
     # Kept because it may matter for a mob ATTACK-SKILL hit, which has never been observed.
@@ -2019,6 +2047,14 @@ function Show-TestPlan {
         Write-Host '       except within 5s of a predicted firing. The 180s period is LEARNED'
         Write-Host '       from the first two catches, so nothing is assumed, and a catch'
         Write-Host '       outside the window resets it. Keep the repair either way.'
+        Write-Host '    0j. NAME THE WRITER - two surfaces, one launch (2026-09-08).' -ForegroundColor Yellow
+        Write-Host '       -SentryWriteWatch (0x20 headers) AND -GuardPage (0x40 quarantine)'
+        Write-Host '       together. The guard serves the 0x40 class one-slot-per-page and'
+        Write-Host '       decommits on free, so a stale pointer into a freed 0x40 slot - the'
+        Write-Host '       run-2/run-5 death the window watch cannot reach - faults at the'
+        Write-Host '       writer. Watch for "GUARD PAGE ARMED ... control PASS", the heartbeat'
+        Write-Host '       "guard page:" line, and "GUARD PAGE - STALE ... RIP R" (the answer).'
+        Write-Host '       History below.'
         Write-Host '    0j. NAME THE WRITER. RUN 1 (70 min) MISSED THE STORE and found three' -ForegroundColor Yellow
         Write-Host '       things: the writer RE-HITS slots it hit before (3 of 12 repaired'
         Write-Host '       slots damaged again, one twice); the sentry ignored re-hits and'
@@ -2460,6 +2496,24 @@ if ($HeapFix) { $Session = "$Session,heapfix=on" }
 if ($ClientHitNumberPatch) { $Session = "$Session,hitnumber=off" }
 if ($FreeGuard) { $Session = "$Session,freeguard=on" }
 elseif ($FreeGuardObserve) { $Session = "$Session,freeguard=observe" }
+if ($GuardPage) { $Session = "$Session,guardpage=$GuardBucket" }
+
+if ($GuardPage) {
+    if (-not $PinPatches) {
+        Write-Host 'GUARD PAGE needs -PinPatches to reach a launcher run: the launcher writes' -ForegroundColor Yellow
+        Write-Host '  maplecw-hook.session with its OWN defaults and would overwrite this.' -ForegroundColor Yellow
+    }
+    Write-Host "GUARD PAGE: quarantining size class $GuardBucket." -ForegroundColor Cyan
+    Write-Host '  Each allocation of that class gets its OWN page; its free DECOMMITS the page' -ForegroundColor Cyan
+    Write-Host '  and never reuses it. A stale write/read into a freed slot FAULTS at the' -ForegroundColor Cyan
+    Write-Host '  instruction that makes it - on any clock, not just the 180s window.' -ForegroundColor Cyan
+    Write-Host '  In the hook log: "GUARD PAGE ARMED ... control PASS", a heartbeat line' -ForegroundColor Cyan
+    Write-Host '  ("N served, M freed, K live, ... CATCH(es)"), and on a hit:' -ForegroundColor Cyan
+    Write-Host '  "GUARD PAGE - STALE WRITE/READ at X ... RIP R ... allocated from A freed from F".' -ForegroundColor Cyan
+    Write-Host '  R is THE ANSWER for the 0x40 surface. Pair with -SentryWriteWatch (0x20).' -ForegroundColor Cyan
+    Write-Host '  It writes to the client (an inline hook on the allocator + a HeapFree swap);' -ForegroundColor Cyan
+    Write-Host '  it stands down if the allocator prologue does not match or its self-test fails.' -ForegroundColor Cyan
+}
 
 if ($FreeGuard -or $FreeGuardObserve) {
     if (-not $PinPatches) {

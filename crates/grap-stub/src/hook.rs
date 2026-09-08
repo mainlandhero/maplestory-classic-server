@@ -555,6 +555,10 @@ pub unsafe fn install() {
     // a thread of its own, because PCOM's cached free pointer is filled at runtime.
     // See crates/grap-stub/src/freeguard.rs.
     crate::freeguard::install();
+    // Quarantine one pool size class so a stale write into freed memory faults at the writer.
+    // Gated on `guardpage=<hex slot size>` in the session marker; absent, it hooks nothing and
+    // starts no thread. See crates/grap-stub/src/guardpage.rs.
+    crate::guardpage::install();
 
     log("install: hook active");
 }

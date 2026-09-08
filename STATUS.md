@@ -77,6 +77,17 @@ died this way. The `0x20` write watch is still one door-close from its own write
 covering the `0x40`/worker surface needs the guard-page build, which is a deliberate schedule,
 not a window tweak.
 
+**2026-09-08: the GUARD-PAGE quarantine is built (`crates/grap-stub/src/guardpage.rs`,
+`-GuardPage`).** It covers the surface the write watch cannot: it serves one pool size class
+(default `0x40`, bucket 2) one-slot-per-page from a private 2 GB reserve and DECOMMITS each slot
+on free, never reusing the address, so a stale pointer into freed-and-reused memory - the
+writer's habit behind every run - faults at the instruction that uses it, on any clock. The
+handler logs RIP + who-allocated + who-freed and recommits so the client survives. Alloc is one
+inline hook (prologue-checked, `identity::install_detour`); free is a HeapFree pointer swap
+(`freeguard`'s technique); a self-test must catch a control write before it arms. Off unless
+`-GuardPage`. Run it WITH `-SentryWriteWatch` (0x20) + `-PinPatches`: the two cover both
+surfaces in one launch. Not yet on a client. 95 grap-stub tests.
+
 **The one run worth a launch is `-SentryWriteWatch`** (`research/naming-the-writer-2026-09-07.md`,
 `crates/grap-stub/src/writewatch.rs`). Around each *predicted* firing it puts bucket 1's pages
 read-only for 1.2 s, so the damaging store faults at its own instruction and the log names the
