@@ -284,6 +284,20 @@
 
     -GuardBucket now DEFAULTS to 0x20+0x40. Do not type it.
 
+    AND NOTHING ELSE. NO -Probe WATCHES ON THIS RUN.
+    2026-09-08 14:47: this command plus five watch@ targets was run, and the client closed
+    the instant it entered the field - the first death in this whole investigation with NO
+    exception and NO crash dump. The guard page armed clean, control PASSed, and BOTH classes'
+    first-free controls fired, so the guard page is not the suspect; the log's LAST line is
+    the watch firing. Two things were changed at once and that is why it is still a suspicion
+    rather than a fact. Run the guard page ALONE. Add watches only after it has survived.
+
+    IF YOU DO ADD WATCHES LATER, THE GRAMMAR IS ONE `watch@`:
+      -Probe "watch@140c93530,140c936a0,140c93810,140c93b70,140c93930"   RIGHT
+      -Probe "watch@140c93530,watch@140c936a0,..."                        WRONG - four of the
+                                                                          five are refused
+    The launcher now refuses the wrong form outright, so this cannot cost another run.
+
     SETTLED AT 12:01 TODAY, DO NOT RE-TEST. The guard page armed on a client for the first
     time ("GUARD PAGE ARMED: size class 0x20 ... control PASS"), and the client then ran
     12:01:18 -> 13:58:14, 1h57m, the longest session this project has had. An inline hook on
@@ -2282,6 +2296,17 @@ function Show-TestPlan {
         Write-Host '    0i. THE OVERNIGHT RUN - the goal is to SURVIVE, not to measure.' -ForegroundColor Green
         Write-Host '       -PoolSentry -SentryQuiet -SentryRepair -PinPatches -GuardPage'
         Write-Host '       -GuardBucket now DEFAULTS to 0x20+0x40 - TWO classes. Type nothing.' -ForegroundColor Yellow
+        Write-Host '       AND NOTHING ELSE. NO -Probe WATCHES ON THIS RUN.' -ForegroundColor Red
+        Write-Host '       14:47 today: this command PLUS five watch@ targets, and the client' -ForegroundColor Red
+        Write-Host '       closed the instant it entered the field - the first death here with' -ForegroundColor Red
+        Write-Host '       NO exception and NO dump. The guard page armed clean and both'
+        Write-Host '       classes first-free controls fired, so it is not the suspect; the'
+        Write-Host '       log ends ON the watch firing. But TWO things were changed at once,'
+        Write-Host '       so that is a suspicion, not a fact. Guard page ALONE this time.'
+        Write-Host '       If you add watches later the grammar is ONE watch@:'
+        Write-Host '         -Probe "watch@140c93530,140c936a0,140c93810"     RIGHT'
+        Write-Host '         -Probe "watch@140c93530,watch@140c936a0"         WRONG'
+        Write-Host '       The launcher now refuses the wrong form outright.'
         Write-Host '       SETTLED 12:01 TODAY, do NOT re-test: the guard page armed on a client' -ForegroundColor Green
         Write-Host '       for the first time, control PASSed, and the client ran 1h57m - the' -ForegroundColor Green
         Write-Host '       longest session this project has had. The allocator inline hook does' -ForegroundColor Green
@@ -3021,6 +3046,35 @@ if (-not $FallbackAccount) {
 }
 New-Item -ItemType Directory -Path $dumpDir -Force | Out-Null
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.dumpdir') -Value $dumpDir -Encoding ascii
+# **VALIDATE THE PROBE SPEC BEFORE IT COSTS A RUN.**
+#
+# 2026-09-08 14:47: a spec of "watch@A,watch@B,watch@C,watch@D,watch@E" armed ONE target. The
+# grammar is a SINGLE `watch@` prefix followed by comma-separated targets - `arm_watch` does
+# `strip_prefix("watch@")` once and splits the remainder on commas - so every term after the
+# first carried a literal "watch@" and was refused one line at a time in the hook log, which
+# nobody reads until after the client has died. Four of five watches were silently absent.
+if ($Probe -and $Probe.Trim()) {
+    $spec = $Probe.Trim()
+    if ($spec.StartsWith('watch@')) {
+        $rest = $spec.Substring(6)
+        if ($rest -like '*watch@*') {
+            Write-Host ''
+            Write-Host 'THE PROBE SPEC REPEATS "watch@" AND MOST OF IT WOULD BE IGNORED.' -ForegroundColor Red
+            Write-Host '  The grammar is ONE watch@ then comma-separated targets:' -ForegroundColor Red
+            Write-Host '    -Probe "watch@140c93530,140c936a0,140c93810"' -ForegroundColor Yellow
+            Write-Host '  not  -Probe "watch@140c93530,watch@140c936a0,..."' -ForegroundColor Yellow
+            throw 'probe spec repeats watch@; only the first target would arm'
+        }
+        foreach ($term in ($rest -split ',')) {
+            if (-not $term.Trim()) { continue }
+            $target = ($term -split ':')[0].Trim()
+            if ($target -notmatch '^[0-9a-fA-F]+$' -and $target -notmatch '^[A-Za-z0-9_.-]+!.+$') {
+                throw "-Probe target '$target' is neither a hex VA nor <module>!<export>. The hook would refuse it and the run would be short that watch."
+            }
+        }
+    }
+}
+
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.probe') -Value $Probe -Encoding ascii
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.session') -Value $Session -Encoding ascii
 
