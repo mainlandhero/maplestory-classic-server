@@ -59,6 +59,39 @@ ways: `FUN_141b267c0` switches on `result + 1`, so `case 8` is wire 7 - and `cas
 table is `notRegisteredID`, which this repo already knew is wire result 5, so the offset is
 checked against something that can disagree [L]. **Nobody has put that dialog on a screen yet.**
 
+**2026-09-08 LATE: the guard page is absorbing the overrun, not detecting it - and the gate that
+arms the writer is NOT in the executable.** The owner asked whether the writer hits predictable
+locations, whether we could reserve those chunks for it, and whether our stub `grap64.dll` is
+implicated. `research/the-180-second-family-is-anti-cheat-2026-09-08.md` §9, three answers:
+
+* **The offset is a compile-time constant; the address is not.** `&v[0] + K` where the base is
+  whatever slot the pool hands out. Nothing to reserve, because the writer aims at a *distance*.
+* **But reserving the SLACK works, and the guard page already does it by accident.**
+  `SLOT_BODY_OFF = 0x10`, one slot per 4 KB page, so every known `K` (max `0x220`) lands at
+  `page + 0x10 + K` - inside our own committed page, 3.5 KB clear. **The instrument built as a
+  stale-access detector is functioning as an overrun absorber**, which means `0 confirmed finding`
+  at three hours is *not* the same claim as "nothing has gone wrong". **Test that reads the answer
+  out of a client that is still running:** scan `page + 0x90 .. page + 0x300` of live quarantined
+  slots for non-zero dwords at each heartbeat. Pages are handed out zeroed; a repeating non-zero
+  dword is the writer caught in our padding, with no crash and no dump. It also settles the
+  overrun-vs-stale-pointer question §6 left open.
+* **The stub does not cause the write** [L] - the array size and the write offset are both
+  compile-time immediates in `MapleStory.exe`'s own `.text`, with no `grap64` call between them.
+  **Whether the stub ARMS it is undetermined, and the previous write-up was over-confident.** The
+  live writer needs `[0x143AC7F3C] >= 2`; `dump_va.py` says that address has **no file bytes**
+  (uninitialised `.data` tail), and an opcode-agnostic RIP-relative scan of `.text` - not
+  `dataref.py`, whose own docstring warns its opcode table has been short before - finds **one**
+  reference, the `cmp` that reads it. Something outside `.text` writes the 2 every session. The
+  "byte-identical across three sessions" argument never had power here: all three sessions ran the
+  same stub, hook and patched client.
+
+**`tools/gatescan.py` (new) reads all eighteen gates out of the RUNNING client**, read-only
+(`PROCESS_VM_READ`, the same pattern `dump_runtime.py` already uses), refusing to report unless a
+rebase control and a block-fingerprint control both pass. **It needs an elevated shell** - the
+client runs elevated and `OpenProcess` returns error 5 otherwise. If the gate can be seen at 0 in
+any healthy session, the stub question closes without ever loading the real DLL (which installs a
+service and the `BlackCat64.sys` kernel driver, and is not worth it).
+
 **2026-09-08: the guard-page quarantine now SHIPS in the launcher, and it has a kill switch
 that needs no rebuild.** The owner: *"work under the assumption that if this works, all of the clients
 should have it."* `launcher::client::DEFAULT_SESSION` is now
