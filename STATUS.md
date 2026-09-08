@@ -86,7 +86,17 @@ handler logs RIP + who-allocated + who-freed and recommits so the client survive
 inline hook (prologue-checked, `identity::install_detour`); free is a HeapFree pointer swap
 (`freeguard`'s technique); a self-test must catch a control write before it arms. Off unless
 `-GuardPage`. Run it WITH `-SentryWriteWatch` (0x20) + `-PinPatches`: the two cover both
-surfaces in one launch. Not yet on a client. 95 grap-stub tests.
+surfaces in one launch. Not yet on a client. **Reviewed before its first launch** (the owner: *"make
+sure you agree"*; `research/guard-page-2026-09-08.md` §6): three defects fixed - the allocator
+detour could be entered before its trampoline was stored (a crash at RIP 0 at arm time; the
+trampoline is now published first and other threads are parked outside the prologue while the
+jump is written, in `identity::install_detour` for both its users), the "freed from" address
+would always have read the pool's own free (`0x14019bbf3`) instead of the freer, and `probe.rs`'s
+handler - registered later, so it runs first - would have logged every catch as a `CLIENT FAULT`
+and written a crash dump before the guard page's handler saw it. Confirmed off the listing while
+reviewing: both pool frees read the one `HeapFree` slot (60 readers in all), the ladder takes a
+`0x100` header to that arm, `HeapFree` gets `body-8`, and the allocator overwrites `rax` before
+reading it, so the trampoline's clobber is safe. 97 grap-stub tests.
 
 **The one run worth a launch is `-SentryWriteWatch`** (`research/naming-the-writer-2026-09-07.md`,
 `crates/grap-stub/src/writewatch.rs`). Around each *predicted* firing it puts bucket 1's pages

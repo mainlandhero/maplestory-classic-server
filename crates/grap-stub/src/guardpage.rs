@@ -87,6 +87,11 @@ const POOL_CTX_RVA: usize = 0x143AD68A0 - 0x140000000;
 /// `call qword [rip+..]`. `research/heapfix-did-not-hold.md` §1: `-> 0x143ad5530`. Swapping it
 /// is `crate::freeguard`'s technique; in the run-5 dump it held `kernel32!HeapFree`.
 const HEAPFREE_SLOT_RVA: usize = 0x143AD5530 - 0x140000000;
+/// The pool's own code: the hardcoded-context free `FUN_14019b4e0`, the allocator
+/// `FUN_14019b780`, the free `FUN_14019bb50`, and the helpers between them. A return address
+/// in here is the pool calling itself, never the caller worth naming - see [`caller_ra`].
+const POOL_CODE_LO_RVA: usize = 0x14019b4e0 - 0x140000000;
+const POOL_CODE_HI_RVA: usize = 0x14019bc60 - 0x140000000;
 
 // ---------------------------------------------------------------------------------------
 // Windows
@@ -186,6 +191,56 @@ static FALLBACK: AtomicU64 = AtomicU64::new(0);
 static CATCHES: AtomicU64 = AtomicU64::new(0);
 static CATCH_LOGS: AtomicU32 = AtomicU32::new(0);
 const MAX_CATCH_LOGS: u32 = 64;
+
+/// The client's executable sections as `[lo, hi)`, from the PE header at the module base,
+/// read once at arm. On this build: `.text`, `.themida` and `.boot`. A return address is only
+/// believed if it lies in one of these - see [`caller_ra`].
+const MAX_EXEC: usize = 8;
+const ZERO_USIZE: AtomicUsize = AtomicUsize::new(0);
+static EXEC_LO: [AtomicUsize; MAX_EXEC] = [ZERO_USIZE; MAX_EXEC];
+static EXEC_HI: [AtomicUsize; MAX_EXEC] = [ZERO_USIZE; MAX_EXEC];
+static EXEC_N: AtomicUsize = AtomicUsize::new(0);
+
+/// The executable sections of a PE image whose first bytes are `hdr`, as absolute
+/// `[lo, hi)` ranges at `base`. Returns the ranges and how many are filled; a header that does
+/// not parse yields zero.
+pub(crate) fn parse_exec_ranges(hdr: &[u8], base: usize) -> ([(usize, usize); MAX_EXEC], usize) {
+    const IMAGE_SCN_MEM_EXECUTE: u32 = 0x2000_0000;
+    let mut out = [(0usize, 0usize); MAX_EXEC];
+    let rd32 = |at: usize| -> Option<u32> {
+        hdr.get(at..at + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    let rd16 = |at: usize| -> Option<u16> { hdr.get(at..at + 2).map(|b| u16::from_le_bytes([b[0], b[1]])) };
+    if hdr.get(0..2) != Some(b"MZ") {
+        return (out, 0);
+    }
+    let Some(pe) = rd32(0x3c).map(|v| v as usize) else { return (out, 0) };
+    if hdr.get(pe..pe + 4) != Some(b"PE\0\0") {
+        return (out, 0);
+    }
+    let (Some(nsec), Some(optsz)) = (rd16(pe + 6), rd16(pe + 20)) else { return (out, 0) };
+    let mut n = 0;
+    for i in 0..nsec as usize {
+        let sec = pe + 24 + optsz as usize + i * 40;
+        let (Some(vsize), Some(va), Some(ch)) = (rd32(sec + 8), rd32(sec + 12), rd32(sec + 36)) else {
+            break;
+        };
+        if ch & IMAGE_SCN_MEM_EXECUTE != 0 && vsize != 0 && n < MAX_EXEC {
+            out[n] = (base + va as usize, base + va as usize + vsize as usize);
+            n += 1;
+        }
+    }
+    (out, n)
+}
+
+/// Is `v` a return address worth recording: inside one of the client's executable sections
+/// and not inside the pool's own routines.
+pub(crate) fn accept_ra(v: usize, base: usize, exec: &[(usize, usize)]) -> bool {
+    if base != 0 && v >= base + POOL_CODE_LO_RVA && v < base + POOL_CODE_HI_RVA {
+        return false;
+    }
+    exec.iter().any(|&(lo, hi)| v >= lo && v < hi)
+}
 
 /// The self-test's own page and the address it stores to.
 static PROBE_PAGE: AtomicUsize = AtomicUsize::new(0);
@@ -297,18 +352,37 @@ unsafe extern "system" fn heapfree_shim(heap: usize, flags: u32, mem: usize) -> 
     real(heap, flags, mem)
 }
 
-/// The caller's return address, best-effort from the shadow of this frame. Used only for the
-/// per-page metadata, where a wrong value is a worse log line, never a fault.
+/// The caller's return address, best-effort: the first value up the stack from here that
+/// [`accept_ra`] believes. Used only for the per-page metadata, where a wrong value is a
+/// worse log line, never a fault.
+///
+/// Two filters, both from the review of 2026-09-08, before the first launch:
+///
+/// * **Executable sections only, not "the image".** The first version accepted any value in
+///   the 128 MB image, and the pool context `0x143ad68a0` - a `.data` address that is the
+///   allocator's first argument and sits in its home slot - qualified.
+/// * **Skip the pool's own code.** From [`heapfree_shim`] the nearest client address up the
+///   stack is always `0x14019bbf3`, the return into the free that called `HeapFree` - so every
+///   catch would have read "freed from 0x14019bbf3", which names the pool and not the freer.
+///   Both frees are `push rdi; sub rsp,0x20` frames [L], so the caller worth naming is one
+///   frame further up; skipping `[0x14019b4e0, 0x14019bc60)` reaches it.
+///
+/// From [`alloc_detour`], entered by the jump at the allocator's first byte, the first
+/// accepted value is the allocator's caller directly.
 #[inline(never)]
 unsafe fn caller_ra() -> usize {
     let mut rsp: usize;
     std::arch::asm!("mov {}, rsp", out(reg) rsp);
-    // The return into heapfree_shim sits above its locals; scan a small window for a code
-    // address in the client image rather than trust one fixed offset across build modes.
     let base = crate::hook::base();
-    for off in (0..0x80).step_by(8) {
+    let n = EXEC_N.load(Ordering::SeqCst).min(MAX_EXEC);
+    let mut exec = [(0usize, 0usize); MAX_EXEC];
+    for (i, slot) in exec.iter_mut().enumerate().take(n) {
+        *slot = (EXEC_LO[i].load(Ordering::SeqCst), EXEC_HI[i].load(Ordering::SeqCst));
+    }
+    // 0x180 bytes: this frame, the shim's, the free's 0x28-byte frame and its return slot.
+    for off in (0..0x180).step_by(8) {
         let v = std::ptr::read_volatile((rsp + off) as *const usize);
-        if v >= base && v < base + 0x0800_0000 {
+        if accept_ra(v, base, &exec[..n]) {
             return v;
         }
     }
@@ -378,6 +452,32 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
     // rather than corrupting the pool.
     std::ptr::write_volatile((page + SLOT_HEADER_OFF) as *mut u64, QUARANTINE_HEADER);
     EXCEPTION_CONTINUE_EXECUTION
+}
+
+/// Is this exception one of ours - a fault on a retired page in the reserve, or on the
+/// self-test's page? `probe.rs` asks before it treats a fault as a client crash, exactly as
+/// it asks `writewatch`. Its handler is registered when the first watch arms, seconds after
+/// this module's, and a first-chance handler registered later runs FIRST - so without this a
+/// guard-page catch would be logged as `CLIENT FAULT` and would write a crash dump before our
+/// handler ever saw it.
+pub(crate) unsafe fn suppresses(info: *mut c_void) -> bool {
+    if info.is_null() {
+        return false;
+    }
+    let p = info.cast::<ExceptionPointers>();
+    let rec = (*p).record;
+    if rec.is_null() || *(rec.add(REC_CODE).cast::<u32>()) != EXCEPTION_ACCESS_VIOLATION {
+        return false;
+    }
+    if (*(rec.add(REC_PARAMS).cast::<u32>()) as usize) < 2 {
+        return false;
+    }
+    let target = *(rec.add(REC_INFO + 8).cast::<usize>());
+    let probe = PROBE_PAGE.load(Ordering::SeqCst);
+    if probe != 0 && page_of(target) == probe {
+        return true;
+    }
+    slot_index(RESERVE_BASE.load(Ordering::SeqCst), target).is_some()
 }
 
 // ---------------------------------------------------------------------------------------
@@ -472,6 +572,20 @@ unsafe fn arm(watched: usize) {
     META.store(meta_ptr, Ordering::SeqCst);
     WATCHED.store(watched, Ordering::SeqCst);
 
+    // Which addresses count as a caller. Read from the mapped image's own header so a
+    // rebuilt client cannot silently move `.text` out from under a constant.
+    let hdr = std::slice::from_raw_parts(base as *const u8, PAGE_BYTES);
+    let (exec, n) = parse_exec_ranges(hdr, base);
+    for i in 0..n {
+        EXEC_LO[i].store(exec[i].0, Ordering::SeqCst);
+        EXEC_HI[i].store(exec[i].1, Ordering::SeqCst);
+    }
+    EXEC_N.store(n, Ordering::SeqCst);
+    if n == 0 {
+        log("***** GUARD PAGE: the PE header at the module base did not parse; caller \
+             attribution will read 0 on every catch (the catch itself is unaffected) *****");
+    }
+
     // The free interception first (a pointer swap; nothing depends on ordering with alloc, and
     // doing it before the alloc hook means no quarantined slot can be served before its free
     // path exists).
@@ -493,9 +607,18 @@ unsafe fn arm(watched: usize) {
     // The allocator hook last. If it refuses (prologue mismatch), undo the free swap so the
     // client is left exactly as it was.
     let detour: unsafe extern "system" fn(usize, usize) -> usize = alloc_detour;
-    match crate::identity::install_detour(base + ALLOC_RVA, detour as usize, ALLOC_PROLOGUE.len(), &ALLOC_PROLOGUE) {
-        Some(tramp) => {
-            ALLOC_TRAMPOLINE.store(tramp, Ordering::SeqCst);
+    // `install_detour` stores the trampoline into ALLOC_TRAMPOLINE itself, BEFORE the jump
+    // into `alloc_detour` exists, and parks every other thread outside the prologue while the
+    // bytes change. Storing it here, after the return, left a gap in which the allocator -
+    // called from thirty threads - jumped through a zero.
+    match crate::identity::install_detour(
+        base + ALLOC_RVA,
+        detour as usize,
+        ALLOC_PROLOGUE.len(),
+        &ALLOC_PROLOGUE,
+        &ALLOC_TRAMPOLINE,
+    ) {
+        Some(_tramp) => {
             MODE.store(MODE_ARMED, Ordering::SeqCst);
             log(&format!(
                 "***** GUARD PAGE ARMED: size class {watched:#x} is served one-slot-per-page \
@@ -510,7 +633,9 @@ unsafe fn arm(watched: usize) {
         None => {
             // Undo the swap; leave nothing behind.
             std::ptr::write_volatile(slot as *mut usize, real);
-            log("***** GUARD PAGE: the allocator prologue did not match - HeapFree swap reverted, NOT armed *****");
+            log("***** GUARD PAGE: the allocator hook was refused (prologue mismatch, or a \
+                 thread would not leave it - the identity: line above says which) - HeapFree \
+                 swap reverted, NOT armed *****");
         }
     }
 }
@@ -537,6 +662,49 @@ pub(crate) fn armed() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The client's own section table, read off `client-patched/MapleStory.exe`: three
+    /// executable sections, and the two addresses the first version of `caller_ra` got wrong.
+    #[test]
+    fn a_return_address_is_believed_only_in_an_executable_section_outside_the_pool() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../client-patched/MapleStory.exe");
+        let Ok(bytes) = std::fs::read(path) else {
+            eprintln!("skipped: {path} is not present");
+            return;
+        };
+        let base = 0x1_4000_0000usize;
+        let (exec, n) = parse_exec_ranges(&bytes[..PAGE_BYTES], base);
+        let exec = &exec[..n];
+        assert_eq!(n, 3, "{exec:x?}");
+        assert_eq!(exec[0].0, base + 0x1000, ".text");
+        assert!(exec.iter().any(|&(lo, _)| lo == base + 0x3d87000), ".themida: {exec:x?}");
+        assert!(exec.iter().any(|&(lo, _)| lo == base + 0x5173000), ".boot: {exec:x?}");
+
+        // The rdx=5 caller in the Themida region that precedes every catch by ~100 ms.
+        assert!(accept_ra(0x14491cafd, base, exec));
+        // A caller in .text.
+        assert!(accept_ra(0x140ca61d0, base, exec));
+        // The pool context: in the image, in .data, on the stack in the allocator's home slot.
+        assert!(!accept_ra(0x143ad68a0, base, exec), "a data address is not a caller");
+        // The return into the free that called HeapFree - the pool naming itself.
+        assert!(!accept_ra(0x14019bbf3, base, exec));
+        assert!(!accept_ra(0x14019b58e, base, exec), "the other free's return, too");
+        assert!(!accept_ra(0x14019b4e0, base, exec));
+        assert!(accept_ra(0x14019bc60, base, exec), "the range ends where the free does");
+        // Outside every module.
+        assert!(!accept_ra(0x7ffe_0000_0000, base, exec));
+        assert!(!accept_ra(0, base, exec));
+    }
+
+    #[test]
+    fn a_header_that_is_not_a_pe_yields_no_ranges() {
+        assert_eq!(parse_exec_ranges(&[0u8; 64], 0x1_4000_0000).1, 0);
+        assert_eq!(parse_exec_ranges(b"MZ", 0x1_4000_0000).1, 0);
+        let mut junk = vec![0u8; 0x200];
+        junk[..2].copy_from_slice(b"MZ");
+        junk[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+        assert_eq!(parse_exec_ranges(&junk, 0x1_4000_0000).1, 0, "no PE signature");
+    }
 
     #[test]
     fn the_size_ladder_matches_the_pools_four_classes() {

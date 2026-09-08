@@ -83,7 +83,7 @@
 //! working baseline and it stays the failure mode.
 
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use crate::hook::log;
 
@@ -210,8 +210,9 @@ static FILLED: AtomicBool = AtomicBool::new(false);
 /// no place to open a file - and **the marker is deleted the moment it has been read**, so
 /// there would be nothing to re-read. See [`install`].
 static TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-/// The relocated prologue plus a jump back to `FUN_142c50400+15`.
-static TRAMPOLINE: AtomicU64 = AtomicU64::new(0);
+/// The relocated prologue plus a jump back to `FUN_142c50400+15`. Written by
+/// [`install_detour`] itself, before the jump into [`hooked_get_identity`] exists.
+static TRAMPOLINE: AtomicUsize = AtomicUsize::new(0);
 /// How many times the getter has run. Logged so "the field was never read" can be told from
 /// "the field was read and was empty" - `CLAUDE.md`, count the same event in two logs.
 static ENTRIES: AtomicU64 = AtomicU64::new(0);
@@ -397,10 +398,144 @@ unsafe fn write_abs_jmp(at: *mut u8, dest: usize) {
     *at.add(11) = 0xE0;
 }
 
+/// How many times [`park_other_threads_outside`] will suspend, look, and let go again.
+const PARK_ATTEMPTS: u32 = 200;
+
+/// Suspend every other thread of this process, with none of them stopped inside `[lo, hi)`.
+/// Returns the suspended threads' handles for [`release_parked`], or `None` if after
+/// [`PARK_ATTEMPTS`] tries some thread was still inside the range (all are running again).
+///
+/// Handles are opened and the vector sized before anything is suspended; between the first
+/// `SuspendThread` and the return nothing allocates. A thread created after the snapshot is
+/// not parked - that residue is accepted and noted here rather than hidden.
+unsafe fn park_other_threads_outside(lo: usize, hi: usize) -> Option<Vec<*mut c_void>> {
+    const TH32CS_SNAPTHREAD: u32 = 0x0000_0004;
+    const THREAD_ACCESS: u32 = 0x0002 | 0x0008; // SUSPEND_RESUME | GET_CONTEXT
+    const CONTEXT_CONTROL: u32 = 0x0010_0001;
+    const CTX_FLAGS_OFF: usize = 0x30;
+    const CTX_RIP_OFF: usize = 0xF8;
+    const INVALID_HANDLE_VALUE: *mut c_void = usize::MAX as *mut c_void;
+
+    #[repr(C)]
+    struct ThreadEntry32 {
+        dw_size: u32,
+        cnt_usage: u32,
+        th32_thread_id: u32,
+        th32_owner_process_id: u32,
+        tp_base_pri: i32,
+        tp_delta_pri: i32,
+        dw_flags: u32,
+    }
+    #[repr(C, align(16))]
+    struct Context([u8; 1232]);
+
+    extern "system" {
+        fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> *mut c_void;
+        fn Thread32First(snap: *mut c_void, entry: *mut ThreadEntry32) -> i32;
+        fn Thread32Next(snap: *mut c_void, entry: *mut ThreadEntry32) -> i32;
+        fn OpenThread(access: u32, inherit: i32, tid: u32) -> *mut c_void;
+        fn SuspendThread(thread: *mut c_void) -> u32;
+        fn ResumeThread(thread: *mut c_void) -> u32;
+        fn GetThreadContext(thread: *mut c_void, ctx: *mut c_void) -> i32;
+        fn CloseHandle(handle: *mut c_void) -> i32;
+        fn GetCurrentThreadId() -> u32;
+        fn GetCurrentProcessId() -> u32;
+        fn Sleep(ms: u32);
+    }
+
+    let pid = GetCurrentProcessId();
+    let me = GetCurrentThreadId();
+    let snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if snap == INVALID_HANDLE_VALUE || snap.is_null() {
+        return None;
+    }
+    let mut handles: Vec<*mut c_void> = Vec::with_capacity(128);
+    let mut entry = ThreadEntry32 {
+        dw_size: std::mem::size_of::<ThreadEntry32>() as u32,
+        cnt_usage: 0,
+        th32_thread_id: 0,
+        th32_owner_process_id: 0,
+        tp_base_pri: 0,
+        tp_delta_pri: 0,
+        dw_flags: 0,
+    };
+    let mut ok = Thread32First(snap, &mut entry);
+    while ok != 0 {
+        if entry.th32_owner_process_id == pid && entry.th32_thread_id != me {
+            let h = OpenThread(THREAD_ACCESS, 0, entry.th32_thread_id);
+            if !h.is_null() {
+                handles.push(h);
+            }
+        }
+        entry.dw_size = std::mem::size_of::<ThreadEntry32>() as u32;
+        ok = Thread32Next(snap, &mut entry);
+    }
+    CloseHandle(snap);
+
+    for _ in 0..PARK_ATTEMPTS {
+        // Suspend all, then look. Nothing allocates from here to the resume.
+        for &h in &handles {
+            SuspendThread(h);
+        }
+        let mut inside = false;
+        for &h in &handles {
+            let mut ctx = Context([0; 1232]);
+            ctx.0[CTX_FLAGS_OFF..CTX_FLAGS_OFF + 4].copy_from_slice(&CONTEXT_CONTROL.to_le_bytes());
+            if GetThreadContext(h, std::ptr::addr_of_mut!(ctx).cast()) != 0 {
+                let rip = usize::from_le_bytes(ctx.0[CTX_RIP_OFF..CTX_RIP_OFF + 8].try_into().unwrap());
+                if rip >= lo && rip < hi {
+                    inside = true;
+                    break;
+                }
+            }
+        }
+        if !inside {
+            return Some(handles);
+        }
+        for &h in &handles {
+            ResumeThread(h);
+        }
+        Sleep(1);
+    }
+    for h in handles {
+        CloseHandle(h);
+    }
+    None
+}
+
+/// Resume and close what [`park_other_threads_outside`] returned.
+unsafe fn release_parked(handles: Vec<*mut c_void>) {
+    extern "system" {
+        fn ResumeThread(thread: *mut c_void) -> u32;
+        fn CloseHandle(handle: *mut c_void) -> i32;
+    }
+    for h in handles {
+        ResumeThread(h);
+        CloseHandle(h);
+    }
+}
+
 /// Relocate `stolen` bytes of `target` into a fresh page and point `target` at `detour`.
 ///
 /// Returns the trampoline address. `None` means nothing was patched: either the prologue was
-/// not the one this module was written against, or the page could not be made writable.
+/// not the one this module was written against, the page could not be made writable, or some
+/// other thread would not leave the prologue.
+///
+/// **The trampoline is stored into `publish` BEFORE the jump goes live**, and that is not a
+/// nicety. Found in review on 2026-09-08, before the guard-page allocator's first launch: the
+/// original shape wrote the jump, restored the page protection, read the bytes back, returned,
+/// and only *then* did the caller store the trampoline. A detour entered in that gap loaded a
+/// zero and jumped to it. For the identity getter, called once at login, that gap was
+/// academic. For `FUN_14019b780` - the pool allocator, entered from thirty threads thousands
+/// of times a second - it was a crash at RIP 0 a few microseconds into arming, on the launch
+/// meant to prove the instrument does not disturb the client.
+///
+/// **Every other thread is suspended while the bytes change**, and none of them is allowed to
+/// be stopped inside `[target, target+stolen)`. A 12-byte jump written over a live prologue
+/// is not atomic; a thread that had already fetched the first `mov` and resumed at byte 5
+/// would execute the middle of our immediate. Nothing allocates, logs or formats while the
+/// threads are parked - the same rule `poolsentry::thread_snapshot` keeps, for the same
+/// reason: a parked thread may hold the heap lock.
 ///
 /// # Safety
 /// `target` must be the first byte of a function whose first `stolen` bytes are
@@ -410,6 +545,7 @@ pub unsafe fn install_detour(
     detour: usize,
     stolen: usize,
     expect: &[u8],
+    publish: &AtomicUsize,
 ) -> Option<usize> {
     debug_assert!(stolen >= 12 && stolen == expect.len());
 
@@ -439,8 +575,20 @@ pub unsafe fn install_detour(
     std::ptr::copy_nonoverlapping(target as *const u8, t, stolen);
     write_abs_jmp(t.add(stolen), target + stolen);
 
+    // Published first: from here on the detour can be entered at any instant and must find
+    // a real trampoline.
+    publish.store(tramp as usize, Ordering::SeqCst);
+
+    let Some(parked) = park_other_threads_outside(target, target + stolen) else {
+        log(&format!(
+            "identity: some thread would not leave the prologue at {target:#x} after {PARK_ATTEMPTS} \
+             attempts - NOT patching"
+        ));
+        return None;
+    };
     let mut old = 0u32;
     if VirtualProtect(target as *mut c_void, stolen, PAGE_EXECUTE_READWRITE, &mut old) == 0 {
+        release_parked(parked);
         log(&format!(
             "identity: could not make {target:#x} writable - NOT patching"
         ));
@@ -451,6 +599,7 @@ pub unsafe fn install_detour(
         *(target as *mut u8).add(i) = 0x90;
     }
     VirtualProtect(target as *mut c_void, stolen, old, &mut old);
+    release_parked(parked);
 
     // Read the patch back. A jump that did not take reports nothing and looks exactly like a
     // function that never runs - the silent negative this repo keeps getting caught by.
@@ -617,10 +766,11 @@ pub unsafe fn install() {
     let target = base + GET_IDENTITY_RVA;
     let detour: unsafe extern "system" fn(*mut c_void, *mut c_void) -> *mut c_void =
         hooked_get_identity;
-    let Some(tramp) = install_detour(target, detour as usize, STOLEN, &EXPECTED_PROLOGUE) else {
+    let Some(tramp) =
+        install_detour(target, detour as usize, STOLEN, &EXPECTED_PROLOGUE, &TRAMPOLINE)
+    else {
         return;
     };
-    TRAMPOLINE.store(tramp as u64, Ordering::SeqCst);
     log(&format!(
         "identity: armed on FUN_142c50400 at {target:#x} (trampoline {tramp:#x}), {} byte token \
          from {IDENTITY_MARKER}. It was a PLAIN-TEXT LOCAL SECRET on disk until the line above \
@@ -778,7 +928,7 @@ mod tests {
         0x48, 0x8D, 0x04, 0x11, 0xC3,
     ];
 
-    static SELFTEST_TRAMP: AtomicU64 = AtomicU64::new(0);
+    static SELFTEST_TRAMP: AtomicUsize = AtomicUsize::new(0);
     static SELFTEST_HITS: AtomicU64 = AtomicU64::new(0);
 
     unsafe extern "system" fn selftest_detour(a: u64, b: u64) -> u64 {
@@ -818,9 +968,12 @@ mod tests {
                 detour as usize,
                 STOLEN,
                 &SUBJECT[..STOLEN],
+                &SELFTEST_TRAMP,
             )
             .expect("the detour should install over a prologue that matches");
-            SELFTEST_TRAMP.store(tramp as u64, Ordering::SeqCst);
+            // Published by install_detour itself, before the jump went live - the detour
+            // never sees a zero trampoline, however early it is entered.
+            assert_eq!(SELFTEST_TRAMP.load(Ordering::SeqCst), tramp);
 
             // Through the detour: the same answer, and the detour demonstrably ran. Both
             // halves matter - a hook that runs but breaks the function is worse than none.
@@ -848,10 +1001,13 @@ mod tests {
             let mut wrong = EXPECTED_PROLOGUE;
             wrong[0] = 0xCC;
             let detour: unsafe extern "system" fn(u64, u64) -> u64 = selftest_detour;
+            static UNTOUCHED: AtomicUsize = AtomicUsize::new(0);
             assert!(
-                install_detour(page as usize, detour as usize, STOLEN, &wrong).is_none(),
+                install_detour(page as usize, detour as usize, STOLEN, &wrong, &UNTOUCHED)
+                    .is_none(),
                 "a mismatched prologue must refuse"
             );
+            assert_eq!(UNTOUCHED.load(Ordering::SeqCst), 0, "a refusal publishes nothing");
             // And nothing was written: the subject still runs untouched.
             let subject: extern "system" fn(u64, u64) -> u64 = std::mem::transmute(page);
             assert_eq!(subject(2, 3), 5);

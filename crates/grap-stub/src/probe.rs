@@ -1105,6 +1105,12 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
         if crate::writewatch::suppresses(info.cast::<c_void>()) {
             return EXCEPTION_CONTINUE_SEARCH;
         }
+        // The same for the guard-page quarantine: a fault on one of its retired pages is the
+        // catch it exists for, and its own handler recommits the page and continues. Ours is
+        // registered when the first watch arms - AFTER guardpage's - so ours runs first.
+        if crate::guardpage::suppresses(info.cast::<c_void>()) {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
         // Not our walk, so this exception belongs to the client - but say so before
         // handing it back.
         //

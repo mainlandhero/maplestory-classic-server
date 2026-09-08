@@ -95,4 +95,67 @@ run; `0x40` is the default because it is uncovered and low-traffic, `-GuardBucke
   faulting into our handler. `0x40` slots are small objects and map nodes, not I/O buffers, so
   this is unlikely, but it is the one path where the quarantine changes behaviour instead of
   observing it.
-* **Not yet on a client.** Compile and 95 unit tests only. The launch is the test.
+* **Not yet on a client.** Compile and 97 unit tests only. The launch is the test.
+
+## 6. The review before the first launch (2026-09-08)
+
+The owner: *"Can you review what was written and make sure you agree?"* Read adversarially against
+the listing rather than re-described. Four things were checked off the binary and three defects
+were found in the code; all three are fixed in the same commit as this section.
+
+### 6.1 Confirmed off the listing **[L]**
+
+| claim the build rests on | what the listing says |
+|---|---|
+| both pool frees load `HeapFree` from `0x143ad5530` | `FUN_14019b4e0` at `0x14019b577`, `FUN_14019bb50` at `0x14019bbdb` - both `mov rbx,[rip+..]` of that slot. The slot has **60** readers in `.text`, so the shim sits on every large free in the client; every one but ours is a pass-through |
+| a `0x100` header takes the `HeapFree` arm | `cmp rax,0x20 / ja; cmp rax,0x40 / ja; cmp rax,0x80; ecx=-1; cmovbe ecx,3; test ecx,ecx; jns pooled` - `0x100` leaves `ecx=-1` and falls to `call rbx` |
+| `HeapFree` receives `body-8` | `call GetProcessHeap; lea r8,[rdi-8]; xor edx,edx; mov rcx,rax; call rbx` at `0x14019bbe2..bbf1`. Nothing else in the free touches a counter before that arm |
+| the 15 stolen bytes are the whole prologue and the trampoline's `mov rax,imm; jmp rax` clobbers nothing live | `mov [rsp+8],rbx / [rsp+18],rbp / [rsp+20],rsi` is 15 bytes; the next instructions are `push rdi/r14/r15; sub rsp,0x20; mov rax,rdx` - `rax` is written before it is read, and `r8` is `xor`ed before it is read |
+| the size ladder | `cmp rdx,0x20 / ja; cmp rax,0x10; seta` → classes `0..=0x10`, `..=0x20`, `..=0x40`, `..=0x80` (`rsi=0x80`), else the large path. Matches `size_class` |
+
+### 6.2 Defect 1: the detour could run before its trampoline existed
+
+`identity::install_detour` wrote the live jump, restored the page, read it back and *returned*;
+the caller then stored the trampoline. Between the write and that store, `alloc_detour` entered
+by any thread loaded a zero and jumped to it. For the identity getter, called once at login,
+the gap was academic. For the pool allocator - entered from thirty threads, thousands of times a
+second - it was a crash at RIP 0 a few microseconds into arming, on the launch meant to show the
+instrument does not disturb the client. And it would have been unattributable: a fault at
+address 0 with a return address in `grap64.dll`.
+
+Fixed in `install_detour` for both users: the trampoline is stored into a caller-supplied
+`AtomicUsize` **before** the jump is written. While it is written, every other thread is
+suspended and checked to be outside `[target, target+15)` (a 12-byte jump over a live prologue
+is not atomic; a thread resuming at byte 5 would execute the middle of the immediate); nothing
+allocates or logs while they are parked, the rule `poolsentry::thread_snapshot` already keeps.
+Residue, stated: a thread created between the snapshot and the suspend is not parked. The
+identity self-test now asserts the publish-before-jump ordering; a refused install publishes
+nothing.
+
+### 6.3 Defect 2: "freed from" would always have named the pool
+
+`caller_ra` accepted any value in the 128 MB image and took the first one up the stack. From
+`heapfree_shim` that is always `0x14019bbf3` - the return into the free that called
+`HeapFree` - so every catch line would have read *freed from the free function*. From
+`alloc_detour` the pool context `0x143ad68a0`, a `.data` address sitting in the allocator's home
+slot, qualified too. Now: only the image's executable sections (`.text`, `.themida`, `.boot`,
+read from the mapped PE header at arm) and never `[0x14019b4e0, 0x14019bc60)`, the pool's own
+code. Both frees are `push rdi; sub rsp,0x20` frames [L], so the caller worth naming is one
+frame up; the scan window covers it. Tested against the client's own section table.
+
+### 6.4 Defect 3: `probe.rs`'s handler would have seen every catch first
+
+The probe's vectored handler is registered when the first `watch@` arms, seconds after this
+module's. A first-chance handler registered later runs first. Its non-watch branch logs a
+`CLIENT FAULT` and writes a crash dump - per catch, before this module's handler recommitted the
+page. `writewatch` already had a `suppresses()` hand-off there for exactly this reason;
+`guardpage::suppresses()` now sits beside it. The write watch's own handler, also registered
+later, returns `CONTINUE_SEARCH` for any target outside its runs, so it needed nothing.
+
+### 6.5 Still true after the review
+
+It has not run on a client. The three defects above are the kind that only a run or a review
+finds, and the review found them; what a run will add is whether Themida objects to the
+allocator's first fifteen bytes changing (the prologue check and the `identity:` line will say)
+and whether a `0x40` class served from guard pages changes the client's behaviour in any way the
+write watch or the sentry can see.
