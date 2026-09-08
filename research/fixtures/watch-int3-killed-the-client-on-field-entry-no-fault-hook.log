@@ -1,0 +1,57 @@
+14:47:26.169 instance: ARMING in pid 450576 - marker maplecw-hook.multiclient present, this is the FIRST client on this desktop, so the guard will be LOGGED ONLY (first client behaves exactly as before)
+14:47:26.169 instance: hooked user32.dll!FindWindowW at 0x7ffab1203bc0, stole 14 bytes (48 89 5c 24 08 48 89 7c 24 10 55 48 8b ec 48 83)
+14:47:26.170 instance: hooked user32.dll!FindWindowA at 0x7ffab125ab90, stole 12 bytes (48 83 ec 38 4c 8b ca 4c 8b c1 33 d2 33 c9 e8 75)
+14:47:26.170 instance: redirected kernel32.dll!CreateMutexW by rewriting its forwarder slot at 0x7ffab02855f0 (0x7ffaaf457230 -> 0x7ffa7e738560). No code was modified; callers that reach kernelbase by another route are unaffected
+14:47:26.170 instance: redirected kernel32.dll!CreateMutexA by rewriting its forwarder slot at 0x7ffab0285520 (0x7ffaaf4a7460 -> 0x7ffa7e738200). No code was modified; callers that reach kernelbase by another route are unaffected
+14:47:26.371 instance: CreateMutexA(name="Global\\WvsClientMtx") already_existed=false -> we are the first to create it
+14:47:28.398 install_once: our code IS running. env=false marker=true -> installing
+14:47:28.450 install: .text settled after 51 ms (deadline 5000 ms) - the client's login dialog fires around 4.5 s after connect, so this margin is what decides whether the suppression lands
+14:47:28.451 install: base=0x140000000 target=0x1415d60e0
+14:47:28.451 probe: watching 0x140c93530 (slot 0), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+14:47:28.451 probe: watch spec "watch@140c936a0" in "watch@140c93530,watch@140c936a0,watch@140c93810,watch@140c93b70,watch@140c93930" is not <hex VA> or <module>!<export>
+14:47:28.451 probe: watch spec "watch@140c93810" in "watch@140c93530,watch@140c936a0,watch@140c93810,watch@140c93b70,watch@140c93930" is not <hex VA> or <module>!<export>
+14:47:28.451 probe: watch spec "watch@140c93b70" in "watch@140c93530,watch@140c936a0,watch@140c93810,watch@140c93b70,watch@140c93930" is not <hex VA> or <module>!<export>
+14:47:28.451 probe: watch spec "watch@140c93930" in "watch@140c93530,watch@140c936a0,watch@140c93810,watch@140c93b70,watch@140c93930" is not <hex VA> or <module>!<export>
+14:47:28.452 identity: maplecw-hook.identity read and DELETED - the token now exists only in this process, and cannot be picked up by a later run
+14:47:28.460 session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="mode=2,create=on,guardpage=0x20+0x40"
+14:47:28.504 identity: armed on FUN_142c50400 at 0x142c50400 (trampoline 0x71b0000), 26 byte token from maplecw-hook.identity. It was a PLAIN-TEXT LOCAL SECRET on disk until the line above deleted it: anything running as this user could have read it, which is the same power as being this launch. It is one-time, and the server keeps only its SHA-256
+14:47:28.504 install: hook active
+14:47:28.557 ***** GUARD PAGE ARMED: size class(es) 0x20+0x40 are served one-slot-per-page from a 32 GB reserve (8388608 slots) at 0x180060000 and DECOMMITTED on free, each address held back for 600s before it can be handed out again. SIZED FROM THE 12:01 RUN: 0x20 burst to 627172 in its first minute then ran at 1560/s, so ONE class needs 1469572 slots for its first retirement window (936000 once it is turning over) - the old 1048576-slot cursor was spent at six minutes and 419588 allocations fell back. Against that requirement this reserve has 2.8x of headroom for the 2 class(es) armed, IF they churn like 0x20 - which is measured for 0x20 and unmeasured for the other three, so read the 'pool allocations seen by class' counters in the heartbeat. Metadata is committed lazily, so arming costs 33 MB now and grows with the cursor instead of 320 MB up front. Committed PAGE memory is bounded by the LIVE set, not by the cursor: 0x20 held ~26000 live slots all run, which is 101 MB, so expect roughly that per class rather than the 230 MB predicted before that launch. A stale write or read into a freed slot faults at the instruction that makes it, which the handler logs (RIP, target, who allocated, who freed, how long ago) and recommits so the client continues. control PASS. The pool's own chain, free list and counters are untouched - our slots take the HeapFree arm, and that arm is chosen by the header value ALONE, so one stamp 0x100 covers every class at once *****
+14:47:28.660 session: object at 0x5f48d68 is now readable
+14:47:28.661 ***** SESSION obj=0x5f48d68 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+14:47:29.211 guard page: the FIRST free of class 0x20 came back through our HeapFree shim - that class's free path IS intercepted and its slots are being decommitted. (This is the control: a class that is served and never freed would leak and the heartbeat would say so.)
+14:47:29.211 guard page: the FIRST free of class 0x40 came back through our HeapFree shim - that class's free path IS intercepted and its slots are being decommitted. (This is the control: a class that is served and never freed would leak and the heartbeat would say so.)
+14:47:29.786     0 opcode=0x0032 elapsed_us=256.8 ret=110380448 flag=0->1 state=0->2
+14:47:29.786 ***** OPCODE 0x0032 RELEASED THE STARTUP LOOP (conn+0x150 0->1, Data.wz hash now 0x00000000) *****
+14:47:29.865 ***** SOCKET conn=0x5a6ce18 +0x20=0x668 - the client holds a socket *****
+14:47:30.091 ***** C++ THROW #1 at 0x7ffaaf455369 in KERNELBASE.dll on tid 451892 at +1641ms
+      stack: 0x145173000(?) 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x140001000<-TEXT 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x1432abe30(?) 0x1403da5d3<-TEXT 0x143d87000(vm) *****
+14:47:30.189     1 opcode=0x0032 elapsed_us=55.9 ret=1 flag=1->1 state=2->2
+14:47:30.468 ***** SOCKET 0x668 is now VALID (client still holds it) *****
+14:47:30.513 ***** POOL SENTRY ARMED: pool ctx 0x143ad68a0, every 100 ms (all four buckets every 10), heartbeat 60 s, up to 0 dump(s). REPAIR IS ON: a confirmed damaged header is put back to the slot size, which is the ONE client byte this module ever writes - it turns a fatal free into a correct one and does NOT stop the writer. No lock is taken either way. The writer runs on a 180-SECOND CLOCK - six catches, four intervals, all 180.0 s within 0.12 s (research/the-180-second-clock-2026-09-07.md) - so after the first catch the next one is predictable, and silence for longer than that is itself the news.
+      bucket 0 slot 0x10: 412 chunks, 26368 slots, 0 not equal to the slot size; walk ended ListEnd; carve identity 26368 vs carved 26496 [FAIL]
+      bucket 1 slot 0x20: 1008 chunks, 32256 slots, 0 not equal to the slot size; walk ended ListEnd; carve identity 32256 vs carved 32256 [PASS]
+      bucket 2 slot 0x40: 316 chunks, 5056 slots, 0 not equal to the slot size; walk ended ListEnd; carve identity 5056 vs carved 5056 [PASS]
+      bucket 3 slot 0x80: 864 chunks, 6912 slots, 0 not equal to the slot size; walk ended ListEnd; carve identity 6912 vs carved 6912 [PASS] *****
+14:47:30.857 ***** C++ THROW #2 at 0x7ffaaf455369 in KERNELBASE.dll on tid 453016 at +2422ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x1433d3650(?) 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x1417810d0<-TEXT 0x140001000<-TEXT 0x143ad68a0(?) 0x141780d4c<-TEXT *****
+14:47:31.471 ***** SESSION obj=0x5f48d68 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+14:47:34.205     2 opcode=0x0032 elapsed_us=59.3 ret=1 flag=1->1 state=2->2
+14:47:34.480 ***** SESSION obj=0x5f48d68 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+14:47:37.362 ***** IDENTITY wrote 26 bytes into 0x14f9f0+0x1b8 on getter entry #1 (block 0x31e0e618, refcount held at 2 so the session destructor cannot free it). The token itself is NOT logged. login.log should now show `0x0073 IDENTITY: ... identity length=26` - if it shows 0, the client dropped it between here and w_str *****
+14:47:37.489 ***** SESSION obj=0x5f48d68 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+14:47:37.964     3 opcode=0x0000 elapsed_us=661.3 ret=1 flag=1->1 state=2->2
+14:47:37.964 ***** SESSION mode patched at 0x14f9f0+0x68: 5 -> 2 - the tick should no longer auto-login, and Login should transition to CharSelect *****
+14:47:37.965     4 opcode=0x000B elapsed_us=329.3 ret=1 flag=1->1 state=2->2
+14:47:37.965     5 opcode=0x000B elapsed_us=326.4 ret=1 flag=1->1 state=2->2
+14:47:37.966 ***** SESSION called FUN_140c9e230 at 0x140c9e230 - the create-character flag should now read 1. THIS IS A CLIENT PATCH: the real service sets it from virtualised code, so this proves the button's gate, not the protocol *****
+14:47:37.967     6 opcode=0x0010 elapsed_us=1183.8 ret=1 flag=1->1 state=2->2
+14:47:40.499 ***** SESSION obj=0x5f48d68 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+14:47:43.507 ***** SESSION obj=0x5f48d68 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+14:47:46.513 ***** SESSION obj=0x5f48d68 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+14:47:49.523 ***** SESSION obj=0x5f48d68 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+14:47:52.531 ***** SESSION obj=0x5f48d68 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+14:47:55.537 ***** SESSION obj=0x5f48d68 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+14:47:57.531     7 opcode=0x0011 elapsed_us=2133.6 ret=1 flag=1->1 state=2->2
+14:47:58.240 ***** WATCH #1: 0x140c93530 ENTERED on tid 451892 while dispatching opcode 0x01A0 rcx=0xbbe5f16faf9f0000 rdx=0x12f5ca75 (as i32 318098037) [0x296baf20] r8=0xdb r9=0xa4aeac78 (as i32 -1532056456) called-from=0x142892bf9
+      stack: 0x142892bf9<-TEXT 0x143ad68c8(?) 0x140001000<-TEXT 0x14326194a(?) 0x143d87000(vm) 0x145173000(?) 0x145173000(?) 0x145daa400(?) 0x140001000<-TEXT 0x14326194a(?) 0x143d87000(vm) 0x145173000(?) 0x145173000(?) 0x145daa400(?) 0x140001000<-TEXT 0x14326194a(?) *****

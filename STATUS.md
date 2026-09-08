@@ -112,6 +112,32 @@ died this way. The `0x20` write watch is still one door-close from its own write
 covering the `0x40`/worker surface needs the guard-page build, which is a deliberate schedule,
 not a window tweak.
 
+**2026-09-08 14:47: two answers and one self-inflicted wound.** The multi-class build plus
+five `watch@` targets, and **the client closed the instant it entered the field** - the first
+death in this investigation with **no exception and no crash dump at all**, which every previous
+one produced.
+
+**Two things settled [L], and they are worth the run on their own:**
+* **The `0x40` free path IS intercepted.** Both first-free controls fired within a second:
+  *"the FIRST free of class 0x20 / 0x40 came back through our HeapFree shim"*. That was the
+  biggest unknown in the multi-class change - 53 of the client's 56 free sites are inlined and
+  untraced - and it is now measured rather than inferred.
+* **`FUN_140c93530` is LIVE.** `WATCH #1: 0x140c93530 ENTERED ... while dispatching opcode
+  0x01A0` (SET_FIELD), called from `0x142892bf9` - which matches the static call site
+  `0x142892bf4` exactly. So the five `.text` tick functions found by decompiling are **real code
+  that runs**, not a copy Themida replaced. The decompilation lead is alive.
+
+**The wound was mine, twice.** The spec `watch@A,watch@B,...` repeats a prefix the hook strips
+**once**, so four of the five were refused one log line at a time and only `0x140c93530` armed.
+And I told the owner to change **two things at once**, which is the rule this repo already writes down
+("test one variant at a time. Changing two things at once has already produced one unexplained
+crash"). So the guard page is **not** the suspect - it armed, control PASSed, both controls fired
+and the client ran 30 s through login and character select - but that is a suspicion, not a fact,
+because the run cannot separate them. The launcher now **refuses a repeated `watch@`** and any
+target that is not a hex VA or `module!export`, proven both ways.
+
+**Next run: the guard page ALONE.** If it survives field entry, the int3 watch was the cause.
+
 **2026-09-08 12:01, THE GUARD PAGE'S FIRST CLIENT RUN: it works, the client lived 1h57m, and it
 died on a class we were not watching.** 12:01:18 -> 13:58:14 is the longest session this project
 has had. `GUARD PAGE ARMED: size class 0x20 ... control PASS` [L], and an inline hook on the pool
