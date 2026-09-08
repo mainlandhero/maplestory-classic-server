@@ -98,6 +98,12 @@ const MEM_RELEASE: u32 = 0x8000;
 const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
 const EXCEPTION_CONTINUE_EXECUTION: i32 = -1;
 const EXCEPTION_ACCESS_VIOLATION: u32 = 0xC000_0005;
+/// The trap after a single-stepped instruction. `probe.rs` uses the same three constants to
+/// re-plant its `int3` one instruction later; here they re-protect a page one instruction
+/// after the write that opened it.
+const EXCEPTION_SINGLE_STEP: u32 = 0x8000_0004;
+const CTX_EFLAGS: usize = 0x44;
+const TRAP_FLAG: u32 = 0x100;
 
 /// `ExceptionInformation[0]` for a write. `0` is a read, `8` a DEP violation.
 const AV_WRITE: usize = 1;
@@ -150,10 +156,11 @@ const MAX_CHUNKS: usize = 16_384;
 const MAX_RUNS: usize = 4_096;
 /// Header writes recorded in full. The event is one per three minutes.
 const MAX_HITS: usize = 32;
-/// Write faults of ANY kind recorded, as the armed run's own liveness control: a window that
-/// records zero of these did not watch anything, which is a different result from "the writer
-/// did not fire".
-const MAX_SEEN: usize = 16;
+/// Write faults of ANY kind kept - the LAST this many, as a ring. The liveness control, and
+/// since run 4 the record of what wrote to a page in the moments before a header write on it:
+/// a window that records zero of these did not watch anything, which is a different result
+/// from "the writer did not fire".
+const MAX_SEEN: usize = 64;
 /// Chunks whose spans are within this many bytes of each other are merged into one run. The
 /// big allocator puts its own block header between segments; merging across it costs nothing
 /// (those bytes fault, get unprotected and are counted as edge writes) and saves the run
@@ -242,8 +249,16 @@ static HITS_DRAINED: AtomicUsize = AtomicUsize::new(0);
 /// `(rip, target)` for the first few write faults of any kind. The liveness control.
 static SEEN_RIP: [AtomicU64; MAX_SEEN] = [ZERO_U64; MAX_SEEN];
 static SEEN_TARGET: [AtomicU64; MAX_SEEN] = [ZERO_U64; MAX_SEEN];
+static SEEN_TICK: [AtomicU64; MAX_SEEN] = [ZERO_U64; MAX_SEEN];
+/// Monotonic; the ring index is `n % MAX_SEEN`.
 static SEEN_COUNT: AtomicUsize = AtomicUsize::new(0);
 static SEEN_DRAINED: AtomicUsize = AtomicUsize::new(0);
+
+/// The page a just-faulted write opened, to be protected again on the single-step trap that
+/// follows the instruction. One slot: two threads faulting in the same microsecond would
+/// leave one page open until the next burst sweep, which is the state every page was in
+/// before this existed. `probe.rs`'s `WATCH_REARM` makes the same trade for the same reason.
+static REPROTECT: AtomicUsize = AtomicUsize::new(0);
 
 // ---------------------------------------------------------------------------------------
 // Pure helpers - the parts worth testing without a client
@@ -442,11 +457,42 @@ fn probe_page_hit(target: usize) -> bool {
 
 /// The watch. Allocates nothing, takes no lock, writes no log - see the module docs.
 unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
-    if info.is_null() || !WATCHING.load(Ordering::SeqCst) {
+    if info.is_null() {
         return EXCEPTION_CONTINUE_SEARCH;
     }
     let rec = (*info).record;
-    if rec.is_null() || *(rec.add(REC_CODE).cast::<u32>()) != EXCEPTION_ACCESS_VIOLATION {
+    if rec.is_null() {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    let code = *(rec.add(REC_CODE).cast::<u32>());
+
+    // **The step after a write we let through: protect the page again, now.**
+    //
+    // Run 4 (2026-09-07 22:45-23:35): the store landed inside window #3 on a page that had
+    // been PINNED for three minutes, and was not caught. The design until then unprotected a
+    // page on its first write and left it open until the next 5 ms sweep - so a body write to
+    // the same page a few microseconds earlier held the door for the header write. Every
+    // window's pages take body traffic (258 first-writes across eleven windows), and the
+    // writer's own routine plausibly writes a body before it writes the header. So the page is
+    // now closed again one instruction after it was opened, and EVERY write faults.
+    //
+    // Checked before WATCHING: the window may have closed between the fault and the step, in
+    // which case the page must stay writable and only the trap flag is cleared.
+    if code == EXCEPTION_SINGLE_STEP {
+        let page = REPROTECT.swap(0, Ordering::SeqCst);
+        if page == 0 {
+            return EXCEPTION_CONTINUE_SEARCH; // not ours - probe.rs re-plants its int3 on these
+        }
+        if WATCHING.load(Ordering::SeqCst) {
+            let mut old = 0u32;
+            VirtualProtect(page as *mut c_void, PAGE_BYTES, PAGE_READONLY, &mut old);
+        }
+        let ctx = (*info).context.cast::<u8>();
+        *(ctx.add(CTX_EFLAGS).cast::<u32>()) &= !TRAP_FLAG;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+
+    if !WATCHING.load(Ordering::SeqCst) || code != EXCEPTION_ACCESS_VIOLATION {
         return EXCEPTION_CONTINUE_SEARCH;
     }
     if (*(rec.add(REC_PARAMS).cast::<u32>()) as usize) < 2 {
@@ -461,7 +507,7 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
     if probe_page_hit(target) {
         PROBE_KIND.store(kind, Ordering::SeqCst);
         PROBE_SAW.store(target, Ordering::SeqCst);
-        unprotect_page(target);
+        open_for_one_instruction(info, target);
         return EXCEPTION_CONTINUE_EXECUTION;
     }
 
@@ -472,11 +518,10 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
     FAULTS.fetch_add(1, Ordering::SeqCst);
     let rip = *(rec.add(0x10).cast::<u64>());
 
-    let n = SEEN_COUNT.fetch_add(1, Ordering::SeqCst);
-    if n < MAX_SEEN {
-        SEEN_RIP[n].store(rip, Ordering::SeqCst);
-        SEEN_TARGET[n].store(target as u64, Ordering::SeqCst);
-    }
+    let n = SEEN_COUNT.fetch_add(1, Ordering::SeqCst) % MAX_SEEN;
+    SEEN_RIP[n].store(rip, Ordering::SeqCst);
+    SEEN_TARGET[n].store(target as u64, Ordering::SeqCst);
+    SEEN_TICK[n].store(GetTickCount64(), Ordering::SeqCst);
 
     let b = &BUCKETS[DAMAGE_CLASS];
     let count = CHUNK_COUNT.load(Ordering::SeqCst).min(MAX_CHUNKS);
@@ -515,8 +560,21 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
         }
     }
 
-    unprotect_page(target);
+    open_for_one_instruction(info, target);
     EXCEPTION_CONTINUE_EXECUTION
+}
+
+/// Make the page writable so the faulting store can complete, and arrange for it to be
+/// read-only again immediately after: the trap flag on the resumed context delivers a
+/// single-step exception after exactly one instruction, and the branch at the top of [`veh`]
+/// re-protects the page recorded here.
+unsafe fn open_for_one_instruction(info: *mut ExceptionPointers, target: usize) {
+    let page = (target / PAGE_BYTES) * PAGE_BYTES;
+    if unprotect_page(target) {
+        REPROTECT.store(page, Ordering::SeqCst);
+        let ctx = (*info).context.cast::<u8>();
+        *(ctx.add(CTX_EFLAGS).cast::<u32>()) |= TRAP_FLAG;
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -809,15 +867,26 @@ pub(crate) fn counters() -> (u64, u64, u64, u64) {
 pub(crate) fn drain() -> Vec<String> {
     let mut out = Vec::new();
 
-    let seen = SEEN_COUNT.load(Ordering::SeqCst).min(MAX_SEEN);
+    // The ring holds the last MAX_SEEN faults; anything older than that since the previous
+    // drain has been overwritten and is counted, not listed.
+    let seen = SEEN_COUNT.load(Ordering::SeqCst);
     let mut from = SEEN_DRAINED.load(Ordering::SeqCst);
-    while from < seen {
-        let rip = SEEN_RIP[from].load(Ordering::SeqCst) as usize;
-        let target = SEEN_TARGET[from].load(Ordering::SeqCst) as usize;
+    if seen.saturating_sub(from) > MAX_SEEN {
         out.push(format!(
-            "POOL WRITE WATCH saw a write into a watched page: {target:#x} from {rip:#x}{}. \
-             This is the instrument's liveness control - it says the protection is real and \
-             faults are reaching us, not that anything is wrong",
+            "POOL WRITE WATCH: {} write fault(s) since the last drain, the last {MAX_SEEN} follow",
+            seen - from
+        ));
+        from = seen - MAX_SEEN;
+    }
+    while from < seen {
+        let i = from % MAX_SEEN;
+        let rip = SEEN_RIP[i].load(Ordering::SeqCst) as usize;
+        let target = SEEN_TARGET[i].load(Ordering::SeqCst) as usize;
+        let tick = SEEN_TICK[i].load(Ordering::SeqCst);
+        out.push(format!(
+            "POOL WRITE WATCH saw a write into a watched page: {target:#x} from {rip:#x}{} at \
+             tick {tick}. Liveness: the protection is real and faults reach us; a run of these \
+             on one page just before a header write on it is the writer's own footprint",
             unsafe { crate::netwatch::module_of(rip) }
         ));
         from += 1;
@@ -949,8 +1018,21 @@ mod tests {
             // A body write first, as the control for the classifier: the class is full of
             // these and they must NOT be reported as the writer.
             let body = bases[2] + 8 + 7 * b.stride() + 8;
+            let faults_before = FAULTS.load(Ordering::SeqCst);
             std::ptr::write_volatile(body as *mut u64, 0xdead_beef);
             assert_eq!(std::ptr::read_volatile(body as *const u64), 0xdead_beef);
+            assert_eq!(FAULTS.load(Ordering::SeqCst), faults_before + 1);
+            // **A second write to the SAME page faults again.** Run 4's store landed on a
+            // pinned page inside its window and was missed, because the first write to a page
+            // used to leave it open until the next sweep. The single-step re-protect closes it
+            // one instruction later, so every write is seen.
+            std::ptr::write_volatile((body + 8) as *mut u64, 0xfeed_face);
+            assert_eq!(
+                FAULTS.load(Ordering::SeqCst),
+                faults_before + 2,
+                "the page must be read-only again one instruction after the first write"
+            );
+            assert_eq!(std::ptr::read_volatile((body + 8) as *const u64), 0xfeed_face);
 
             // Now the family's write, on slot 3 of chunk 5.
             let header = bases[5] + 8 + 3 * b.stride();

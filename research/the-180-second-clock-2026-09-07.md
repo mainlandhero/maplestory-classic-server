@@ -501,3 +501,34 @@ Recorded; not chased.
 Same recipe again. The expectation is now specific: the first re-hit came at catch #3 in this
 run and at #3 in run 1, so the first pinned-page window with a re-hit under it should be about
 ten minutes in.
+
+## 10. Run 4: the store landed inside a window, on a pinned page, and was not caught
+
+2026-09-07 22:45-23:35, process 358616, closed by hand. `[L]`
+
+Eleven windows, one every cycle - the guard of §9 holds - with the pinned set growing to eight
+pages. Nine catches in **fifteen** firings (the `rdx=5` probe logged all fifteen, 22:51:17 to
+23:33:17): six firings put their store somewhere the sentry cannot see, which is the rate the
+§8 death predicted - a body field in another class, or a header off the live chain. 258 write
+faults over the eleven windows, none on a header.
+
+**The decisive pair is catches #3 and #4**: both `0x3f2d2e18`, three minutes apart. After #3
+its page was pinned; window #3 opened at 23:03:16.788 with that page among its three pinned;
+the store landed between 23:03:17.14 and 17.25 - **inside the window, on a protected page** -
+and the handler never saw a header write.
+
+That is the design's one structural blind spot, and it is now visible in the numbers: the
+first write to a page unprotected it for everyone until the next 5 ms sweep. Every window's
+pages take body traffic, and the writer's own routine plausibly writes a body before the header
+(the `rdx=5` allocation stores its count into a fresh slot's body 100 ms before the catch). A
+body write to the pinned page microseconds ahead of the header store held the door open.
+
+Fixed the way `probe.rs` re-plants its `int3`: the page is opened for **one instruction**. The
+handler sets the trap flag on the resumed context and, on the single-step exception that
+follows, protects the page again - so **every write faults**, not the first per page per sweep.
+The end-to-end test now performs two writes to one page and requires two faults. The fault ring
+keeps the last 64 with ticks, so the writes on a pinned page just before a header write are in
+the log the next time.
+
+The close crashed at `0x141d12df0`, an address the archive has twice before; not the pool.
+Same recipe again.

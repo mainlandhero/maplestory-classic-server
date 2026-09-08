@@ -63,6 +63,11 @@ went 42 minutes, **12 firings, 12 catches, none silent, pool clean at close** - 
 works and a third of firings re-hit - but the watch opened **one** window: its re-arm guard
 reset with every catch. Fixed (`window_due`, tested). Same recipe again.
 
+**Run 4** (50 min): eleven windows on schedule, eight pinned pages - and the store landed
+**inside a window on a pinned page, uncaught**: the first write to a page opened it until the
+next 5 ms sweep. Fixed with `probe.rs`'s own trick - the page is open for one instruction (trap
+flag, re-protect on the step), so every write faults. §10 of the clock file. Same recipe again.
+
 **The one run worth a launch is `-SentryWriteWatch`** (`research/naming-the-writer-2026-09-07.md`,
 `crates/grap-stub/src/writewatch.rs`). Around each *predicted* firing it puts bucket 1's pages
 read-only for 1.2 s, so the damaging store faults at its own instruction and the log names the

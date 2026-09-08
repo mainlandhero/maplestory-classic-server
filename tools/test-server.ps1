@@ -223,6 +223,14 @@
     control PASS). FIXED: the pages of every header already caught are PINNED on every window.
     Given (1), the next window over a re-hit slot should catch the store.
 
+    RUN 4 (22:45-23:35, closed by hand): 11 windows, one every cycle; pinned pages grew to 8;
+    9 catches in 15 firings (six stores landed where the sentry cannot see, as the run-2 death
+    predicted). And the decisive pair: catches #3 and #4 were the SAME slot, its page PINNED,
+    and #4's store landed INSIDE window #3 on that protected page - uncaught. The first write
+    to a page opened it until the next 5 ms sweep, and a body write on the same page held the
+    door. FIXED: the page is opened for ONE instruction (trap flag, then re-protect on the
+    step - probe.rs's own int3 trick), so EVERY write faults. Tested with two writes to one
+    page. AGAIN, same recipe.
     RUN 3 (21:57-22:39, closed by hand): 12 firings, 12 catches, none silent - the re-hit fix
     works, and a THIRD of firings land on an address already hit (0x696fde0 three times). Pool
     clean at close. But ONE window opened in 42 minutes: the re-arm guard compared the firing
@@ -2018,10 +2026,13 @@ function Show-TestPlan {
         Write-Host '       the 28-byte alloc from 0x14491cafd fires 180s apart ~100ms before'
         Write-Host '       every catch (14/14); and the watch covered only 10% of the pool'
         Write-Host '       (FIXED - pages of caught headers are pinned every window).'
-        Write-Host '       RUN 3: 12 firings, 12 catches, re-hits now caught (one address'
-        Write-Host '       three times), pool clean at close - but ONE window in 42 min: the'
-        Write-Host '       re-arm guard reset with every catch (FIXED, tested). AGAIN, same'
-        Write-Host '       recipe, 20+ min; expect a pinned window over a re-hit ~10 min in.'
+        Write-Host '       RUN 3: 12/12 catches, re-hits caught, one window (guard bug, FIXED).'
+        Write-Host '       RUN 4: 11 windows, 8 pinned pages, and the store landed INSIDE a'
+        Write-Host '       window on a PINNED page - uncaught: the first write to a page opened'
+        Write-Host '       it until the next sweep. FIXED: a page is open for ONE instruction'
+        Write-Host '       (trap flag + re-protect on the step), so every write faults.'
+        Write-Host '       AGAIN, same recipe, 20+ min. 6 of 15 firings landed off-pool: the'
+        Write-Host '       catch will come from one that lands on a pinned header.'
         Write-Host '         "THE WRITER: ... from RIP R"  -> THE ANSWER. R is the instruction,'
         Write-Host '                    and the module it sits in also settles "is this OURS"'
         Write-Host '         "saw a write into a watched page" -> liveness. Expect several'
