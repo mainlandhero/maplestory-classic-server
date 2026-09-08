@@ -129,8 +129,13 @@ pub enum AuthReply {
         /// could not stake a claim - which it reports rather than failing the login, because
         /// the password really was right.
         launch_id: LaunchId,
-        /// The one-time token the **client** will carry in `0x0073`. Empty on a server that
-        /// predates it, and empty when the claim could not be staked. See [`ClientToken`].
+        /// The token the **client** will carry in `0x0073`. Empty on a server that predates
+        /// it, and empty when the claim could not be staked. See [`ClientToken`].
+        ///
+        /// **The launcher keeps this and hands the same value to every `Start Game`.** That
+        /// was always true and used to be the bug: the server spent it on first presentation,
+        /// so the second `Start Game` was refused while this screen said the session was good
+        /// for twelve hours. Since 2026-09-08 the server honours it until the claim expires.
         client_token: ClientToken,
     },
     InvalidCredentials,

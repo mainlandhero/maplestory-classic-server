@@ -97,7 +97,8 @@ pub fn launch_args(plan: &Plan) -> Vec<String> {
 /// Everything except starting the client. Split out so it can be tested against a temp
 /// directory without launching anything.
 ///
-/// `client_token` is this launch's one-time credential, or `None`. **`None` deletes any marker
+/// `client_token` is this launch's credential, or `None`. It is the SAME value on every
+/// `Start Game` of one sign-in - see `crate::http::AuthReply::Ok::client_token`. **`None` deletes any marker
 /// a previous launch left**, which is not tidiness: see [`client::write_identity_marker`].
 pub fn prepare(
     layout: &Layout,

@@ -37,7 +37,7 @@ pub const HOOK_DUMPDIR_MARKER: &str = "maplecw-hook.dumpdir";
 /// suppresses nothing in that one. So a single-client run behaves exactly as it did before
 /// and still produces the log that names the guard.
 pub const HOOK_MULTICLIENT_MARKER: &str = "maplecw-hook.multiclient";
-/// **The one-time credential the client will carry**, in plain text, beside the client.
+/// **The credential the client will carry**, in plain text, beside the client.
 ///
 /// Read by `grap_stub::identity`, which writes it into the client's own session object so the
 /// client sends it in `0x0073`. Written only when a sign-in produced a fresh token, and
@@ -46,6 +46,13 @@ pub const HOOK_MULTICLIENT_MARKER: &str = "maplecw-hook.multiclient";
 /// Anything running as this user can read this file. That is the same power as being this
 /// launch, so on a single-user machine it does not widen anything - but it is a secret on
 /// disk and it is named as one here rather than left to be discovered.
+///
+/// **This file got more valuable on 2026-09-08 and the sentence above got weaker.** The token
+/// used to be spent on its first presentation, so a copy of this file was worth one race
+/// against the real client. The owner asked for the token to be honoured for the life of the login
+/// claim (`store::claims::Store::present_client_token`), so a copy is now worth being served
+/// as that account on the LOGIN socket for up to twelve hours. The hook deletes the file once
+/// it has read it, which is what keeps that window short in practice rather than in theory.
 pub const HOOK_IDENTITY_MARKER: &str = "maplecw-hook.identity";
 pub const HOOK_LOG: &str = "maplecw-hook.log";
 

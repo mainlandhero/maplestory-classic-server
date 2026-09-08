@@ -291,6 +291,15 @@ impl Store {
         // either a wrong account or no reply at all, and an unanswered packet freezes the
         // client's whole UI.
         crate::claims::create_tables(&conn)?;
+        // WHO IS PLAYING RIGHT NOW - the lease behind "that ID is already logged in". New
+        // table, so `CREATE TABLE IF NOT EXISTS` is enough, and `presence.rs` ensures it at
+        // every entry point for the same reason `claims.rs` does: the read runs on the login
+        // path, and a missing table there would become an `Err` where the only safe answers
+        // are a wrong one or none at all.
+        //
+        // **This line is what makes it wired rather than merely working.** `CLAUDE.md`'s
+        // "Built is not wired" section is about exactly the state where this is absent.
+        crate::presence::create_tables(&conn)?;
         // The two AP-spend counters. ALTERed onto `characters`, which is NOT a new table, so
         // this carries its own PRAGMA guard - see the note in that module.
         crate::abilityspend::create_tables(&conn)?;

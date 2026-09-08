@@ -77,7 +77,7 @@ impl SignIn {
                      credential and the connection will be attributed the way it always has \
                      been - by the process that owns it."
                 } else {
-                    " The client will carry a one-time credential of its own."
+                    " The client will carry a credential of its own, good for as long as this claim is."
                 },
                 // Said here rather than only at the launch step, because it is the earliest
                 // point at which it is known and it changes what a second sign-in on this
@@ -273,7 +273,12 @@ mod tests {
         // And the ordinary case carries it out, or nothing downstream can write the marker.
         let ok = signed_in("t");
         assert_eq!(ok.client_token().map(|t| t.as_str()), Some("MFRGGZDFMZTWQ2LKNNWG23TP2A"));
-        assert!(ok.message().contains("one-time credential of its own"), "{}", ok.message());
+        assert!(ok.message().contains("credential of its own"), "{}", ok.message());
+        // The screen must not still call it one-time: the launcher hands the same token to
+        // every Start Game and the server honours it until the claim expires. A promise on
+        // screen that the server no longer keeps is how this bug was reported in the first
+        // place - "the launcher says the session is valid for 12 hours".
+        assert!(!ok.message().contains("one-time"), "{}", ok.message());
         // The refusals carry none, for the same reason they carry no launch handle.
         assert!(SignIn::BadCredentials.client_token().is_none());
         assert!(SignIn::Disabled.client_token().is_none());

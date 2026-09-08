@@ -31,7 +31,7 @@ use net::opcode::{
     LOGIN_RESULT, MIGRATE_COMMAND, NAME_ALREADY_USED, NAME_AVAILABLE, NAME_NOT_ALLOWED,
     WORLD_LIST,
 };
-use store::{Account, NameCheck, Store};
+use store::{Account, NameCheck, PresenceGuard, Store};
 
 use crate::config::{Config, World};
 
@@ -210,7 +210,12 @@ pub struct Session {
     fallback: Option<Account>,
     /// The process the operating system attributes this socket to, as
     /// `store::peerowner::owning_pid_of` reported it at accept time. Never asserted by the
-    /// client. Used only to let the **same** client process re-present a spent token.
+    /// client.
+    ///
+    /// **Two readers, and neither of them refuses any more.** It labels a repeat presentation
+    /// of a client token in the log (`store::claims::Presentation`), and it is the key a
+    /// presence lease is held under (`store::presence::holder_key`) - which is what makes the
+    /// player's own reconnect not count as a second login.
     launch_pid: Option<u32>,
     /// Lines for the server's log that are not attached to a reply.
     ///
@@ -219,6 +224,18 @@ pub struct Session {
     /// [`Session::take_notes`] after every `handle`. A `Vec` rather than a callback so this
     /// module stays pure and every sentence below is unit-testable without a socket.
     notes: Vec<String>,
+    /// **The "this account is logged in" lease this connection holds**, if it holds one.
+    ///
+    /// Taken at the first request that would serve a character list, released when this
+    /// `Session` is dropped - which is when the socket closes, however it closes. A client
+    /// that crashes closes its socket the same way a client that quits does, so the release
+    /// runs on the crash path too; that is the point, and `store::presence` has the argument.
+    ///
+    /// `None` is not "nobody is playing". It is "this connection is not the one holding it" -
+    /// which covers an unattributed connection, one this server cannot identify at all
+    /// (`store::presence::holder_key` returned `None`), a store failure, and the state before
+    /// the first login request arrives.
+    presence: Option<PresenceGuard>,
 }
 
 impl Session {
@@ -245,6 +262,7 @@ impl Session {
             fallback: None,
             launch_pid: None,
             notes: Vec::new(),
+            presence: None,
         }
     }
 
@@ -339,6 +357,144 @@ impl Session {
         )]
     }
 
+    /// **ONE LOGIN PER ACCOUNT.** Take the presence lease, or produce the refusal.
+    ///
+    /// The owner, 2026-09-08: *"the server should not allow the same account to login twice, there
+    /// should be an existing message to say that the account is already logged in."*
+    ///
+    /// Returns `Some(replies)` when this request must be **refused and nothing else** - the
+    /// same shape [`Session::refuse_unclaimed`] uses, and for the same reason: a refusal is a
+    /// well-formed reply, never an absent one. `None` means carry on.
+    ///
+    /// # Three ways this deliberately does NOT refuse
+    ///
+    /// Each of them is a route to locking a player out of their own account, which would be a
+    /// far worse bug than the one being fixed. `CLAUDE.md`'s standing rule about a guard whose
+    /// answer is ignored has a mirror: a guard that fires on the wrong input is worse than no
+    /// guard, because it fails in the direction nobody tests.
+    ///
+    /// * **We already hold it.** The lease is keyed on the client *process*, so the second
+    ///   login connection of one launch - "Log Out", "Choose another world", both of which
+    ///   drop the socket and reconnect - re-takes its own lease. `store::presence`.
+    /// * **We cannot identify this connection at all.** No OS-attributed process and no peer
+    ///   address means no honest key, and a connection nobody can name must not be able to
+    ///   hold an account. It is logged and served.
+    /// * **The store failed.** A database error becomes a note, not a refusal - the same trade
+    ///   `on_session_identity` makes on its own `Err`. A table that will not read must not
+    ///   lock every account out.
+    fn claim_presence(&mut self, account: &Account, cause: &str) -> Option<Vec<Reply>> {
+        // Already ours: renew rather than re-take, so a long stay at character select does
+        // not go stale while the player reads their list.
+        if let Some(guard) = &self.presence {
+            if guard.account_id() == account.id {
+                match guard.renew() {
+                    Ok(true) => return None,
+                    // Lost it - it expired and somebody else has it. Fall through and try to
+                    // take it again, which either succeeds or produces the honest refusal.
+                    Ok(false) => self.note(
+                        "PRESENCE: this connection's lease had expired and was taken. \
+                         Re-taking it",
+                    ),
+                    Err(e) => {
+                        self.note(format!("PRESENCE: could not renew the lease: {e}"));
+                        return None;
+                    }
+                }
+            }
+            // A different account on the same connection can only happen if 0x0073 changed it
+            // after we had taken a lease. Drop ours before taking the new one, or this
+            // connection would hold two.
+            self.presence = None;
+        }
+
+        let Some(holder) = store::holder_key(self.launch_pid, self.peer.as_deref()) else {
+            self.note(format!(
+                "PRESENCE: NOT ENFORCED for {cause} - this connection has no OS-attributed \
+                 process and no peer address, so there is no honest key to hold a lease \
+                 under. A connection nobody can identify must not be able to lock an account \
+                 out, so it is served. Two clients on this connection's account would both be \
+                 served"
+            ));
+            return None;
+        };
+        let whence = format!(
+            "a login connection from {} (holder {holder})",
+            self.peer.as_deref().unwrap_or("an unknown address")
+        );
+
+        match PresenceGuard::hold(self.store.clone(), account.id, &holder, &whence) {
+            Ok(Ok(guard)) => {
+                self.note(format!(
+                    "PRESENCE: {cause} - account {:?} (id {}) is now held by {holder}. It is \
+                     released when this socket closes, and expires by itself {} s after the \
+                     last packet if the process dies without closing it",
+                    account.name,
+                    account.id,
+                    store::PRESENCE_LEASE_SECS
+                ));
+                self.presence = Some(guard);
+                None
+            }
+            Ok(Err(who)) => {
+                let why = who.why_refused(std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0));
+                self.note(format!("PRESENCE: {cause} - {why}"));
+                Some(vec![Reply::new(
+                    LOGIN_RESULT,
+                    net::opcode::login_refused(net::opcode::LOGIN_REFUSED_ALREADY_LOGGED_IN),
+                    format!(
+                        "{cause}: REFUSED with login failure {} (loginAlready - the client \
+                         draws its own \"That ID is already logged in. Please try again \
+                         later\"). Account {:?} is already being played by {}. {why}",
+                        net::opcode::LOGIN_REFUSED_ALREADY_LOGGED_IN,
+                        account.name,
+                        who.whence
+                    ),
+                )])
+            }
+            Err(e) => {
+                // A database failure must not be a lockout. Say so and serve.
+                self.note(format!(
+                    "PRESENCE: NOT ENFORCED for {cause} - the lease lookup FAILED: {e}. The \
+                     connection is served: a table that will not read must not lock every \
+                     account out"
+                ));
+                None
+            }
+        }
+    }
+
+    /// **Stop holding the account on this connection because the client is migrating.**
+    ///
+    /// Character select closes the login socket and opens a channel connection a moment later,
+    /// both from the same client process. If this connection released the lease on its way
+    /// out, a second client could log in during the gap - which is the thing being prevented.
+    /// So the lease is handed across, and the channel takes it with the same holder key.
+    ///
+    /// The handover is bounded by `store::PRESENCE_LEASE_SECS`, so a client that dies between
+    /// the two connections holds the account for at most that long rather than for the life of
+    /// the login claim.
+    fn hand_presence_to_the_channel(&mut self) {
+        let handed = match &mut self.presence {
+            Some(guard) => {
+                guard.hand_over();
+                true
+            }
+            None => false,
+        };
+        if handed {
+            self.note(format!(
+                "PRESENCE: handed to the channel connection - this login socket is about to \
+                 close and the same client process reconnects to the channel. The lease is NOT \
+                 released here, or a second client could log in during the gap. If the channel \
+                 connection never arrives it expires in {} s",
+                store::PRESENCE_LEASE_SECS
+            ));
+        }
+    }
+
     /// Take the log lines produced since the last call. The server drains these after every
     /// `handle`; nothing here writes to a log itself.
     pub fn take_notes(&mut self) -> Vec<String> {
@@ -359,6 +515,21 @@ impl Session {
     /// means "nothing to patch" however often it arrives), and the alternative costs a
     /// manual client launch to discover.
     pub fn on_quiet(&mut self) -> Vec<Reply> {
+        // **The presence lease's heartbeat**, and this is the only thing that runs while a
+        // player sits on the character-select screen sending nothing. Without it the lease
+        // would go stale after `store::PRESENCE_LEASE_SECS` and a second client could log in
+        // while the first was still on screen. Four seconds against a sixty-second lease is
+        // fifteen chances to miss one.
+        if let Some(guard) = &self.presence {
+            match guard.renew() {
+                Ok(true) => {}
+                Ok(false) => self.note(
+                    "PRESENCE: the lease on this connection's account is no longer ours - it \
+                     expired and was taken. The next request re-takes it or is refused",
+                ),
+                Err(e) => self.note(format!("PRESENCE: could not renew the lease: {e}")),
+            }
+        }
         if self.seen_login_request {
             return Vec::new();
         }
@@ -506,6 +677,14 @@ impl Session {
         let Some(account) = self.account.clone() else {
             return self.refuse_unclaimed(cause);
         };
+        // THE SECOND ENFORCEMENT POINT, and it is here rather than at `handle` because this is
+        // the one function that serves a character list. Every effect hangs off the
+        // transition: if the store says this account is already being played, the refusal is
+        // the WHOLE reply - no account info, no world list, no characters. `CLAUDE.md`'s Heena
+        // quest section is what happens when effects sit outside the answer instead.
+        if let Some(refusal) = self.claim_presence(&account, cause) {
+            return refusal;
+        }
         let world = &self.config.world;
         let mut out = vec![
             Reply::new(
@@ -583,9 +762,15 @@ impl Session {
     /// | identity | account served |
     /// |---|---|
     /// | empty (every capture to date, and every reconnect) | unchanged - whatever the weaker rules chose at accept time |
-    /// | a valid unspent token | **the claim that minted it**, and the token is spent |
-    /// | a token this same client process already spent | the same claim, nothing spent again |
-    /// | a spent token from another process, or one nobody issued | **the `--account` fallback** - a presented credential gets its claim or none |
+    /// | a token whose login claim is live | **the claim that minted it**, whichever process presents it and however often |
+    /// | a token whose claim has expired, been cleared, or whose account is gone | **the `--account` fallback** - a presented credential gets its claim or none |
+    ///
+    /// **The middle two rows used to be three, and the third was a refusal.** A token was
+    /// spent on first presentation and only the process that spent it could present it again;
+    /// a second `Start Game` is a second process, so it was refused while the launcher's screen
+    /// said the session was good for twelve hours. The owner, 2026-09-08: *"the server should honor
+    /// that same token until its expiry."* `store::claims::Store::present_client_token` states
+    /// what that costs.
     fn on_session_identity(&mut self, payload: &[u8]) -> Vec<Reply> {
         let Some(parsed) = SessionIdentity::parse(payload) else {
             // A body that does not parse is not a presentation - it buys exactly what silence
@@ -1000,12 +1185,20 @@ impl Session {
             Err(e) => return refuse(format!("REFUSED - could not mint a migration: {e}")),
         };
 
+        // The migration is minted, so this client is on its way to the channel and this socket
+        // is about to close. Hand the presence lease across rather than releasing it - see
+        // `hand_presence_to_the_channel`. Placed AFTER the mint, deliberately: every `refuse`
+        // path above returns before it, so a select that failed still releases on drop and
+        // leaves the account free. Every effect hangs off the transition.
+        let world_id = world.id;
+        self.hand_presence_to_the_channel();
+
         vec![Reply::new(
             MIGRATE_COMMAND,
             migrate(addr, id, seed),
             format!(
-                "migrate {:?} (id {id}) to world {} channel {channel} at {addr}, seed {seed:#010x} - single use, NOT authentication. Migration {binding}. Advertised as {advertised_as}",
-                chosen.name, world.id
+                "migrate {:?} (id {id}) to world {world_id} channel {channel} at {addr}, seed {seed:#010x} - single use, NOT authentication. Migration {binding}. Advertised as {advertised_as}",
+                chosen.name
             ),
         )]
     }
@@ -1185,6 +1378,204 @@ mod tests {
         let account = store.get_account("maplecw").unwrap().unwrap();
         assert_eq!(account.id, id);
         Session::new(store, Arc::new(Config::default()), account)
+    }
+
+    // --------------------------------------------------------------------------------------
+    // ONE LOGIN PER ACCOUNT, and the lockout it must not cause.
+    //
+    // The owner, 2026-09-08: "the server should not allow the same account to login twice, there
+    // should be an existing message to say that the account is already logged in." The
+    // message is the client's own `loginAlready` bitmap and the code is 7.
+    //
+    // These tests are here rather than only in `store::presence` because the store's answer is
+    // not the feature: the feature is that the REPLY changes, and that everything else about
+    // the reply stops. `CLAUDE.md`'s Heena quest section is the cautionary tale - a store guard
+    // that returns "nothing changed" while the effects fire anyway.
+    // --------------------------------------------------------------------------------------
+
+    /// Two sessions over one store, each with its own owning process - which is exactly what
+    /// two `Start Game` clicks produce.
+    fn two_clients_on_one_account(pid_a: u32, pid_b: u32) -> (Session, Session) {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store.create_account("maplecw", "correct horse battery").unwrap();
+        let account = store.get_account("maplecw").unwrap().unwrap();
+        let config = Arc::new(Config::default());
+        (
+            Session::new(store.clone(), config.clone(), account.clone())
+                .with_peer("127.0.0.1")
+                .with_launch_pid(Some(pid_a)),
+            Session::new(store, config, account).with_peer("127.0.0.1").with_launch_pid(Some(pid_b)),
+        )
+    }
+
+    /// The result byte of the `LOGIN_RESULT` in a set of replies, if there is one.
+    fn login_result_code(replies: &[Reply]) -> Option<u8> {
+        replies.iter().find(|r| r.opcode == LOGIN_RESULT).map(|r| r.packet()[2])
+    }
+
+    /// **THE FEATURE.** A second client process is told "already logged in" with code 7, and
+    /// the first session is untouched.
+    ///
+    /// Four assertions, deliberately, because a test that checks one of several effects gives
+    /// false confidence about the rest: the code, the *absence* of everything else in the
+    /// reply, the first session still working, and the log line naming the reason.
+    #[test]
+    fn a_second_client_on_one_account_is_refused_with_the_already_logged_in_result() {
+        let (mut first, mut second) = two_clients_on_one_account(100, 200);
+
+        let ok = first.handle(&request(CLIENT_LOGIN_REQUEST, &[]));
+        assert_eq!(login_result_code(&ok), Some(net::opcode::LOGIN_OK));
+        first.take_notes();
+
+        let refused = second.handle(&request(CLIENT_LOGIN_REQUEST, &[]));
+        assert_eq!(
+            login_result_code(&refused),
+            Some(net::opcode::LOGIN_REFUSED_ALREADY_LOGGED_IN),
+            "the second client must get the loginAlready code"
+        );
+        // AND NOTHING ELSE. A refusal that also sent the world list and the account info would
+        // put the second client on a screen it must not reach.
+        assert_eq!(refused.len(), 1, "the refusal is the WHOLE reply: {:?}",
+                   refused.iter().map(|r| r.what.as_str()).collect::<Vec<_>>());
+        assert!(refused[0].what.contains("already logged in"), "{}", refused[0].what);
+        let notes = second.take_notes().join("\n");
+        assert!(notes.contains("ALREADY LOGGED IN"), "{notes}");
+        // The log has to bound the wait, or a person reads it as a permanent lockout.
+        assert!(notes.contains("no manual step"), "{notes}");
+
+        // THE FIRST SESSION IS UNAFFECTED - the effect a refusal-only test would miss.
+        let still = first.handle(&request(CLIENT_LOGIN_REQUEST, &[]));
+        assert_eq!(login_result_code(&still), Some(net::opcode::LOGIN_OK));
+    }
+
+    /// **THE LOCKOUT REGRESSION, and the one most likely to be found by a player.**
+    ///
+    /// This client crashes mid-session, often. A connection that dies without a clean logout
+    /// must free the account at once - not after the login claim's twelve hours, not after the
+    /// lease's minute. The socket closing is what drops the `Session`, and dropping the
+    /// `Session` is what releases the lease, so this test drops one.
+    #[test]
+    fn a_client_that_dies_without_logging_out_frees_the_account_at_once() {
+        let (mut first, mut second) = two_clients_on_one_account(100, 200);
+        assert_eq!(
+            login_result_code(&first.handle(&request(CLIENT_LOGIN_REQUEST, &[]))),
+            Some(net::opcode::LOGIN_OK)
+        );
+        // The control: while it is alive, the second client really is refused. Without this
+        // the test below would pass against a build with no enforcement at all.
+        assert_eq!(
+            login_result_code(&second.handle(&request(CLIENT_LOGIN_REQUEST, &[]))),
+            Some(net::opcode::LOGIN_REFUSED_ALREADY_LOGGED_IN)
+        );
+
+        // The client process dies. `login::server::connection` returns - `read` gave 10054 -
+        // and the Session goes with it. No logout was sent and none could have been.
+        drop(first);
+
+        assert_eq!(
+            login_result_code(&second.handle(&request(CLIENT_LOGIN_REQUEST, &[]))),
+            Some(net::opcode::LOGIN_OK),
+            "a crash must not lock the player out of their own account"
+        );
+    }
+
+    /// **The player's own reconnect is not a second login.** "Log Out" and "Choose another
+    /// world" drop the login socket and open a new one from the same client process -
+    /// `CLAUDE.md` records two `0x0010`s in one launch. Refusing that would read on screen as
+    /// being locked out by yourself.
+    #[test]
+    fn the_same_client_process_reconnecting_is_not_refused() {
+        let (mut first, mut reconnect) = two_clients_on_one_account(100, 100);
+        assert_eq!(
+            login_result_code(&first.handle(&request(CLIENT_LOGIN_REQUEST, &[]))),
+            Some(net::opcode::LOGIN_OK)
+        );
+        // The reconnect arrives BEFORE the old session is dropped, which is the ordering that
+        // makes this a real test: if the lease were keyed on the socket, this would refuse.
+        assert_eq!(
+            login_result_code(&reconnect.handle(&request(CLIENT_LOGIN_REQUEST, &[]))),
+            Some(net::opcode::LOGIN_OK),
+            "the same client process must re-take its own lease"
+        );
+        assert_eq!(
+            login_result_code(&reconnect.handle(&request(CLIENT_SELECT_WORLD, &[]))),
+            Some(net::opcode::LOGIN_OK),
+            "and picking a world on the new connection is still served"
+        );
+    }
+
+    /// A connection this server cannot identify at all holds nothing, and says so. It must not
+    /// be able to lock an account out by arriving - that would be a denial of service with no
+    /// credential at all.
+    #[test]
+    fn a_connection_with_no_process_and_no_address_does_not_hold_the_account() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store.create_account("maplecw", "correct horse battery").unwrap();
+        let account = store.get_account("maplecw").unwrap().unwrap();
+        let config = Arc::new(Config::default());
+        // No peer, no pid: `store::holder_key` returns None.
+        let mut anonymous = Session::new(store.clone(), config.clone(), account.clone());
+        assert_eq!(
+            login_result_code(&anonymous.handle(&request(CLIENT_LOGIN_REQUEST, &[]))),
+            Some(net::opcode::LOGIN_OK)
+        );
+        assert!(anonymous.take_notes().join("\n").contains("NOT ENFORCED"));
+        assert!(store.presence_of(account.id).unwrap().is_none(), "it held nothing");
+
+        // And a real client is still served afterwards.
+        let mut real = Session::new(store, config, account)
+            .with_peer("127.0.0.1")
+            .with_launch_pid(Some(100));
+        assert_eq!(
+            login_result_code(&real.handle(&request(CLIENT_LOGIN_REQUEST, &[]))),
+            Some(net::opcode::LOGIN_OK)
+        );
+    }
+
+    /// **Character select hands the lease to the channel rather than releasing it.** Releasing
+    /// it would open a window in which a second client could log in while the first was
+    /// migrating, which is the whole thing being prevented.
+    #[test]
+    fn selecting_a_character_hands_the_lease_over_instead_of_releasing_it() {
+        let (mut first, _) = two_clients_on_one_account(100, 200);
+        let account_id = first.account_id();
+        first.handle(&request(CLIENT_LOGIN_REQUEST, &[]));
+        let chr = first
+            .store
+            .create_character(account_id, first.config.world.id, &seed_character("Migrator"))
+            .unwrap();
+        first.take_notes();
+
+        let replies = first.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(chr.id)));
+        assert_eq!(replies[0].opcode, MIGRATE_COMMAND, "{}", replies[0].what);
+        assert!(first.take_notes().join("\n").contains("handed to the channel"));
+
+        let store = first.store.clone();
+        drop(first);
+        assert!(
+            store.presence_of(account_id).unwrap().is_some(),
+            "the lease must survive the login socket closing, or a second client slips in"
+        );
+    }
+
+    /// ...but a select that is REFUSED does not hand anything over, so a client that failed to
+    /// enter the world releases the account when its socket closes. Every effect hangs off the
+    /// transition: no migration, no handover.
+    #[test]
+    fn a_refused_select_releases_the_lease_on_drop() {
+        let (mut first, _) = two_clients_on_one_account(100, 200);
+        let account_id = first.account_id();
+        first.handle(&request(CLIENT_LOGIN_REQUEST, &[]));
+        // An id this account does not own.
+        let replies = first.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(999_999)));
+        assert!(replies[0].what.contains("REFUSED"), "{}", replies[0].what);
+
+        let store = first.store.clone();
+        drop(first);
+        assert!(
+            store.presence_of(account_id).unwrap().is_none(),
+            "a select that did not migrate must not keep holding the account"
+        );
     }
 
     /// A session whose account carries an email, so the login screen has something real.
@@ -1757,7 +2148,7 @@ mod tests {
         let replies = s.handle(&identity_request(5, &client_token));
         assert!(replies.is_empty(), "0x0073 must not be answered - the client does not block");
         let notes = s.take_notes().join("\n");
-        assert!(notes.contains("ACCEPTED and SPENT"), "{notes}");
+        assert!(notes.contains("for the FIRST time"), "{notes}");
         assert!(notes.contains("account CHANGED"), "{notes}");
 
         let after = character_list(&mut s);
@@ -1885,36 +2276,59 @@ mod tests {
 
         s.handle(&identity_request(5, &client_token));
         let notes = s.take_notes().join("\n");
-        assert!(notes.contains("REPLAY BY THE SAME CLIENT PROCESS"), "{notes}");
+        assert!(notes.contains("REPEAT BY THE SAME CLIENT PROCESS"), "{notes}");
         assert_eq!(s.account_name(), "second_one", "the same client must not be downgraded");
     }
 
-    /// A different client process replaying a spent token is downgraded. This is the
-    /// one-time-use property where it matters - and the pid it turns on comes from the
-    /// operating system, never from the connection.
+    /// **THE REPORTED BUG, at the session layer.** A second `Start Game` is a second process
+    /// presenting the token the launcher kept, and it is now SERVED rather than downgraded.
+    ///
+    /// This test is the inverse of `another_process_replaying_a_spent_token_is_downgraded`,
+    /// which asserted the refusal. The owner, 2026-09-08: *"the server should honor that same token
+    /// until its expiry, as long as that token is still valid."* The pid still comes from the
+    /// operating system and is still recorded; it just no longer decides.
+    ///
+    /// **And the refusal is asserted in the same test**, because a test that proved only the
+    /// acceptance would pass against a version with no expiry check at all - which is the
+    /// dangerous shape now that expiry is the whole gate.
     #[test]
-    fn another_process_replaying_a_spent_token_is_downgraded() {
+    fn a_second_process_presenting_the_same_token_is_served_until_the_claim_expires() {
         let (mut first, client_token) = session_with_claim("maplecw", "second_one");
         first.handle(&identity_request(5, &client_token));
         assert_eq!(first.account_name(), "second_one", "the control: it worked once");
 
         // A second connection, same store, a DIFFERENT owning process.
-        let mut thief = Session::new(
+        let mut second = Session::new(
             first.store.clone(),
             first.config.clone(),
             first.store.get_account("maplecw").unwrap().unwrap(),
         )
         .with_fallback(first.store.get_account("maplecw").unwrap().unwrap())
         .with_launch_pid(Some(9999));
-        thief.handle(&identity_request(5, &client_token));
-        let notes = thief.take_notes().join("\n");
-        assert!(notes.contains("SPENT"), "{notes}");
-        assert!(notes.contains("DOWNGRADING"), "{notes}");
-        // The thief was ALREADY being served the fallback, so nothing on screen changes -
-        // and the line has to say that rather than "DOWNGRADING from maplecw to maplecw",
-        // which reads as a bug in the log instead of as a refusal.
-        assert!(notes.contains("ALREADY being served as"), "{notes}");
-        assert_eq!(thief.account_name(), "maplecw");
+        second.handle(&identity_request(5, &client_token));
+        let notes = second.take_notes().join("\n");
+        assert!(notes.contains("REPEAT BY A DIFFERENT PROCESS"), "{notes}");
+        assert!(!notes.contains("DOWNGRADING"), "the reported bug is this downgrade: {notes}");
+        assert_eq!(
+            second.account_name(),
+            "second_one",
+            "a second Start Game must be served the account its token names"
+        );
+
+        // ---- and now the refusal, which is the half that proves the gate exists ----
+        second.store.clear_login_claims().unwrap();
+        let mut third = Session::new(
+            first.store.clone(),
+            first.config.clone(),
+            first.store.get_account("maplecw").unwrap().unwrap(),
+        )
+        .with_fallback(first.store.get_account("maplecw").unwrap().unwrap())
+        .with_launch_pid(Some(4242));
+        third.handle(&identity_request(5, &client_token));
+        let notes = third.take_notes().join("\n");
+        assert!(notes.contains("matches no LIVE claim"), "{notes}");
+        assert!(notes.contains("DOWNGRADING"), "a dead token must still downgrade: {notes}");
+        assert_eq!(third.account_name(), "maplecw");
     }
 
     /// **E1's own requirement**: every `0x0073`, whatever it carries, produces a log line that
