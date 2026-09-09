@@ -59,6 +59,71 @@ ways: `FUN_141b267c0` switches on `result + 1`, so `case 8` is wire 7 - and `cas
 table is `notRegisteredID`, which this repo already knew is wire result 5, so the offset is
 checked against something that can disagree [L]. **Nobody has put that dialog on a screen yet.**
 
+**2026-09-08 22:10: THE SECOND CLIENT DIED IN 6 MINUTES OF HEAP CORRUPTION, WITH THE GUARD PAGE
+OFF - AND IT WAS OFF BECAUSE THE LAUNCHER STRIPPED IT.** The owner closed the 7-hour client and
+pressed Start Game again. The new one lasted **6m10s**.
+
+**Cause of death** [L], `dumps/maplecw-crash-517472-c0000374-1.dmp` (all six dumpwalk
+self-checks pass): `0xC0000374` STATUS_HEAP_CORRUPTION, `_HEAP_FAILURE_INFORMATION` **type 8,
+`heap_failure_block_not_busy`**, entry `0x382ad9a0`. The allocator's own captured stack names
+our pool:
+
+```
+#2  ntdll.dll!RtlFreeHeap+0x51
+#3  MapleStory.exe+0x19bbf3   fn 0x14019bb6a     <- the pool's free path
+```
+
+The pool freed a block whose header said it was not allocated. **That is precisely the failure
+the guard-page quarantine exists to intercept** - its free is a pointer swap that never touches
+the pool's free list.
+
+**Why it was off, and this is a shipping defect, not bad luck.** The two session markers, read
+off the two runs' own hook logs [L]:
+
+```
+14:55:25  mode=2,create=on,guardpage=0x20+0x40     <- written by test-server.ps1 -GuardPage (a PIN)
+22:04:06  mode=2,create=on                          <- written by the launcher's Start Game
+```
+
+`launcher::client::DEFAULT_SESSION` in the source *does* carry `guardpage=0x20+0x40` - commit
+`6a1f9e1`, **16:47**. The launcher binaries on disk are `target/debug` **12:35** and
+`target/release` **14:55**. **Both predate the commit; it was never built.** So the running
+launcher rewrites the marker on every Start Game using its stale default, and in doing so
+**actively strips a guard-page pin that `test-server.ps1` had already put there**. "It ships to
+every client" has been true in the repo and false on disk all day - `CLAUDE.md`'s *Built is not
+wired*, and this entry claimed it was shipped.
+
+**Fix before the next client**: stop and relaunch so the launcher is rebuilt. A running launcher
+is a stale binary after any launcher change and nothing says so.
+
+```bash
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -Stop
+```
+```bash
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe
+```
+
+**The accidental A/B, same machine, same day, same client build, same servers** - fixtures
+`guardpage-ARMED-survived-6h53m-2026-09-08-extract.log` and
+`guardpage-NOT-armed-heap-corruption-6min-2026-09-08-hook.log`:
+
+| | armed 14:55 | unarmed 22:04 |
+|---|---|---|
+| lifetime | **25 702 s (7h08m)**, ended by hand | **370 s**, ended by heap corruption |
+| CLIENT FAULT lines | **0** | **1**, `0xC0000374` |
+| sentry findings | 0 | 0 |
+
+**n = 1 on each side, so this is not proof** - the baseline crash rate is 37.7 %
+(`tools/crash_rate.py`) and a 6-minute death is unremarkable for an unprotected client. What
+makes it worth recording is that the one variable that differed is the guard page, and the death
+signature is the exact one it targets. It is also the first time the two arms have been run on
+the same day.
+
+**And an out-of-sample confirmation arrived free.** Yesterday's claim was that
+`[0x143AC7F3C]` flips between 38 s and 194 s of process life, from 37 dumps. This dump did not
+exist when that was written, lived 370 s, and reads **2**. `gatescan.py --dumps` is now
+**38 dumps, 38 passing both controls**, still a clean split with no overlap.
+
 **2026-09-08: KEY BINDINGS now SAVE to the database, and restore is built but deliberately
 switched off until one number is measured.** The owner bound three skills, clicked CONFIRM, and the
 whole protocol came out of that one capture - `research/keyboard-layout-2026-09-08.md`.
