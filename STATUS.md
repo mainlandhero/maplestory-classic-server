@@ -138,13 +138,36 @@ screen and what is merely built, kept apart on purpose:
   were all missing the first time - a depth-6 read count, the pool head's own `u32` counted
   separately, and a test asserting the body is 13 bytes. The cause was skipping
   `tools/reads.py`, which exists **because** a short packet killed this client twice before.
-* **MAP CHAIRS STILL DO NOT WORK**, and the negative is measured rather than assumed. The
-  client sends `0x00DA` with a seat index and waits; a live probe read `CUser+0x3c28 = -1`
-  with `IsSitting` false while the owner clicked a Henesys bench. **Every** opcode in
-  `0x0224..0x039F` has been checked and none sets a seat; the only writers of the seat index
-  are the `-1` initialiser, the `0x0224` record at body offset 416, and `SetChair` via
-  `SetSeat`. `0x0318` was tried here and **refuted on screen** - four replies, four retries,
-  never sat.
+* **MAP CHAIRS - THE MECHANISM IS FOUND AND WIRED, AND IT IS UNSEEN.** `0x0252`, body
+  `u32 characterId; u8 bSit; if (bSit) u16 seatIndex` - **7 bytes seated, 5 released**.
+  `research/map-chair-seat-2026-09-09.md`.
+
+  **Why three attempts failed, and it was never the body.** The client has two remote
+  dispatchers that resolve the target differently. `0x02AD` lives in `FUN_1429bb720`, which
+  goes **straight to the hash** at `[pool+0xf8]`; the local player is not in that hash, so
+  that opcode is *structurally incapable* of addressing the player who sent the request,
+  whatever it carries. `0x0252` lives in `FUN_1429bafb0`, whose `GetUser` checks
+  `[pool+0x10]` - the local user - **first**. That one difference is the whole failure.
+  `0x0318` was also tried and **refuted on screen**: four replies, four retries, never sat.
+
+  Verified here rather than taken on trust: the read count (two, `u8` then a `u16` gated on
+  it), the table row (index 44 of `0x1429bb5d0` calls `FUN_1428341c0`), the index arithmetic
+  (`lea eax,[rsi-0x226]`, `cmp eax,0x50`), the head consuming exactly one `u32` - the other
+  two read sites are inside the `0x0226`-only inline branch - and both lookups read side by
+  side. The control came free: index 11 of that same table is `0x0231`, which
+  `crates/net/src/userchat.rs` recorded independently on 2026-08-30.
+
+  **The release is `bSit = 0` with the field ABSENT, not `0xFFFF` in it** - `1428341ea`
+  presets `-1` and the `u16` is `movzx`-widened, so `0xFFFF` would arrive as seat 65535.
+  `0x00DA` uses `0xFFFF` for that meaning, so the two conventions are opposite.
+
+  **Two things it could still fail on, and they are different outcomes.** `1428341d3
+  call [rax+0x58]` runs before any read and a non-zero return exits having consumed nothing
+  - undecoded. And the client re-validates position (`seatX-10 <= myX < seatX+10`,
+  `seatY-30 <= myY < seatY+30`) and on failure **sends `0x00DA 0xFFFF`** - so "nothing
+  happened" and "nothing happened plus a `0x00DA ffff` in the log" mean different things.
+  `0x0252` is deliberately **not broadcast**: a bystander holding a stale position for the
+  sitter would fail that check and stand *itself* up.
 * **The trade invite popup - BUILT TODAY, NEVER SEEN.** The owner: *"the trade request pop up never
   showed up on Cobalt's side."* The whole cause is one field: `type` must be 1 or 2, and a
   scan of all 31 writers of the balloon-kind field shows the gated site is the **only** one

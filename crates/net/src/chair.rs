@@ -203,6 +203,86 @@ pub fn user_sit_remote(character_id: u32, chair_id: Option<u32>) -> Vec<u8> {
     w.into_vec()
 }
 
+/// **`0x0252` - the MAP chair, and the packet three earlier attempts were missing.**
+///
+/// The owner, repeatedly: *"I still cannot sit in map chairs."* `research/map-chair-seat-2026-09-09.md`.
+///
+/// # Why nothing else could ever have worked
+///
+/// The client has two remote dispatchers and they look up the target user differently, which
+/// is the whole answer [L]:
+///
+/// ```text
+/// 0x0226..0x0292  FUN_1429bafb0 -> GetUser 0x1429b6c90
+///                   1429b6ca9  mov rcx,[rcx+0x10]   THE LOCAL USER, checked FIRST
+///                   1429b6cb7  cmp eax,ebx          ...against the id we sent
+///                   1429b6cbb  mov rax,[rdi+0x10]   and returned
+///                   1429b6cca  (only then the hash bucket walk at +0xf8/+0x100)
+///
+/// 0x0293..0x02C4  FUN_1429bb720 - where 0x02AD lives
+///                   1429bb74c  mov r8,[rbx+0xf8]    STRAIGHT to the hash. No +0x10.
+/// ```
+///
+/// The local player is not in the remote hash, so **`0x02AD` is structurally incapable of
+/// addressing the player who sent the request** - it is not that the body was wrong. And
+/// `0x0318`'s local dispatcher has no seat-index path at all; sending it was **refuted on
+/// screen**, four replies and four retries with no seating.
+///
+/// # The body, counted rather than eyeballed
+///
+/// `tools/reads.py 0x1428341c0 6` reports **exactly two** reads, and the dispatcher head
+/// consumes the `u32` before them [L]:
+///
+/// ```text
+/// u32 characterId    1429bb08d, in the head; fed straight to GetUser at 1429bb099
+/// u8  bSit           1428341e2
+/// u16 seatIndex      1428341f7  ONLY IF bSit != 0  (1428341f2 test al,al / je)
+/// ```
+///
+/// **7 bytes seated, 5 released.** A length test pins both, because a chair packet one field
+/// short is exactly how `0x02AD` killed Tester2's client on this same day.
+///
+/// **The release is `bSit = 0`, NOT `0xFFFF`.** `1428341ea` presets `r8d = -1` and the `u16`
+/// is `movzx`-widened at `1428341fc`, so a `0xFFFF` sent in the field arrives as `0x0000FFFF`
+/// and is not the sentinel. Omitting the field is the only way to say "not seated".
+///
+/// # One gate that makes this do nothing, silently
+///
+/// `1428341d3 call [rax+0x58]` runs **before any read**, and a non-zero return exits the
+/// handler having consumed nothing. It is not decoded. If a run shows the packet going out
+/// and the player still standing, that gate is the first suspect and it is not a body fault.
+pub fn user_sit_result(character_id: u32, seat: Option<u16>) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(character_id);
+    w.bool(seat.is_some());
+    if let Some(index) = seat {
+        w.u16(index);
+    }
+    w.into_vec()
+}
+
+/// Server -> client. Seats a character on a **map** chair, addressed by character id.
+///
+/// Pinned by index arithmetic with two controls [L]: `1429bb100 lea eax,[rsi-0x226]` and
+/// `cmp eax,0x50`, so `index = opcode - 0x226`; entry 44 is `0x226 + 44 = 0x252` and its stub
+/// `1429bb344` calls `FUN_1428341c0`. Index 11 of that same table is `0x0231 USER_CHAT`,
+/// which `crates/net/src/userchat.rs` decoded independently on 2026-08-30 and records as
+/// index 11 - a control this file did not have to take on trust.
+pub const USER_SIT_RESULT: u16 = 0x0252;
+
+/// The table's bound, checked at COMPILE time rather than in a test.
+///
+/// `1429bb106 cmp eax,0x50 / ja` sends anything past index 0x50 to the default arm, which
+/// answers nothing. A test asserting this would be a constant expression - it can never fail
+/// at run time - so it is a build failure instead, which is the only form that means anything.
+const _: () = assert!(USER_SIT_RESULT >= 0x0226 && USER_SIT_RESULT - 0x0226 <= 0x50);
+
+/// Byte count of a seated [`user_sit_result`].
+pub const USER_SIT_RESULT_SEATED_LEN: usize = 7;
+
+/// Byte count of a released [`user_sit_result`].
+pub const USER_SIT_RESULT_RELEASED_LEN: usize = 5;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,6 +351,47 @@ mod tests {
         let b = user_sit(Some(3_010_005));
         assert_eq!(u32::from_le_bytes(b[0..4].try_into().unwrap()), 3_010_005);
         assert_eq!(b.len(), 8);
+    }
+
+    /// **7 seated, 5 released.** `reads.py 0x1428341c0 6` counts two reads and the head takes
+    /// the `u32`. A chair packet one field short is how `0x02AD` killed a client on
+    /// 2026-09-09; if this ever fails downward it is a client-killer again.
+    #[test]
+    fn the_map_seat_is_seven_bytes_seated_and_five_released() {
+        let seated = user_sit_result(213, Some(24));
+        assert_eq!(seated.len(), USER_SIT_RESULT_SEATED_LEN, "u32 + u8 + u16");
+        assert_eq!(u32::from_le_bytes(seated[0..4].try_into().unwrap()), 213);
+        assert_eq!(seated[4], 1, "bSit, read at 1428341e2");
+        assert_eq!(u16::from_le_bytes(seated[5..7].try_into().unwrap()), 24);
+
+        let up = user_sit_result(213, None);
+        assert_eq!(up.len(), USER_SIT_RESULT_RELEASED_LEN, "the u16 is gated on bSit");
+        assert_eq!(u32::from_le_bytes(up[0..4].try_into().unwrap()), 213);
+        assert_eq!(up[4], 0, "bSit = 0 is the release");
+    }
+
+    /// **The release must be the ABSENT field, never `0xFFFF` in it.** `1428341ea` presets
+    /// `r8d = -1` and `1428341fc` is a `movzx`, so a `0xFFFF` written into the `u16` reaches
+    /// `SetChair` as `0x0000FFFF` - a seat index of 65535, not the sentinel. `0x00DA` uses
+    /// `0xFFFF` for exactly this meaning, so the two conventions are opposite and mixing them
+    /// up is the easy mistake.
+    #[test]
+    fn the_release_omits_the_field_rather_than_sending_ffff() {
+        let up = user_sit_result(213, None);
+        assert_eq!(up.len(), 5, "no seat index at all");
+        assert!(!up.windows(2).any(|w| w == [0xff, 0xff]), "0xFFFF must not appear");
+        // The control: 0xFFFF really is representable in this builder, so its absence above
+        // is a property of the release form and not of the writer.
+        assert!(user_sit_result(213, Some(0xffff)).windows(2).any(|w| w == [0xff, 0xff]));
+    }
+
+    /// Index arithmetic, with the control the decode itself used.
+    #[test]
+    fn the_opcode_is_index_forty_four_of_the_0x226_table() {
+        assert_eq!(USER_SIT_RESULT, 0x0252);
+        assert_eq!(USER_SIT_RESULT - 0x0226, 44, "1429bb100 lea eax,[rsi-0x226]");
+        // Index 11 of the SAME table is USER_CHAT, decoded independently in userchat.rs.
+        assert_eq!(0x0226 + 11, crate::userchat::USER_CHAT);
     }
 
     /// Both must stay in the latching list. If either is ever removed from it, the handler

@@ -156,6 +156,14 @@ pub struct Session {
     /// Set by `0x00DB` and cleared by `0x00DA`. It scales the idle tick and nothing else; the
     /// client's own on-screen seating is not driven from here.
     seated_chair: Option<u32>,
+    /// The **map** seat index the player is on, if any - a bench, not a Set Up item.
+    ///
+    /// Kept apart from [`Self::seated_chair`] on purpose: the two are different fields in the
+    /// client (`CUser+0x3c28` the seat index, `+0x4080` the chair item id) reached by
+    /// different opcodes, and the Set Up path is CONFIRMED on two screens while this one is
+    /// new. This exists so the stand-up only sends `0x0252` to a player who actually took a
+    /// map seat, leaving the confirmed path byte-for-byte as it was.
+    seated_map_seat: Option<u16>,
     /// The source address this connection arrived from, if the socket reported one.
     ///
     /// **Recorded and reported, never decisive.** Two clients on one machine share it, so
@@ -514,6 +522,7 @@ impl Session {
             subscriber,
             claimed: None,
             seated_chair: None,
+            seated_map_seat: None,
             peer: None,
             peer_addr: None,
             local_addr: None,
