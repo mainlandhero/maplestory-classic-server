@@ -469,6 +469,7 @@ mod field;
 mod gm;
 mod ground;
 mod inventory;
+mod keymap;
 mod multiplayer;
 mod npc;
 mod party;
@@ -767,6 +768,11 @@ impl Session {
                 return self.on_inventory_move(body.get(2..).unwrap_or(&[]))
             }
             net::mobmove::MOB_MOVE_REQUEST => return self.on_mob_move(body.get(2..).unwrap_or(&[])),
+            // CONFIRM in the KEY BINDINGS dialog. Stored, answered with nothing - see
+            // session/keymap.rs for why silence is safe here and how that was measured.
+            net::keymap::CLIENT_KEYMAP_CHANGE => {
+                return self.on_keymap_change(body.get(2..).unwrap_or(&[]))
+            }
             // The client telling us where it walked. **Answered with nothing, deliberately**
             // - 1082 of these went unanswered across every captured session and the client
             // played on for minutes, so this is not one of the packets that latches.
@@ -943,7 +949,12 @@ impl Session {
                     .to_string(),
             ),
         };
-        vec![Reply { opcode: net::opcode::SET_FIELD, body, what }]
+        // The saved key layout, AFTER the SetField and never before it. A reply sequence is a
+        // script the client walks in order, and the keymap manager belongs to the stage this
+        // SetField is building. session/keymap.rs.
+        let mut out = vec![Reply { opcode: net::opcode::SET_FIELD, body, what }];
+        out.extend(self.keymap_replies());
+        out
     }
 
 

@@ -36,6 +36,7 @@ pub mod error;
 pub mod handshake;
 pub mod inventory;
 pub mod jobbuffs;
+pub mod keymap;
 pub mod message;
 pub mod mob;
 pub mod mobdamage;

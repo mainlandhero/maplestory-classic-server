@@ -59,6 +59,47 @@ ways: `FUN_141b267c0` switches on `result + 1`, so `case 8` is wire 7 - and `cas
 table is `notRegisteredID`, which this repo already knew is wire result 5, so the offset is
 checked against something that can disagree [L]. **Nobody has put that dialog on a screen yet.**
 
+**2026-09-08: KEY BINDINGS now SAVE to the database, and restore is built but deliberately
+switched off until one number is measured.** The owner bound three skills, clicked CONFIRM, and the
+whole protocol came out of that one capture - `research/keyboard-layout-2026-09-08.md`.
+
+* `net::keymap` - `0x0199` in (subtypes 0-3), `0x05F1`/`0x05F2`/`0x05F3` out. 8 tests.
+* `store::keymap` - `character_keymap` (one row per bound key) and `character_keymap_option`.
+* `world::session::keymap` - stores on CONFIRM, and sends the restore straight AFTER `SetField`.
+
+**The save half works now.** Click CONFIRM and the bindings land in the database.
+
+**The restore half is wired and currently sends NOTHING**, because of a constraint that is easy
+to miss and expensive to get wrong: **`0x0199` is a DELTA and `0x05F1` is the FULL 89 slots.** The
+client diffs against a shadow table that `0x05F1` refreshes, so for a character that has never
+synced, the thing it diffed against is its own **factory layout - which is nowhere in this
+repo**. Sending the read gate with only the keys we know would unbind the other 86 on the
+player's keyboard. So `net::keymap::CLIENT_DEFAULT_LAYOUT` is `None` and `restore` returns
+`None` until it is measured. Two tests assert that, so nobody can "fix" it into shipping an
+empty table.
+
+**And it sends nothing rather than the keep-gate packet**, which was the first plan and was
+wrong: the client's no-op path behind that gate (`0x1419ffd21` onward) has not been read, while
+sending nothing is exactly what the server does today on a client that survived seven hours.
+Preserve the measured-good behaviour; do not trade it for an unmeasured one to save a branch.
+
+**To switch it on**, with a client running, from an ELEVATED shell:
+
+```bash
+cd "C:\MapleCW"; python tools\keymapdump.py --rust
+```
+
+`FUN_1401de850` is `lea rax,[rip+...]; ret`, so the manager is a **static** at `0x143274460`
+and the factory table is the shadow at `+0x1bd` [L]. It stays factory on any client because we
+have never sent `0x05F1`. The tool has three controls - rebase, 10..80 slots bound, and Q/W/E/I
+all bound - and refuses to emit a table if any fails, because a wrong table moves every key a
+player has. Paste the output over `CLIENT_DEFAULT_LAYOUT`.
+
+**Known incomplete, recorded rather than guessed:** the KEY BINDINGS dialog has a **Preset 1/2/3**
+selector and the client reports a switch as `0x0199` subtype 3, but **no server-to-client opcode
+for it was found**. A preset change is logged and not stored, because storing something we can
+never send back is worse than not storing it.
+
 **2026-09-08 LATE: the guard page is absorbing the overrun, not detecting it - and the gate that
 arms the writer is NOT in the executable.** The owner asked whether the writer hits predictable
 locations, whether we could reserve those chunks for it, and whether our stub `grap64.dll` is

@@ -234,8 +234,16 @@ rather than to correct one we are already sending.
    Subtypes 1 and 2 each carry one `u32`; subtype 3 is a preset index.
 2. **Store it per character**, alongside the other per-character state.
 3. **Send `0x05F1` at login** with gate byte `0` and all 89 slots, plus `0x05F2` / `0x05F3` with
-   their `u32`s. A character that has never saved a layout must be sent gate byte **non-zero**,
-   or an all-zero block would blank every key rather than leaving the client's defaults alone.
+   their `u32`s.
+
+   For a character with nothing stored, **send no packet at all** - not the non-zero keep gate,
+   which was the first plan. The keep gate is a real packet and the client's no-op path behind
+   it (`0x1419ffd21` onward, past the `jne` that skips the loop) **has not been read**. The
+   server sends nothing today and the client is demonstrably fine on a seven-hour session, so
+   silence is the measured-good behaviour and the keep form would be an unmeasured one adopted
+   to save a branch. `net::keymap::restore` returns `Option` for exactly this reason, and
+   `keymap_init_keep` is kept only because the inverted gate byte is the thing most likely to
+   be got backwards later.
 
 Nothing here is wired yet - `grep -rn "keymap|key_map|func_key|quickslot" --include=*.rs crates/`
 still returns nothing.
