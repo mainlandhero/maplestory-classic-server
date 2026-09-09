@@ -1,0 +1,16 @@
+# The 6h53m run with the guard page ARMED, versus the 6m07s run without it.
+# Extract from previous-runs/maplecw-hook-20260908-220404.log (57 MB, gitignored).
+# The other half is research/fixtures/guardpage-NOT-armed-heap-corruption-6min-2026-09-08-hook.log
+
+## the arming line
+14:55:25.392 session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="mode=2,create=on,guardpage=0x20+0x40"
+14:55:25.492 ***** GUARD PAGE ARMED: size class(es) 0x20+0x40 are served one-slot-per-page from a 32 GB reserve (8388608 slots) at 0x180060000 and DECOMMITTED on free, each address held back for 600s before it can be handed out again. SIZED FROM THE 12:01 RUN: 0x20 burst to 627172 in its first minute then ran at 1560/s, so ONE class needs 1469572 slots for its first retirement window (936000 once it is turning over) - the old 1048576-slot cursor was spent at six minutes and 419588 allocations fell back. Against that requirement this reserve has 2.8x of headroom for the 2 class(es) armed, IF they churn like 0x20 - which is measured for 0x20 and unmeasured for the other three, so read the 'pool allocations seen by class' counters in the heartbeat. Metadata is committed lazily, so arming costs 33 MB now and grows with the cursor instead of 320 MB up front. Committed PAGE memory is bounded by the LIVE set, not by the cursor: 0x20 held ~26000 live slots all run, which is 101 MB, so expect roughly that per class rather than the 230 MB predicted before that launch. A stale write or read into a freed slot faults at the instruction that makes it, which the handler logs (RIP, target, who allocated, who freed, how long ago) and recommits so the client continues. control PASS. The pool's own chain, free list and counters are untouched - our slots take the HeapFree arm, and that arm is chosen by the header value ALONE, so one stamp 0x100 covers every class at once *****
+
+## first heartbeat
+14:56:27.446 POOL SENTRY alive 60s: 0 confirmed finding(s) | b0:835ch 53440slots carve PASS | b1:1008ch 32256slots carve PASS | b2:316ch 5056slots carve PASS | b3:2024ch 16192slots carve PASS | 0 header(s) repaired | guard page: 0x20: 635183 served, 596642 freed, 38541 live, 0 recycled, 0 fell back | 0x40: 314820 served, 288176 freed, 26644 live, 0 recycled, 0 fell back | 950003 of 8388608 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 442309, 0x20 635183, 0x40 314820, 0x80 85271 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 377 us avg, 18463 us max over 595 walks
+
+## last heartbeat
+22:03:49.912 POOL SENTRY alive 25702s: 0 confirmed finding(s) | b0:1275ch 81600slots carve PASS | b1:1008ch 32256slots carve PASS | b2:316ch 5056slots carve PASS | b3:2144ch 17152slots carve PASS | 0 header(s) repaired | guard page: 0x20: 44562289 served, 44517752 freed, 44537 live, 42852090 recycled, 0 fell back | 0x40: 77217901 served, 77197235 freed, 20666 live, 74484888 recycled, 0 fell back | 4443212 of 8388608 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 81971810, 0x20 44562289, 0x40 77217901, 0x80 4930656 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 351 us avg, 2203 us max over 596 walks
+
+## any client fault?
+0
