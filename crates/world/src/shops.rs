@@ -560,6 +560,25 @@ impl ShopTable {
     /// The policy was already here and already correct; what was wrong is that two places did
     /// not call it. Hence one function with two names rather than three copies of a rule.
     pub fn max_stack(&self, item_id: u32) -> u16 {
+        // **The three repurposed scrolls override the client's own number**, the owner 2026-09-09:
+        // *"can we make all of these items stackable up to a 100 please?"*
+        //
+        // It has to be an override rather than a data edit for two reasons. `gm-handbook/` is
+        // generated and must never be hand-edited - the next dump would silently undo it. And
+        // the client's `info/slotMax` describes what those items *were*: `4031065` and
+        // `4031066` carry `slotMax = 1`, which is right for the quest props they are in this
+        // client's data and wrong for the scrolls `crate::scrolls` turns them into. `4001009`
+        // already reached 100 through the fall-through below; naming all three here keeps the
+        // rule in one statement rather than two-thirds of one.
+        //
+        // **[I], and the risk is on the client side**: nothing has been measured about how
+        // this client draws a stack larger than an item's own `slotMax`. The server decides
+        // quantities and the client has always drawn what it was sent, but a merge or split of
+        // such a stack goes through the client's own UI rule, which is undecoded. Worth one
+        // look on a screen - stack a few, then try splitting them.
+        if crate::scrolls::Scroll::from_item_id(item_id).is_some() {
+            return crate::scrolls::STACK_LIMIT;
+        }
         match self.item_data.get(&item_id).map(|d| d.slot_max) {
             Some(n) if n > 0 => n,              // [L] from info/slotMax
             _ if item_id / 1_000_000 == 1 => 1, // an equip: one at a time
@@ -624,6 +643,26 @@ fn join_ids(ids: &[u32]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **All three scrolls stack to 100**, overriding the client's own `slotMax`.
+    ///
+    /// The owner, 2026-09-09: *"can we make all of these items stackable up to a 100 please?"*
+    /// Two of the three carry `info/slotMax = 1` in `gm-handbook/itemdata.txt`, so without the
+    /// override they would be one per bag slot. The data file is generated and must never be
+    /// hand-edited, which is why this lives in code.
+    #[test]
+    fn the_three_scrolls_stack_to_one_hundred() {
+        let shops = ShopTable::default();
+        for id in [
+            crate::scrolls::INNOCENCE,
+            crate::scrolls::CHAOS,
+            crate::scrolls::CLEAN_SLATE,
+        ] {
+            assert_eq!(shops.max_stack(id), crate::scrolls::STACK_LIMIT, "item {id}");
+        }
+        // The control: the override is not simply "everything stacks". An equip still does not.
+        assert_eq!(shops.max_stack(1_040_002), 1, "an equip is one per slot");
+    }
 
     const SHOPS: &str = "../../data/shops.txt";
     const NAMES: &str = "../../gm-handbook/items.txt";

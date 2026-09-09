@@ -4771,7 +4771,17 @@ fn the_tutorial_sentinel_always_drops_its_shellpiece() {
     assert_eq!(rows.len(), 1, "template 1 drops exactly one thing: {rows:?}");
     assert_eq!(rows[0].item_id, 4000000, "Jr. Sentinel Shellpiece");
     assert_eq!(rows[0].chance_bp, crate::droptables::BASIS_POINTS, "100%, not the scraped 40%");
-    assert!(table.global().is_empty(), "a global event row would drop from it too");
+    // **The global table is no longer empty**, and this used to assert that it was. The owner put
+    // the three scrolls in it on 2026-09-09. The concern behind the old assertion still
+    // stands - an extra item on the floor during the step that teaches picking things up -
+    // so this bounds it instead of forbidding it: every global row must be 1 basis point, so
+    // a tutorial Sentinel drops something extra about once in 3 333 kills.
+    for row in table.global() {
+        assert_eq!(
+            row.chance_bp, 1,
+            "a global row above 1bp would land on the tutorial floor: {row:?}"
+        );
+    }
 
     // And it really does hit on every roll, not just at a value that looks like 100.
     for roll in [0u64, 1, 4_999, 9_999, u64::MAX] {

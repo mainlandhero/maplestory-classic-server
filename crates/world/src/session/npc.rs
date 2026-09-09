@@ -1923,7 +1923,7 @@ impl Session {
     /// behind it is how a later reply walks into the wrong state machine. `why` is the log
     /// label, so `world.log` records whether a day was spent without the sentence having to
     /// say so on screen.
-    fn admin_says(&self, template: u32, text: &str, why: &str) -> Vec<Reply> {
+    pub(super) fn admin_says(&self, template: u32, text: &str, why: &str) -> Vec<Reply> {
         vec![Reply {
             opcode: net::script::SCRIPT_MESSAGE,
             body: net::script::npc_say(template, text, false, false),
@@ -2044,6 +2044,11 @@ impl Session {
         // precondition and a third disjoint path prefix, so the order between the three does
         // not matter - `dailyperks::this_menu_path_cannot_be_confused_with_a_taxi_or_an_
         // instructor` asserts all six directions.
+        // A fourth disjoint prefix, `scroll.` - see `scrollnpc::is_scroll_path`, whose test
+        // asserts it cannot be confused with the other three.
+        if let Some(replies) = self.scroll_menu_answer(body) {
+            return replies;
+        }
         if let Some(replies) = self.daily_perk_menu_answer(body) {
             return replies;
         }
@@ -2072,6 +2077,13 @@ impl Session {
         // PACKET SENT - and they would go silent on the first Yes.
         if convo.path == crate::shanks::ASK_PATH {
             return self.shanks_reply(reply.action);
+        }
+
+        // `!scroll`'s confirm, before the generic quest branch and for exactly the reason
+        // Shanks' is: the quest arm would claim it, find no quest id, and drop the
+        // conversation with NO PACKET SENT - so a Yes would silently do nothing.
+        if crate::scrollnpc::is_scroll_path(&convo.path) {
+            return self.scroll_confirm_answer(reply.action);
         }
 
         if convo.awaiting_yes_no {

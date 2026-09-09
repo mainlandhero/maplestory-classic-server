@@ -36,7 +36,7 @@ const GM_COMMANDS: &str =
 
 /// What a player who is not a GM is shown by `!help`, and all they may run. The owner,
 /// 2026-09-06: *"A player should only be shown commands that they are allowed to execute."*
-const PLAYER_COMMANDS: &str = "Commands: !tool, !rates, !help";
+const PLAYER_COMMANDS: &str = "Commands: !tool, !scroll, !rates, !help";
 
 /// One packet to send, plus what it is - the label goes in the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,6 +164,8 @@ pub struct Session {
     /// new. This exists so the stand-up only sends `0x0252` to a player who actually took a
     /// map seat, leaving the confirmed path byte-for-byte as it was.
     seated_map_seat: Option<u16>,
+    /// Mixed into each `!scroll` roll so two scrolls in one session cannot share one.
+    scroll_roll_counter: u64,
     /// The source address this connection arrived from, if the socket reported one.
     ///
     /// **Recorded and reported, never decisive.** Two clients on one machine share it, so
@@ -491,6 +493,7 @@ mod pools;
 mod rates;
 mod recovery;
 mod regen;
+mod scroll;
 mod shop;
 mod storage;
 mod trade;
@@ -523,6 +526,7 @@ impl Session {
             claimed: None,
             seated_chair: None,
             seated_map_seat: None,
+            scroll_roll_counter: 0,
             peer: None,
             peer_addr: None,
             local_addr: None,

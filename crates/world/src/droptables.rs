@@ -313,6 +313,35 @@ fn parse_percent(s: &str) -> Result<u32, String> {
 mod tests {
     use super::*;
 
+    /// **The three scrolls are in the global table at exactly 1 basis point each.**
+    ///
+    /// The owner, 2026-09-09: *"These 3 items will be added to the global drop table at a 0.01%
+    /// drop rate each."* 0.01% is 1 bp - `parse_percent` multiplies by 100 and
+    /// [`BASIS_POINTS`] is 10 000 - so the rate is exact rather than rounded, and this test
+    /// says so in basis points rather than trusting the percentage in the file.
+    ///
+    /// It also guards the fragility the file's own header warns about: these rows are hand
+    /// written into a generated file, so a re-scrape would delete them and the scrolls would
+    /// stop dropping silently. This test is what turns that into a failure.
+    #[test]
+    fn the_three_scrolls_drop_globally_at_one_basis_point() {
+        let tables = DropTables::load(std::path::Path::new("../../data/drops.txt"));
+        assert!(tables.problems.is_empty(), "{:?}", tables.problems);
+        for id in [
+            crate::scrolls::INNOCENCE,
+            crate::scrolls::CHAOS,
+            crate::scrolls::CLEAN_SLATE,
+        ] {
+            let row = tables
+                .global
+                .iter()
+                .find(|e| e.item_id == id)
+                .unwrap_or_else(|| panic!("{id} is not in the GLOBAL drop table"));
+            assert_eq!(row.chance_bp, 1, "{id} must be 0.01%, which is 1 basis point");
+            assert_eq!((row.min_qty, row.max_qty), (1, 1), "{id} drops one at a time");
+        }
+    }
+
     const SAMPLE: &str = "\
 # templateId | itemId | chance% | minQty | maxQty | score | name
 2 | 0       | 100 | 2 | 2  | 1 | mesos

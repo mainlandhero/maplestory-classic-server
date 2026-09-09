@@ -95,6 +95,9 @@ impl Session {
         match name {
             "rates" => return self.gm_rates(),
             crate::dailyperks::COMMAND => return self.open_daily_perks(),
+            // Same shape as !tool and open to everyone: the owner asked for a command that
+            // "functions very similar to !tool" with the Administrator's dialogue.
+            crate::scrollnpc::COMMAND => return self.open_scroll_picker(),
             "help" => {
                 return self.gm_ack(if is_gm { GM_COMMANDS.to_string() } else { PLAYER_COMMANDS.to_string() })
             }

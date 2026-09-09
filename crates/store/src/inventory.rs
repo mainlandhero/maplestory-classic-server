@@ -1400,6 +1400,64 @@ pub struct Equipped {
 impl Store {
     /// The worn slots, with their stats. `characters_for` returns the `(slot, item_id)` pairs
     /// the avatar look needs; this is the same rows with the stat tail.
+    /// One worn item, with the server-only failed-slot count. For `world::scrolls`.
+    ///
+    /// `equipped_items` deliberately does not carry `failed_slots` - it feeds the avatar and
+    /// the wire, where the count has no business - so the scroll path reads the row itself.
+    pub fn worn_item(
+        &self,
+        character_id: u32,
+        equip_slot: u8,
+    ) -> Result<Option<(u32, Option<EquipStats>, u8)>> {
+        let conn = self.conn();
+        let got = conn
+            .query_row(
+                &format!(
+                    "SELECT item_id, {} FROM equipment WHERE character_id = ?1 AND slot = ?2",
+                    worn_columns()
+                ),
+                rusqlite::params![i64::from(character_id), i64::from(equip_slot)],
+                worn_from_row,
+            )
+            .optional()?;
+        Ok(got)
+    }
+
+    /// Write a worn item's stats and failed-slot count back. For `world::scrolls`.
+    ///
+    /// **An UPDATE, not an upsert.** A scroll may only ever change an item that is already on
+    /// the character; creating a row here would put an item on somebody who never equipped
+    /// one. `Ok(false)` means the slot was empty and nothing was written, which the caller
+    /// must treat as a refusal rather than a success.
+    pub fn set_worn_equip(
+        &self,
+        character_id: u32,
+        equip_slot: u8,
+        stats: &EquipStats,
+        failed_slots: u8,
+    ) -> Result<bool> {
+        let conn = self.conn();
+        let assignments: Vec<String> = EQUIP_STAT_COLUMNS
+            .iter()
+            .enumerate()
+            .map(|(i, c)| format!("{c} = ?{}", i + 3))
+            .collect();
+        let sql = format!(
+            "UPDATE equipment SET {}, {FAILED_SLOTS_COLUMN} = ?{} \
+             WHERE character_id = ?1 AND slot = ?2",
+            assignments.join(", "),
+            3 + EQUIP_STAT_COLUMN_COUNT
+        );
+        let mut values = vec![
+            Value::Integer(i64::from(character_id)),
+            Value::Integer(i64::from(equip_slot)),
+        ];
+        values.extend(equip_stat_values(stats).into_iter().map(Value::Integer));
+        values.push(Value::Integer(i64::from(failed_slots)));
+        let n = conn.execute(&sql, params_from_iter(values))?;
+        Ok(n > 0)
+    }
+
     pub fn equipped_items(&self, character_id: u32) -> Result<Vec<EquippedItem>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(&format!(

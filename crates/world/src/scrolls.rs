@@ -66,6 +66,14 @@ pub const CLEAN_SLATE: u32 = 4_031_066;
 /// The success chance of Chaos and Clean Slate when the daily free pass is spent, in percent.
 pub const ROLLED_SUCCESS_PCT: u32 = 60;
 
+/// **How many of one scroll fit in a bag slot.** The owner, 2026-09-09: *"can we make all of these
+/// items stackable up to a 100 please?"*
+///
+/// Applied in `crate::shops::max_stack`, which is the one place that rule lives, and applied
+/// as an OVERRIDE: `4031065` and `4031066` carry `info/slotMax = 1` in the client's own data,
+/// which describes the quest props they are there rather than the scrolls they are here.
+pub const STACK_LIMIT: u16 = 100;
+
 /// The largest amount Chaos moves a stat by, in either direction.
 ///
 /// The owner: *"randomly rolls one item stat to go up or down 0 to 5 points"*, so the swing is
