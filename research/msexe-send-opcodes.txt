@@ -1,5 +1,22 @@
 # opcodes passed to 1406ed520 in EDX
 # 1881 resolved of 1894 call sites
+#
+# *** THIS IS NOT A COMPLETE CENSUS. Found 2026-09-09. ***
+# CLAUDE.md tells you to use this file as an enumeration - 'grep for the specific opcode the
+# action's own code builds' - and that advice is still right, because what IS here is real.
+# But absence from this file is NOT evidence. It lists 38 builder sites for 0x017E; an agent
+# re-decoding the byte scan found 52. One of the four it named was checked by hand:
+#
+#     141c1c6de  mov edx, 0x17e
+#     141c1c6e8  call 0x1406ed520
+#
+# a genuine builder, and 141c1c6c0 appears nowhere below. The other three named as missing are
+# 141c1cd30, 141c1ce30 and 141e9bff0.
+#
+# So: a hit here is [L]. A MISS here is nothing at all, and must not be written up as 'the
+# client does not send this'. That mistake has already been made once in the other direction -
+# STATUS.md carried 'trade sends no packet at all' for nine days, citing a grep of this very
+# file, while 0x017E sat in it 38 times.
 
   ????         FUN_1409fe0a0 @ 1409fe0a0  (call at 1409fe0c5)
   ????         FUN_140ca2d90 @ 140ca2d90  (call at 140ca2de6)
