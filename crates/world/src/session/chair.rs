@@ -11,14 +11,14 @@
 //! stand, on top of freezing every later inventory action. Both handlers below return exactly
 //! what the catch-all returned and add only the bookkeeping.
 //!
-//! # What this does not fix, and it is the thing the owner noticed second
+//! # The reply, and why both directions need one
 //!
-//! The owner, 2026-09-08: *"I also cannot get out of the chair, the server won't let me."* Theirs
-//! client sent **eight** `0x00DA` stand requests in four minutes and stayed seated, so leaving
-//! a chair needs a server packet that has not been identified. This module clears the seated
-//! state on request - so the recovery bonus stops immediately, which is the half that is ours
-//! to get right - but the character stays seated **on screen** until that packet is found.
-//! `research/chairs-2026-09-08.md` §4 lists what was eliminated.
+//! The owner, 2026-09-08: *"I also cannot get out of the chair, the server won't let me."* The
+//! client seats itself but will not stand until the server says so - `FUN_142cd3a60` re-arms
+//! the latch and returns without touching the chair. `net::chair::USER_SIT` (`0x0318`) is that
+//! reply, and both handlers send it: the sit is echoed so the state the client invented is the
+//! state the server agrees to, and the stand carries **two zero words**, which is the only
+//! form the client treats as a release. `research/chairs-2026-09-08.md` §12.
 
 use super::{Reply, Session};
 
@@ -33,6 +33,20 @@ impl Session {
             ));
             return unlock;
         };
+        let mut out = unlock;
+        // Echo the seat back. The client has already built its own chair object, but the
+        // server is the authority the *stand* is asked of, so it must agree the player is
+        // seated - and the owner's point: other players have to be told too, which is the same
+        // packet in the remote user's range.
+        out.push(Reply {
+            opcode: net::chair::USER_SIT,
+            body: net::chair::user_sit(Some(sit.item_id)),
+            what: format!(
+                "UserSit: seated on chair {} (slot {}). Nothing authenticates - the item id \
+                 is not checked against the player's inventory.",
+                sit.item_id, sit.slot
+            ),
+        });
         match self.config.chairs.get(&sit.item_id) {
             Some(chair) => {
                 self.seated_chair = Some(sit.item_id);
@@ -55,22 +69,29 @@ impl Session {
                 ));
             }
         }
-        unlock
+        out
     }
 
     /// `0x00DA` - the player asked to stand up, or moved to another chair.
     pub(super) fn on_chair_cancel(&mut self, body: &[u8]) -> Vec<Reply> {
         let unlock =
             crate::mesodrop::unlock_unhandled_latching_request(net::chair::CLIENT_CHAIR_CANCEL);
+        let mut out = unlock;
         match net::chair::parse_cancel(body) {
             Some(None) => {
-                if self.seated_chair.take().is_some() {
-                    crate::server::log(
-                        "   chair: stood up - recovery bonus ends. NOTE: the client stays seated \
-                         on screen; the server-to-client packet that releases a chair has not \
-                         been found. research/chairs-2026-09-08.md section 4",
-                    );
-                }
+                self.seated_chair = None;
+                // **Two zero words, and that is not a detail.** The handler's middle arm -
+                // chair id 0 with a NON-zero second field - sets a cooldown and returns
+                // WITHOUT releasing, which on screen is indistinguishable from the bug this
+                // fixes. `net::chair::user_sit(None)` sends both zero and a test pins it.
+                out.push(Reply {
+                    opcode: net::chair::USER_SIT,
+                    body: net::chair::user_sit(None),
+                    what: "UserSit: RELEASE - both fields zero, the only form the client \
+                           treats as standing up. Nothing authenticates."
+                        .to_string(),
+                });
+                crate::server::log("   chair: stood up - release sent, recovery bonus ends");
             }
             Some(Some(id)) => {
                 // A non-`0xFFFF` id has never been captured. Recorded rather than acted on.
@@ -84,7 +105,7 @@ impl Session {
                 body.len()
             )),
         }
-        unlock
+        out
     }
 
     /// What the chair the player is sitting on adds to one idle tick, as `(hp, mp)`.
