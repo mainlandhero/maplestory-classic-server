@@ -50,6 +50,17 @@ STATIC_BASE = 0x140000000
 IS_SITTING_FN = 0x142834020
 SESSION_GLOBAL = 0x143AA84A0
 USER_AT = 0x2358
+
+# The LOCAL CUser, read straight out of a global instead of guessed at.
+#
+# `FUN_14187f150` - the chair UI logic - does `mov rcx,[rip+0x22292d6] ; mov rax,[rcx] ;
+# call [rax+0x120]`, i.e. it loads this global, takes the object's vtable and calls slot 36,
+# which is `IsSitting`. So the object at this address is a CUser, from the client's own code
+# [L]. The neighbouring `0x143AA84A0` is the session object the hook already watches.
+#
+# Two guessed offsets produced two wrong conclusions before this was found; the vtable control
+# below still applies, so a wrong anchor is caught rather than reported.
+LOCAL_USER_GLOBAL = 0x143AA8518
 CHAIR_OBJ_AT = 0x3C18
 CHAIR_ID_AT = 0x3C28
 
@@ -260,6 +271,21 @@ def main():
         print("the user pointer below it would be read from the wrong object.")
         return 1
     print()
+
+    # Preferred: the global the client's own chair code dereferences.
+    user = struct.unpack("<Q", read(pid, LOCAL_USER_GLOBAL + slide, 8))[0]
+    if user:
+        try:
+            vt0 = struct.unpack("<Q", read(pid, user, 8))[0]
+        except OSError:
+            vt0 = 0
+        if (vt0 - slide) in CUSER_VTABLES:
+            print("local CUser = *%#x = %#x   (vtable OK)" % (LOCAL_USER_GLOBAL, user))
+            print()
+            report_user(pid, user, slide, "the client's own local-user global")
+            return 0
+        print("*%#x = %#x but its vtable %#x is not a CUser - falling through"
+              % (LOCAL_USER_GLOBAL, user, vt0))
 
     user = struct.unpack("<Q", read(pid, session + USER_AT, 8))[0]
     if not user:
