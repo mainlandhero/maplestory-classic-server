@@ -316,6 +316,32 @@
           180 s is the client's own clock; a flip at 40 s is something else, and something
           else is where our stub could be implicated.
 
+      (j) THE TRADE INVITE POPUP - BUILT 2026-09-09, NEVER SEEN ON A SCREEN. Two clients.
+          Tester2 sends Cobalt a trade request. Cobalt must get a "Trade request from
+          Tester2" popup; on 2026-09-09 nothing appeared at all, which is what this fixes.
+            popup appears  -> the `type` field was the bug and it is fixed.
+            no popup       -> check world.log for 0x0575 going out. If it went out, the
+                              cause is field 3, the only guessed field in the packet: a HIT
+                              on the client's local lookup makes it auto-decline SILENTLY,
+                              which looks identical to today's symptom.
+          ACCEPT DOES NOTHING, AND THAT IS EXPECTED - not a regression. The trade WINDOW is
+          0x0575 mode 4, whose per-member body is dispatched through a virtual call on the
+          open dialog and is undecoded. Accept and Decline are logged and answered with
+          nothing rather than with a guess; a guessed body killed a client THIS SAME DAY.
+
+      (k) SHANKS - Southperry to Lith Harbor. NEW, and they used to say "no template for NPC
+          15". Talk to them on map 60. They must quote 1000 mesos EVERY time, including to a
+          player who has finished "Mai's Final Training" - the waiver comes after the answer,
+          never in the opening line. Click YES and watch the MESO COUNT:
+            quest NOT complete -> 1000 comes off, you arrive at Lith Harbor (10000000).
+            quest complete     -> an EXTRA line saying they have heard about you, then a FREE
+                                  trip. The meso count must NOT move.
+          Not enough mesos is its own refusal and must not teleport.
+
+      (l) THE FARE LINE MUST BE GREY, NOT RED. Any fare - Shanks or a taxi - prints a grey
+          chat line "You have lost mesos (-1000)". A RED "You have received Meso Penalty"
+          means the old path is still live. This is the same check for (k) and for any taxi.
+
     T20 (2026-09-08, REWRITTEN AFTER THE 12:01 RUN). THE OVERNIGHT RUN - SURVIVE, do not
     measure. The owner: "our goal is to leave the client running overnight without it exiting."
 
@@ -2372,6 +2398,30 @@ function Show-TestPlan {
         Write-Host '             cd "C:\MapleCW"; python tools\gatescan.py'
         Write-Host '           The gate flips 0 -> 2 between 38s and 194s in every session'
         Write-Host '           (38 dumps, clean split). Two readings bracket it.'
+        Write-Host '       (j) TRADE INVITE POPUP - BUILT TODAY, NEVER SEEN. Two clients.' -ForegroundColor Yellow
+        Write-Host '           Tester2 sends Cobalt a trade request. Cobalt must get a'
+        Write-Host '           "Trade request from Tester2" popup. Yesterday: nothing at all.'
+        Write-Host '             popup     -> the type field was the bug, and it is fixed'
+        Write-Host '             no popup  -> grep world.log for 0x0575. If it WENT OUT, the'
+        Write-Host '                          cause is field 3, the one guessed field: a hit'
+        Write-Host '                          on the local lookup auto-declines SILENTLY.'
+        Write-Host '           ACCEPT DOES NOTHING AND THAT IS EXPECTED, not a regression:' -ForegroundColor Yellow
+        Write-Host '           the trade WINDOW is mode 4, whose body is undecoded. It is'
+        Write-Host '           answered with nothing rather than a guess - a guessed body'
+        Write-Host '           killed a client yesterday.'
+        Write-Host '       (k) SHANKS, Southperry (map 60) to Lith Harbor. NEW - they used to' -ForegroundColor Yellow
+        Write-Host '           say "no template for NPC 15". They must quote 1000 mesos EVERY'
+        Write-Host '           time, INCLUDING to someone who finished Mai Final Training:'
+        Write-Host '           the waiver comes after the answer, never in the opening line.'
+        Write-Host '           Click YES and WATCH THE MESO COUNT:'
+        Write-Host '             quest NOT done -> 1000 comes off, you land at Lith Harbor'
+        Write-Host '             quest DONE     -> an EXTRA line saying they have heard about'
+        Write-Host '                               you, then FREE. Mesos must NOT move.'
+        Write-Host '           Too few mesos must refuse and must NOT teleport.'
+        Write-Host '       (l) THE FARE LINE MUST BE GREY. Any fare - Shanks or a taxi -' -ForegroundColor Yellow
+        Write-Host '           prints a grey chat line "You have lost mesos (-1000)".'
+        Write-Host '           A RED "You have received Meso Penalty" means the old path is'
+        Write-Host '           still live. Same check for (k) and for any taxi.'
         Write-Host '    0i. THE OVERNIGHT RUN - the goal is to SURVIVE, not to measure.' -ForegroundColor Green
         Write-Host '       -PoolSentry -SentryQuiet -SentryRepair -PinPatches -GuardPage'
         Write-Host '       -GuardBucket now DEFAULTS to 0x20+0x40 - TWO classes. Type nothing.' -ForegroundColor Yellow
