@@ -103,6 +103,88 @@ def file_bytes_at(va, n):
     return None
 
 
+def proc_uptime(pid):
+    """Seconds since the process started, from GetProcessTimes. None if it cannot be read."""
+    import ctypes
+    import ctypes.wintypes as w
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    PROCESS_QUERY_INFORMATION = 0x0400
+    h = k32.OpenProcess(PROCESS_QUERY_INFORMATION, False, pid)
+    if not h:
+        return None
+    try:
+        creation, exit_, kernel, user = (w.FILETIME() for _ in range(4))
+        ok = k32.GetProcessTimes(h, ctypes.byref(creation), ctypes.byref(exit_),
+                                 ctypes.byref(kernel), ctypes.byref(user))
+        if not ok:
+            return None
+        start = (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+        now = w.FILETIME()
+        ctypes.windll.kernel32.GetSystemTimeAsFileTime(ctypes.byref(now))
+        nowv = (now.dwHighDateTime << 32) | now.dwLowDateTime
+        return (nowv - start) / 1e7
+    finally:
+        k32.CloseHandle(h)
+
+
+def watch():
+    """Poll the two live gates until they flip, and print the process age when they do.
+
+    The archive brackets the flip to 38 s .. 194 s of process life (`--dumps`). That is as
+    tight as dead sessions can make it, because no dump exists inside the window. This closes
+    it from the other side: one number, from a client that is still running.
+
+    Prints only on a CHANGE plus a heartbeat, so the flip is not buried in noise.
+    """
+    import time
+
+    pid, base = find_client()
+    if pid is None:
+        print("MapleStory.exe is not running.")
+        return 2
+    slide = (base - STATIC_BASE) if base else 0
+    watched = [(0x143AC7F3C, 2, "FUN_140c93c80 180 s"),
+               (0x143AC7F70, 1, "FUN_140c93d60 240 s"),
+               (0x143AC7FDC, 3, "FUN_140c946c0 240 s")]
+
+    want = file_bytes_at(INIT_FN, 8)
+    if bytes(read(pid, INIT_FN + slide, 8)) != bytes(want):
+        print("CONTROL rebase FAILED - refusing to watch an address that is not the gate.")
+        return 1
+    print("pid %d, controls OK. Watching %d gate(s); Ctrl-C to stop."
+          % (pid, len(watched)))
+    print("%-9s %-12s %s" % ("uptime", "gate", "value"))
+
+    last = {}
+    beat = 0.0
+    while True:
+        try:
+            up = proc_uptime(pid)
+            for va, thr, who in watched:
+                v = struct.unpack("<I", read(pid, va + slide, 4))[0]
+                if va not in last:
+                    last[va] = v
+                    print("%8.1fs %-12s = %d  (start, need >= %d, %s)"
+                          % (up or -1, hex(va), v, thr, who))
+                elif v != last[va]:
+                    print("%8.1fs %-12s = %d -> %d   ***FLIPPED*** need >= %d, %s  %s"
+                          % (up or -1, hex(va), last[va], v, thr, who,
+                             "GATE NOW OPEN" if v >= thr else ""))
+                    last[va] = v
+            if up is not None and up - beat >= 30:
+                beat = up
+                print("%8.1fs ... no change (%s)"
+                      % (up, ", ".join("%s=%d" % (hex(k), x) for k, x in last.items())))
+            time.sleep(1.0)
+        except KeyboardInterrupt:
+            print("stopped.")
+            return 0
+        except OSError as exc:
+            print("process gone or unreadable: %s" % exc)
+            return 0
+
+
 def scan_dumps():
     """The same block, out of every archived minidump, behind the same two controls.
 
@@ -162,6 +244,8 @@ def scan_dumps():
 def main():
     if "--dumps" in sys.argv:
         return scan_dumps()
+    if "--watch" in sys.argv:
+        return watch()
     pid, base = find_client()
     if pid is None:
         print("MapleStory.exe is not running - nothing to read.")
