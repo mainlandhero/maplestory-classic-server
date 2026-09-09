@@ -11,6 +11,26 @@
 # THE CHANCES ARE OURS. The source has vote scores and no drop rates; only the meso
 # rows carry a real chance. See chance_percent() in the script, and the score column
 # here, which is what those chances were derived from.
+#
+# ---------------------------------------------------------------------------------
+# THE THREE SCROLLS, added by hand 2026-09-09 on the owner's instruction:
+#   "These 3 items will be added to the global drop table at a 0.01%% drop rate each."
+#
+# 0.01 is EXACTLY 1 basis point - parse_percent multiplies by 100 and BASIS_POINTS is
+# 10000 - so this is the finest rate the format can express, with no rounding.
+#
+# These are NOT scraped and never will be: they are ours, repurposed as scrolls this
+# client's data does not contain. See crates/world/src/scrolls.rs and
+# research/scroll-command-2026-09-09.md.
+#
+# THE HEADER ABOVE APPLIES TO THEM TOO: "Hand edits survive only until the next
+# scrape." If tools/scrape_drops.py is ever run again these three rows go with it and
+# the scrolls stop dropping, silently. Whoever runs it next has to put them back or
+# teach the script to keep the global table.
+# ---------------------------------------------------------------------------------
+* | 4001009 | 0.01 | 1 | 1 | 0 | Event Trophy (Innocence Scroll)
+* | 4031065 | 0.01 | 1 | 1 | 0 | Scroll of Secrets (Chaos Scroll)
+* | 4031066 | 0.01 | 1 | 1 | 0 | Treasure Scroll (Clean Slate)
 
 # ---- the global table: event items, rolled for every mob -----------------------
 # (empty - no events yet. One line here and every mob in the game can drop it.)

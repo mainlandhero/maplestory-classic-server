@@ -132,10 +132,28 @@ pub fn audience_for(store: &store::Store, characters: &[u32]) -> Vec<Eligibility
 
 /// Items this module must never gate, whatever their flag says.
 ///
-/// Only the four Dark Marbles, and the reason is in the module docs: `crate::secondjob` owns
-/// them with a narrower rule and must not be second-guessed from here.
+/// Two groups, and both are cases where another module owns the item with a narrower rule.
+///
+/// **The four Dark Marbles** - `crate::secondjob` owns them; see the module docs.
+///
+/// **The two scrolls `crate::scrolls` repurposes**, added 2026-09-09, and this one would
+/// otherwise have shipped silently broken. `4031065` and `4031066` carry `info/quest = 1` in
+/// the client's own data and are named by **no quest in this client** - 0 hits across
+/// `questlines.txt` and `questreq.txt` - which makes them orphans, and [`ORPHANS_DROP`] is
+/// `false`. So the global drop rows the owner asked for would have been suppressed at runtime and
+/// the two scrolls would never have appeared. At 0.01% that is indistinguishable from bad luck
+/// for a very long time.
+///
+/// The orphan policy's own stated purpose is to stop *"an item nobody can ever hand in,
+/// accumulating in a bag"*. That premise does not hold here: these two have a use, `!scroll`,
+/// and are consumed by it. So the exemption is the policy applied, not an exception to it.
+///
+/// Note `4001009` is **not** listed: its `info/quest` is 0, so nothing gates it in the first
+/// place. Adding it would suggest a gate that does not exist.
 pub fn is_exempt(item_id: u32) -> bool {
     crate::secondjob::is_marble(item_id)
+        || item_id == crate::scrolls::CHAOS
+        || item_id == crate::scrolls::CLEAN_SLATE
 }
 
 /// Which items are quest items, and which quests want each of them.
@@ -723,7 +741,13 @@ mod tests {
             let Ok(item_id) = cols[1].parse::<u32>() else { continue };
             rows += 1;
             if cols[0] == crate::droptables::GLOBAL_KEY {
-                assert!(!q.is_quest_item(item_id), "a quest item in the GLOBAL table: {item_id}");
+                // Exempt items are allowed: `is_exempt` names the two scrolls and says why -
+                // they carry `info/quest` but belong to no quest, and without the exemption
+                // ORPHANS_DROP would have silently suppressed the rows the owner asked for.
+                assert!(
+                    !q.is_quest_item(item_id) || is_exempt(item_id),
+                    "a gated quest item in the GLOBAL table: {item_id}"
+                );
             }
             if q.is_quest_item(item_id) && !is_exempt(item_id) {
                 gated.insert(item_id);
@@ -733,7 +757,11 @@ mod tests {
                 }
             }
         }
-        assert_eq!(rows, 993, "every parseable row in data/drops.txt");
+        // 993 scraped rows plus the three GLOBAL scroll rows added by hand on 2026-09-09.
+        // Counted rather than adjusted: if a re-scrape drops the hand-written rows this falls
+        // to 993 and fails, which is the point - the file's own header warns that hand edits
+        // do not survive a scrape, and the scrolls would otherwise stop dropping silently.
+        assert_eq!(rows, 996, "every parseable row in data/drops.txt");
         assert_eq!(gated_rows, 9, "rows this filter can now remove (15 quest-item rows, 6 marble)");
         assert!(
             gated.contains(&4_031_047),
