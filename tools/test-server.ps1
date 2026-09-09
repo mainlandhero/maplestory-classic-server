@@ -286,24 +286,27 @@
           point of (e) being a command: the client's click fork is keyed on their TEMPLATE, so
           a summoned copy of their would send bytes identical to clicking them.
 
-      (g) CHAIRS - NEW 2026-09-08, and the reason for this run. Put a chair in the Set Up
-          tab (Red Chair 3010005 gives 30 HP) and DOUBLE-CLICK it. Then STAND STILL for
-          about 15 seconds and watch the HP number.
-            it climbs by 40 per tick  -> the chair is scaling idle recovery. FIXED.
-            it climbs by 10 per tick  -> the server never learned you sat; check world.log
-                                         for an inbound 0x00DB.
-          The Blue Seal Cushion (3010008) is the control worth doing second: it must add
-          10 MP and NO HP at all. If it adds 30 HP, the table was defaulted somewhere.
+      (g) CHAIRS - CONFIRMED ON TWO SCREENS 2026-09-09. Set Up chairs sit, stand, scale the
+          idle tick, show the right model, and Tester2 sees Cobalt in them. Do NOT spend a
+          run re-testing that half. Two things are still worth a look:
+            - the Blue Seal Cushion (3010008) must add 10 MP and NO HP. If it adds 30 HP the
+              chair table was defaulted somewhere. Never checked on a screen.
+            - MAP CHAIRS (a Henesys bench) still do not work, and the cause is known: the
+              client sends 0x00DA with a SEAT INDEX, waits, and never seats itself. A live
+              memory probe while clicking a bench read CUser+0x3c28 = -1 and IsSitting FALSE.
+              Every opcode in 0x0224..0x039F has been checked and none sets a seat.
+          Chair recovery: sit, stand still 15 s, HP should climb by 40 per tick (10 flat plus
+          the Red Chair's 30).
 
-      (h) STUCK IN THE CHAIR - THIS IS THE ONE MEASUREMENT ONLY WISP CAN TAKE. Standing up
-          is still broken and the packet that releases a chair has NOT been found. While
-          you are stuck, LEAVE THE CLIENT OPEN and say so. One read of CUser+0x3c28 splits
-          the question in half and needs a seated client to exist:
-            it holds 3010005 -> the client seated ITSELF and we are blocking the stand path
-            it holds -1      -> the client never thought it was sitting; the sprite is
-                                cosmetic and this is a different bug entirely
-          Those need opposite work and look identical from outside. Do not close the client
-          to "reset" it - closing it is what lost this measurement last time.
+      (h) THE CHAIR RELAY IS LIVE AND IT KILLED A CLIENT ONCE. 0x02AD is sent on every sit,
+          map-chair attempt and stand. On 2026-09-09 an earlier 12-byte version of it faulted
+          Tester2's client 5 ms after it went out; the body is 13 bytes and a test pins that.
+          If a second client EVER exits while somebody sits, that packet is the first suspect:
+            world.log        -> 0x02AD ... 13 bytes
+            hook log         CLIENT FAULT #1 code=0xc0000005
+          Say so immediately and do not close the surviving client - tools\chairprobe.py
+          --pid <n> reads its state, and with two clients up you must pass --pid because they
+          share one hook log.
 
       (i) THE ANTI-CHEAT GATE, and it is TIME-CRITICAL. Run this at about 60 s of client
           life and again at about 150 s:
@@ -2347,20 +2350,24 @@ function Show-TestPlan {
         Write-Host '           their QUEST or their greeting, NEVER the favours menu. That is why'
         Write-Host '           (e) is a command - the click fork is keyed on their TEMPLATE, so'
         Write-Host '           a summoned copy would send bytes identical to clicking them.'
-        Write-Host '       (g) CHAIRS - NEW, AND THE REASON FOR THIS RUN.' -ForegroundColor Yellow
-        Write-Host '           Double-click a chair in the Set Up tab (Red Chair = 30 HP),'
-        Write-Host '           then STAND STILL 15s and watch the HP number.'
-        Write-Host '             climbs by 40 per tick -> chair recovery works. FIXED.'
-        Write-Host '             climbs by 10 per tick -> we never saw you sit; check'
-        Write-Host '                                      world.log for an inbound 0x00DB.'
-        Write-Host '           Control: Blue Seal Cushion must add 10 MP and NO HP.'
-        Write-Host '       (h) STUCK IN THE CHAIR - ONLY YOU CAN TAKE THIS ONE.' -ForegroundColor Red
-        Write-Host '           Standing up is STILL BROKEN and the packet is not found.'
-        Write-Host '           WHILE STUCK, LEAVE THE CLIENT OPEN AND SAY SO. One read of' -ForegroundColor Red
-        Write-Host '           CUser+0x3c28 halves the problem, and needs a seated client:'
-        Write-Host '             3010005 -> the client seated itself, we block the stand'
-        Write-Host '             -1      -> it never thought it sat; different bug'
-        Write-Host '           Closing the client is what lost this measurement last time.'
+        Write-Host '       (g) CHAIRS - Set Up chairs CONFIRMED on two screens. Do not' -ForegroundColor Green
+        Write-Host '           re-test sit/stand/model/relay. Two gaps remain:'
+        Write-Host '             - Blue Seal Cushion must add 10 MP and NO HP. If it adds'
+        Write-Host '               30 HP the chair table was defaulted. Never seen.'
+        Write-Host '             - MAP CHAIRS (a Henesys bench) still do NOT work. The' -ForegroundColor Yellow
+        Write-Host '               client sends 0x00DA with a seat index and waits; a live'
+        Write-Host '               probe read CUser+0x3c28 = -1, IsSitting FALSE. Every'
+        Write-Host '               opcode 0x0224..0x039F checked; none sets a seat.'
+        Write-Host '           Recovery check: sit, stand still 15s, HP +40 per tick.'
+        Write-Host '       (h) THE RELAY IS LIVE AND IT KILLED A CLIENT ONCE.' -ForegroundColor Red
+        Write-Host '           0x02AD goes out on every sit, bench attempt and stand. An'
+        Write-Host '           earlier 12-byte version faulted Tester2 5 ms after sending;'
+        Write-Host '           it is 13 bytes now and a test pins that.'
+        Write-Host '           IF A SECOND CLIENT EVER EXITS WHILE SOMEONE SITS, say so and' -ForegroundColor Red
+        Write-Host '           do NOT close the survivor. Check world.log for 0x02AD and the'
+        Write-Host '           hook log for CLIENT FAULT 0xc0000005.'
+        Write-Host '           Two clients share one hook log, so chairprobe needs --pid:'
+        Write-Host '             cd "C:\MapleCW"; python tools\chairprobe.py --pid <n>'
         Write-Host '       (i) ANTI-CHEAT GATE - TIME-CRITICAL, at ~60s AND ~150s of life:' -ForegroundColor Yellow
         Write-Host '             cd "C:\MapleCW"; python tools\gatescan.py'
         Write-Host '           The gate flips 0 -> 2 between 38s and 194s in every session'
