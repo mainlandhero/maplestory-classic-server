@@ -108,7 +108,18 @@ impl Scroll {
         }
     }
 
-    /// The name the dialogue uses. The client has no string for these, so we supply one.
+    /// The name the dialogue uses.
+    ///
+    /// **These are the client's own names, not invented ones**, and that was checked rather
+    /// than assumed on 2026-09-09: `String.wz/Etc.img` gives `4001009` *Event Trophy*,
+    /// `4031065` *Scroll of Secrets* and `4031066` *Treasure Scroll*, character for character.
+    /// They are repeated here because a dialogue string cannot read the WZ, and they must keep
+    /// matching - the menu now draws each row's `#i<itemId>#` icon beside the name, and an
+    /// icon that disagrees with the text beside it is worse than no icon.
+    ///
+    /// What the client does **not** have is a description that fits: its `desc` for `4031066`
+    /// is *"A map that shows where the jewels are hidden away."* `crate::scrollnpc::describe`
+    /// supplies ours.
     pub fn name(self) -> &'static str {
         match self {
             Scroll::Innocence => "Event Trophy",
