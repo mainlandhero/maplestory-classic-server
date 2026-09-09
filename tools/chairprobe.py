@@ -52,6 +52,17 @@ SESSION_GLOBAL = 0x143AA84A0
 USER_AT = 0x2358
 CHAIR_OBJ_AT = 0x3C18
 CHAIR_ID_AT = 0x3C28
+
+# The five CUser-family vtables, from `tools/callers.py 0x142834020` - every one carries
+# IsSitting at slot 36. An object whose first qword is not one of these is NOT a CUser, and
+# reading +0x3c28 out of it is reading a stranger's memory.
+#
+# **This control is the whole reason for this edit.** The first version validated the SESSION
+# pointer against the hook log and then walked `+0x2358` to a "CUser" WITHOUT checking it,
+# reporting 0. A watch on SetChair later showed the client being handed -1 on a real CUser
+# whose vtable was 0x1434831e0 - so the 0 was very likely read from the wrong object. Verifying
+# one link of a chain and trusting the rest is exactly what CLAUDE.md warns about.
+CUSER_VTABLES = [0x14337F188, 0x143413F98, 0x143481768, 0x1434831E0, 0x143486B70]
 HOOK_LOG = os.path.join("client-patched", "maplecw-hook.log")
 
 
@@ -110,6 +121,22 @@ def main():
         print("the session holds a NULL local user at +%#x - nothing to read." % USER_AT)
         return 1
     print("local CUser = *(session + %#x) = %#x" % (USER_AT, user))
+    vt = struct.unpack("<Q", read(pid, user, 8))[0]
+    vt_static = vt - slide
+    ok_vt = vt_static in CUSER_VTABLES
+    print("CONTROL type    : vtable %#x %s"
+          % (vt, "is a CUser vtable   OK" if ok_vt
+             else "is NOT any of the five CUser vtables   FAILED"))
+    if not ok_vt:
+        print()
+        print("REFUSING TO REPORT: session+%#x does not point at a CUser, so whatever sits at"
+              % USER_AT)
+        print("+0x3c28 of it is not the chair field. The earlier reading of 0 came from this")
+        print("unchecked step and should not be trusted. Expected one of:")
+        for v in CUSER_VTABLES:
+            print("    %#x" % v)
+        return 1
+    print()
 
     chair_obj = struct.unpack("<Q", read(pid, user + CHAIR_OBJ_AT, 8))[0]
     chair_id = struct.unpack("<i", read(pid, user + CHAIR_ID_AT, 4))[0]
