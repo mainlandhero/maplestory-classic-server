@@ -78,6 +78,32 @@ SCAN_BYTES = 0x4000
 HOOK_LOG = os.path.join("client-patched", "maplecw-hook.log")
 
 
+def client_pids():
+    """Every running MapleStory.exe, not just the first one `tasklist` happens to list.
+
+    **Two clients broke this tool once.** `dump_runtime.find_client` returns `pids[0]`, and
+    the hook log is shared by every client on the machine - so with Cobalt and Tester2 both
+    up, the session pointer read from one process was compared against a `SESSION obj=` line
+    written by the other, and the control refused a perfectly good read. The control was
+    right to fire; the comparison was ambiguous.
+    """
+    import subprocess
+
+    out = subprocess.run(
+        ["tasklist", "/FI", "IMAGENAME eq MapleStory.exe", "/FO", "CSV", "/NH"],
+        capture_output=True, text=True,
+    ).stdout
+    pids = []
+    for line in out.splitlines():
+        parts = [p.strip('"') for p in line.split('","')]
+        if len(parts) > 1 and parts[0].lower().startswith("maplestory"):
+            try:
+                pids.append(int(parts[1]))
+            except ValueError:
+                pass
+    return pids
+
+
 def logged_session_obj():
     """The object the hook last printed, as an independent check on our pointer walk."""
     try:
@@ -235,7 +261,25 @@ def report_user(pid, user, slide, whence):
 
 
 def main():
+    # With two clients up, `find_client` returns whichever `tasklist` lists first - which may
+    # be the other player's. Say which pids exist and let one be named.
+    pids = client_pids()
+    if len(pids) > 1:
+        print("%d clients running: %s" % (len(pids), ", ".join(str(p) for p in pids)))
+        print("Reading the first unless --pid is given. Each is one character; the seat "
+              "fields below are that client's own.")
+        print()
+    want = None
+    for i, a in enumerate(sys.argv):
+        if a == "--pid" and i + 1 < len(sys.argv):
+            want = int(sys.argv[i + 1])
     pid, base = find_client()
+    if want is not None:
+        if want not in pids:
+            print("no MapleStory.exe with pid %d - running: %s"
+                  % (want, ", ".join(str(p) for p in pids)))
+            return 2
+        pid, base = want, None
     if pid is None:
         print("MapleStory.exe is not running - and this measurement only exists while it is.")
         return 2
@@ -261,15 +305,25 @@ def main():
     session = struct.unpack("<Q", read(pid, SESSION_GLOBAL + slide, 8))[0]
     expected = logged_session_obj()
     ok_session = expected is not None and session == expected
+    many = len(client_pids()) > 1
     print("CONTROL session : *%#x = %#x, hook log last printed %s   %s"
           % (SESSION_GLOBAL, session,
              hex(expected) if expected else "(none found)",
-             "OK" if ok_session else "MISMATCH" if expected else "UNCHECKED"))
+             "OK" if ok_session else "ADVISORY" if many else "MISMATCH" if expected else "UNCHECKED"))
     if expected is not None and not ok_session:
-        print()
-        print("REFUSING TO REPORT: the session pointer disagrees with the hook's own log, so")
-        print("the user pointer below it would be read from the wrong object.")
-        return 1
+        if many:
+            # The hook log is shared by every client, so its last line may belong to the OTHER
+            # one. Not a reason to refuse - the vtable control below is the hard gate and it
+            # checks the object itself rather than a log written by a sibling process.
+            print("   (%d clients are running and they share one hook log, so its last line"
+                  % len(client_pids()))
+            print("    may be the other client's. Downgraded to advisory; the vtable control")
+            print("    below is the one that cannot be fooled by a sibling process.)")
+        else:
+            print()
+            print("REFUSING TO REPORT: the session pointer disagrees with the hook's own log,")
+            print("and only one client is running, so that is a real mismatch.")
+            return 1
     print()
 
     # Preferred: the global the client's own chair code dereferences.
