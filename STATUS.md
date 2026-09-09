@@ -156,6 +156,25 @@ screen and what is merely built, kept apart on purpose:
   pointer matching what the hook last logged), and the chair object's ZtlSecure checksum is
   valid - so the seat index is a value the client built, not a byte we happened to read.
 
+  **The whole cycle, with two clients, and it is not one observation.** The owner, later the same
+  session: *"I tested the map chairs with two clients, that's all working now."* The log:
+
+  ```text
+    6  sits    0x0252, 7 bytes, bSit = 1     seats 23, 24 and 25
+    5  stands  0x0252, 5 bytes, bSit = 0     every one after a 0x00DA ffff
+    3  relays  0x02AD UserSitRemote          sat on seat N / stood up, to the map
+    0  CLIENT FAULTs
+  ```
+
+  So the **release** works too - the shape that is 5 bytes with the seat field *absent*
+  rather than `0xFFFF`, which is the opposite convention from `0x00DA` and was the easy
+  mistake. That is the half that failed on 09-08, when a player could sit and not get out.
+
+  **And the risk is retired, not merely unobserved.** `0x0252` had never been on a wire
+  before this session; it has now gone out **eleven times with two clients up** and nothing
+  faulted. The comparison that matters is `0x02AD`, which killed a client five milliseconds
+  after its first send.
+
   **Why three attempts failed, and it was never the body.** The client has two remote
   dispatchers that resolve the target differently. `0x02AD` lives in `FUN_1429bb720`, which
   goes **straight to the hash** at `[pool+0xf8]`; the local player is not in that hash, so
