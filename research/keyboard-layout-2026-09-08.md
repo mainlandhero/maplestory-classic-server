@@ -135,3 +135,107 @@ anyway.** After logging out and back in, are the three keys:
 
 The two readings need opposite work and look identical in every log we hold, so this is worth
 asking before any code is written.
+
+---
+
+## 6. The restore opcodes: `0x05F1`, `0x05F2`, `0x05F3` [L]
+
+§5 said the opcode was unknown and named the chain up from the decoder as the way to find it.
+That chain was the wrong instrument - `0x141820080` has 9 call sites *and* 25 tail-jump sites,
+34 entry points, and none of them is in either opcode table. Widening it would only have made
+the blind spot bigger.
+
+**Changing the question found it in one step.** `0x1419ffc00` takes its packet in `rcx` and gets
+the keymap manager from a singleton, so whoever calls it is passing a packet - which makes
+`0x141820080` a packet handler rather than the UI routine its caller count suggested. It is a
+large dispatch function, and the call site is 0x1F36 bytes into it. Reading the branch that
+selects it [L]:
+
+```
+141821fa4  lea  eax, [r9 - 0x5f1]      ; r9 is the opcode
+141821fab  cmp  eax, 2
+141821fae  ja   <next case>            ; so: opcode in 0x5F1 .. 0x5F3
+141821fb0  mov  rdx, rbx               ; the packet
+141821fb3  mov  ecx, r9d               ; the opcode
+141821fb6  call 0x1419ffff0
+```
+
+and `FUN_1419ffff0(opcode, packet)` splits the three [L]:
+
+```
+1419ffff4  sub  ecx, 0x5f1 / je  -> 141a0002c   ; 0x5F1
+1419fffc  sub  ecx, 1     / je  -> 141a00019    ; 0x5F2
+141a00001  cmp  ecx, 1    / jne -> return       ; 0x5F3
+
+141a0002c  mov rcx, rdx ; jmp 0x1419ffc00       ; 0x5F1 -> the 89-slot loop
+141a00019  Decode4 -> [0x143AD1068]             ; 0x5F2 -> one u32
+141a0000e  Decode4 -> [0x143AD106C]             ; 0x5F3 -> one u32
+```
+
+### The control: the save builders read exactly the globals these handlers write
+
+The three `0x0199` subtypes and the three inbound opcodes are a matched set, and the match is
+checkable rather than assumed. §2 recorded that subtype 1 (`FUN_141a011c0`) and subtype 2
+(`FUN_141a01250`) each encode one u32 read from a global. Resolving all four RIP-relative
+displacements [L]:
+
+| | address |
+|---|---|
+| `0x05F2` handler **writes** | `0x143AD1068` |
+| `0x0199` subtype 1 **reads** | `0x143AD1068` |
+| `0x05F3` handler **writes** | `0x143AD106C` |
+| `0x0199` subtype 2 **reads** | `0x143AD106C` |
+
+Two independent code paths, written years apart from each other in the same binary, agreeing on
+an address to the byte. That is what makes this a pairing and not a guess.
+
+### The full protocol, both directions
+
+| client -> server | server -> client | payload |
+|---|---|---|
+| `0x0199` subtype 0 | **`0x05F1`** | key bindings. **Save is a DELTA, restore is the FULL 89 slots.** |
+| `0x0199` subtype 1 | **`0x05F2`** | one `u32` at `0x143AD1068` |
+| `0x0199` subtype 2 | **`0x05F3`** | one `u32` at `0x143AD106C` |
+| `0x0199` subtype 3 | none found | `u8` preset index, bounded `< 4` by `cmp ebx,4 / jae` at `0x141a01871` |
+
+The preset selector is visible in the client's KEY BINDINGS dialog as **Preset 1 / 2 / 3**, and
+subtype 3 is how a switch is reported. Nothing inbound was found for it, so either the server is
+not told to restore the *selected* preset, or its handler is elsewhere. **Named as unfinished
+rather than guessed at.**
+
+### `0x05F1`'s body, which is the one to get right
+
+```
+u8   gate                  ; 0 = READ the block. NON-ZERO = skip and keep defaults.
+89 x { u8 type; u32 action }
+```
+
+`1 + 89*5 = 446` bytes. The gate is inverted from the natural reading and that is the single
+easiest thing to get wrong here; §3 has the listing.
+
+## 7. Confirmed on a screen, 2026-09-08
+
+The owner bound the three skills, clicked CONFIRM, then tested both kinds of relog [L]:
+
+* **logout and back in without closing the client -> the layout STAYS.** The client keeps its
+  keymap manager across a character re-entry, and `SetField` is sent on that path.
+* **a fresh client -> the layout is back at FACTORY bindings**, not blank.
+
+Together those two settle a question §5 had left open with two readings. If our `SetField` tail's
+zero byte reached the 89-slot loop, the re-login would have read 89 zero slots out of our padding
+and come back **blank**. It came back unchanged. So `0x05F1` is a packet we have **never sent**,
+the client falls back to its own defaults on a fresh process, and the fix is to add a packet
+rather than to correct one we are already sending.
+
+## 8. What the server has to do
+
+1. **Parse `0x0199`.** Subtype 0 carries only the keys that differ from the client's defaults, so
+   **merge** the deltas into the stored layout; replacing it loses every untouched binding.
+   Subtypes 1 and 2 each carry one `u32`; subtype 3 is a preset index.
+2. **Store it per character**, alongside the other per-character state.
+3. **Send `0x05F1` at login** with gate byte `0` and all 89 slots, plus `0x05F2` / `0x05F3` with
+   their `u32`s. A character that has never saved a layout must be sent gate byte **non-zero**,
+   or an all-zero block would blank every key rather than leaving the client's defaults alone.
+
+Nothing here is wired yet - `grep -rn "keymap|key_map|func_key|quickslot" --include=*.rs crates/`
+still returns nothing.
