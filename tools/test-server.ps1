@@ -341,14 +341,12 @@
           open dialog and is undecoded. Accept and Decline are logged and answered with
           nothing rather than with a guess; a guessed body killed a client THIS SAME DAY.
 
-      (k) SHANKS - Southperry to Lith Harbor. NEW, and they used to say "no template for NPC
-          15". Talk to them on map 60. They must quote 1000 mesos EVERY time, including to a
-          player who has finished "Mai's Final Training" - the waiver comes after the answer,
-          never in the opening line. Click YES and watch the MESO COUNT:
-            quest NOT complete -> 1000 comes off, you arrive at Lith Harbor (10000000).
-            quest complete     -> an EXTRA line saying they have heard about you, then a FREE
-                                  trip. The meso count must NOT move.
-          Not enough mesos is its own refusal and must not teleport.
+      (k) SHANKS - CONFIRMED ON A SCREEN 2026-09-09. The owner: "I did test Shank, it did work."
+          They sail Southperry to Lith Harbor and no longer says "no template for NPC 15".
+          DO NOT SPEND A LAUNCH RE-TESTING THE SAIL.
+          One branch is not separately attested: the FREE trip for a player who has finished
+          "Mai's Final Training" - an extra line saying they have heard about you, and the meso
+          count must NOT move. Worth a look only if such a character is already to hand.
 
       (l) THE FARE LINE MUST BE GREY, NOT RED. Any fare - Shanks or a taxi - prints a grey
           chat line "You have lost mesos (-1000)". A RED "You have received Meso Penalty"
@@ -2432,15 +2430,11 @@ function Show-TestPlan {
         Write-Host '           the trade WINDOW is mode 4, whose body is undecoded. It is'
         Write-Host '           answered with nothing rather than a guess - a guessed body'
         Write-Host '           killed a client yesterday.'
-        Write-Host '       (k) SHANKS, Southperry (map 60) to Lith Harbor. NEW - they used to' -ForegroundColor Yellow
-        Write-Host '           say "no template for NPC 15". They must quote 1000 mesos EVERY'
-        Write-Host '           time, INCLUDING to someone who finished Mai Final Training:'
-        Write-Host '           the waiver comes after the answer, never in the opening line.'
-        Write-Host '           Click YES and WATCH THE MESO COUNT:'
-        Write-Host '             quest NOT done -> 1000 comes off, you land at Lith Harbor'
-        Write-Host '             quest DONE     -> an EXTRA line saying they have heard about'
-        Write-Host '                               you, then FREE. Mesos must NOT move.'
-        Write-Host '           Too few mesos must refuse and must NOT teleport.'
+        Write-Host '       (k) SHANKS - CONFIRMED ON A SCREEN 2026-09-09. They sail Southperry' -ForegroundColor Green
+        Write-Host '           to Lith Harbor. Do NOT re-test the sail.' -ForegroundColor Green
+        Write-Host '           One branch is not separately attested: the FREE trip for a'
+        Write-Host '           player who finished Mai Final Training - an extra line, and'
+        Write-Host '           the mesos must NOT move. Only if such a character is to hand.'
         Write-Host '       (l) THE FARE LINE MUST BE GREY. Any fare - Shanks or a taxi -' -ForegroundColor Yellow
         Write-Host '           prints a grey chat line "You have lost mesos (-1000)".'
         Write-Host '           A RED "You have received Meso Penalty" means the old path is'

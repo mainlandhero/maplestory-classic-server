@@ -175,10 +175,13 @@ screen and what is merely built, kept apart on purpose:
   does nothing and that is a known gap, not a regression** - the trade window is `0x0575`
   mode 4, whose per-member body is dispatched through a virtual call on the open dialog and is
   undecoded, so it is answered with nothing rather than a guess.
-* **Shanks sails Southperry to Lith Harbor - BUILT, NEVER RUN.** They quote 1000 mesos every
-  time, including to a player who finished "Mai's Final Training"; the waiver comes only after
-  Yes, with an extra line, then a free trip. A test asserts the opening never says "free".
-  They previously answered *"no template for NPC 15"*.
+* **Shanks sails Southperry to Lith Harbor - CONFIRMED ON A SCREEN 2026-09-09.** The owner: *"I did
+  test Shank, it did work."* They quote 1000 mesos every time, including to a player who
+  finished "Mai's Final Training"; the waiver comes only after Yes, with an extra line, then a
+  free trip. A test asserts the opening never says "free". They previously answered *"no template
+  for NPC 15"*. **Do not spend a launch re-testing the sail.** The one thing not separately
+  attested is the *free* branch - that needs a character with the quest complete, and it is
+  worth a look if one is to hand rather than a run of its own.
 * **Fares print a grey chat line**, `"You have lost mesos (-500)"`, instead of the red
   "Meso Penalty" text. Built, unseen.
 
