@@ -143,6 +143,10 @@ impl Session {
             "job" => self.gm_job(arg),
             "npcecho" => self.gm_npc_echo(arg),
             "nx" => self.gm_nx(arg),
+            // Added 2026-09-09 so the meso-drop run can reach its own edges. Without it a
+            // drop test is limited to whatever balance the character happened to have, and
+            // "drop your whole balance" - the boundary the tests pin - is untestable.
+            "meso" | "mesos" => self.gm_meso(arg),
             // The shop prices in LP, so this is the one that funds it. See gm_lp.
             "lp" | "leafpoints" => self.gm_lp(arg),
             // Put spent points back in the pool. See gm_reset_ap for why the AP one
@@ -411,6 +415,64 @@ impl Session {
         ack
     }
 
+
+    /// `!meso [amount]` - set the balance, so a meso-drop run can reach its own edges.
+    ///
+    /// Added 2026-09-09 for the run that tests `0x0143`. Without it the drop test is capped at
+    /// whatever the character happened to be carrying, and two of the cases that matter are
+    /// unreachable: *drop more than you hold* needs a known balance to exceed, and *drop your
+    /// whole balance* is the boundary `a_meso_drop_larger_than_the_balance_is_refused` pins.
+    ///
+    /// # It SETS rather than adds, and that is the point
+    ///
+    /// `!lp` and `!nx` add, because a cash wallet is a running total nobody needs to know
+    /// exactly. A drop test needs the balance to be a **known number**, so that "the counter
+    /// went down by 10" is a claim that can come back false. `!meso` with no argument reports
+    /// without changing anything.
+    ///
+    /// # The client is told, or the screen and the database disagree
+    ///
+    /// The meso counter is not re-read on its own. The same `StatChanged` bit the pick-up path
+    /// uses carries the new value, so the number on screen is the number in the row - otherwise
+    /// the next drop would look wrong for a reason that has nothing to do with dropping.
+    pub(super) fn gm_meso(&mut self, arg: &str) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else {
+            return self
+                .gm_ack("!meso REFUSED: no character is claimed on this connection.".to_string());
+        };
+        let held = self.store.mesos(chr.id).unwrap_or(0);
+        let Some(token) = arg.split_whitespace().next() else {
+            return self.gm_ack(format!(
+                "{} holds {held} mesos. `!meso 10000` sets it; `!meso 0` empties it.",
+                chr.name
+            ));
+        };
+        let Ok(amount) = token.parse::<u32>() else {
+            return self.gm_ack(format!(
+                "!meso: {token:?} is not an amount. It takes a whole number, 0 or more."
+            ));
+        };
+        if let Err(e) = self.store.set_mesos(chr.id, amount) {
+            return self.gm_ack(format!("!meso FAILED and the balance is unchanged: {e}"));
+        }
+        let mut out = self.gm_ack(format!(
+            "{} now holds {amount} mesos (was {held}).",
+            chr.name
+        ));
+        out.push(Reply {
+            opcode: net::combat::STAT_CHANGED,
+            body: net::combat::stat_changed(&net::combat::StatChange {
+                meso: Some(u64::from(amount)),
+                ..Default::default()
+            }),
+            what: format!(
+                "StatChanged: !meso set the balance to {amount}. Sent because the counter is \
+                 not re-read on its own - without this the screen and the row disagree, and \
+                 the next drop looks wrong for a reason that is not the drop."
+            ),
+        });
+        out
+    }
 
     /// `!heal` - back to full HP and MP.
     ///
@@ -1629,6 +1691,47 @@ mod npc_reload_tests {
         // And the one good row was still applied - a refusal is per row, not per file.
         assert!(body_carries(&bystander.handle(&npc_click(1000))[0], "THE GOOD ROW"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **`!meso` SETS a known balance**, which is what makes a drop test able to fail.
+    ///
+    /// Added 2026-09-09 for the `0x0143` run. `!lp` and `!nx` add; this sets, because "the
+    /// counter went down by 10" is only a claim that can come back false if the number it
+    /// started from is known. It also asserts the client is TOLD - a balance changed in the
+    /// row and not on screen makes the next drop look wrong for a reason that is not the drop.
+    #[test]
+    fn meso_sets_a_known_balance_and_tells_the_client() {
+        let dir = scratch("meso");
+        let file = dir.join("npc-dialogue.txt");
+        let (mut gm, _b, _config, _) = two_players(&file, false);
+        let id = gm.claimed_character().unwrap().id;
+
+        let out = gm.handle(&gm_chat("!meso 10000"));
+        assert_eq!(gm.store.mesos(id).unwrap(), 10_000, "the row must hold the new balance");
+        let stat = out
+            .iter()
+            .find(|r| r.opcode == net::combat::STAT_CHANGED)
+            .expect("the client must be told, or the screen and the row disagree");
+        assert!(stat.what.contains("10000"), "{}", stat.what);
+
+        // It SETS rather than adds - a second call is not 20000.
+        gm.handle(&gm_chat("!meso 25"));
+        assert_eq!(gm.store.mesos(id).unwrap(), 25);
+        // Zero is a legitimate balance, and it is the one the "drop your whole balance" case
+        // leaves behind.
+        gm.handle(&gm_chat("!meso 0"));
+        assert_eq!(gm.store.mesos(id).unwrap(), 0);
+
+        // Garbage changes nothing and says so, rather than silently setting zero.
+        let bad = gm.handle(&gm_chat("!meso lots"));
+        assert_eq!(gm.store.mesos(id).unwrap(), 0, "a bad argument must not write");
+        assert!(notice_text(&bad[0]).contains("not an amount"), "{}", notice_text(&bad[0]));
+
+        // No argument reports without changing anything.
+        gm.handle(&gm_chat("!meso 77"));
+        let report = gm.handle(&gm_chat("!meso"));
+        assert_eq!(gm.store.mesos(id).unwrap(), 77, "a bare !meso must not write");
+        assert!(notice_text(&report[0]).contains("77"), "{}", notice_text(&report[0]));
     }
 
     /// `!help` and the dispatcher must agree, **in both directions and for both lists**: every

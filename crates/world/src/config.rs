@@ -2788,7 +2788,10 @@ mod npc_dialogue_tests {
     /// the only unbounded parts of it are the two paths. Nothing is clipped at the defaults.
     #[test]
     fn the_acknowledgement_stays_within_the_longest_notice_this_client_has_drawn() {
-        // `GM_COMMANDS`, the `!help` text, is 474 characters and is shipping.
+        // 474 is the longest notice this client has been SEEN to draw, which is what makes it
+        // the bound. It is not `GM_COMMANDS.len()`: this comment used to say the help text
+        // "is 474 characters and is shipping" and by 2026-09-09 it was **330**, because the
+        // 09-06 prune shortened the string and left the number behind. Measured, not read.
         const PROVEN: usize = 474;
         assert_eq!(clip_tail("data/npc-dialogue.txt"), "data/npc-dialogue.txt", "no clipping at the default");
         let long = format!("C:\\{}\\npc-dialogue.txt", "d".repeat(300));

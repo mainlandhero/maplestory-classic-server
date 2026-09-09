@@ -18,6 +18,81 @@
     TWO copies in this file - this one and the Write-Host block near the bottom that
     actually gets printed. Update both, then RENDER the second one and read it.
 
+    ###################################################################################
+    ## THIS RUN IS TWO THINGS: MESOS, THEN MAP CHAIRS. IN THAT ORDER. 2026-09-09.
+    ###################################################################################
+
+    Do NOT re-test Set Up chairs, Shanks, !tool or the 12-hour login. All four are
+    confirmed on a screen and re-testing them spends the launch on answers we have.
+
+    THE ORDER IS NOT ARBITRARY. The meso drop is built out of packet shapes already
+    proven on screen - mobs drop mesos, they land, they are picked up. The map chair
+    sends 0x0252, which has NEVER been on a wire, and the last never-tested chair
+    packet (0x02AD) faulted Tester2's client five milliseconds after it went out. So
+    bank the meso answers FIRST, while the client is certainly alive.
+
+    IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON. That one sentence is the whole
+    difference between "0x0252 is a client-killer" and "the session ended".
+
+    ---- PART 1: MESOS. New today; the server used to decode the request and REFUSE it.
+
+      M0. `!meso 10000` first. NEW COMMAND, added today for this run - without it the test
+          is capped at whatever you happen to be carrying and M4/M5 are unreachable. It
+          SETS rather than adds, so the balance is a known number and "the counter went
+          down by 10" becomes a claim that can come back false. Bare `!meso` reports.
+      M1. Stand still. Drop 10 mesos.
+            coins on the floor AND the counter drops by 10  -> it works
+            nothing, and a chat line saying why             -> a REFUSAL, working as
+                                                                built; the line says
+                                                                which one
+            nothing, and NO line                            -> the freeze is back.
+                                                                Grep world.log for
+                                                                0x0143 and say so.
+      M2. IMMEDIATELY move an item in your bag. THIS IS THE REAL TEST.
+            the bag works    -> the reply cleared the +0x2330 latch
+            the bag is DEAD  -> the coins were placed WITHOUT clearing the latch, and
+                                the inventory, AP buttons and cash shop are gone for
+                                the rest of the session. Say so; do not close the
+                                client.
+      M3. Pick the coins back up. Expect the counter +10 and a "+10 mesos" message.
+          Coins that vanish with no credit mean the pick-up is not crediting.
+      M4. Try to drop MORE than you hold. Expect "You do not have that many mesos.",
+          no coins, and a bag that still works.
+      M5. Drop your WHOLE balance. This is allowed on purpose and is the boundary the
+          tests pin.
+      M6. JUMP, and drop at the top of the jump. The coins must come to rest on the
+          floor beneath you, not hang in the air. This is the foothold path, and it is
+          the same question as the mob-drop one below.
+      M7. Two clients: Tester2 walks over Cobalt's coins. ANYONE may take them.
+
+    ---- PART 2: MAP CHAIRS. 0x0252, never on a wire. Henesys is 10001000.
+
+      C1. Sit on a bench.
+            you sit and STAY seated -> 0x0252 was the missing packet. Done.
+            nothing at all          -> grep world.log for 0x0252. If it WENT OUT, the
+                                       suspect is the handler's own gate at 1428341d3,
+                                       which returns before reading a single byte. That
+                                       is NOT a body-length fault.
+            you stand up by yourself, or 0x00DA ffff appears in world.log
+                                    -> the client REFUSED on position. It wants
+                                       seatX-10 <= myX < seatX+10 and
+                                       seatY-30 <= myY < seatY+30. A different answer
+                                       from "nothing happened", and not a packet fault.
+      C2. WHILE SEATED, run the probe. This is the measurement that does not need the
+          screen to agree, and it is the one that tells us WHICH half is broken:
+            cd "C:\MapleCW"; python tools\chairprobe.py --pid <n>
+            +0x3c28 = the seat index, IsSitting TRUE  -> the client ACCEPTED the packet
+                                                        and set the seat. If the screen
+                                                        disagrees it is a DRAWING
+                                                        problem, not a packet one.
+            +0x3c28 = -1, IsSitting FALSE            -> the packet did not take.
+          Two clients share one hook log, so --pid is required with both up.
+      C3. Stand up with a movement key, then run the probe again: -1 and FALSE.
+      C4. Two clients: does Tester2 see Cobalt on the bench? The 0x02AD relay carrying a
+          map SEAT rather than a chair item is unmeasured, so either answer is news.
+
+    AFTERWARDS: world.log is the evidence. Say what you saw per step; I will read it.
+
     HOW A RUN STARTS, since 2026-09-05: the servers come up and THE LAUNCHER OPENS. Sign
     in there, press Start Game. Nothing is served to a client that did not come through a
     sign-in - the login server answers it "not a registered ID". The old default, which
@@ -2223,6 +2298,73 @@ function Show-TestPlan {
         Write-Host '    (7 -> 23), then a SEAT INDEX at body 416 where 0 is a valid'
         Write-Host '    seat, then position/foothold/facing. All fixed.'
         Write-Host ''
+        Write-Host ''
+        Write-Host '  ##############################################################' -ForegroundColor Cyan
+        Write-Host '  ## THIS RUN IS TWO THINGS: MESOS, THEN MAP CHAIRS, IN ORDER ##' -ForegroundColor Cyan
+        Write-Host '  ##############################################################' -ForegroundColor Cyan
+        Write-Host '  Do NOT re-test Set Up chairs, Shanks, !tool or the 12h login -' -ForegroundColor Green
+        Write-Host '  all four are confirmed on a screen. Re-testing spends the run.' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  THE ORDER IS NOT ARBITRARY. The meso drop uses packet shapes'
+        Write-Host '  already proven on screen (mobs drop mesos, they land, you pick'
+        Write-Host '  them up). The map chair sends 0x0252, NEVER on a wire, and the'
+        Write-Host '  last never-tested chair packet faulted Tester2 5 ms after it'
+        Write-Host '  went out. Bank the meso answers FIRST.'
+        Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
+        Write-Host ''
+        Write-Host '  --- PART 1: MESOS (new today) ---' -ForegroundColor Yellow
+        Write-Host '   M0. !meso 10000 first. NEW COMMAND, added today for this run.' -ForegroundColor Green
+        Write-Host '       It SETS rather than adds, so the balance is a KNOWN number'
+        Write-Host '       and "the counter went down by 10" can come back false.'
+        Write-Host '       Without it M4 and M5 are unreachable. Bare !meso reports.'
+        Write-Host '   M1. Stand still, drop 10 mesos.'
+        Write-Host '         coins + counter down 10  -> it works'
+        Write-Host '         nothing + a chat line    -> a REFUSAL, working as built'
+        Write-Host '         nothing + NO line        -> the freeze is back. Grep'
+        Write-Host '                                     world.log for 0x0143.'
+        Write-Host '   M2. IMMEDIATELY move a bag item. THIS IS THE REAL TEST.' -ForegroundColor Yellow
+        Write-Host '         bag works -> the +0x2330 latch was cleared'
+        Write-Host '         bag DEAD  -> coins placed WITHOUT clearing the latch;'
+        Write-Host '                      inventory, AP and cash shop are gone for the'
+        Write-Host '                      session. Say so, do NOT close the client.'
+        Write-Host '   M3. Pick the coins back up: counter +10 and a "+10 mesos" line.'
+        Write-Host '   M4. Drop MORE than you hold -> "You do not have that many'
+        Write-Host '       mesos.", no coins, bag still alive.'
+        Write-Host '   M5. Drop your WHOLE balance. Allowed on purpose.'
+        Write-Host '   M6. JUMP and drop at the top. Coins must REST on the floor'
+        Write-Host '       below you, not hang in the air. (The foothold path.)'
+        Write-Host '   M7. Two clients: Tester2 walks over Cobalt coins. ANYONE may'
+        Write-Host '       take them.'
+        Write-Host ''
+        Write-Host '  --- PART 2: MAP CHAIRS, 0x0252. Henesys is 10001000 ---' -ForegroundColor Yellow
+        Write-Host '   C1. Sit on a bench.'
+        Write-Host '         you sit and STAY seated -> 0x0252 was the missing packet'
+        Write-Host '         nothing at all          -> grep world.log for 0x0252. If'
+        Write-Host '                                    it WENT OUT the suspect is the'
+        Write-Host '                                    gate at 1428341d3, NOT a body'
+        Write-Host '                                    length.'
+        Write-Host '         you stand up by yourself, or 0x00DA ffff in world.log'
+        Write-Host '                                 -> the client REFUSED on position'
+        Write-Host '                                    (seatX-10 <= myX < seatX+10,'
+        Write-Host '                                    seatY-30 <= myY < seatY+30).'
+        Write-Host '                                    A DIFFERENT answer from'
+        Write-Host '                                    "nothing happened".'
+        Write-Host '   C2. WHILE SEATED, run the probe. This does not need the screen' -ForegroundColor Yellow
+        Write-Host '       to agree, and it says WHICH half is broken:'
+        Write-Host '         cd "C:\MapleCW"; python tools\chairprobe.py --pid <n>'
+        Write-Host '         +0x3c28 = seat index, IsSitting TRUE -> the client TOOK'
+        Write-Host '            the packet and set the seat. If the screen disagrees'
+        Write-Host '            it is a DRAWING problem, not a packet one.'
+        Write-Host '         +0x3c28 = -1, IsSitting FALSE -> the packet did not take.'
+        Write-Host '       Two clients share one hook log, so --pid is required.'
+        Write-Host '   C3. Stand up with a movement key, probe again: -1 and FALSE.'
+        Write-Host '   C4. Two clients: does Tester2 SEE Cobalt on the bench? The'
+        Write-Host '       0x02AD relay carrying a map SEAT is unmeasured - either'
+        Write-Host '       answer is news.'
+        Write-Host ''
+        Write-Host '  AFTERWARDS: world.log is the evidence. Say what you saw per step.' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  ---- everything below is reference, not this run ----' -ForegroundColor DarkGray
         Write-Host '  WHAT IS WORTH A RUN NOW, in order:' -ForegroundColor Yellow
         Write-Host '    0A. THE SESSION BUG AND ONE LOGIN PER ACCOUNT (new 2026-09-08).' -ForegroundColor Green
         Write-Host '        Two changes, and they only make sense together. Do this FIRST -'
