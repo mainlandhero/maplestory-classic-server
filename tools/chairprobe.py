@@ -205,6 +205,16 @@ def report_user(pid, user, slide, whence):
             print("      FUN_141716a90(obj) = %d, checksum %s"
                   % (value, "VALID" if ok else "INVALID - this is not that structure"))
             obj_half = bool(value) and ok
+        # The object IS the seated state, so name its class. Its vtable identifies it, and
+        # the vtable's slots are where a "clear this" method would live - which is what the
+        # release has to reach. The id field at +0x3c28 is not involved at all.
+        try:
+            ovt = struct.unpack("<Q", read(pid, chair_obj, 8))[0]
+            print("      chair object vtable = %#x  (static %#x)" % (ovt, ovt - slide))
+            head = bytes(read(pid, chair_obj, 0x50))
+            print("      object head: %s" % head[:0x30].hex())
+        except OSError:
+            print("      chair object header unreadable")
 
     sitting = obj_half or chair_id != -1
     print("      -> IsSitting = (obj && flag) || id != -1 = %s" % ("TRUE" if sitting else "FALSE"))
