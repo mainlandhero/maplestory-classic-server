@@ -34,6 +34,8 @@ impl Session {
             return unlock;
         };
         let mut out = unlock;
+        // A Set Up chair is not a map seat; taking one leaves no bench to release later.
+        self.seated_map_seat = None;
         // Echo the seat back. The client has already built its own chair object, but the
         // server is the authority the *stand* is asked of, so it must agree the player is
         // seated - and the owner's point: other players have to be told too, which is the same
@@ -94,10 +96,35 @@ impl Session {
                            treats as standing up. Nothing authenticates."
                         .to_string(),
                 });
+                // **Only a player who actually took a map seat gets the `0x0252` release.**
+                // The Set Up chair stand is confirmed on two screens and is left byte for
+                // byte as it was; `0x0252` clears `CUser+0x3c28`, which a Set Up chair never
+                // set. `bSit = 0` with the field ABSENT is the release - a `0xFFFF` written
+                // into the u16 would `movzx` to 65535 and seat them on a nonexistent bench.
+                let was_on_a_map_seat = self.seated_map_seat.take();
                 if let Some(chr) = self.claimed_character() {
+                    if let Some(seat) = was_on_a_map_seat {
+                        let body = net::chair::user_sit_result(chr.id, None);
+                        debug_assert_eq!(body.len(), net::chair::USER_SIT_RESULT_RELEASED_LEN);
+                        out.push(Reply {
+                            opcode: net::chair::USER_SIT_RESULT,
+                            body,
+                            what: format!(
+                                "UserSitResult: character {} off map seat {seat}, 5 bytes \
+                                 (u32 id, u8 bSit=0, no index). Nothing authenticates.",
+                                chr.id
+                            ),
+                        });
+                    }
                     self.publish_chair(chr.id, chr.map_id, None);
                 }
-                crate::server::log("   chair: stood up - release sent, recovery bonus ends");
+                crate::server::log(&format!(
+                    "   chair: stood up - release sent, recovery bonus ends{}",
+                    match was_on_a_map_seat {
+                        Some(s) => format!(" (also 0x0252 clearing map seat {s})"),
+                        None => String::new(),
+                    }
+                ));
             }
             Some(Some(seat)) => {
                 // **A MAP chair.** The owner, 2026-09-09: *"I still cannot sit down in chairs that
@@ -111,25 +138,39 @@ impl Session {
                 // dispatcher has no seat-index path at all - one chair arm in 218, and its
                 // only `SetSeat` call is the release - so map chairs are not its opcode.
                 //
-                // `0x02AD` is the remaining chair path: its handler decodes a character id,
-                // looks the user up in the pool and builds a chair object for them. Being
-                // addressed by character id is also exactly what the map relay needs, so the
-                // same body goes to everyone else.
+                // **`0x02AD` was tried here too, and it could never have worked.** Not a wrong
+                // body - a wrong *dispatcher*. `0x02AD` lives in `FUN_1429bb720`, which looks
+                // the target up by going straight to the hash at `[pool+0xf8]`; the local
+                // player is not in that hash. `0x0252` lives in `FUN_1429bafb0`, whose
+                // `GetUser` checks `[pool+0x10]` - the local user - FIRST and returns it on an
+                // id match. That one difference is the whole three-day failure.
+                // `research/map-chair-seat-2026-09-09.md`.
                 self.seated_chair = None;
+                self.seated_map_seat = Some(seat);
                 if let Some(chr) = self.claimed_character() {
+                    let body = net::chair::user_sit_result(chr.id, Some(seat));
+                    debug_assert_eq!(body.len(), net::chair::USER_SIT_RESULT_SEATED_LEN);
                     out.push(Reply {
-                        opcode: net::chair::USER_SIT_REMOTE,
-                        body: net::chair::user_sit_remote(chr.id, Some(u32::from(seat))),
+                        opcode: net::chair::USER_SIT_RESULT,
+                        body,
                         what: format!(
-                            "UserSitRemote: character {} on map seat {seat}, 13 bytes. \
-                             Nothing authenticates.",
+                            "UserSitResult: character {} on map seat {seat}, 7 bytes \
+                             (u32 id, u8 bSit=1, u16 seat). Nothing authenticates - the seat \
+                             index is not checked against the map's chair list.",
                             chr.id
                         ),
                     });
+                    // The relay to everyone else stays `0x02AD`, unchanged. That path IS
+                    // confirmed on two screens for Set Up chairs, and `0x0252` is deliberately
+                    // NOT broadcast: the client re-validates the sitter's position against the
+                    // seat and, on failure, makes **its own** player send a stand request - so
+                    // a bystander holding a stale position for the sitter would stand itself
+                    // up. Whether `0x02AD` renders a map seat correctly for bystanders is
+                    // unmeasured, and is left as it was rather than guessed at.
                     self.publish_chair(chr.id, chr.map_id, Some(u32::from(seat)));
                     crate::server::log(&format!(
-                        "   chair: 0x00DA seat index {seat} - a MAP chair. Sent 0x02AD to the \
-                         player and to the map."
+                        "   chair: 0x00DA seat index {seat} - a MAP chair. Sent 0x0252 to the \
+                         player (the dispatcher that can address them) and 0x02AD to the map."
                     ));
                 }
             }

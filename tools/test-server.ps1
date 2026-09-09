@@ -291,10 +291,22 @@
           run re-testing that half. Two things are still worth a look:
             - the Blue Seal Cushion (3010008) must add 10 MP and NO HP. If it adds 30 HP the
               chair table was defaulted somewhere. Never checked on a screen.
-            - MAP CHAIRS (a Henesys bench) still do not work, and the cause is known: the
-              client sends 0x00DA with a SEAT INDEX, waits, and never seats itself. A live
-              memory probe while clicking a bench read CUser+0x3c28 = -1 and IsSitting FALSE.
-              Every opcode in 0x0224..0x039F has been checked and none sets a seat.
+            - MAP CHAIRS (a Henesys bench): A FIX IS IN, BUILT TODAY, NEVER SEEN. Sit on a
+              Henesys bench. The player should seat and STAY seated; press a movement key
+              to get up again.
+                seats           -> 0x0252 was the missing packet. Say so and we are done.
+                nothing at all  -> check world.log. If 0x0252 went out, the suspect is the
+                                   handler's own gate at 1428341d3, which returns before
+                                   reading anything. It is NOT a body-length fault.
+                you get up by yourself, or a 0x00DA ffff appears in the log
+                                -> the client re-validated and REFUSED: it wants
+                                   seatX-10 <= myX < seatX+10 and seatY-30 <= myY <
+                                   seatY+30. That is a position problem, not a packet one,
+                                   and it is a DIFFERENT outcome from "nothing happened".
+              Why it never worked before: 0x02AD lives in a dispatcher that looks the target
+              up in the remote hash only, and the local player is not in that hash - so it
+              could never address the sitter, whatever body it carried. 0x0252 lives in the
+              dispatcher that checks the local-user slot first.
           Chair recovery: sit, stand still 15 s, HP should climb by 40 per tick (10 flat plus
           the Red Chair's 30).
 
@@ -2380,10 +2392,21 @@ function Show-TestPlan {
         Write-Host '           re-test sit/stand/model/relay. Two gaps remain:'
         Write-Host '             - Blue Seal Cushion must add 10 MP and NO HP. If it adds'
         Write-Host '               30 HP the chair table was defaulted. Never seen.'
-        Write-Host '             - MAP CHAIRS (a Henesys bench) still do NOT work. The' -ForegroundColor Yellow
-        Write-Host '               client sends 0x00DA with a seat index and waits; a live'
-        Write-Host '               probe read CUser+0x3c28 = -1, IsSitting FALSE. Every'
-        Write-Host '               opcode 0x0224..0x039F checked; none sets a seat.'
+        Write-Host '             - MAP CHAIRS: A FIX IS IN. BUILT TODAY, NEVER SEEN.' -ForegroundColor Yellow
+        Write-Host '               Sit on a Henesys bench. You should seat AND STAY'
+        Write-Host '               seated; a movement key gets you up.'
+        Write-Host '                 seats        -> 0x0252 was the missing packet, done'
+        Write-Host '                 nothing      -> grep world.log for 0x0252. If it WENT'
+        Write-Host '                                 OUT the suspect is the handler gate at'
+        Write-Host '                                 1428341d3, NOT a body length.'
+        Write-Host '                 you stand up by yourself, or 0x00DA ffff in the log'
+        Write-Host '                              -> the client REFUSED on position: it'
+        Write-Host '                                 wants seatX-10 <= myX < seatX+10 and'
+        Write-Host '                                 seatY-30 <= myY < seatY+30. That is a'
+        Write-Host '                                 DIFFERENT outcome from "nothing".'
+        Write-Host '               Why it never worked: 0x02AD is dispatched by a hash-only'
+        Write-Host '               lookup and the local player is not in that hash, so it'
+        Write-Host '               could never address the sitter whatever body it carried.'
         Write-Host '           Recovery check: sit, stand still 15s, HP +40 per tick.'
         Write-Host '       (h) THE RELAY IS LIVE AND IT KILLED A CLIENT ONCE.' -ForegroundColor Red
         Write-Host '           0x02AD goes out on every sit, bench attempt and stand. An'
