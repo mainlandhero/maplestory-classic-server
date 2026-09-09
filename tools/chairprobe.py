@@ -161,14 +161,56 @@ def find_users(pid, session, slide):
     return out
 
 
+def chair_object_flag(pid, obj):
+    """Evaluate `FUN_141716a90(obj)` - the second half of IsSitting - rather than guess.
+
+    It is a ZtlSecure accessor, not a state test [L]:
+
+        edx = byte[obj+0x40]                 ; key
+        eax = byte[obj+0x41]                 ; key ^ value
+        bl  = al ^ dl                        ; THE VALUE
+        edx ^= 0xbaadf00d ; ror edx,5 ; add edx,eax
+        cmp edx, dword[obj+0x44]             ; the stored checksum
+
+    Returns `(value, checksum_ok)`. A non-null pointer alone says nothing: the first version of
+    this tool printed "SITTING" for any non-null object and that was an overclaim.
+    """
+    raw = bytes(read(pid, obj + 0x40, 8))
+    key = raw[0]
+    keyed = raw[1]
+    stored = struct.unpack_from("<I", raw, 4)[0]
+    value = keyed ^ key
+    e = (key ^ 0xBAADF00D) & 0xFFFFFFFF
+    e = ((e >> 5) | (e << 27)) & 0xFFFFFFFF
+    e = (e + keyed) & 0xFFFFFFFF
+    return value, e == stored
+
+
 def report_user(pid, user, slide, whence):
     chair_obj = struct.unpack("<Q", read(pid, user + CHAIR_OBJ_AT, 8))[0]
     chair_id = struct.unpack("<i", read(pid, user + CHAIR_ID_AT, 4))[0]
     vt = struct.unpack("<Q", read(pid, user, 8))[0]
-    state = "SITTING" if (chair_obj or chair_id != -1) else "not sitting"
     print("  CUser %#x  (from %s, vtable %#x)" % (user, whence, vt))
-    print("      +0x3c18 obj = %#x   +0x3c28 id = %d   -> IsSitting says %s"
-          % (chair_obj, chair_id, state))
+    print("      +0x3c28 chair id  = %d %s" % (chair_id, "(absent - correct)" if chair_id == -1 else ""))
+    print("      +0x3c18 chair obj = %#x" % chair_obj)
+
+    obj_half = False
+    if chair_obj:
+        try:
+            value, ok = chair_object_flag(pid, chair_obj)
+        except OSError:
+            print("      the object is unreadable - the object half cannot be evaluated")
+            value, ok = None, False
+        if value is not None:
+            print("      FUN_141716a90(obj) = %d, checksum %s"
+                  % (value, "VALID" if ok else "INVALID - this is not that structure"))
+            obj_half = bool(value) and ok
+
+    sitting = obj_half or chair_id != -1
+    print("      -> IsSitting = (obj && flag) || id != -1 = %s" % ("TRUE" if sitting else "FALSE"))
+    if sitting and chair_id == -1:
+        print("         ...and it is TRUE because of the OBJECT half alone. The id field is")
+        print("         correct; whatever holds the player in the chair is that object.")
 
 
 def main():
