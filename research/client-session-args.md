@@ -144,7 +144,8 @@ a builder's calls in order):
         FUN_1406edc80    w_str             <-- it is encoded, as a string
         FUN_1406ede20    w_raw              the 16-byte GUID
         u32                                 a tick
-        FUN_1406ed610    SEND
+        FUN_1415d01c0    SEND
+        FUN_1406ed610    ~COutPacket   (corrected 2026-09-09; it was labelled SEND here)
 ```
 
 So the identity is not merely stored somewhere near the packet; it is handed straight to the

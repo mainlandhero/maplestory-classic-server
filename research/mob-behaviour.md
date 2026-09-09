@@ -448,13 +448,44 @@ It contains exactly one `COutPacket` construction: [L]
 141cb7f0a  packed byte              -> Encode1
 ...
 141cb8353  CALL 0x141d57c60          ; the movement path
-141cb8365  CALL 0x1406ed610          ; SendPacket
+141cb8358  CMP  byte [RBP-0x80], 0   ; <-- A BRANCH. Not the end of the packet.
+141cb835c  JE   141cb8374            ;     zero -> carry on and send
+141cb835e  LEA  RCX,[RBP+0xd0]
+141cb8365  CALL 0x1406ed610          ; ~COutPacket - the ABORT arm, destroyed UNSENT
+...                                  ; 11 more encodes on the je path
+141cb8632  CALL 0x1415d01c0          ; the real SEND
+141cb8777  CALL 0x1406ed610          ; ~COutPacket on the normal path
 ```
 
 The encode primitives were identified from their own bodies rather than assumed:
 `1406ed520` = ctor (writes the opcode through `1406ed940`), `1406ed840` = 1 byte,
-`1406ed940` = 2, `1406ed9d0` = 4, `1406edbc0` = 8, `1406edc80` = string, `1406ede20` = raw,
-`1406ed610` = send. Each was read at its `ADD dword ptr [rbx+0x428],n`. [L]
+`1406ed940` = 2, `1406ed9d0` = 4, `1406edbc0` = 8, `1406edc80` = string, `1406ede20` = raw.
+Each was read at its `ADD dword ptr [rbx+0x428],n`. [L]
+
+## The body above is TRUNCATED, and the sentence above is how it happened
+
+**Corrected 2026-09-09.** That list used to end `` `1406ed610` = send ``, inside a sentence
+claiming all of them were read at an `ADD dword ptr [rbx+0x428],n`. **`1406ed610` has no such
+instruction**, so the stated control cannot have covered it - it covered seven of the eight
+things it named. `tools/dis_at.py 0x1406ed610` is eleven instructions: release `this+0x438`,
+tail-jump releasing `this+0x408`. It is `~COutPacket`. The send is `1415d01c0`, and the
+encoders are a positive control that the instrument discriminates - `1406ed9d0` shows
+`add [rbx+0x428],4` and `1406ed840` shows `inc [rbx+0x428]`. [L]
+
+**The cost was not cosmetic.** One buffer, `[rbp+0xd0]`, runs through the whole function, and
+at `141cb8358` it forks. The non-zero arm destroys the packet and jumps to the epilogue - it
+**sends nothing**. Under the old label that arm read as "SendPacket", so the transcript
+followed the abort path and stopped there. On the arm that actually sends, **eleven further
+encodes run first**: `141cb83e7, 8412, 84b7, 8548, 8557, 8571, 85d5, 85e9, 85fe, 860e, 8626`
+- five `w_u8` and six `w_u32` - before `141cb8632`. [L]
+
+So **the field list above is a prefix of `0x2FF`, not the whole of it.** The trailing eleven
+are deliberately not named here: several sit behind their own branches, so a static count is
+an upper bound on any single packet and naming them from position alone is the guess this
+file already paid for once.
+
+**What survives unchanged:** everything below rests on the *first* `Encode4` and on a write
+scan, both before the fork, so `mob+0x3a0` = object id is untouched by this.
 
 **`mob+0x3a0` is the object id**, not a template pointer. A scan for writes to `+0x3a0` over
 the mob range returns two: the constructor, and `141c4ffb4 MOV dword [RSI+0x3a0],EBX` inside

@@ -49,8 +49,16 @@ Marks: **[L]** read from a listing/decompilation/capture, **[D]** derived, **[I]
 ```
 
 Neither can be ours. In `msexe-packet-fields.txt` both write **no primitives at all** —
-`FUN_1415d01c0` (the outbound packet logger), an allocate/construct/post triple, then
-`FUN_1406ed610` (send). That is an **empty-body** `0x00D1`, and our capture has 34 bytes. **[L]**
+`FUN_1415d01c0`, an allocate/construct/post triple, then `FUN_1406ed610`. That is an
+**empty-body** `0x00D1`, and our capture has 34 bytes. **[L]**
+
+*(Corrected 2026-09-09: those two were labelled "the outbound packet logger" and "send"
+respectively, and it is the other way round - `1415d01c0` is the **send**, `1406ed610` is
+`~COutPacket`. **The conclusion is not just unaffected but strengthened.** The whole argument
+here is that this builder writes no field primitives, and under the corrected labels the shape
+is ctor, send, then destructor at scope exit on the same `[rsp+0x30]` buffer - a packet sent
+with nothing encoded into it, which is what "empty body" means stated directly rather than
+inferred from an absence. See `research/cash-shop-stage.md`, the same function.)*
 
 So I re-enumerated from the binary rather than filtering the existing list — the mistake
 `CLAUDE.md` names twice. A byte scan of every `.text` section for `E8 rel32` targeting

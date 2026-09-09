@@ -64,8 +64,20 @@ not one branch** - which is what makes the ten-byte head fixed rather than condi
 1409f96a4  MOVZX ESI,byte [RSP+0x6e]
 1409f96b1  CALL  1406ed840          ; w_u8
 1409f96d2  CALL  141d57c60          ; the movement path
-1409f9769  CALL  1406ed610          ; SendPacket
+1409f96df  CALL  1415d01c0          ; SEND         <- corrected 2026-09-09
+1409f9769  CALL  1406ed610          ; ~COutPacket  <- corrected 2026-09-09
 ```
+
+**Corrected 2026-09-09: `1406ed610` is the destructor, not the send** - eleven instructions
+releasing `this+0x438` and `this+0x408`, never touching the `this+0x428` length every encoder
+advances. The send is `1415d01c0`, here at `1409f96df`, **13 bytes after the movement path**
+and 138 bytes before the destructor. [L]
+
+**The decode below is unaffected, and this builder is the reason to believe that.** Every
+field transcribed above sits before `1409f96df`, so the packet is exactly as described - and
+because this function is `tools/loop_builders.py`'s positive control, its corrected shape
+`[CTOR,u8,u32,u32,u8,SEND,~dtor,u8]` now shows the send in the position a send belongs in,
+which it could not before: the tool's table had no entry for `1415d01c0` at all.
 
 `FUN_141892840` is the same "current field" getter the drop arm of `FUN_142cc5b00` calls at
 `0x142cc5c3b` (`research/item-drop.md` §1), so the first two fields are **field properties**,

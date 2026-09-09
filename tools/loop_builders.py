@@ -27,7 +27,7 @@ marked LOOP**. If they do not, this tool cannot see a loop at all and every empt
 has ever printed was meaningless. It prints:
 
 ```text
-control 0x1409f6eb0 (0x00D9 user move): header [CTOR,u8,u32,u32,u8,SEND,u8]  LOOP [u8]
+control 0x1409f6eb0 (0x00D9 user move): header [CTOR,u8,u32,u32,u8,SEND,~dtor,u8]  LOOP [u8]
 ```
 
 **That control failed on the first run of this tool, and the failure is the reason `--depth`
@@ -84,7 +84,18 @@ ENC = {
     0x1406EDBC0: "u64",
     0x1406EDC80: "str",
     0x1406EDE20: "raw",
-    0x1406ED610: "SEND",
+    # Corrected 2026-09-09. This was "SEND" and it is the DESTRUCTOR: eleven instructions
+    # releasing this+0x438 and this+0x408, with no touch of the this+0x428 length that every
+    # encoder above advances. `tools/encodes.py` was fixed the same day and this copy was
+    # not, which is the drift the comment above warns about, in the flesh.
+    #
+    # It does not truncate anything - these labels only name sites - but it did print a
+    # destructor as a send, and in at least one builder (FUN_141cb6880, the 0x2FF mob move)
+    # the FIRST such call is an abort arm that destroys the packet unsent 700 bytes before
+    # the real send. A reader trusting the old label reads that as the end of the packet.
+    0x1406ED610: "~dtor",
+    # The actual send, which was absent, so no output of this tool has ever shown one.
+    0x1415D01C0: "SEND",
 }
 
 DEFAULT_EXE = "client-patched/MapleStory.exe"

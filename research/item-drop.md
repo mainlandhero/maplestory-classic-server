@@ -607,11 +607,21 @@ with the code between them. **[D]** for "monotonic with address", **[I]** for "l
 1417d2e51  CALL  1406ed520                ; COutPacket(0x25F)
 1417d32b2  CALL  1406ed9d0                ; w_u32  <- deobfuscated [rsi+0x90]/[rsi+0x98]
 1417d32be  CALL  1406ed9d0                ; w_u32  <- [rbp-0x80], the code
-1417d372d  CALL  1406ed610                ; SendPacket
+1417d32c7  CALL  1415d01c0                ; SEND        <- corrected 2026-09-09
+1417d372d  CALL  1406ed610                ; ~COutPacket <- corrected 2026-09-09
 1417d3733  ...                            ; stack cookie, RET
 ```
 
 So the body is **`u32 <a field of the context object>, u32 <the call-site code>`**. **[L]**
+
+**Corrected 2026-09-09 - the label was wrong and the conclusion is unaffected, which is worth
+saying explicitly.** `1406ed610` is `~COutPacket` (eleven instructions releasing `this+0x438`
+and `this+0x408`, never touching the `this+0x428` length that every encoder advances); the
+send is `1415d01c0`. Here that correction is *load-bearing in the safe direction*: the real
+send sits at `1417d32c7`, **immediately after the two `w_u32`** and 1131 bytes before the
+destructor. Had it sat earlier, fields transcribed above it would not have been in the packet
+at all. It does not, so the two-field body stands exactly as written. Compare
+`research/mob-behaviour.md`, where the same mislabel did truncate a body.
 
 The earlier note called the first field `itemId`. That is **[I]** and probably wrong: the
 object is `0x428` bytes, and the drop `DropEnterField` allocates is `0x238` (§3, read 1), so
