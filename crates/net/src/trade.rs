@@ -115,6 +115,18 @@ pub fn parse_request(body: &[u8]) -> Option<Request> {
 /// called on this same field from both the inbound and the outbound menu path [L]. So a
 /// zeroed or misplaced `type` reproduces the owner's symptom exactly: no popup, no complaint.
 ///
+/// And it is the **only** path, not merely one of them. A scan of every writer of
+/// `balloon+0x300` - the field that selects which balloon is drawn - returns 31 sites in the
+/// UI image, and **30 of them store a literal immediate**, one dedicated setter per balloon
+/// kind. Neither `0x15` nor `0x16` is among those immediates. The single site that can produce
+/// either is the computed `eax` at `14180fab8`, inside the `type ∈ {1,2}` gate above [L]. That
+/// is what makes a wrong `type` a complete and silent failure rather than a degraded one:
+/// there is no second way to build this popup.
+///
+/// The instrument caught its own near-miss and that is why the number is trustworthy - the
+/// first scan filtered for stores of `0x15`/`0x16` and so **structurally could not see** the
+/// one writer that computes the value. `research/trade-2026-09-09.md` §2 records both runs.
+///
 /// # `id` and the auto-decline
 ///
 /// Field 3 goes to a lookup in a collection on the session global, and a **hit** makes the
