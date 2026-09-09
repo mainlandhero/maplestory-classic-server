@@ -63,6 +63,7 @@ CHAIR_ID_AT = 0x3C28
 # whose vtable was 0x1434831e0 - so the 0 was very likely read from the wrong object. Verifying
 # one link of a chain and trusting the rest is exactly what CLAUDE.md warns about.
 CUSER_VTABLES = [0x14337F188, 0x143413F98, 0x143481768, 0x1434831E0, 0x143486B70]
+SCAN_BYTES = 0x4000
 HOOK_LOG = os.path.join("client-patched", "maplecw-hook.log")
 
 
@@ -76,6 +77,42 @@ def logged_session_obj():
         return None
     hits = re.findall(r"SESSION obj=0x([0-9a-fA-F]+)", tail)
     return int(hits[-1], 16) if hits else None
+
+
+def find_users(pid, session, slide):
+    """Every pointer in the session object that points at a real CUser.
+
+    No guessed offsets: each 8-aligned qword is dereferenced and kept only if its target's
+    first qword is one of `CUSER_VTABLES`. The control IS the search, so a miss returns
+    nothing rather than something plausible.
+    """
+    try:
+        blob = bytes(read(pid, session, SCAN_BYTES))
+    except OSError:
+        return []
+    wanted = {v + slide for v in CUSER_VTABLES}
+    out = []
+    for off in range(0, len(blob) - 8, 8):
+        ptr = struct.unpack_from("<Q", blob, off)[0]
+        if ptr < 0x10000 or ptr > 0x7FFF_FFFF_FFFF or ptr & 7:
+            continue
+        try:
+            vt = struct.unpack("<Q", read(pid, ptr, 8))[0]
+        except OSError:
+            continue
+        if vt in wanted:
+            out.append((off, ptr, vt))
+    return out
+
+
+def report_user(pid, user, slide, whence):
+    chair_obj = struct.unpack("<Q", read(pid, user + CHAIR_OBJ_AT, 8))[0]
+    chair_id = struct.unpack("<i", read(pid, user + CHAIR_ID_AT, 4))[0]
+    vt = struct.unpack("<Q", read(pid, user, 8))[0]
+    state = "SITTING" if (chair_obj or chair_id != -1) else "not sitting"
+    print("  CUser %#x  (from %s, vtable %#x)" % (user, whence, vt))
+    print("      +0x3c18 obj = %#x   +0x3c28 id = %d   -> IsSitting says %s"
+          % (chair_obj, chair_id, state))
 
 
 def main():
@@ -128,14 +165,22 @@ def main():
           % (vt, "is a CUser vtable   OK" if ok_vt
              else "is NOT any of the five CUser vtables   FAILED"))
     if not ok_vt:
+        print("   (%#x is not a pointer at all - session+%#x is some other field)"
+              % (vt, USER_AT))
         print()
-        print("REFUSING TO REPORT: session+%#x does not point at a CUser, so whatever sits at"
-              % USER_AT)
-        print("+0x3c28 of it is not the chair field. The earlier reading of 0 came from this")
-        print("unchecked step and should not be trusted. Expected one of:")
-        for v in CUSER_VTABLES:
-            print("    %#x" % v)
-        return 1
+        print("Falling back to SEARCHING the session object for a CUser, which needs no guessed")
+        print("offset: every candidate is accepted only if its vtable is one of the five, so")
+        print("this cannot report a wrong object the way a fixed offset silently did.")
+        print()
+        found = find_users(pid, session, slide)
+        if not found:
+            print("No CUser found in the first %#x bytes of the session object." % SCAN_BYTES)
+            print("Nothing is reported rather than reporting a stranger's memory.")
+            return 1
+        print("%d CUser(s) reachable from the session object:" % len(found))
+        for off, ptr, v in found:
+            report_user(pid, ptr, slide, "session + %#x" % off)
+        return 0
     print()
 
     chair_obj = struct.unpack("<Q", read(pid, user + CHAIR_OBJ_AT, 8))[0]
