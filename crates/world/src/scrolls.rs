@@ -1,18 +1,31 @@
-//! The three scrolls this client does not have, and what each does to an equip.
+//! The two scrolls this client does not have, and what each does to an equip.
 //!
-//! The owner, 2026-09-09, specified three items to be repurposed as scrolls MapleStory has and this
+//! The owner, 2026-09-09, specified items to be repurposed as scrolls MapleStory has and this
 //! client's data does not. `research/scroll-command-2026-09-09.md` records the spec verbatim;
 //! this module is the rules half of it and **nothing here talks to a client, a store or a
 //! packet**. That is deliberate: every rule below is a pure function of the equip's current
 //! state, its base template and one roll, so all of it is testable without a database.
 //!
-//! # The three
+//! # The two
 //!
-//! | item | acts as | what it does |
-//! |---|---|---|
-//! | `4001009` Event Trophy | Innocence 100% | back to base stats AND base slots; needs no free slot |
-//! | `4031065` Scroll of Secrets | Chaos 60% | **always** eats a slot; on success moves one stat by -5..+5 |
-//! | `4031066` Treasure Scroll | Clean Slate 60% | returns one slot that a **failed** scroll took |
+//! | item | what it does |
+//! |---|---|
+//! | `4031065` Scroll of Secrets | **one item, three modes**, chosen in the dialogue - see [`SecretsMode`] |
+//! | `4031066` Treasure Scroll | guarantees a **real** scroll the player is carrying; see [`apply_treasure`] |
+//!
+//! # `4001009` Event Trophy was dropped, and the reason is measured
+//!
+//! It was the Innocence Scroll until 2026-09-09, when the owner said *"Do not use event trophy
+//! since it does not stack."* The client's own data agrees and says why: `itemdata.txt` gives
+//! `4001009` **`slotMax = 0`**, against `1` for the other two. Innocence did not disappear with
+//! it - it became [`SecretsMode::Innocence`], one of the three things a Scroll of Secrets can
+//! be used as.
+//!
+//! **An honest note that outlives this change:** `4031065` and `4031066` carry `slotMax = 1`,
+//! which is also not a stack. `crate::shops::max_stack` overrides both to
+//! [`STACK_LIMIT`] server-side, and whether this client honours a server quantity above an
+//! item's own `slotMax` is **[I]** - unmeasured, and the same question that took Event Trophy
+//! out. 161 of the 359 Etc items already carry `slotMax = 200` if a swap is ever wanted.
 //!
 //! # Two answers from the owner that are rules, not defaults
 //!
@@ -54,14 +67,16 @@
 
 use net::opcode::EquipStatSet;
 
-/// `4001009` Event Trophy, acting as an Innocence Scroll 100%.
-pub const INNOCENCE: u32 = 4_001_009;
+/// `4031065` Scroll of Secrets - a Chaos, an Innocence or a Clean Slate, the player's choice.
+pub const SCROLL_OF_SECRETS: u32 = 4_031_065;
 
-/// `4031065` Scroll of Secrets, acting as a Chaos Scroll 60%.
-pub const CHAOS: u32 = 4_031_065;
+/// `4031066` Treasure Scroll - guarantees a real scroll the player is carrying.
+pub const TREASURE_SCROLL: u32 = 4_031_066;
 
-/// `4031066` Treasure Scroll, acting as a Clean Slate 60%.
-pub const CLEAN_SLATE: u32 = 4_031_066;
+/// Both repurposed ids, for the callers that need to treat them as a set - the drop-table
+/// exemption and the stack override. **A list, not a range**: they are neighbours today and a
+/// third could be anywhere.
+pub const REPURPOSED: [u32; 2] = [SCROLL_OF_SECRETS, TREASURE_SCROLL];
 
 /// The success chance of Chaos and Clean Slate when the daily free pass is spent, in percent.
 pub const ROLLED_SUCCESS_PCT: u32 = 60;
@@ -81,56 +96,108 @@ pub const STACK_LIMIT: u16 = 100;
 /// which is different from a failure and must not be reported as one.
 pub const CHAOS_MAX_SWING: i32 = 5;
 
-/// Which of the three, from the item id the player used.
+/// Which of the two repurposed items the player used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scroll {
-    Innocence,
-    Chaos,
-    CleanSlate,
+    /// `4031065`, whose behaviour the player then chooses. See [`SecretsMode`].
+    Secrets,
+    /// `4031066`, which guarantees a real scroll the player is carrying.
+    Treasure,
 }
 
 impl Scroll {
-    /// `None` for anything that is not one of the three.
+    /// `None` for anything that is not one of the two.
     pub fn from_item_id(item_id: u32) -> Option<Self> {
         match item_id {
-            INNOCENCE => Some(Scroll::Innocence),
-            CHAOS => Some(Scroll::Chaos),
-            CLEAN_SLATE => Some(Scroll::CleanSlate),
+            SCROLL_OF_SECRETS => Some(Scroll::Secrets),
+            TREASURE_SCROLL => Some(Scroll::Treasure),
             _ => None,
         }
     }
 
     pub fn item_id(self) -> u32 {
         match self {
-            Scroll::Innocence => INNOCENCE,
-            Scroll::Chaos => CHAOS,
-            Scroll::CleanSlate => CLEAN_SLATE,
+            Scroll::Secrets => SCROLL_OF_SECRETS,
+            Scroll::Treasure => TREASURE_SCROLL,
         }
     }
 
     /// The name the dialogue uses.
     ///
     /// **These are the client's own names, not invented ones**, and that was checked rather
-    /// than assumed on 2026-09-09: `String.wz/Etc.img` gives `4001009` *Event Trophy*,
-    /// `4031065` *Scroll of Secrets* and `4031066` *Treasure Scroll*, character for character.
-    /// They are repeated here because a dialogue string cannot read the WZ, and they must keep
-    /// matching - the menu now draws each row's `#i<itemId>#` icon beside the name, and an
-    /// icon that disagrees with the text beside it is worse than no icon.
+    /// than assumed on 2026-09-09: `String.wz/Etc.img` gives `4031065` *Scroll of Secrets* and
+    /// `4031066` *Treasure Scroll*, character for character. They are repeated here because a
+    /// dialogue string cannot read the WZ, and they must keep matching - the menu draws each
+    /// row's `#i<itemId>#` icon beside the name, and an icon that disagrees with the text
+    /// beside it is worse than no icon.
     ///
     /// What the client does **not** have is a description that fits: its `desc` for `4031066`
     /// is *"A map that shows where the jewels are hidden away."* `crate::scrollnpc::describe`
     /// supplies ours.
     pub fn name(self) -> &'static str {
         match self {
-            Scroll::Innocence => "Event Trophy",
-            Scroll::Chaos => "Scroll of Secrets",
-            Scroll::CleanSlate => "Treasure Scroll",
+            Scroll::Secrets => "Scroll of Secrets",
+            Scroll::Treasure => "Treasure Scroll",
+        }
+    }
+}
+
+/// The three things a Scroll of Secrets can be used as, chosen in the dialogue.
+///
+/// The owner's patch notes, 2026-09-09, are the specification and each line is one arm below:
+///
+/// * *"Chaos Scroll (100% first time of the day, otherwise 60%), randomly increases or
+///   decreases one of the item's base stat by up to 5 points. Reduces enhancement slot by 1."*
+/// * *"Innocence Scroll (100%), returns the item back to its unmodified base state, no random
+///   base stats will be kept. Returns all enhancement slots. Does not require an enhancement
+///   slot to use."*
+/// * *"Clean Slate Scroll (100% first time of the day, otherwise 60%), returns a failed
+///   enhancement slot of a previous scroll you have used upon the item. You cannot recover an
+///   enhancement slot if the original scroll succeeded."*
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecretsMode {
+    Chaos,
+    Innocence,
+    CleanSlate,
+}
+
+impl SecretsMode {
+    /// Every mode, in the order the menu lists them.
+    pub const ALL: [SecretsMode; 3] =
+        [SecretsMode::Chaos, SecretsMode::Innocence, SecretsMode::CleanSlate];
+
+    /// The name of the *real* MapleStory scroll this mode imitates - which is what the patch
+    /// notes call it, and therefore what the player will call it.
+    pub fn name(self) -> &'static str {
+        match self {
+            SecretsMode::Chaos => "Chaos Scroll",
+            SecretsMode::Innocence => "Innocence Scroll",
+            SecretsMode::CleanSlate => "Clean Slate Scroll",
         }
     }
 
-    /// Does this one roll at all? Innocence is 100% by specification, always.
+    /// Stable across restarts and readable in a log, because it is half of the daily-perk key
+    /// and a key that changes shape strands every claim written under the old one.
+    pub fn key(self) -> &'static str {
+        match self {
+            SecretsMode::Chaos => "chaos",
+            SecretsMode::Innocence => "innocence",
+            SecretsMode::CleanSlate => "cleanslate",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        SecretsMode::ALL.into_iter().find(|m| m.key() == key)
+    }
+
+    /// Does this mode roll at all?
+    ///
+    /// **Innocence never does** - the patch note gives it a flat `(100%)` with no daily
+    /// qualifier, where Chaos and Clean Slate both read *"100% first time of the day,
+    /// otherwise 60%"*. So Innocence must not consume a daily pass either: spending one on a
+    /// mode that could not have used it would silently cost the player their free Chaos.
     pub fn always_succeeds(self) -> bool {
-        matches!(self, Scroll::Innocence)
+        matches!(self, SecretsMode::Innocence)
     }
 }
 
@@ -173,25 +240,40 @@ pub struct EquipBase {
 /// **Exhaustive over [`EquipStatSet`] on purpose.** A stat missing from this table is a stat
 /// Chaos can never roll, silently - so the test `the_stat_table_covers_every_field` destructures
 /// an `EquipStatSet` and fails to compile if a field is added and not listed here.
+///
+/// # Every name here is the client's own tooltip label
+///
+/// And that is a correction, not a style note. This table used to call `inc_pad` **"Weapon
+/// Attack"** and `inc_wat` **"WAT"**, which is the pair swapped - the same swap that made
+/// `equip_base` copy a weapon's attack into bit 8 and put `Attack Power: +200 (0 +200)` on
+/// The owner's screen. `net::opcode::EquipStatSet` carries each field's string id from the client's
+/// own table: bit 8 `inc_pad` is `Attack Power: +%d` (`0x0380`) and bit 16 `inc_wat` is
+/// `Weapon Attack: +%d` (`0x037F`).
+///
+/// It matters beyond tidiness because these strings are **read out to the player** - a Chaos
+/// that says *"gained 3 WAT"* while the tooltip line beside it says *Weapon Attack* is a
+/// message the player cannot reconcile with what they are looking at. `Avoidability`,
+/// `Critical` and `Craft` were wrong the same way and are now `Evasion`, `Critical Rate` and
+/// `Critical Damage`.
 #[allow(clippy::type_complexity)]
 const STATS: &[(&str, fn(&EquipStatSet) -> u16, fn(&mut EquipStatSet, u16))] = &[
     ("STR", |s| s.inc_str, |s, v| s.inc_str = v),
     ("DEX", |s| s.inc_dex, |s, v| s.inc_dex = v),
     ("INT", |s| s.inc_int, |s, v| s.inc_int = v),
     ("LUK", |s| s.inc_luk, |s, v| s.inc_luk = v),
-    ("Max HP", |s| s.inc_mhp, |s, v| s.inc_mhp = v),
-    ("Max MP", |s| s.inc_mmp, |s, v| s.inc_mmp = v),
+    ("MaxHP", |s| s.inc_mhp, |s, v| s.inc_mhp = v),
+    ("MaxMP", |s| s.inc_mmp, |s, v| s.inc_mmp = v),
     ("Speed", |s| s.inc_speed, |s, v| s.inc_speed = v),
     ("Jump", |s| s.inc_jump, |s, v| s.inc_jump = v),
-    ("Weapon Attack", |s| s.inc_pad, |s, v| s.inc_pad = v),
+    ("Attack Power", |s| s.inc_pad, |s, v| s.inc_pad = v),
     ("Magic Attack", |s| s.inc_mad, |s, v| s.inc_mad = v),
-    ("Weapon Defense", |s| s.inc_pdd, |s, v| s.inc_pdd = v),
-    ("Magic Defense", |s| s.inc_mdd, |s, v| s.inc_mdd = v),
+    ("Weapon Def.", |s| s.inc_pdd, |s, v| s.inc_pdd = v),
+    ("Magic Def.", |s| s.inc_mdd, |s, v| s.inc_mdd = v),
     ("Accuracy", |s| s.inc_acc, |s, v| s.inc_acc = v),
-    ("Avoidability", |s| s.inc_eva, |s, v| s.inc_eva = v),
-    ("Critical", |s| s.inc_crt, |s, v| s.inc_crt = v),
-    ("Craft", |s| s.inc_crd, |s, v| s.inc_crd = v),
-    ("WAT", |s| s.inc_wat, |s, v| s.inc_wat = v),
+    ("Evasion", |s| s.inc_eva, |s, v| s.inc_eva = v),
+    ("Critical Rate", |s| s.inc_crt, |s, v| s.inc_crt = v),
+    ("Critical Damage", |s| s.inc_crd, |s, v| s.inc_crd = v),
+    ("Weapon Attack", |s| s.inc_wat, |s, v| s.inc_wat = v),
 ];
 
 /// A refusal, with the line the player is shown.
@@ -200,12 +282,14 @@ const STATS: &[(&str, fn(&EquipStatSet) -> u16, fn(&mut EquipStatSet, u16))] = &
 /// exactly like a frozen UI, and this project has spent runs chasing that.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refusal {
-    /// Chaos needs a slot to take.
+    /// Chaos and the Treasure Scroll both need a slot to take.
     NoSlotsLeft,
     /// Clean Slate needs a failure to undo.
     NothingToRestore,
     /// Clean Slate would push the item past its own template's `tuc`.
     AlreadyAtBase,
+    /// The Treasure Scroll found no real scroll in the bag that fits the chosen equip.
+    NoScrollFits,
 }
 
 impl Refusal {
@@ -214,6 +298,9 @@ impl Refusal {
             Refusal::NoSlotsLeft => "That item has no enhancement slots left.",
             Refusal::NothingToRestore => "That item has no failed enhancement slots to restore.",
             Refusal::AlreadyAtBase => "That item already has all of its enhancement slots.",
+            Refusal::NoScrollFits => {
+                "You are not carrying a scroll that fits that item. Bring me one made for it."
+            }
         }
     }
 }
@@ -224,11 +311,15 @@ pub struct Applied {
     pub after: EquipState,
     /// Did the roll succeed? Innocence is always `true`.
     pub succeeded: bool,
-    /// Did this use consume an enhancement slot? True for Chaos on **both** arms.
+    /// Did this use consume an enhancement slot? True for Chaos on **both** arms, and for
+    /// every Treasure Scroll - the owner: *"while subtracting an item enhancement"*.
     pub slot_spent: bool,
-    /// The stat Chaos moved and by how much, for the line the player reads. `None` when
-    /// nothing moved a stat - a failed Chaos, a Clean Slate, or an Innocence.
-    pub stat_change: Option<(&'static str, i32)>,
+    /// Which stats moved and by how much, for the line the player reads.
+    ///
+    /// **A list rather than one pair**, because the Treasure Scroll applies a real scroll and
+    /// a real scroll can grant several stats at once - `2040800` grants Attack Power *and*
+    /// Accuracy. Chaos pushes at most one; Clean Slate and Innocence push none.
+    pub changes: Vec<(&'static str, i32)>,
 }
 
 /// Apply one scroll. `roll` is any number; only its residues are used, so a caller may pass a
@@ -242,24 +333,28 @@ pub struct Applied {
 /// path that returns `Ok`, success or failure, per the owner's *"the item is deducted from the
 /// player's inventory and the scroll action performed."*
 pub fn apply(
-    scroll: Scroll,
+    mode: SecretsMode,
     base: &EquipBase,
     state: &EquipState,
     chance: Chance,
     roll: u64,
 ) -> Result<Applied, Refusal> {
-    match scroll {
-        // Reverts everything, and needs no free slot - the owner: "This scroll does not need
-        // enhancement slots available on the item to be used." So it has no refusal at all,
-        // and it clears the failed count because there are no longer any failures to undo.
-        Scroll::Innocence => Ok(Applied {
+    match mode {
+        // Reverts everything, and needs no free slot - the owner: "Does not require an enhancement
+        // slot to use." So it has no refusal at all, and it clears the failed count because
+        // there are no longer any failures to undo.
+        //
+        // "no random base stats will be kept" is `stats: base.stats` and nothing else: the
+        // template's own set, not the current set with the rolls unwound, so an item that has
+        // been scrolled a dozen times still lands exactly on the template.
+        SecretsMode::Innocence => Ok(Applied {
             after: EquipState { remaining: base.tuc, failed_slots: 0, stats: base.stats },
             succeeded: true,
             slot_spent: false,
-            stat_change: None,
+            changes: Vec::new(),
         }),
 
-        Scroll::Chaos => {
+        SecretsMode::Chaos => {
             if state.remaining == 0 {
                 return Err(Refusal::NoSlotsLeft);
             }
@@ -267,19 +362,19 @@ pub fn apply(
             let mut after = *state;
             // **Both arms.** The owner: "failed chaos scroll will eat a slot."
             after.remaining -= 1;
-            let mut stat_change = None;
+            let mut changes = Vec::new();
             if succeeded {
-                if let Some((name, delta)) = roll_one_stat(base, &mut after.stats, roll) {
-                    stat_change = Some((name, delta));
+                if let Some(change) = roll_one_stat(base, &mut after.stats, roll) {
+                    changes.push(change);
                 }
             } else {
                 // The slot it just ate is now a slot Clean Slate can give back.
                 after.failed_slots = after.failed_slots.saturating_add(1);
             }
-            Ok(Applied { after, succeeded, slot_spent: true, stat_change })
+            Ok(Applied { after, succeeded, slot_spent: true, changes })
         }
 
-        Scroll::CleanSlate => {
+        SecretsMode::CleanSlate => {
             if state.failed_slots == 0 {
                 return Err(Refusal::NothingToRestore);
             }
@@ -295,9 +390,65 @@ pub fn apply(
                 after.failed_slots -= 1;
             }
             // A failed Clean Slate takes nothing - it only fails to give.
-            Ok(Applied { after, succeeded, slot_spent: false, stat_change: None })
+            Ok(Applied { after, succeeded, slot_spent: false, changes: Vec::new() })
         }
     }
+}
+
+/// The Treasure Scroll: apply a **real** scroll's increments with guaranteed success.
+///
+/// The owner, 2026-09-09: *"Use this Scroll to automatically succeed the next scroll of your
+/// choosing via the GUI options and apply those stat increases to the item immediately while
+/// subtracting an item enhancement."* Asked which scrolls the menu offers, they chose *only a
+/// real scroll you are carrying* - so this takes the increments of a scroll the caller has
+/// already found in the bag and confirmed fits the equip.
+///
+/// # Three things it deliberately does not consult
+///
+/// * **`ScrollTemplate::success`.** The guarantee is the whole item. A 10% scroll and a 100%
+///   scroll are the same here, which is exactly why the menu shows the normal rate: the
+///   difference the Treasure Scroll makes is only visible if the player can see what they
+///   were spared.
+/// * **`ScrollTemplate::cursed`.** A guaranteed success never reaches the failure arm, so
+///   nothing can be destroyed. That is a consequence of the rule and not a special case -
+///   there is no destroy path in this function to disable.
+/// * **[`Chance`] and the daily pass.** The Treasure Scroll is not gated on a day; its
+///   scarcity is the 0.01% drop. Nothing here claims a pass, so a Treasure Scroll cannot
+///   silently cost the player their free Chaos.
+///
+/// # It still costs a slot, and therefore it can still be refused
+///
+/// A slot is subtracted, so an item with none is refused **before** anything is spent - the
+/// caller has nothing to half-apply, and neither the Treasure Scroll nor the real scroll
+/// leaves the bag.
+///
+/// Failed slots are untouched: this cannot fail, so it banks nothing for a Clean Slate, and it
+/// does not repay one either. A slot spent here is simply spent.
+pub fn apply_treasure(
+    base: &EquipBase,
+    state: &EquipState,
+    increments: &EquipStatSet,
+) -> Result<Applied, Refusal> {
+    let _ = base;
+    if state.remaining == 0 {
+        return Err(Refusal::NoSlotsLeft);
+    }
+    let mut after = *state;
+    after.remaining -= 1;
+    let mut changes = Vec::new();
+    for (name, get, set) in STATS {
+        let granted = get(increments);
+        if granted == 0 {
+            continue;
+        }
+        let now = get(&after.stats);
+        // Saturating: a stat is `u16` on the wire, and wrapping a weapon's attack to a small
+        // number would read on screen as the scroll having *removed* the stat it granted.
+        let next = now.saturating_add(granted);
+        set(&mut after.stats, next);
+        changes.push((*name, i32::from(next) - i32::from(now)));
+    }
+    Ok(Applied { after, succeeded: true, slot_spent: true, changes })
 }
 
 fn succeeds(chance: Chance, roll: u64) -> bool {
@@ -342,15 +493,15 @@ fn roll_one_stat(
 mod tests {
     use super::*;
 
-    fn base(tuc: u8, pad: u16) -> EquipBase {
-        EquipBase { tuc, stats: EquipStatSet { inc_pad: pad, ..Default::default() } }
+    fn base(tuc: u8, wat: u16) -> EquipBase {
+        EquipBase { tuc, stats: EquipStatSet { inc_wat: wat, ..Default::default() } }
     }
 
-    fn state(remaining: u8, failed: u8, pad: u16) -> EquipState {
+    fn state(remaining: u8, failed: u8, wat: u16) -> EquipState {
         EquipState {
             remaining,
             failed_slots: failed,
-            stats: EquipStatSet { inc_pad: pad, ..Default::default() },
+            stats: EquipStatSet { inc_wat: wat, ..Default::default() },
         }
     }
 
@@ -370,13 +521,31 @@ mod tests {
     }
 
     #[test]
-    fn the_three_item_ids_map_and_nothing_else_does() {
-        assert_eq!(Scroll::from_item_id(4_001_009), Some(Scroll::Innocence));
-        assert_eq!(Scroll::from_item_id(4_031_065), Some(Scroll::Chaos));
-        assert_eq!(Scroll::from_item_id(4_031_066), Some(Scroll::CleanSlate));
-        // The control: a neighbouring id is not a scroll.
+    fn the_two_item_ids_map_and_nothing_else_does() {
+        assert_eq!(Scroll::from_item_id(4_031_065), Some(Scroll::Secrets));
+        assert_eq!(Scroll::from_item_id(4_031_066), Some(Scroll::Treasure));
+        // The control: a neighbouring id is not a scroll, and neither is the Event Trophy
+        // that used to be one - a stale mapping here would put a dead item back on the menu.
         assert_eq!(Scroll::from_item_id(4_031_067), None);
+        assert_eq!(Scroll::from_item_id(4_001_009), None);
         assert_eq!(Scroll::from_item_id(2_000_000), None);
+        assert_eq!(REPURPOSED.len(), 2);
+        assert!(REPURPOSED.iter().all(|id| Scroll::from_item_id(*id).is_some()));
+    }
+
+    /// A mode's daily-perk key is stored, so it must survive a reordering of the enum. Keys
+    /// built from a discriminant would silently re-map every claim ever written.
+    #[test]
+    fn every_mode_key_round_trips_and_they_are_distinct() {
+        for mode in SecretsMode::ALL {
+            assert_eq!(SecretsMode::from_key(mode.key()), Some(mode));
+        }
+        let mut keys: Vec<&str> = SecretsMode::ALL.iter().map(|m| m.key()).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), 3);
+        assert_eq!(SecretsMode::from_key("nonsense"), None);
+        assert_eq!(SecretsMode::from_key(""), None);
     }
 
     /// Innocence reverts BOTH halves and needs no free slot - the one that has no refusal.
@@ -385,10 +554,10 @@ mod tests {
         let b = base(7, 5);
         // The worst case: no slots left, three failures banked, stats driven far off base.
         let s = state(0, 3, 99);
-        let out = apply(Scroll::Innocence, &b, &s, Chance::Rolled, 0).unwrap();
+        let out = apply(SecretsMode::Innocence, &b, &s, Chance::Rolled, 0).unwrap();
         assert!(out.succeeded, "Innocence is 100% by specification");
         assert_eq!(out.after.remaining, 7, "all enhancement slots returned");
-        assert_eq!(out.after.stats.inc_pad, 5, "back to the template's stats");
+        assert_eq!(out.after.stats.inc_wat, 5, "back to the template's stats");
         assert_eq!(out.after.failed_slots, 0, "no failures left to undo");
         assert!(!out.slot_spent);
     }
@@ -399,12 +568,12 @@ mod tests {
         let b = base(7, 5);
         let s = state(7, 0, 5);
         // roll % 100 == 99 -> above 60, a failure.
-        let out = apply(Scroll::Chaos, &b, &s, Chance::Rolled, 99).unwrap();
+        let out = apply(SecretsMode::Chaos, &b, &s, Chance::Rolled, 99).unwrap();
         assert!(!out.succeeded);
         assert!(out.slot_spent, "the slot is eaten on failure too - that is the rule");
         assert_eq!(out.after.remaining, 6);
         assert_eq!(out.after.failed_slots, 1, "and it becomes a slot Clean Slate can return");
-        assert_eq!(out.after.stats.inc_pad, 5, "a failure changes no stat");
+        assert_eq!(out.after.stats.inc_wat, 5, "a failure changes no stat");
     }
 
     /// A successful Chaos also eats the slot, and moves exactly one stat within +-5.
@@ -412,15 +581,15 @@ mod tests {
     fn a_successful_chaos_eats_the_slot_and_moves_one_base_stat() {
         let b = base(7, 20);
         for roll in [0u64, 1, 59, 100, 1_000, 12_345, 999_999] {
-            let out = apply(Scroll::Chaos, &b, &state(7, 0, 20), Chance::Guaranteed, roll).unwrap();
+            let out = apply(SecretsMode::Chaos, &b, &state(7, 0, 20), Chance::Guaranteed, roll).unwrap();
             assert!(out.succeeded);
             assert!(out.slot_spent);
             assert_eq!(out.after.remaining, 6);
             assert_eq!(out.after.failed_slots, 0, "a success banks nothing for Clean Slate");
-            let (name, delta) = out.stat_change.expect("a base stat exists, so one moved");
+            let (name, delta) = out.changes.first().copied().expect("a base stat exists, so one moved");
             assert_eq!(name, "Weapon Attack", "the only non-zero base stat");
             assert!((-CHAOS_MAX_SWING..=CHAOS_MAX_SWING).contains(&delta), "delta {delta}");
-            assert_eq!(i32::from(out.after.stats.inc_pad), 20 + delta);
+            assert_eq!(i32::from(out.after.stats.inc_wat), 20 + delta);
         }
     }
 
@@ -429,7 +598,7 @@ mod tests {
     fn chaos_never_touches_a_stat_the_template_does_not_have() {
         let b = base(7, 20); // weapon attack only
         for roll in 0..2_000u64 {
-            let out = apply(Scroll::Chaos, &b, &state(7, 0, 20), Chance::Guaranteed, roll).unwrap();
+            let out = apply(SecretsMode::Chaos, &b, &state(7, 0, 20), Chance::Guaranteed, roll).unwrap();
             let a = out.after.stats;
             assert_eq!(a.inc_str, 0, "roll {roll}");
             assert_eq!(a.inc_mhp, 0, "roll {roll}");
@@ -442,9 +611,9 @@ mod tests {
     fn a_stat_rolled_below_zero_clamps_instead_of_wrapping() {
         let b = base(7, 3);
         for roll in 0..2_000u64 {
-            let out = apply(Scroll::Chaos, &b, &state(7, 0, 1), Chance::Guaranteed, roll).unwrap();
+            let out = apply(SecretsMode::Chaos, &b, &state(7, 0, 1), Chance::Guaranteed, roll).unwrap();
             // 1 - 5 would be -4; as a u16 that is 65532, which would be a legendary weapon.
-            assert!(out.after.stats.inc_pad <= 6, "roll {roll} gave {}", out.after.stats.inc_pad);
+            assert!(out.after.stats.inc_wat <= 6, "roll {roll} gave {}", out.after.stats.inc_wat);
         }
     }
 
@@ -452,7 +621,7 @@ mod tests {
     fn chaos_is_refused_with_no_slots_and_the_state_is_untouched() {
         let b = base(7, 5);
         let s = state(0, 2, 5);
-        assert_eq!(apply(Scroll::Chaos, &b, &s, Chance::Guaranteed, 0), Err(Refusal::NoSlotsLeft));
+        assert_eq!(apply(SecretsMode::Chaos, &b, &s, Chance::Guaranteed, 0), Err(Refusal::NoSlotsLeft));
     }
 
     /// **Clean Slate counts; it does not remember an order.** Two failures, two restores.
@@ -461,7 +630,7 @@ mod tests {
         let b = base(7, 5);
         let mut s = state(5, 2, 5); // two slots lost to failures earlier
         for expect_remaining in [6u8, 7] {
-            let out = apply(Scroll::CleanSlate, &b, &s, Chance::Guaranteed, 0).unwrap();
+            let out = apply(SecretsMode::CleanSlate, &b, &s, Chance::Guaranteed, 0).unwrap();
             assert!(out.succeeded);
             assert_eq!(out.after.remaining, expect_remaining);
             s = out.after;
@@ -469,7 +638,7 @@ mod tests {
         assert_eq!(s.failed_slots, 0);
         // A third is refused: the count, not the history, is what gates it.
         assert_eq!(
-            apply(Scroll::CleanSlate, &b, &s, Chance::Guaranteed, 0),
+            apply(SecretsMode::CleanSlate, &b, &s, Chance::Guaranteed, 0),
             Err(Refusal::NothingToRestore)
         );
     }
@@ -480,10 +649,10 @@ mod tests {
     fn clean_slate_is_refused_after_a_successful_chaos() {
         let b = base(7, 20);
         let after_success =
-            apply(Scroll::Chaos, &b, &state(7, 0, 20), Chance::Guaranteed, 0).unwrap().after;
+            apply(SecretsMode::Chaos, &b, &state(7, 0, 20), Chance::Guaranteed, 0).unwrap().after;
         assert_eq!(after_success.failed_slots, 0);
         assert_eq!(
-            apply(Scroll::CleanSlate, &b, &after_success, Chance::Guaranteed, 0),
+            apply(SecretsMode::CleanSlate, &b, &after_success, Chance::Guaranteed, 0),
             Err(Refusal::NothingToRestore)
         );
     }
@@ -493,7 +662,7 @@ mod tests {
     fn a_failed_clean_slate_costs_only_the_scroll() {
         let b = base(7, 5);
         let s = state(5, 2, 5);
-        let out = apply(Scroll::CleanSlate, &b, &s, Chance::Rolled, 99).unwrap();
+        let out = apply(SecretsMode::CleanSlate, &b, &s, Chance::Rolled, 99).unwrap();
         assert!(!out.succeeded);
         assert!(!out.slot_spent);
         assert_eq!(out.after, s, "nothing moved at all");
@@ -504,7 +673,7 @@ mod tests {
     fn clean_slate_will_not_exceed_the_templates_tuc() {
         let b = base(7, 5);
         assert_eq!(
-            apply(Scroll::CleanSlate, &b, &state(7, 1, 5), Chance::Guaranteed, 0),
+            apply(SecretsMode::CleanSlate, &b, &state(7, 1, 5), Chance::Guaranteed, 0),
             Err(Refusal::AlreadyAtBase)
         );
     }
@@ -516,10 +685,10 @@ mod tests {
         let b = base(7, 20);
         let s = state(7, 0, 20);
         for roll in 0..100u64 {
-            assert!(apply(Scroll::Chaos, &b, &s, Chance::Guaranteed, roll).unwrap().succeeded);
+            assert!(apply(SecretsMode::Chaos, &b, &s, Chance::Guaranteed, roll).unwrap().succeeded);
         }
         let wins = (0..100u64)
-            .filter(|&r| apply(Scroll::Chaos, &b, &s, Chance::Rolled, r).unwrap().succeeded)
+            .filter(|&r| apply(SecretsMode::Chaos, &b, &s, Chance::Rolled, r).unwrap().succeeded)
             .count();
         assert_eq!(wins, 60, "ROLLED_SUCCESS_PCT is 60 and the residue is roll % 100");
     }
@@ -529,17 +698,110 @@ mod tests {
     #[test]
     fn a_decorative_equip_succeeds_and_moves_nothing() {
         let b = EquipBase { tuc: 5, stats: EquipStatSet::default() };
-        let out = apply(Scroll::Chaos, &b, &state(5, 0, 0), Chance::Guaranteed, 7).unwrap();
+        let out = apply(SecretsMode::Chaos, &b, &state(5, 0, 0), Chance::Guaranteed, 7).unwrap();
         assert!(out.succeeded);
         assert!(out.slot_spent);
-        assert_eq!(out.stat_change, None);
+        assert!(out.changes.is_empty());
+    }
+
+    /// **The Treasure Scroll succeeds and spends a slot.** The owner: *"automatically succeed the
+    /// next scroll of your choosing … and apply those stat increases to the item immediately
+    /// while subtracting an item enhancement."*
+    #[test]
+    fn a_treasure_scroll_always_succeeds_and_costs_one_slot() {
+        let b = base(7, 100);
+        let grant = EquipStatSet { inc_wat: 3, inc_acc: 1, ..Default::default() };
+        let out = apply_treasure(&b, &state(7, 2, 100), &grant).unwrap();
+        assert!(out.succeeded, "the guarantee is the whole item");
+        assert!(out.slot_spent);
+        assert_eq!(out.after.remaining, 6);
+        assert_eq!(out.after.stats.inc_wat, 103, "the increment is added to what is there");
+        assert_eq!(out.after.stats.inc_acc, 1);
+        // **It banks no failure and repays none.** It cannot fail, so there is nothing for a
+        // Clean Slate to pick up, and the two failures it found are left exactly as they were.
+        assert_eq!(out.after.failed_slots, 2);
+        // Every granted stat is reported, not just the first - the player spent two items.
+        assert_eq!(out.changes.len(), 2, "{:?}", out.changes);
+        assert!(out.changes.contains(&("Weapon Attack", 3)), "{:?}", out.changes);
+        assert!(out.changes.contains(&("Accuracy", 1)), "{:?}", out.changes);
+    }
+
+    /// A slot is subtracted, so an item with none is refused - **before** anything is spent.
+    #[test]
+    fn a_treasure_scroll_is_refused_with_no_slots_left() {
+        let b = base(7, 100);
+        let grant = EquipStatSet { inc_wat: 3, ..Default::default() };
+        assert_eq!(apply_treasure(&b, &state(0, 0, 100), &grant), Err(Refusal::NoSlotsLeft));
+    }
+
+    /// **A stat at the ceiling saturates rather than wrapping.** `EquipStatSet` is `u16`, and
+    /// a wrap would take a weapon from 65 535 attack to 2 - which reads on screen as the
+    /// scroll having removed the stat it was supposed to grant.
+    #[test]
+    fn a_treasure_scroll_saturates_instead_of_wrapping() {
+        let b = base(7, 1);
+        let mut s = state(7, 0, 1);
+        s.stats.inc_wat = u16::MAX;
+        let grant = EquipStatSet { inc_wat: 10, ..Default::default() };
+        let out = apply_treasure(&b, &s, &grant).unwrap();
+        assert_eq!(out.after.stats.inc_wat, u16::MAX);
+        // And the reported delta is what actually happened, not what was promised.
+        assert_eq!(out.changes, vec![("Weapon Attack", 0)]);
+    }
+
+    /// A scroll that grants nothing still succeeds and still costs the slot - and reports no
+    /// change rather than a fictional one.
+    #[test]
+    fn a_treasure_scroll_granting_nothing_is_still_a_success_that_cost_a_slot() {
+        let b = base(7, 100);
+        let out = apply_treasure(&b, &state(7, 0, 100), &EquipStatSet::default()).unwrap();
+        assert!(out.succeeded);
+        assert!(out.slot_spent);
+        assert_eq!(out.after.remaining, 6);
+        assert!(out.changes.is_empty());
+    }
+
+    /// **The stat names are the client's own tooltip labels**, and this pair is the one that
+    /// was crossed: bit 8 `inc_pad` is `Attack Power` (string `0x0380`) and bit 16 `inc_wat`
+    /// is `Weapon Attack` (`0x037F`). The table used to have them the other way round, so a
+    /// Chaos on a weapon announced a change to "WAT" while the tooltip line beside it said
+    /// *Weapon Attack*.
+    #[test]
+    fn the_stat_labels_are_the_clients_own_and_the_attack_pair_is_not_crossed() {
+        let named = |field: fn(&EquipStatSet) -> u16| {
+            let mut probe = EquipStatSet::default();
+            for (name, get, set) in STATS {
+                set(&mut probe, 1);
+                let hit = field(&probe) == 1;
+                set(&mut probe, 0);
+                if hit {
+                    return *name;
+                }
+                let _ = get;
+            }
+            "not in the table"
+        };
+        assert_eq!(named(|s| s.inc_wat), "Weapon Attack");
+        assert_eq!(named(|s| s.inc_pad), "Attack Power");
+        assert_eq!(named(|s| s.inc_eva), "Evasion");
+        assert_eq!(named(|s| s.inc_crd), "Critical Damage");
+        // No two labels are the same, or a change report could name the wrong line.
+        let mut names: Vec<&str> = STATS.iter().map(|(n, _, _)| *n).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), STATS.len());
     }
 
     /// Every refusal says something, and no two say the same thing - a screenshot has to be
     /// able to name which one fired.
     #[test]
     fn the_refusal_lines_are_distinct_and_non_empty() {
-        let all = [Refusal::NoSlotsLeft, Refusal::NothingToRestore, Refusal::AlreadyAtBase];
+        let all = [
+            Refusal::NoSlotsLeft,
+            Refusal::NothingToRestore,
+            Refusal::AlreadyAtBase,
+            Refusal::NoScrollFits,
+        ];
         for (i, a) in all.iter().enumerate() {
             assert!(!a.line().is_empty());
             for b in &all[i + 1..] {

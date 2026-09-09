@@ -1,4 +1,4 @@
-//! `!scroll` - the Maple Administrator's dialogue for the three scrolls in [`crate::scrolls`].
+//! `!scroll` - the Maple Administrator's dialogue for the two scrolls in [`crate::scrolls`].
 //!
 //! The owner, 2026-09-09: *"`!scroll` will be a new command that functions very similar to `!tool`,
 //! shows up with NPC dialogue from MapleStory Administrator which implements functionality that
@@ -7,15 +7,28 @@
 //! on."*
 //!
 //! `crate::scrolls` owns the rules and knows nothing about dialogue; this owns the wording and
-//! the three steps and knows nothing about the rules. The session joins them.
+//! the steps and knows nothing about the rules. The session joins them.
 //!
-//! # Three steps, and the state rides in the path
+//! # The steps, and the state rides in the path
 //!
 //! ```text
-//!   scroll.pick                     which scroll?      (only ones the player holds)
-//!   scroll.equip:<scrollId>         which worn item?
-//!   scroll.confirm:<scrollId>:<eq>  are you sure?      yes/no
+//!   scroll.pick                          which item?  (only ones the player holds)
+//!
+//!   Scroll of Secrets
+//!     scroll.mode                        Chaos, Innocence or Clean Slate?
+//!     scroll.equip:secrets:<modeKey>     which worn item?
+//!     scroll.confirm:secrets:<key>:<eq>  are you sure?   yes/no
+//!
+//!   Treasure Scroll
+//!     scroll.equip:treasure              which worn item?   (asked FIRST - see below)
+//!     scroll.real:<eq>                   which of your scrolls shall I guarantee?
+//!     scroll.confirm:treasure:<eq>:<id>  are you sure?   yes/no
 //! ```
+//!
+//! **The Treasure Scroll asks for the equip before the scroll**, which is the opposite order
+//! to the other branch and is not an accident: the list of real scrolls it can offer is
+//! filtered to the ones that *fit* the target, so the target has to be known first. Offering
+//! all 208 and refusing 200 of them afterwards would be a menu that mostly disappoints.
 //!
 //! **The path carries the choice because `Conversation` has nowhere else to put it**, and the
 //! alternative - a field per feature on a struct every dialogue shares - is how that struct
@@ -44,16 +57,15 @@
 //!
 //! **Measured, and it is the part that changes the design.** Even if an `#i` icon in a script
 //! window turns out to be hoverable, the tooltip it would show is the *item's own*, and these
-//! three items are repurposed. `String.wz/Etc.img` gives them:
+//! items are repurposed. `String.wz/Etc.img` gives them:
 //!
 //! ```text
-//!   4031066  Treasure Scroll   "A map that shows where the jewels are hidden away."
 //!   4031065  Scroll of Secrets "A mystical scroll written in a lost, ancient language."
-//!   4001009  Event Trophy      "A souvenir for participating in an event. …"
+//!   4031066  Treasure Scroll   "A map that shows where the jewels are hidden away."
 //! ```
 //!
-//! None of which says what the scroll does here. A hover would have to be told our text, and
-//! there is no code that takes text.
+//! Neither says what the scroll does here. A hover would have to be told our text, and there
+//! is no code that takes text.
 //!
 //! **Not found, which is not the same as not there.** Two whole-`.text` scans for the markup
 //! parser - one over byte-register comparisons, one widened to 16- and 32-bit registers
@@ -65,11 +77,11 @@
 //! that cannot see the most likely shape". `tools/find_switch_tables.py` is the instrument
 //! that could, and it has not been pointed at this.
 //!
-//! What this module does in the meantime: the pick menu is one short line per scroll, and the
-//! description is the first thing [`equip_menu`] says one click later. That is the nearest
-//! thing to "on demand" the client is *known* to support.
+//! What this module does in the meantime: every menu is one short line per row, and the
+//! description of a choice is the first thing the *next* screen says. That is the nearest
+//! thing to "on demand" the client is known to support.
 
-use crate::scrolls::{Refusal, Scroll};
+use crate::scrolls::{Refusal, Scroll, SecretsMode};
 
 /// What the player types.
 pub const COMMAND: &str = "scroll";
@@ -77,14 +89,24 @@ pub const COMMAND: &str = "scroll";
 /// The same string with its `!`, for a line a person reads.
 pub const COMMAND_TYPED: &str = "!scroll";
 
-/// Step 1: pick a scroll.
+/// Step 1: pick one of the two items.
 pub const PICK_PATH: &str = "scroll.pick";
 
-/// Step 2: pick a worn item. Followed by `:<scrollItemId>`.
+/// Step 2, Scroll of Secrets only: which of the three it acts as.
+pub const MODE_PATH: &str = "scroll.mode";
+
+/// Which worn item. Followed by `secrets:<modeKey>` or `treasure`.
 pub const EQUIP_PATH_PREFIX: &str = "scroll.equip:";
 
-/// Step 3: confirm. Followed by `:<scrollItemId>:<equipSlot>`.
+/// Treasure Scroll only: which real scroll to guarantee. Followed by `:<equipSlot>`.
+pub const REAL_PATH_PREFIX: &str = "scroll.real:";
+
+/// The yes/no. Followed by `secrets:<key>:<slot>` or `treasure:<slot>:<realScrollId>`.
 pub const CONFIRM_PATH_PREFIX: &str = "scroll.confirm:";
+
+/// The `secrets` / `treasure` discriminator inside a path.
+const SECRETS_TAG: &str = "secrets";
+const TREASURE_TAG: &str = "treasure";
 
 /// Does this conversation path belong to `!scroll`?
 ///
@@ -92,49 +114,129 @@ pub const CONFIRM_PATH_PREFIX: &str = "scroll.confirm:";
 /// Administrator's favour menu do.
 pub fn is_scroll_path(path: &str) -> bool {
     path == PICK_PATH
+        || path == MODE_PATH
         || path.starts_with(EQUIP_PATH_PREFIX)
+        || path.starts_with(REAL_PATH_PREFIX)
         || path.starts_with(CONFIRM_PATH_PREFIX)
 }
 
-/// `scroll.equip:4031065` -> the scroll.
-pub fn scroll_from_equip_path(path: &str) -> Option<Scroll> {
-    Scroll::from_item_id(path.strip_prefix(EQUIP_PATH_PREFIX)?.parse().ok()?)
+/// What the equip menu is being asked on behalf of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Branch {
+    Secrets(SecretsMode),
+    Treasure,
 }
 
-/// `scroll.confirm:4031065:5` -> `(scroll, equip slot)`.
-pub fn choice_from_confirm_path(path: &str) -> Option<(Scroll, u8)> {
-    let rest = path.strip_prefix(CONFIRM_PATH_PREFIX)?;
-    let (id, slot) = rest.split_once(':')?;
-    Some((Scroll::from_item_id(id.parse().ok()?)?, slot.parse().ok()?))
+pub fn equip_path(branch: Branch) -> String {
+    match branch {
+        Branch::Secrets(mode) => format!("{EQUIP_PATH_PREFIX}{SECRETS_TAG}:{}", mode.key()),
+        Branch::Treasure => format!("{EQUIP_PATH_PREFIX}{TREASURE_TAG}"),
+    }
 }
 
-pub fn equip_path(scroll: Scroll) -> String {
-    format!("{EQUIP_PATH_PREFIX}{}", scroll.item_id())
+/// `scroll.equip:secrets:chaos` -> `Branch::Secrets(Chaos)`; `scroll.equip:treasure` ->
+/// `Branch::Treasure`. Anything else is `None` rather than a default.
+pub fn branch_from_equip_path(path: &str) -> Option<Branch> {
+    let rest = path.strip_prefix(EQUIP_PATH_PREFIX)?;
+    if rest == TREASURE_TAG {
+        return Some(Branch::Treasure);
+    }
+    let key = rest.strip_prefix(SECRETS_TAG)?.strip_prefix(':')?;
+    Some(Branch::Secrets(SecretsMode::from_key(key)?))
 }
 
-pub fn confirm_path(scroll: Scroll, equip_slot: u8) -> String {
-    format!("{CONFIRM_PATH_PREFIX}{}:{equip_slot}", scroll.item_id())
+pub fn real_path(equip_slot: u8) -> String {
+    format!("{REAL_PATH_PREFIX}{equip_slot}")
 }
 
-/// What each scroll does, in the player's words. Shown on the pick menu and the confirm box,
-/// because a player choosing between three scrolls they have never seen needs to be told.
-pub fn describe(scroll: Scroll) -> &'static str {
-    match scroll {
-        Scroll::Innocence => {
-            "Returns the item to its original state and gives back every enhancement slot."
+pub fn equip_slot_from_real_path(path: &str) -> Option<u8> {
+    path.strip_prefix(REAL_PATH_PREFIX)?.parse().ok()
+}
+
+/// The confirmed action, which is everything the apply step needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Confirmed {
+    Secrets { mode: SecretsMode, equip_slot: u8 },
+    Treasure { equip_slot: u8, real_scroll: u32 },
+}
+
+impl Confirmed {
+    pub fn equip_slot(self) -> u8 {
+        match self {
+            Confirmed::Secrets { equip_slot, .. } => equip_slot,
+            Confirmed::Treasure { equip_slot, .. } => equip_slot,
         }
-        Scroll::Chaos => {
+    }
+
+    /// Which of the two repurposed items this consumes.
+    pub fn item(self) -> Scroll {
+        match self {
+            Confirmed::Secrets { .. } => Scroll::Secrets,
+            Confirmed::Treasure { .. } => Scroll::Treasure,
+        }
+    }
+}
+
+pub fn confirm_path(action: Confirmed) -> String {
+    match action {
+        Confirmed::Secrets { mode, equip_slot } => {
+            format!("{CONFIRM_PATH_PREFIX}{SECRETS_TAG}:{}:{equip_slot}", mode.key())
+        }
+        Confirmed::Treasure { equip_slot, real_scroll } => {
+            format!("{CONFIRM_PATH_PREFIX}{TREASURE_TAG}:{equip_slot}:{real_scroll}")
+        }
+    }
+}
+
+pub fn confirmed_from_path(path: &str) -> Option<Confirmed> {
+    let rest = path.strip_prefix(CONFIRM_PATH_PREFIX)?;
+    let (tag, rest) = rest.split_once(':')?;
+    let (a, b) = rest.split_once(':')?;
+    match tag {
+        SECRETS_TAG => {
+            Some(Confirmed::Secrets { mode: SecretsMode::from_key(a)?, equip_slot: b.parse().ok()? })
+        }
+        TREASURE_TAG => Some(Confirmed::Treasure {
+            equip_slot: a.parse().ok()?,
+            real_scroll: b.parse().ok()?,
+        }),
+        _ => None,
+    }
+}
+
+/// What each item is, in the player's words.
+pub fn describe_item(scroll: Scroll) -> &'static str {
+    match scroll {
+        Scroll::Secrets => {
+            "Three scrolls in one. You choose which of them it becomes when you use it."
+        }
+        Scroll::Treasure => {
+            "Makes one of the scrolls you are carrying succeed outright, whatever its odds. \
+             It still uses one enhancement slot."
+        }
+    }
+}
+
+/// What each mode of the Scroll of Secrets does. Shown on the mode menu's next screen and on
+/// the confirm box, because a player choosing between three effects needs to be told.
+pub fn describe(mode: SecretsMode) -> &'static str {
+    match mode {
+        SecretsMode::Chaos => {
             "Uses one enhancement slot and randomly raises or lowers one of the item's stats \
              by up to 5. The slot is used whether it works or not."
         }
-        Scroll::CleanSlate => {
+        SecretsMode::Innocence => {
+            "Returns the item to its original state and gives back every enhancement slot. \
+             Nothing you rolled onto it is kept."
+        }
+        SecretsMode::CleanSlate => {
             "Gives back one enhancement slot that a failed scroll used up."
         }
     }
 }
 
 pub fn header() -> String {
-    "I have three scrolls here that you will not find anywhere else in Maple World. \
+    "I have scrolls here that you will not find anywhere else in Maple World. \
      Which one shall I use?"
         .to_string()
 }
@@ -144,48 +246,86 @@ pub fn header() -> String {
 /// The owner, 2026-09-09, with a screenshot: *"the dialogue shown clips"* - the description ran
 /// straight over the top of the selectable line above it.
 ///
-/// The first version of this wrote `#L0#…#l\r\n<description>` per entry, which puts **plain
-/// text after a `#l`**. Every `#L` menu in this client's own `QuestData` was then enumerated -
-/// 33 strings - and:
+/// The first version wrote a CRLF and then the description after each `#l`, which is plain
+/// text following a link close. Every `#L` menu in this client's own `QuestData` was then
+/// enumerated - 33 strings - and:
 ///
 /// ```text
 ///   nothing at all follows the final #l          32 of 33   (the 33rd has a bare #k)
-///   the separator immediately before a #L is \n  81 of 81
+///   the separator immediately before a #L is     81 of 81   a bare newline, never a CRLF
 ///   one #l closes the whole menu                 30 of 33   (3 close each link)
 /// ```
 ///
-/// So text after `#l` is **unattested in 33 out of 33 cases**, and that is the clip. The menu
-/// is the last thing in the string, entries are separated by `\n`, and one `#l` ends it.
-///
-/// The descriptions have not been thrown away - they are the first thing [`equip_menu`] says,
-/// one click later, which is the nearest thing to "on demand" this client demonstrably
-/// supports. See the module docs on the hover question.
+/// So text after `#l` is **unattested in 33 out of 33 cases**, and that is the clip. Every
+/// menu below is therefore the last thing in its string, one row per line, one `#l` at the end.
 const MENU_SEPARATOR: &str = "\n";
 
-/// The pick menu, over the scrolls the player is actually carrying.
+/// Assemble a menu the way this client's own content does: a lead paragraph, a blank line,
+/// then the rows and nothing after them.
 ///
-/// `held` is `(scroll, count)`. **Only scrolls in the bag are listed**: offering one the player
-/// does not have would be a menu entry whose only outcome is a refusal, and a menu that can
-/// only disappoint is worse than a shorter menu.
+/// **One function so there is one shape.** The clip was in `pick_menu` and would have been in
+/// each of the other three the moment they grew a description, because they were four
+/// separate `format!`s that merely happened to agree.
+fn menu(lead: &str, rows: &[String]) -> String {
+    format!("{lead}\n\n{}#l", rows.join(MENU_SEPARATOR))
+}
+
+/// One selectable row: `#L<n>#` then the item's icon, its name, and whatever trails it.
 ///
 /// # The icon
 ///
 /// The owner: *"I also want you to display the item icon as well as part of that line selection."*
 /// `#i<itemId>#` is the icon, and it is attested **164 times** in this client's own quest text
-/// - `"The mirror looks like this: #i4031000#."` - so the code itself is not in doubt.
+/// - `"The mirror looks like this: #i4031000#."* - so the code itself is not in doubt.
 ///
 /// **What is not attested is an icon INSIDE a `#L` region**: zero of the 33 menu strings put
 /// one there, so whether the list widget makes the row tall enough for a 32px canvas is
-/// [I], and it is the same class of question as the clip above. One screen settles it.
+/// **[I]**, and it is the same class of question as the clip above. One screen settles it.
+fn row(index: usize, item_id: u32, name: &str, trailer: &str) -> String {
+    format!("#L{index}##i{item_id}# #b{name}#k{trailer}")
+}
+
+/// Step 1: which of the two items. `held` is `(scroll, count)`.
+///
+/// **Only items in the bag are listed**: offering one the player does not have would be a menu
+/// entry whose only outcome is a refusal, and a menu that can only disappoint is worse than a
+/// shorter menu.
 pub fn pick_menu(held: &[(Scroll, u16)]) -> String {
-    let entries: Vec<String> = held
+    let rows: Vec<String> = held
         .iter()
         .enumerate()
         .map(|(i, (scroll, count))| {
-            format!("#L{i}##i{}# #b{}#k (x{count})", scroll.item_id(), scroll.name())
+            row(i, scroll.item_id(), scroll.name(), &format!(" (x{count})"))
         })
         .collect();
-    format!("{}\n\n{}#l", header(), entries.join(MENU_SEPARATOR))
+    menu(&header(), &rows)
+}
+
+/// Step 2 for the Scroll of Secrets: which of the three it becomes.
+///
+/// Each row says its own success rate, because that is the difference between the three that
+/// the player is actually choosing on, and there is no later screen that would show all three
+/// side by side.
+pub fn mode_menu(guaranteed: [bool; 3]) -> String {
+    let rows: Vec<String> = SecretsMode::ALL
+        .iter()
+        .zip(guaranteed)
+        .enumerate()
+        .map(|(i, (mode, free))| {
+            let odds = if mode.always_succeeds() {
+                "always works".to_string()
+            } else if free {
+                "guaranteed today".to_string()
+            } else {
+                format!("{}%", crate::scrolls::ROLLED_SUCCESS_PCT)
+            };
+            row(i, crate::scrolls::SCROLL_OF_SECRETS, mode.name(), &format!(" - {odds}"))
+        })
+        .collect();
+    menu(
+        "A #bScroll of Secrets#k is whichever of these you need it to be. Which shall it be?",
+        &rows,
+    )
 }
 
 pub fn nothing_to_use() -> String {
@@ -201,50 +341,95 @@ pub fn nothing_equipped() -> String {
 
 /// The worn-item menu. `worn` is `(equip slot, item id, item name, remaining slots, failed)`.
 ///
-/// **This is where the description lives.** It is the first line, as plain text above the
-/// menu, which is the one position for non-link text that this client's own content attests -
-/// see [`MENU_SEPARATOR`]. The pick menu is a list of names and the moment one is chosen this
-/// says what it does, so nothing is lost by keeping the list short.
-///
-/// Same menu shape as [`pick_menu`], for the same measured reason, and the same `#i` icon per
-/// row with the same [I] on an icon inside a `#L`.
-pub fn equip_menu(scroll: Scroll, worn: &[(u8, u32, String, u8, u8)]) -> String {
-    let entries: Vec<String> = worn
+/// **This is where the chosen effect is described.** It is the lead paragraph, plain text
+/// above the menu, which is the one position for non-link text that this client's own content
+/// attests. The menu before it is a list of names, and the moment one is chosen this says what
+/// it does - so nothing is lost by keeping the lists short.
+pub fn equip_menu(branch: Branch, worn: &[(u8, u32, String, u8, u8)]) -> String {
+    let lead = match branch {
+        Branch::Secrets(mode) => {
+            format!("#b{}#k. {}\n\nWhich of the things you are wearing shall I use it on?",
+                    mode.name(), describe(mode))
+        }
+        Branch::Treasure => {
+            "#bTreasure Scroll#k. I will make one of your own scrolls succeed outright.\n\n\
+             Which of the things you are wearing is it for?"
+                .to_string()
+        }
+    };
+    let rows: Vec<String> = worn
         .iter()
         .enumerate()
         .map(|(i, (_, item_id, name, remaining, failed))| {
-            format!(
-                "#L{i}##i{item_id}# #b{name}#k - {remaining} slot(s) left, {failed} failed"
-            )
+            row(i, *item_id, name, &format!(" - {remaining} slot(s) left, {failed} failed"))
         })
         .collect();
+    menu(&lead, &rows)
+}
+
+/// Nothing in the bag fits the chosen equip. Names the item, because "no scroll fits" without
+/// saying what it had to fit is a refusal the player cannot act on.
+pub fn no_scroll_fits(item_name: &str) -> String {
     format!(
-        "#b{}#k. {}\n\nWhich of the things you are wearing shall I use it on?\n\n{}#l",
-        scroll.name(),
-        describe(scroll),
-        entries.join(MENU_SEPARATOR)
+        "None of the scrolls you are carrying were made for a #b{item_name}#k. \
+         Bring me one that was, and I will make it work."
     )
 }
 
-/// The confirm box. Deliberately restates BOTH the scroll and the item: the owner asked for a
-/// confirmation, and a confirmation that does not name what it is confirming is a button.
-pub fn confirm(scroll: Scroll, item_name: &str, guaranteed: bool) -> String {
-    let odds = if scroll.always_succeeds() {
-        "This one always works.".to_string()
-    } else if guaranteed {
-        "Your first use of this scroll today is guaranteed to work.".to_string()
-    } else {
-        format!(
-            "You have already used one today, so this one has a {}% chance.",
-            crate::scrolls::ROLLED_SUCCESS_PCT
-        )
-    };
-    format!(
-        "Use #b{}#k on your #b{item_name}#k?\r\n\r\n{}\r\n{odds}\r\n\r\n\
-         The scroll is used up either way.",
-        scroll.name(),
-        describe(scroll)
+/// Treasure Scroll step 3: which of the player's real scrolls to guarantee.
+///
+/// `offered` is `(scroll item id, name, normal success rate, count held)`, already filtered to
+/// the ones that fit the chosen equip.
+///
+/// **The normal rate is shown on every row**, and it is the whole point of the screen: a 10%
+/// scroll and a 100% scroll cost the same Treasure Scroll, so a player who cannot see the
+/// difference cannot spend it well.
+pub fn real_scroll_menu(item_name: &str, offered: &[(u32, String, u16, u16)]) -> String {
+    let rows: Vec<String> = offered
+        .iter()
+        .enumerate()
+        .map(|(i, (id, name, success, count))| {
+            row(i, *id, name, &format!(" - normally {success}% (x{count})"))
+        })
+        .collect();
+    menu(
+        &format!(
+            "These are the scrolls you carry that fit your #b{item_name}#k. \
+             Whichever you choose will succeed.\n\nWhich one?"
+        ),
+        &rows,
     )
+}
+
+/// The confirm box. Deliberately restates BOTH what is being used and what it is being used
+/// on: the owner asked for a confirmation, and a confirmation that does not name what it is
+/// confirming is a button.
+pub fn confirm(action: Confirmed, item_name: &str, real_name: &str, guaranteed: bool) -> String {
+    match action {
+        Confirmed::Secrets { mode, .. } => {
+            let odds = if mode.always_succeeds() {
+                "This one always works.".to_string()
+            } else if guaranteed {
+                "Your first use of this scroll today is guaranteed to work.".to_string()
+            } else {
+                format!(
+                    "You have already used one today, so this one has a {}% chance.",
+                    crate::scrolls::ROLLED_SUCCESS_PCT
+                )
+            };
+            format!(
+                "Use a #bScroll of Secrets#k as a #b{}#k on your #b{item_name}#k?\n\n{}\n{odds}\n\n\
+                 The scroll is used up either way.",
+                mode.name(),
+                describe(mode)
+            )
+        }
+        Confirmed::Treasure { .. } => format!(
+            "Use your #bTreasure Scroll#k to guarantee a #b{real_name}#k on your \
+             #b{item_name}#k?\n\nIt will succeed, and one enhancement slot will be used.\n\n\
+             Both scrolls are used up."
+        ),
+    }
 }
 
 pub fn cancelled() -> String {
@@ -255,40 +440,57 @@ pub fn refused(refusal: Refusal) -> String {
     format!("{} Nothing has been used up.", refusal.line())
 }
 
-/// The outcome line. `stat_change` is the `(name, delta)` Chaos produced, if any.
+/// The outcome line. `changes` is every `(name, delta)` the scroll produced.
 pub fn outcome(
-    scroll: Scroll,
+    action: Confirmed,
     item_name: &str,
+    real_name: &str,
     succeeded: bool,
-    stat_change: Option<(&str, i32)>,
+    changes: &[(&str, i32)],
     remaining: u8,
 ) -> String {
-    let head = match (scroll, succeeded) {
-        (Scroll::Innocence, _) => {
+    let head = match action {
+        Confirmed::Secrets { mode: SecretsMode::Innocence, .. } => {
             format!("Your #b{item_name}#k is as it was the day it was made.")
         }
-        (Scroll::Chaos, true) => match stat_change {
-            Some((stat, d)) if d > 0 => {
+        Confirmed::Secrets { mode: SecretsMode::Chaos, .. } if succeeded => match changes.first() {
+            Some((stat, d)) if *d > 0 => {
                 format!("It worked. #b{item_name}#k gained {d} {stat}.")
             }
-            Some((stat, d)) if d < 0 => {
+            Some((stat, d)) if *d < 0 => {
                 format!("It worked, after a fashion. #b{item_name}#k lost {} {stat}.", -d)
             }
             // A roll of zero, or an item with no stats to move. It is still a success and the
             // slot is still gone, so it must not read as a failure.
             _ => format!("It worked, but nothing about #b{item_name}#k changed."),
         },
-        (Scroll::Chaos, false) => {
+        Confirmed::Secrets { mode: SecretsMode::Chaos, .. } => {
             format!("It failed, and the slot is gone. #b{item_name}#k is unchanged otherwise.")
         }
-        (Scroll::CleanSlate, true) => {
+        Confirmed::Secrets { mode: SecretsMode::CleanSlate, .. } if succeeded => {
             format!("One of the slots you lost is back. #b{item_name}#k can be scrolled again.")
         }
-        (Scroll::CleanSlate, false) => {
+        Confirmed::Secrets { mode: SecretsMode::CleanSlate, .. } => {
             format!("It failed. #b{item_name}#k keeps the slots it has.")
         }
+        // The Treasure Scroll cannot fail, so there is no failure arm to write. A scroll that
+        // granted nothing is still a success and still cost a slot, and must say so.
+        Confirmed::Treasure { .. } => {
+            if changes.is_empty() {
+                format!("The #b{real_name}#k took, but it had nothing to give #b{item_name}#k.")
+            } else {
+                let list: Vec<String> = changes
+                    .iter()
+                    .map(|(stat, d)| format!("{}{d} {stat}", if *d > 0 { "+" } else { "" }))
+                    .collect();
+                format!(
+                    "The #b{real_name}#k took hold. #b{item_name}#k gained {}.",
+                    list.join(", ")
+                )
+            }
+        }
     };
-    format!("{head}\r\n\r\nEnhancement slots remaining: #b{remaining}#k.")
+    format!("{head}\n\nEnhancement slots remaining: #b{remaining}#k.")
 }
 
 #[cfg(test)]
@@ -299,11 +501,47 @@ mod tests {
     /// in a diff and this repo has already lost one to a heredoc halving its backslashes.
     const CARRIAGE_RETURN: char = '\r';
 
+    fn worn() -> Vec<(u8, u32, String, u8, u8)> {
+        vec![
+            (5, 1_322_999, "Wizet Secret Agent Suitcase".to_string(), 6, 1),
+            (11, 1_040_002, "Grey T-Shirt".to_string(), 7, 0),
+        ]
+    }
+
+    /// Real rows, so the fixture and `gm-handbook/scrolls.txt` cannot drift:
+    /// `2043200` is *Lesser*, 100%; `2043202` is *Greater*, 10%. Both are One-Handed Blunt
+    /// Weapon scrolls, which is the category of the owner's `1322999` suitcase.
+    fn offered() -> Vec<(u32, String, u16, u16)> {
+        vec![
+            (2_043_200, "One-Handed Blunt Weapon Attack Scroll: Lesser".to_string(), 100, 2),
+            (2_043_202, "One-Handed Blunt Weapon Attack Scroll: Greater".to_string(), 10, 1),
+        ]
+    }
+
+    fn every_menu() -> Vec<String> {
+        vec![
+            pick_menu(&[(Scroll::Secrets, 3), (Scroll::Treasure, 1)]),
+            mode_menu([true, false, true]),
+            equip_menu(Branch::Secrets(SecretsMode::Chaos), &worn()),
+            equip_menu(Branch::Treasure, &worn()),
+            real_scroll_menu("Wizet Secret Agent Suitcase", &offered()),
+        ]
+    }
+
     /// **The path prefix cannot be confused with any other dialogue's.** A type-6 reply carries
     /// no speaker, so if two features shared a prefix each would answer the other's menu.
     #[test]
     fn the_scroll_paths_are_disjoint_from_every_other_dialogue() {
-        for p in [PICK_PATH, &equip_path(Scroll::Chaos), &confirm_path(Scroll::Chaos, 5)] {
+        let paths = [
+            PICK_PATH.to_string(),
+            MODE_PATH.to_string(),
+            equip_path(Branch::Secrets(SecretsMode::Chaos)),
+            equip_path(Branch::Treasure),
+            real_path(5),
+            confirm_path(Confirmed::Secrets { mode: SecretsMode::Chaos, equip_slot: 5 }),
+            confirm_path(Confirmed::Treasure { equip_slot: 5, real_scroll: 2_043_200 }),
+        ];
+        for p in &paths {
             assert!(is_scroll_path(p), "{p}");
             assert!(!crate::dailyperks::is_menu_path(p), "{p}");
             assert!(!crate::secondjob::is_menu_path(p), "{p}");
@@ -314,59 +552,44 @@ mod tests {
         assert!(!is_scroll_path(""));
     }
 
-    /// The state really does survive the round trip through the path.
+    /// The state really does survive the round trip through the path - every branch of it.
     #[test]
-    fn the_choice_round_trips_through_the_path() {
-        for scroll in [Scroll::Innocence, Scroll::Chaos, Scroll::CleanSlate] {
-            assert_eq!(scroll_from_equip_path(&equip_path(scroll)), Some(scroll));
+    fn every_choice_round_trips_through_the_path() {
+        for mode in SecretsMode::ALL {
+            assert_eq!(
+                branch_from_equip_path(&equip_path(Branch::Secrets(mode))),
+                Some(Branch::Secrets(mode))
+            );
             for slot in [1u8, 5, 11, 255] {
-                assert_eq!(
-                    choice_from_confirm_path(&confirm_path(scroll, slot)),
-                    Some((scroll, slot))
-                );
+                let c = Confirmed::Secrets { mode, equip_slot: slot };
+                assert_eq!(confirmed_from_path(&confirm_path(c)), Some(c));
             }
         }
-        // Garbage decodes to nothing rather than to a default.
-        assert_eq!(scroll_from_equip_path("scroll.equip:999"), None);
-        assert_eq!(choice_from_confirm_path("scroll.confirm:4031065"), None);
-        assert_eq!(choice_from_confirm_path("scroll.confirm:4031065:x"), None);
+        assert_eq!(branch_from_equip_path(&equip_path(Branch::Treasure)), Some(Branch::Treasure));
+        for slot in [1u8, 5, 255] {
+            assert_eq!(equip_slot_from_real_path(&real_path(slot)), Some(slot));
+            let c = Confirmed::Treasure { equip_slot: slot, real_scroll: 2_043_200 };
+            assert_eq!(confirmed_from_path(&confirm_path(c)), Some(c));
+        }
+        // Garbage decodes to nothing rather than to a default. A `Secrets` path that names no
+        // mode is the dangerous one: a default would silently run a Chaos.
+        assert_eq!(branch_from_equip_path("scroll.equip:secrets:nonsense"), None);
+        assert_eq!(branch_from_equip_path("scroll.equip:"), None);
+        assert_eq!(confirmed_from_path("scroll.confirm:secrets:chaos"), None);
+        assert_eq!(confirmed_from_path("scroll.confirm:treasure:5:x"), None);
+        assert_eq!(confirmed_from_path("scroll.confirm:other:5:5"), None);
     }
 
-    /// A menu entry per scroll held, numbered from zero, matching what `parse_menu_reply`
-    /// returns - an off-by-one here uses the wrong scroll, which is unrecoverable for a player.
-    #[test]
-    fn the_pick_menu_numbers_from_zero_and_lists_only_what_is_held() {
-        let text = pick_menu(&[(Scroll::Chaos, 3), (Scroll::CleanSlate, 1)]);
-        assert!(text.contains("#L0#"), "{text}");
-        assert!(text.contains("#L1#"), "{text}");
-        assert!(!text.contains("#L2#"), "only two are held: {text}");
-        assert!(text.contains("Scroll of Secrets"));
-        assert!(text.contains("(x3)"));
-        assert!(!text.contains("Event Trophy"), "not held, so not offered");
-    }
-
-    /// **The clip the owner photographed, as an assertion.**
+    /// **The clip the owner photographed, as an assertion, over every menu this module builds.**
     ///
-    /// The old pick menu wrote a CRLF and then the description after each `#l`, which is
-    /// plain text following a link close, and the description drew over the
-    /// top of the line above it. 33 of 33 `#L` menus in this client's own `QuestData` end at
-    /// the final `#l`, so plain text after one is unattested - and on screen it clips.
-    ///
-    /// This is asserted on both menus, because both build a list and only one of them was
-    /// photographed.
+    /// 33 of 33 `#L` menus in this client's own `QuestData` end at the final `#l`, so plain
+    /// text after one is unattested - and on screen it clips. Only one of these five menus was
+    /// photographed; all five are held to it.
     #[test]
     fn nothing_follows_the_final_link_close_in_any_menu() {
-        let worn = vec![
-            (5u8, 1_402_043u32, "Wizet Secret Agent Suitcase".to_string(), 6u8, 1u8),
-            (11, 1_040_002, "White Undershirt".to_string(), 7, 0),
-        ];
-        for text in [
-            pick_menu(&[(Scroll::Innocence, 1), (Scroll::Chaos, 3), (Scroll::CleanSlate, 1)]),
-            equip_menu(Scroll::Chaos, &worn),
-        ] {
+        for text in every_menu() {
             assert!(text.ends_with("#l"), "the menu must be the last thing: {text:?}");
             assert_eq!(text.matches("#l").count(), 1, "one close for the whole menu: {text:?}");
-            // The separator the client's own content uses before a #L, 81 times out of 81.
             assert!(
                 !text.contains(CARRIAGE_RETURN),
                 "a CR is not the attested separator: {text:?}"
@@ -374,63 +597,117 @@ mod tests {
         }
     }
 
-    /// The owner: *"I also want you to display the item icon as well as part of that line
-    /// selection."* `#i<itemId>#`, and the id must be the scroll's own - an icon showing the
-    /// wrong item is worse than no icon, because it reads as a working feature.
+    /// Every row is numbered from zero and carries its own icon, on every menu.
+    ///
+    /// The numbering matches what `parse_menu_reply` returns - an off-by-one uses the wrong
+    /// scroll, which is unrecoverable for a player - and the icon must be the row's own item,
+    /// because an icon showing something else reads as a working feature.
     #[test]
-    fn every_menu_row_carries_its_own_item_icon() {
-        let text = pick_menu(&[(Scroll::Chaos, 3), (Scroll::CleanSlate, 1)]);
-        assert!(text.contains("#L0##i4031065# #bScroll of Secrets#k (x3)"), "{text}");
-        assert!(text.contains("#L1##i4031066# #bTreasure Scroll#k (x1)"), "{text}");
-        let worn = vec![(5u8, 1_402_043u32, "Suitcase".to_string(), 6u8, 1u8)];
-        assert!(equip_menu(Scroll::Chaos, &worn).contains("#L0##i1402043# #bSuitcase#k"),
-                "the worn list draws its own icons too");
+    fn every_menu_row_is_numbered_from_zero_and_carries_its_own_icon() {
+        for text in every_menu() {
+            assert!(text.contains("#L0##i"), "row 0 has an icon: {text:?}");
+            assert!(text.contains("#L1##i"), "row 1 has an icon: {text:?}");
+            assert!(!text.contains("#L3#"), "none of these fixtures has four rows: {text:?}");
+        }
+        // The ids themselves, spot-checked where getting them wrong would be invisible.
+        let p = pick_menu(&[(Scroll::Secrets, 3), (Scroll::Treasure, 1)]);
+        assert!(p.contains("#L0##i4031065# #bScroll of Secrets#k (x3)"), "{p}");
+        assert!(p.contains("#L1##i4031066# #bTreasure Scroll#k (x1)"), "{p}");
+        let e = equip_menu(Branch::Treasure, &worn());
+        assert!(e.contains("#L0##i1322999# #bWizet Secret Agent Suitcase#k"), "{e}");
+        let r = real_scroll_menu("Suitcase", &offered());
+        assert!(r.contains("#L0##i2043200#"), "{r}");
     }
 
-    /// The description did not vanish with the clip fix - it moved one click later, and if it
-    /// ever stops being said there the pick menu becomes three unexplained names.
+    /// The mode menu is the one screen where all three effects are compared, so it must say
+    /// each one's odds - and it must not claim a guarantee that the day has already spent.
     #[test]
-    fn the_equip_menu_still_explains_what_the_chosen_scroll_does() {
-        let worn = vec![(5u8, 1_402_043u32, "Suitcase".to_string(), 6u8, 1u8)];
-        for scroll in [Scroll::Innocence, Scroll::Chaos, Scroll::CleanSlate] {
-            let text = equip_menu(scroll, &worn);
-            assert!(text.contains(describe(scroll)), "{scroll:?}: {text}");
+    fn the_mode_menu_states_each_modes_odds() {
+        let fresh = mode_menu([true, true, true]);
+        assert!(fresh.contains("Chaos Scroll#k - guaranteed today"), "{fresh}");
+        assert!(fresh.contains("Innocence Scroll#k - always works"), "{fresh}");
+        let spent = mode_menu([false, true, false]);
+        assert!(spent.contains("Chaos Scroll#k - 60%"), "{spent}");
+        assert!(spent.contains("Clean Slate Scroll#k - 60%"), "{spent}");
+        // Innocence has no daily pass at all, so its row must never move.
+        assert!(spent.contains("Innocence Scroll#k - always works"), "{spent}");
+    }
+
+    /// The description did not vanish with the clip fix - it moved one screen later, and if it
+    /// ever stops being said there the mode menu becomes three unexplained names.
+    #[test]
+    fn the_equip_menu_still_explains_the_chosen_effect() {
+        for mode in SecretsMode::ALL {
+            let text = equip_menu(Branch::Secrets(mode), &worn());
+            assert!(text.contains(describe(mode)), "{mode:?}: {text}");
         }
     }
 
-    /// The confirm box must name the scroll AND the item, and must state the odds - a
-    /// confirmation that does not say what it is confirming is just a button.
+    /// The confirm box must name what is being used AND what it is used on, and must state the
+    /// odds - a confirmation that does not say what it is confirming is just a button.
     #[test]
     fn the_confirm_box_names_both_and_states_the_odds() {
-        let g = confirm(Scroll::Chaos, "Maple Sword", true);
-        assert!(g.contains("Scroll of Secrets") && g.contains("Maple Sword"), "{g}");
+        let chaos = Confirmed::Secrets { mode: SecretsMode::Chaos, equip_slot: 5 };
+        let g = confirm(chaos, "Maple Sword", "", true);
+        assert!(g.contains("Chaos Scroll") && g.contains("Maple Sword"), "{g}");
         assert!(g.contains("guaranteed"), "{g}");
-        let r = confirm(Scroll::Chaos, "Maple Sword", false);
+        let r = confirm(chaos, "Maple Sword", "", false);
         assert!(r.contains("60%"), "{r}");
         // Innocence never rolls, so it must not offer odds at all.
-        let i = confirm(Scroll::Innocence, "Maple Sword", false);
+        let inno = Confirmed::Secrets { mode: SecretsMode::Innocence, equip_slot: 5 };
+        let i = confirm(inno, "Maple Sword", "", false);
         assert!(i.contains("always works"), "{i}");
         assert!(!i.contains('%'), "{i}");
+        // The Treasure Scroll names the real scroll too - it is spending two items and must
+        // say which two.
+        let t = Confirmed::Treasure { equip_slot: 5, real_scroll: 2_043_200 };
+        let text = confirm(t, "Maple Sword", "Greater Attack Scroll", false);
+        assert!(text.contains("Treasure Scroll"), "{text}");
+        assert!(text.contains("Greater Attack Scroll"), "{text}");
+        assert!(text.contains("Maple Sword"), "{text}");
+        assert!(text.contains("Both scrolls are used up"), "{text}");
     }
 
     /// A Chaos that rolled zero is a SUCCESS that changed nothing. The player still paid a
     /// slot, so wording it as a failure would be a lie about what it cost them.
     #[test]
     fn a_zero_roll_chaos_does_not_read_as_a_failure() {
-        let t = outcome(Scroll::Chaos, "Maple Sword", true, None, 4);
+        let chaos = Confirmed::Secrets { mode: SecretsMode::Chaos, equip_slot: 5 };
+        let t = outcome(chaos, "Maple Sword", "", true, &[], 4);
         assert!(t.contains("worked"), "{t}");
         assert!(!t.to_lowercase().contains("failed"), "{t}");
-        let f = outcome(Scroll::Chaos, "Maple Sword", false, None, 4);
+        let f = outcome(chaos, "Maple Sword", "", false, &[], 4);
         assert!(f.contains("failed"), "{f}");
+    }
+
+    /// A real scroll can grant several stats at once, and the outcome must list all of them -
+    /// reporting only the first would understate what the player just spent two items on.
+    #[test]
+    fn a_treasure_scroll_outcome_lists_every_stat_it_granted() {
+        let t = Confirmed::Treasure { equip_slot: 5, real_scroll: 2_040_800 };
+        let text = outcome(t, "Work Gloves", "Gloves Attack Scroll", true,
+                           &[("Attack Power", 2), ("Accuracy", 1)], 5);
+        assert!(text.contains("+2 Attack Power"), "{text}");
+        assert!(text.contains("+1 Accuracy"), "{text}");
+        assert!(text.contains("Gloves Attack Scroll"), "{text}");
+        // A scroll that granted nothing is still a success and still cost a slot.
+        let none = outcome(t, "Work Gloves", "Gloves Attack Scroll", true, &[], 5);
+        assert!(!none.to_lowercase().contains("failed"), "{none}");
+        assert!(none.contains("nothing to give"), "{none}");
     }
 
     /// Every outcome states the slots left, because that is the number the player is deciding
     /// on next and the client's own tooltip is the only other place it appears.
     #[test]
     fn every_outcome_reports_the_remaining_slots() {
-        for scroll in [Scroll::Innocence, Scroll::Chaos, Scroll::CleanSlate] {
+        let mut actions: Vec<Confirmed> = SecretsMode::ALL
+            .iter()
+            .map(|&mode| Confirmed::Secrets { mode, equip_slot: 5 })
+            .collect();
+        actions.push(Confirmed::Treasure { equip_slot: 5, real_scroll: 2_043_200 });
+        for action in actions {
             for ok in [true, false] {
-                let t = outcome(scroll, "Maple Sword", ok, Some(("STR", 2)), 3);
+                let t = outcome(action, "Maple Sword", "Scroll", ok, &[("STR", 2)], 3);
                 assert!(t.contains("Enhancement slots remaining: #b3#k"), "{t}");
             }
         }

@@ -83,3 +83,103 @@ Real scrolling (`0x0125`, `research/scrolling-2026-09-09.md`) is decoded but **n
 implemented**. Until it is, these three are the only things that can create or consume an
 enhancement slot, so the failed-slot counter has exactly one writer. That is a good state to
 build in, and a reason to do `!scroll` before or alongside `0x0125` rather than after.
+
+---
+
+# The spec changed, later the same day
+
+Everything above is the ORIGINAL spec and is kept as written, because two of its sentences are
+still the rule and the third is not. The owner, after seeing the first build on a screen:
+
+> *"Okay I lied, plan change. Do not use event trophy since it does not stack."*
+
+and, as draft patch notes:
+
+> **Scroll of Secrets (Global Drop 0.01% chance)** - Functions either one of the following
+> scrolls
+> * *Chaos Scroll (100% first time of the day, otherwise 60%), randomly increases or decreases
+>   one of the item's base stat by up to 5 points. Reduces enhancement slot by 1.*
+> * *Innocence Scroll (100%), returns the item back to its unmodified base state, no random
+>   base stats will be kept. Returns all enhancement slots. Does not require an enhancement
+>   slot to use.*
+> * *Clean Slate Scroll (100% first time of the day, otherwise 60%), returns a failed
+>   enhancement slot of a previous scroll you have used upon the item. You cannot recover an
+>   enhancement slot if the original scroll succeeded.*
+>
+> **Treasure Scroll (Global Drop 0.01% chance)**
+> * *Use this Scroll to automatically succeed the next scroll of your choosing via the GUI
+>   options and apply those stat increases to the item immediately while subtracting an item
+>   enhancement.*
+
+## What changed, and what did not
+
+| | before | after |
+|---|---|---|
+| items | three | **two** |
+| `4001009` Event Trophy | the Innocence Scroll | **dropped entirely** |
+| Innocence | its own item | a **mode** of the Scroll of Secrets |
+| `4031065` Scroll of Secrets | Chaos only | **all three modes**, chosen in the dialogue |
+| `4031066` Treasure Scroll | Clean Slate | **guarantees a real scroll** the player carries |
+
+Unchanged: the daily gate is still per scroll type per character (now keyed on the *mode*), a
+failed Chaos still eats the slot, Clean Slate is still a counter, and the repurposed item is
+still consumed on every use.
+
+## Why Event Trophy went, measured
+
+`gm-handbook/itemdata.txt`, column 5 is `info/slotMax`:
+
+```text
+4001009, 5000, 0, 0, 0, 0     <- slotMax 0
+4031065, 1, 1, 0, 1, 0        <- slotMax 1
+4031066, 1, 1, 0, 1, 0        <- slotMax 1
+```
+
+**All three are 0 or 1, so none of them stacks on the client's own numbers.** The owner found it on
+Event Trophy first. `crate::shops::max_stack` overrides all of them server-side to 100, and
+whether that override is honoured by a client whose `slotMax` says otherwise is **[I]** - it
+did not save `4001009`, and nothing has been measured about `slotMax = 1` behaving differently
+from `slotMax = 0`. Asked which way to go, the owner chose **keep `4031065`/`4031066` and test on a
+screen**. If the answer is that it does not stack either, 161 of the 359 Etc items already
+carry `slotMax = 200`.
+
+## The Treasure Scroll's menu source, asked and answered
+
+*"the next scroll of your choosing via the GUI options"* has two readings and they need
+opposite implementations: any real scroll that fits the item, or only one the player owns.
+Asked directly, the owner chose **only a real scroll you are carrying**. It is consumed along with
+the Treasure Scroll, it is guaranteed to succeed, and one enhancement slot is spent.
+
+### Which real scrolls fit which equip - derived, and controlled
+
+There is no applicability field in the WZ. `0204.img`'s `itemID1/2/3` are the *other tiers of
+the same scroll* (`2040000` names `2040001/2/3`), not a list of targets. The rule is the id:
+
+```text
+    equip category = equip_id / 10000
+    scroll category = 100 + (scroll_id % 10000) / 100
+```
+
+**Controlled against the client's own names**, which can disagree: grouping all 208 scrolls by
+the derived category gives 24 groups, and every group's name begins with the category word -
+*Hat*, *Earring*, *Topwear*, *Overall Armor*, *Bottomwear*, *Shoes*, *Gloves*, *Shield*,
+*Cape*, *One-Handed Sword* … *Claw*, *Pet Equip*. 24 of 24 agree.
+
+And against a screen: the owner's **1322999** Wizet Secret Agent Suitcase has a tooltip reading
+*One-Handed Blunt Weapon*. `1322999 / 10000 = 132`, and `2043200`'s name is *One-Handed Blunt
+Weapon Attack Scroll*. `crate::config::ScrollTemplate::category` carries both controls as a
+test over the real file.
+
+## Two bugs the first build shipped, both the same pair of stats crossed
+
+The owner, scrolling the suitcase: *"It lost 1 weapon attack on the item, but it also gave it 200
+attack power."*
+
+* `session/scroll.rs`'s `equip_base` wrote `inc_pad: t.inc_wat`. This client's
+  `Character.wz` has `incWAT` on 202 equips and **`incPAD` on none**, so bit 8 must be zero.
+  The Chaos roll was correct; the *base* it was measured against was not.
+* `scrolls.rs`'s `STATS` table labelled `inc_pad` **"Weapon Attack"** and `inc_wat` **"WAT"** -
+  the same two crossed, in the strings read out to the player.
+
+Both now go through the one function that owns the mapping, and the labels are the client's own
+tooltip strings (`0x0380` *Attack Power*, `0x037F` *Weapon Attack*).
