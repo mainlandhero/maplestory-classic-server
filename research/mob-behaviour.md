@@ -479,10 +479,22 @@ followed the abort path and stopped there. On the arm that actually sends, **ele
 encodes run first**: `141cb83e7, 8412, 84b7, 8548, 8557, 8571, 85d5, 85e9, 85fe, 860e, 8626`
 - five `w_u8` and six `w_u32` - before `141cb8632`. [L]
 
-So **the field list above is a prefix of `0x2FF`, not the whole of it.** The trailing eleven
-are deliberately not named here: several sit behind their own branches, so a static count is
-an upper bound on any single packet and naming them from position alone is the guess this
-file already paid for once.
+So **the field list above is a prefix of `0x2FF`, not the whole of it.**
+
+**But the trailing eleven are not unknown - they are decoded in the code, and have been all
+along.** `crates/net/src/mobmove.rs` accounts for `0x02FF` as a head, the movement path and a
+**tail**, and it did not get that from this file: it names `141cb85fe` - which is in the
+post-fork run above - as `mob+0x960`, the controller level, and observes that every captured
+body carries the `1` this server granted. Its layout closes exactly on **30 of 30** captured
+bodies, and the later type-aware path walk closes on **860 656 of 860 656** deduplicated
+archived bodies. A layout that lands to the byte on that many real packets is not resting on
+this transcript. [L]
+
+That is the shape of the defect, and it is worth naming: **the truncation was in the
+write-up, not in the implementation.** This file is the stale copy of something the code
+already had right - the inverse of *"built is not wired"*, and the same failure as
+`loop_builders.py` holding a table its own comment said to keep in step. Read `mobmove.rs`
+for the field list; this section is the disassembly landmark for it, nothing more.
 
 **What survives unchanged:** everything below rests on the *first* `Encode4` and on a write
 scan, both before the fork, so `mob+0x3a0` = object id is untouched by this.
