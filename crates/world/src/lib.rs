@@ -28,6 +28,7 @@
 //! store gives is **single use**. See `store::migration`.
 
 pub mod broadcast;
+pub mod chairs;
 pub mod commodity;
 pub mod config;
 /// The Maple Administrator's three once-a-day favours, and the words they say about them.

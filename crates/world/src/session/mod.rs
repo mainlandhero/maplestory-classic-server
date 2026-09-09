@@ -151,6 +151,11 @@ pub struct Session {
     config: Arc<Config>,
     /// The migration this connection claimed, once it has claimed one.
     claimed: Option<ClaimedMigration>,
+    /// The chair the player is sitting on, if any - `net::chair`, `session/chair.rs`.
+    ///
+    /// Set by `0x00DB` and cleared by `0x00DA`. It scales the idle tick and nothing else; the
+    /// client's own on-screen seating is not driven from here.
+    seated_chair: Option<u32>,
     /// The source address this connection arrived from, if the socket reported one.
     ///
     /// **Recorded and reported, never decisive.** Two clients on one machine share it, so
@@ -462,6 +467,7 @@ impl Drop for Session {
 
 mod ability;
 mod buff;
+mod chair;
 mod cashshop;
 mod combat;
 mod consume;
@@ -506,6 +512,7 @@ impl Session {
             config,
             subscriber,
             claimed: None,
+            seated_chair: None,
             peer: None,
             peer_addr: None,
             local_addr: None,
@@ -772,6 +779,14 @@ impl Session {
             // session/keymap.rs for why silence is safe here and how that was measured.
             net::keymap::CLIENT_KEYMAP_CHANGE => {
                 return self.on_keymap_change(body.get(2..).unwrap_or(&[]))
+            }
+            // Sitting down and standing up. BOTH still return the exclusive-request unlock -
+            // see session/chair.rs; without it the client cannot even ask to stand.
+            net::chair::CLIENT_CHAIR_SIT => {
+                return self.on_chair_sit(body.get(2..).unwrap_or(&[]))
+            }
+            net::chair::CLIENT_CHAIR_CANCEL => {
+                return self.on_chair_cancel(body.get(2..).unwrap_or(&[]))
             }
             // The client telling us where it walked. **Answered with nothing, deliberately**
             // - 1082 of these went unanswered across every captured session and the client

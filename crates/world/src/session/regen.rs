@@ -232,11 +232,29 @@ impl Session {
         // regeneration amount in this client's data to apply. Inventing one is the thing the
         // symmetry with MP most invites; `itemrecovery::mp_regen_percent` refuses the HP id
         // for the same reason.
-        let hp = chr.hp.saturating_add(REGEN_AMOUNT).min(pools.max_hp.max(chr.hp));
+        // **The chair.** The owner, 2026-09-08: *"my character just sat in a chair, but the idle
+        // recovery did not adjust to match the chair's recovery stats."* The Red Chair's own
+        // tooltip says *"Restores an additional 30 HP every 10 seconds"* - `additional`, so it
+        // adds to the flat base rather than replacing it, and `10 seconds` is exactly
+        // `REGEN_EVERY_MS`, so it is one chair figure per tick with no scaling. Both halves of
+        // that are read off the client rather than assumed; `world::chairs`.
+        //
+        // `(0, 0)` when standing, when the chair id is unknown, and when `gm-handbook/` has
+        // never been generated - all of which leave this line as it was before chairs existed.
+        let (chair_hp, chair_mp) = self.chair_recovery();
+        let hp = chr
+            .hp
+            .saturating_add(REGEN_AMOUNT)
+            .saturating_add(chair_hp)
+            .min(pools.max_hp.max(chr.hp));
         // The 1% is of the max the client shows, which is the one a learned Max MP Increase
         // has already raised - the tooltip says "of Max MP", and that is the number on screen.
         let mp_regen = self.mp_regen(chr.id, pools.max_mp);
-        let mp = chr.mp.saturating_add(mp_regen.amount).min(pools.max_mp.max(chr.mp));
+        let mp = chr
+            .mp
+            .saturating_add(mp_regen.amount)
+            .saturating_add(chair_mp)
+            .min(pools.max_mp.max(chr.mp));
         let healed_hp = hp - chr.hp;
         let healed_mp = mp - chr.mp;
         chr.hp = hp;
@@ -464,7 +482,7 @@ mod tests {
     /// Did a tick fire? These tests are about the CLOCK, not the packet count, and counting
     /// replies made all three fail the day regeneration grew its second packet. Asking for the
     /// `0x007C` specifically survives another one being added beside it.
-    fn ticked(out: &[Reply]) -> bool {
+    pub(super) fn ticked(out: &[Reply]) -> bool {
         out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED)
     }
 
@@ -866,5 +884,117 @@ mod tests {
         store.set_skill_level(id, 1_110_000, 0).unwrap();
         store.set_skill_level(id, 1_210_000, 1).unwrap();
         assert_eq!(s.mp_regen(id, 500).amount, REGEN_AMOUNT + 3);
+    }
+}
+
+#[cfg(test)]
+mod chair_tests {
+    use super::tests::ticked;
+    use super::*;
+    use crate::chairs::Chair;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use store::Store;
+
+    /// A hurt, claimed session already sitting on `item_id`, with the real chair table.
+    ///
+    /// The seat is taken by feeding a real `0x00DB` body through `on_chair_sit` rather than by
+    /// setting the field, so these tests exercise the decode and the lookup too. Anything less
+    /// would pass with the dispatch arm unwired, which is the "built is not wired" failure this
+    /// repo keeps paying for.
+    fn seated_session(item_id: u32) -> (Session, Arc<Store>) {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Sitter".to_string(), ..Default::default() };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        store.create_migration(account, id, 0, 0).unwrap();
+
+        // The three rows this file needs, transcribed from gm-handbook/chairs.txt.
+        let mut chairs = HashMap::new();
+        chairs.insert(3_010_005, Chair { recovery_hp: 30, recovery_mp: 0, req_level: 5 });
+        chairs.insert(3_010_008, Chair { recovery_hp: 0, recovery_mp: 10, req_level: 0 });
+        let config = Config { set_field_probe: true, chairs, ..Config::default() };
+
+        let mut s = Session::new(store.clone(), Arc::new(config));
+        assert!(s.claim_for_character(id).contains("claimed the migration"));
+        let mut c = s.claimed_character().unwrap();
+        c.max_hp = 500;
+        c.max_mp = 500;
+        c.hp = 1;
+        c.mp = 1;
+        store.save_character_progress(&c).unwrap();
+
+        // A real sit body: u32 tick, u32 item id, u32 slot, then the tail we do not decode.
+        let mut body = Vec::new();
+        body.extend_from_slice(&0x055D_4A80u32.to_le_bytes());
+        body.extend_from_slice(&item_id.to_le_bytes());
+        body.extend_from_slice(&4u32.to_le_bytes());
+        body.extend_from_slice(&[0u8; 13]);
+        let replies = s.on_chair_sit(&body);
+        // The unlock must still go out or the client could never ask to stand.
+        assert!(
+            replies.iter().any(|r| r.opcode == net::combat::STAT_CHANGED),
+            "sitting must still clear the exclusive-request latch"
+        );
+        (s, store)
+    }
+
+    fn hp_mp(store: &Store, id: u32) -> (u32, u32) {
+        let c = store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
+        (c.hp, c.mp)
+    }
+
+    /// The bug the owner reported: they sat on the Red Chair and the tick did not change.
+    #[test]
+    fn sitting_on_the_red_chair_adds_its_thirty_hp_to_the_tick() {
+        let (mut s, store) = seated_session(3_010_005);
+        let id = s.claimed_character().unwrap().id;
+        s.clock_ms = 10_000;
+        assert!(ticked(&s.regen_tick(10_000)), "a tick was due");
+        let (hp, _) = hp_mp(&store, id);
+        // The tooltip says "an ADDITIONAL 30 HP every 10 seconds", so it adds to the flat 10.
+        assert_eq!(hp, 1 + REGEN_AMOUNT + 30);
+    }
+
+    /// The Blue Seal Cushion restores MP and no HP at all. A loader that defaulted its missing
+    /// `recoveryHP` to the common 30 would pass the test above and fail this one.
+    #[test]
+    fn the_blue_seal_cushion_adds_mp_only() {
+        let (mut s, store) = seated_session(3_010_008);
+        let id = s.claimed_character().unwrap().id;
+        s.clock_ms = 10_000;
+        assert!(ticked(&s.regen_tick(10_000)));
+        let (hp, mp) = hp_mp(&store, id);
+        assert_eq!(hp, 1 + REGEN_AMOUNT, "this chair restores no HP");
+        assert_eq!(mp, 1 + REGEN_AMOUNT + 10, "and 10 MP on top of the flat MP");
+    }
+
+    /// Standing up ends the bonus on the very next tick, even though the client stays seated
+    /// on screen - that half is not ours to fix yet.
+    #[test]
+    fn standing_up_ends_the_bonus() {
+        let (mut s, store) = seated_session(3_010_005);
+        let id = s.claimed_character().unwrap().id;
+        let replies = s.on_chair_cancel(&[0xff, 0xff]);
+        assert!(
+            replies.iter().any(|r| r.opcode == net::combat::STAT_CHANGED),
+            "standing must still clear the latch"
+        );
+        s.clock_ms = 10_000;
+        assert!(ticked(&s.regen_tick(10_000)));
+        let (hp, _) = hp_mp(&store, id);
+        assert_eq!(hp, 1 + REGEN_AMOUNT, "back to the flat base");
+    }
+
+    /// An id with no row is unknown, not "a chair that restores nothing", and either way the
+    /// tick must not move. This is the clean-checkout case: `gm-handbook/` never generated.
+    #[test]
+    fn a_chair_we_have_no_row_for_changes_nothing() {
+        let (mut s, store) = seated_session(9_999_999);
+        let id = s.claimed_character().unwrap().id;
+        s.clock_ms = 10_000;
+        assert!(ticked(&s.regen_tick(10_000)));
+        let (hp, mp) = hp_mp(&store, id);
+        assert_eq!((hp, mp), (1 + REGEN_AMOUNT, 1 + REGEN_AMOUNT));
     }
 }
