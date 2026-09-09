@@ -1077,6 +1077,30 @@ which on screen is indistinguishable from absent.
 
 ### What to do next, in order
 
+**2026-09-09: the owner named the next five, and they are FOUR features, not five.** *"Trade
+requests / Hair and face coupons / Scrolling items (and clean slates and white scrolls, which
+do not have items in the game but we'll need to mimic the behavior of) / Summoning Sacks /
+Player games (Omok and Card Match)."*
+
+**Trade, Omok and Match Cards are one subsystem.** All three are `CMiniRoom` - inbound
+`0x017E`, outbound `0x0575` - and the room-open envelope is already decoded in
+`research/trade-2026-09-09.md` §3: mode 4 with `A == 0` creates the window by `B`, where
+`B == 1` is trade (pinned three independent ways) and `B == 3` / `B == 4` are the only other
+two player rooms. The member list is decoded generically. **What is missing is one virtual
+(`[vt+0x1C8]`) per room type** - three small decodes that hand over all three features. That
+is the highest-leverage work on the list by a distance, and none of it needs a client run.
+
+Where each of the four stands before any of this session's decode work lands:
+
+| | ready | missing |
+|---|---|---|
+| **miniroom** (trade, Omok, Match Cards) | the envelope, the member list, the invite popup - all [L] | the per-room-type virtual, ×3 |
+| **scrolling** | `gm-handbook/scrolls.txt`, **213 rows** with success, cursed and every stat increment, already dumped | the opcode that applies a scroll to an equip. Clean Slate and White Scroll have no items here, so those are server-side policy on the same path |
+| **summoning sacks** | mob spawn, drops, damage, death and EXP all live and confirmed | the item→mob table, and whether the client sends anything but `0x010E` |
+| **hair/face coupons** | hair and face are already persisted character fields; `0x0138` outbound is `UserAvatarModified` | the coupon item list, the valid hair/face values per gender, and `0x0138`'s body |
+
+Everything below this banner predates that and is the older ordering.
+
 1. **Watch a departure handover and a control rotation on a screen.** Both landed after the
    last run and both are one two-client launch. The free measurement that comes with it:
    count inbound `0x02FF` per connection for one object id - after a release there must be
