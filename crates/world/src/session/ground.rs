@@ -112,6 +112,122 @@ impl Session {
         vec![placed.removed, placed.enter]
     }
 
+    /// `0x0143` - **the player dropped mesos**, and now it actually happens.
+    ///
+    /// The owner, 2026-09-09: *"I still cannot drop mesos."* Correct: `crate::mesodrop` decoded the
+    /// packet and then refused it. The 2026-09-08 work fixed the *freeze* a refused drop left
+    /// behind and never made the drop happen, and a patch note of mine said otherwise.
+    ///
+    /// # Every effect hangs off the transition, not off the request
+    ///
+    /// `CLAUDE.md`'s Heena-quest rule, which cost repeatable experience: the payout sat outside
+    /// the match on the store's answer, so a refusal was logged and then ignored. Here the
+    /// order is **deduct first, place second**, and the drop is built only from the balance the
+    /// store actually returned. Every refusal below returns immediately with the unlock, so
+    /// there is no path that puts coins on the floor without them having left the character.
+    ///
+    /// # The signed amount is a duplication bug if it is read as a `u32`
+    ///
+    /// `net::dropmoney::DropMoney::amount` is an `i32` **on purpose**: `142d4cb5f` sign-extends
+    /// it and the client's only check is `cmp rdi, rax / jle` against the player's money, which
+    /// **a negative number passes**. Read as unsigned, `-1` is four billion mesos; handed to
+    /// `add_mesos` as a negative delta it would *credit* the player. It is refused here, and a
+    /// test pins that.
+    pub(super) fn on_drop_money(&mut self, body: &[u8]) -> Vec<Reply> {
+        let Some(req) = net::dropmoney::parse_drop_money(body) else {
+            return crate::mesodrop::refuse(
+                &format!(
+                    "an unreadable {} byte body (expected {})",
+                    body.len(),
+                    net::dropmoney::DROP_MONEY_BODY_LEN
+                ),
+                None,
+            );
+        };
+        let Some(chr) = self.claimed_character() else {
+            return crate::mesodrop::refuse("no character is claimed on this connection", None);
+        };
+        // Negative and zero, both refused. See the doc block: negative is the dangerous one.
+        if req.amount <= 0 {
+            return crate::mesodrop::refuse(
+                &format!("{} is not an amount that can be dropped", req.amount),
+                Some(crate::mesodrop::NOT_A_POSITIVE_AMOUNT),
+            );
+        }
+        let want = req.amount as u32;
+        let balance = match self.store.mesos(chr.id) {
+            Ok(v) => v,
+            Err(e) => {
+                return crate::mesodrop::refuse(&format!("the store would not read mesos: {e}"), None)
+            }
+        };
+        if want > balance {
+            return crate::mesodrop::refuse(
+                &format!("asked for {want} with {balance} in hand"),
+                Some(crate::mesodrop::NOT_ENOUGH),
+            );
+        }
+        // Same guard as the item drop, and for the same measured reason: the client's pick-up
+        // sweep is a small box around the player, so coins put down more than ~25 px away are
+        // drawn and unreachable - which on screen looks exactly like nothing having happened.
+        let Some((x, y)) = self.last_position else {
+            return crate::mesodrop::refuse(
+                "the server does not know where you are standing",
+                Some(crate::mesodrop::WALK_FIRST),
+            );
+        };
+        let (x, y) = self.config.footholds.rest_at(chr.map_id, x, y, (x, y));
+
+        // **The transition.** Nothing below runs unless this succeeded, and the drop is built
+        // from `left`, the balance the store returned, rather than from `balance - want`.
+        let left = match self.store.add_mesos(chr.id, -i64::from(want)) {
+            Ok(v) => v,
+            Err(e) => {
+                return crate::mesodrop::refuse(
+                    &format!("the store would not take the mesos: {e}"),
+                    None,
+                )
+            }
+        };
+        let (map, now) = (chr.map_id, self.clock_ms);
+        let placed = self.fields.with_drops(map, |d| {
+            d.drop_money(crate::drops::DropMoneyOnGround {
+                map_id: map,
+                character_id: chr.id,
+                meso: want,
+                x,
+                y,
+                now_ms: now,
+            })
+        });
+        crate::server::log(&format!(
+            "   mesos: character {} dropped {want} at ({x}, {y}) on map {map}, {left} left, \
+             drop object {}. Nothing authenticates - the amount is checked against the stored \
+             balance and nothing else.",
+            chr.id, placed.object_id
+        ));
+        // **One packet does both jobs.** `excl_request` is what clears `player+0x2330`, and
+        // the same `StatChanged` carries the new balance, so the meso counter and the latch
+        // cannot disagree. A bag drop needs a `0x0070` here; mesos are not a bag slot.
+        let balance_reply = Reply {
+            opcode: net::combat::STAT_CHANGED,
+            body: net::combat::stat_changed(&net::combat::StatChange {
+                excl_request: true,
+                meso: Some(u64::from(left)),
+                ..Default::default()
+            }),
+            what: format!(
+                "StatChanged: {want} mesos dropped, balance now {left}. excl_request = 1 \
+                 clears +0x2330; without it every later inventory action, AP click and item \
+                 drop is dropped before it is built."
+            ),
+        };
+        // The floor is shared - everyone else on the map sees it through the bus, the dropper
+        // gets it directly and after the packet that clears their latch.
+        self.bus().publish(self.subscriber, map, placed.enter.clone(), None);
+        vec![balance_reply, placed.enter]
+    }
+
     /// Refuse a drop: the mandatory `0x0070`, **and** a line saying why.
     ///
     /// The `0x0070` alone is enough to keep the client alive - it is what clears the

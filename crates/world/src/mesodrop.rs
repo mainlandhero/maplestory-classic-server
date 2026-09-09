@@ -1,14 +1,24 @@
-//! Refusing a meso drop **and still answering it**.
+//! Refusing a meso drop **and still answering it** - and, since 2026-09-09, the refusals only.
 //!
 //! The owner, 2026-09-08: *"I have attempted to drop 10 mesos and 5000 mesos, none of these
 //! attempts worked, but I lose all functionality in being able to interact with my
 //! inventory."*
 //!
-//! # The policy is unchanged; only the silence is fixed
+//! # Mesos CAN be dropped now, and this module is no longer where that is decided
 //!
-//! Players still cannot drop mesos. Nothing in this module spends, moves or creates a meso,
-//! and nothing in it puts an object on the floor. What it adds is the **reply** - the thing
-//! whose absence turned a refused drop into a dead inventory for the rest of the session.
+//! The owner, 2026-09-09: *"I still cannot drop mesos."* They were right, and the reason was this
+//! module: it decoded `0x0143` and then refused every one of them. The 09-08 work fixed the
+//! **freeze** - the thing whose absence turned a refused drop into a dead inventory for the
+//! rest of the session - and it was never a step towards making the drop happen. A patch note
+//! of mine implied otherwise, which is how the gap surfaced.
+//!
+//! `Session::on_drop_money` in `session/ground.rs` now does the drop, because it needs three
+//! things this module deliberately does not have: the field to put the object in, the
+//! player's position, and the foothold table to rest it on. What is left here is the refusal
+//! half - [`refuse`] - and the general unlock for latching opcodes nothing implements.
+//!
+//! Everything below about the latch is unchanged and is why [`refuse`] exists at all: a
+//! refusal that answers with nothing is worse than a refusal.
 //!
 //! # What was measured
 //!
@@ -39,64 +49,63 @@
 
 use crate::session::Reply;
 
-/// The line the player sees. Written down here so the test and the packet cannot drift.
-pub const REFUSAL: &str = "Mesos cannot be dropped on this server.";
+/// The lines the player sees. Written down here so the tests and the packets cannot drift.
+///
+/// **There is no longer a blanket "mesos cannot be dropped".** They can, since 2026-09-09 -
+/// `Session::on_drop_money` in `session/ground.rs` does it. What remains here is the refusal
+/// half, and each refusal now says *which* one it is, because "nothing happened" with no reason
+/// is the symptom this project has spent runs chasing.
+pub const NOT_ENOUGH: &str = "You do not have that many mesos.";
 
-/// Answer a `0x0143` without dropping anything.
+/// The signed-amount refusal. See `Session::on_drop_money`: `0x0143` carries an `i32` and the
+/// client's own check lets a negative through, so this is a guard against crediting the player,
+/// not a tidiness check.
+pub const NOT_A_POSITIVE_AMOUNT: &str = "That is not an amount you can drop.";
+
+/// The same guard the item drop uses: a drop placed where the server does not know the player
+/// is standing is drawn outside the client's pick-up box and cannot be collected.
+pub const WALK_FIRST: &str = "Walk a step first, then try again.";
+
+/// Refuse a meso drop, **and still answer it**.
 ///
-/// # Order
+/// # The unlock is not optional and is not a detail
 ///
-/// The `0x007C` unlock goes **first** and the chat line second, for the same reason
+/// `0x0143`'s builder sets `player+0x2330` the moment it sends, and the gate refuses every
+/// later latching request while that is non-zero. So a refusal that returns nothing does not
+/// fail one drop - it kills the inventory, the ability-point buttons, the cash shop and the
+/// item drop for the rest of the session. The owner, 2026-09-08: *"none of these attempts worked,
+/// but I lose all functionality in being able to interact with my inventory."*
+///
+/// The `StatChanged` goes **first** and the chat line second, for the same reason
 /// `session::ground` sends the `0x0070` before the `0x046E`: the packet that releases the
 /// client's UI should not be queued behind one that does not.
 ///
-/// # `mesos_now`
-///
-/// Read for the log line only, and it is read *after* the decision not to spend, so a run's
-/// `world.log` records the balance this handler left alone. `store::Store::mesos` is the
-/// only store call in this module and there is no writing counterpart to it here.
-///
-/// # A malformed body is answered too
-///
-/// The client latched before the server had any opinion about the bytes, so `None` from the
-/// parser changes the log line and nothing else. Returning early on a parse failure is the
-/// exact shape of the bug being fixed.
-pub fn on_drop_money(store: &store::Store, character_id: Option<u32>, payload: &[u8]) -> Vec<Reply> {
-    let asked = net::dropmoney::parse_drop_money(payload);
-    let mesos_now = character_id.and_then(|id| store.mesos(id).ok());
-
-    let asked_for = match asked {
-        Some(m) => format!("{} mesos", m.amount),
-        None => format!(
-            "an unreadable {} byte body (expected {})",
-            payload.len(),
-            net::dropmoney::DROP_MONEY_BODY_LEN
-        ),
-    };
-    let balance = match mesos_now {
-        Some(v) => format!("{v}"),
-        None => "unknown - no character is claimed on this connection".to_string(),
-    };
-
+/// `player_line` is `None` for causes the player can do nothing about - a malformed body, a
+/// store error - which are logged rather than narrated. A refusal they *can* act on always
+/// carries one, because a silent refusal and a frozen inventory look identical on screen.
+pub fn refuse(reason: &str, player_line: Option<&str>) -> Vec<Reply> {
     let mut out = vec![Reply {
         opcode: net::combat::STAT_CHANGED,
         body: net::dropmoney::exclusive_request_unlock(),
         what: format!(
-            "StatChanged: REFUSING the meso drop of {asked_for} - mesos cannot be dropped on \
-             this server. Empty mask, nothing changed, balance still {balance}. \
+            "StatChanged: REFUSING the meso drop - {reason}. Empty mask, nothing changed. \
              bExclRequestSent = 1 is the whole point: it is the FIRST thing 142d54780 acts on \
              (142d547bb calls 142cc4430 with 0), and without it the client's +0x2330 latch \
              stays set and every later inventory action, AP click, cash-shop click and item \
              drop is dropped before it is built."
         ),
     }];
-    out.push(Reply {
-        opcode: net::notice::CHAT_NOTICE,
-        body: net::notice::chat_notice(REFUSAL),
-        what: format!("ChatNotice: {REFUSAL}"),
-    });
+    if let Some(line) = player_line {
+        out.push(Reply {
+            opcode: net::notice::CHAT_NOTICE,
+            body: net::notice::chat_notice(line),
+            what: format!("ChatNotice: {line}"),
+        });
+    }
+    crate::server::log(&format!("   mesos: drop REFUSED - {reason}"));
     out
 }
+
 
 /// The general form: answer **any** latching request this server does not implement.
 ///
@@ -146,113 +155,65 @@ pub fn unlock_unhandled_latching_request(opcode: u16) -> Vec<Reply> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use store::Store;
 
-    /// A character with a balance, so "unchanged" is a claim that can come back false.
-    fn character_with(mesos: u32) -> (Store, u32) {
-        let store = Store::open_in_memory().unwrap();
-        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
-        let chr = net::opcode::Character { name: "Wanderer".to_string(), ..Default::default() };
-        let id = store.create_character(account_id, 0, &chr).unwrap().id;
-        store.set_mesos(id, mesos).unwrap();
-        assert_eq!(store.mesos(id).unwrap(), mesos, "the fixture itself must hold");
-        (store, id)
-    }
+    // The balance-moving tests live in `session::tests` now, with the handler that moves it:
+    // `a_meso_drop_leaves_the_character_and_reaches_the_floor` and its three siblings. This
+    // module no longer touches a store, so it no longer builds a character to check one.
 
-    /// **All three effects, not one.**
+    /// **Every refusal answers, and the unlock leads.**
     ///
     /// `CLAUDE.md`: the quest turn-in test counted fanfares while the experience doubled
-    /// beside it, because the fanfare was the one effect that was already gated correctly.
-    /// A meso-drop refusal has three things to say and this asserts all three - a reply went
-    /// out, the balance did not move, and nothing was put on the floor.
+    /// beside it. So this asserts what the packet IS, not merely that one came back - the
+    /// first reply is the stat change, its `bExclRequestSent` byte is set, and its mask is
+    /// empty so the refusal announces no stat and draws no meso effect.
     #[test]
-    fn a_meso_drop_is_answered_costs_nothing_and_creates_no_drop() {
-        let (store, id) = character_with(5_000);
-        let body = net::dropmoney::drop_money_request(0x101b_5775, 10);
-
-        let out = on_drop_money(&store, Some(id), &body);
-
-        // 1. A REPLY WAS SENT. Not "no error was returned" - a packet exists, it is the
-        //    stat change, and its first byte is the one that clears +0x2330.
-        assert!(!out.is_empty(), "an unanswered 0x0143 IS the bug");
-        let unlock = out
-            .iter()
-            .find(|r| r.opcode == net::combat::STAT_CHANGED)
-            .expect("a 0x007C must go back");
-        assert_eq!(unlock.body[0], 1, "bExclRequestSent - the byte the whole fix is about");
+    fn a_refusal_answers_with_the_unlock_first_and_an_empty_mask() {
+        let out = refuse("asked for 9 with 7 in hand", Some(NOT_ENOUGH));
+        assert_eq!(out[0].opcode, net::combat::STAT_CHANGED, "the unlock leads");
+        assert_eq!(out[0].body[0], 1, "bExclRequestSent - the byte the whole fix is about");
         assert_eq!(
-            u32::from_le_bytes([unlock.body[3], unlock.body[4], unlock.body[5], unlock.body[6]]),
+            u32::from_le_bytes([out[0].body[3], out[0].body[4], out[0].body[5], out[0].body[6]]),
             0,
             "an empty mask: the refusal announces no stat and draws no meso effect"
         );
-
-        // 2. THE BALANCE IS UNCHANGED. The handler was handed the store and did not spend.
-        assert_eq!(store.mesos(id).unwrap(), 5_000, "a refused drop costs nothing");
-
-        // 3. NO DROP OBJECT. A drop is observable as a DROP_ENTER_FIELD; there is none, and
-        //    no inventory operation either.
-        assert!(
-            !out.iter().any(|r| r.opcode == net::drops::DROP_ENTER_FIELD),
-            "nothing may reach the floor"
-        );
-        assert!(
-            !out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION),
-            "a meso drop touches no bag slot, so it must not answer with a bag packet"
-        );
-
-        // 4. And the player is told why, rather than watching nothing happen.
-        assert!(out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE));
+        assert_eq!(out[1].opcode, net::notice::CHAT_NOTICE, "and the reason, second");
     }
 
-    /// 5000 was the owner's second attempt. It never left their client - the latch had already
-    /// eaten it - so this is the run that must work once the latch is being cleared.
+    /// A refusal must never touch the floor or the bag.
+    ///
+    /// Answering a meso request with an inventory packet is the "wrong reply" half of
+    /// `CLAUDE.md`'s rule: it would clear the latch and leave the client's bag running an
+    /// entry loop about a slot that never changed.
     #[test]
-    fn the_five_thousand_meso_attempt_is_answered_the_same_way() {
-        let (store, id) = character_with(5_000);
-        let out = on_drop_money(&store, Some(id), &net::dropmoney::drop_money_request(1, 5_000));
+    fn a_refusal_creates_no_drop_and_no_bag_packet() {
+        let out = refuse("whatever the cause", Some(WALK_FIRST));
+        assert!(!out.iter().any(|r| r.opcode == net::drops::DROP_ENTER_FIELD));
+        assert!(!out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION));
+    }
+
+    /// A cause the player can do nothing about is logged, not narrated - but it is still
+    /// answered, because the client latched before anyone had an opinion about the bytes.
+    #[test]
+    fn a_causeless_refusal_still_unlocks_and_says_nothing_on_screen() {
+        let out = refuse("an unreadable 3 byte body (expected 8)", None);
+        assert_eq!(out.len(), 1, "no chat line");
         assert_eq!(out[0].opcode, net::combat::STAT_CHANGED);
         assert_eq!(out[0].body[0], 1);
-        assert_eq!(store.mesos(id).unwrap(), 5_000);
     }
 
-    /// The unlock goes first. The packet that frees the UI is not queued behind chat.
+    /// The three player-facing lines are distinct, so a run's screenshot says which refusal
+    /// fired. Three identical strings would pass every other test in this file.
     #[test]
-    fn the_unlock_is_the_first_reply() {
-        let (store, id) = character_with(1);
-        let out = on_drop_money(&store, Some(id), &net::dropmoney::drop_money_request(1, 1));
-        assert_eq!(out[0].opcode, net::combat::STAT_CHANGED, "the unlock leads");
-    }
-
-    /// **A malformed body is still answered.** Returning early on a parse failure is the
-    /// exact shape of the bug: the client latched before the bytes were ever inspected.
-    #[test]
-    fn an_unreadable_body_is_answered_rather_than_dropped() {
-        let (store, id) = character_with(100);
-        for junk in [vec![], vec![0u8; 3], vec![0u8; 40]] {
-            let out = on_drop_money(&store, Some(id), &junk);
-            assert_eq!(out[0].opcode, net::combat::STAT_CHANGED, "len {}", junk.len());
-            assert_eq!(out[0].body[0], 1);
+    fn the_three_refusal_lines_are_distinct() {
+        let all = [NOT_ENOUGH, NOT_A_POSITIVE_AMOUNT, WALK_FIRST];
+        for (i, a) in all.iter().enumerate() {
+            assert!(!a.is_empty());
+            for b in &all[i + 1..] {
+                assert_ne!(a, b, "two refusals that read the same cannot be told apart");
+            }
         }
-        assert_eq!(store.mesos(id).unwrap(), 100);
     }
 
-    /// No claimed character is not a reason to go quiet either - the client latched anyway.
-    #[test]
-    fn an_unclaimed_connection_is_answered_too() {
-        let (store, _id) = character_with(100);
-        let out = on_drop_money(&store, None, &net::dropmoney::drop_money_request(1, 10));
-        assert_eq!(out[0].opcode, net::combat::STAT_CHANGED);
-        assert_eq!(out[0].body[0], 1);
-    }
-
-    /// A negative amount is a refusal like any other, and must not be read as four billion.
-    #[test]
-    fn a_negative_amount_changes_nothing_and_is_reported_as_negative() {
-        let (store, id) = character_with(7);
-        let out = on_drop_money(&store, Some(id), &net::dropmoney::drop_money_request(1, -1));
-        assert_eq!(store.mesos(id).unwrap(), 7);
-        assert!(out[0].what.contains("-1 mesos"), "{}", out[0].what);
-    }
 
     /// The general arm answers, and answers with nothing but the unlock.
     #[test]
