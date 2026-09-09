@@ -4,6 +4,18 @@
     python tools/reads.py 0x142784970          # ordered read list, depth 3
     python tools/reads.py 0x140304100 2        # the equipped-item decoder, the control
 
+## The two controls for the 2026-09-09 thunk fix, and run BOTH
+
+A fix that only makes a tool report MORE is not verified by finding more. One control must
+show the newly-visible read, and one must show a body that is confirmed on a screen has not
+moved - otherwise an over-reaching walk looks exactly like a fixed one.
+
+    python tools/reads.py 0x141C1B080 6        # MUST list `call 0x1402d1b50 -> raw`
+    python tools/reads.py 0x1428341c0 6        # MUST still be exactly u8 then u16
+
+The second is the `0x0252` map-chair handler. Its 7-byte seated body was confirmed on the owner's
+screen and in the client's own memory on 2026-09-09, so a walk that grows it is wrong.
+
 ## Why this exists rather than a grep for `E8`
 
 Three separate mistakes, all of which have shipped a wrong packet on this project:
@@ -136,6 +148,58 @@ def _foff(va):
     return None
 
 
+# How far to sweep a function that has NO `.pdata` entry. A thunk is four or five
+# instructions; this is generous on purpose, because the docstring on `extent()` gives the
+# rule - over-reaching costs a field the client never reads, under-reaching makes the client
+# read past the end of the body and throw.
+THUNK_WINDOW = 0x40
+
+_thunk_memo = {}
+
+
+def is_thunk(va):
+    """Does `va` start a short, unwind-less run that hands off to another address?
+
+    **This is the blind spot that made this tool report a body 20 bytes short**, found on
+    2026-09-09 by an agent decoding the miniroom room-open packet and confirmed here:
+
+    ```text
+    0x1402d1b50  mov rax,rdx / mov r8d,0x14 / mov rdx,rcx / mov rcx,rax / jmp 0x1406e9170
+    pdata_lookup 0x1402d1b50 -> "falls in no function"
+    ```
+
+    `0x1406e9170` is `raw`, already in `PRIM`. The read was invisible for two independent
+    reasons, and BOTH had to be fixed: `calls_of` refused to collect a call whose target had
+    no `.pdata` entry, and `calls_of` returned `[]` for any function it could not bound. So
+    the tool could neither see the call nor walk into it.
+
+    This is the THIRD time this file has undercounted, and the pattern is identical every
+    time: `0x142d23ef0`, the tenth primitive, sat 6 MB from the other nine; `0x1406e8fb0`,
+    the double reader, was byte-for-byte a `u64` reader and missing for the tool's whole
+    life. `CLAUDE.md`: *"a tail `jmp` into one of them IS a read; missing one shipped a short
+    packet that killed the client twice."* An unwind-less thunk into one is a read too.
+    """
+    if va in _thunk_memo:
+        return _thunk_memo[va]
+    if va in _ent or va in PRIM:
+        _thunk_memo[va] = False
+        return False
+    off = _foff(va)
+    if off is None:
+        _thunk_memo[va] = False
+        return False
+    ok = False
+    for ins in _md.disasm(_data[off:off + THUNK_WINDOW], va):
+        m = ins.mnemonic
+        if m in ("ret", "int3"):
+            break
+        if m in ("call", "jmp") and ins.op_str.startswith("0x"):
+            ok = True
+            break
+    _thunk_memo[va] = ok
+    return ok
+
+
 def calls_of(fn):
     """[(va, target, seen_conditional_before_it)] for every CALL to a known address.
 
@@ -143,8 +207,15 @@ def calls_of(fn):
     """
     ext = extent(fn)
     if ext is None:
-        return []
-    start, end, _merged = ext
+        # **A function with no `.pdata` entry is not "not a function".** Leaf functions and
+        # thunks carry no unwind data - `tools/dis_at.py`'s own docstring says so and exists
+        # for exactly this case. Returning [] here is what hid a 20-byte `raw` read behind
+        # `0x1402d1b50`; see `is_thunk`. Sweep a bounded window instead of giving up.
+        if not is_thunk(fn):
+            return []
+        start, end, _merged = fn, fn + THUNK_WINDOW, 0
+    else:
+        start, end, _merged = ext
     off = _foff(start)
     if off is None:
         return []
@@ -163,8 +234,16 @@ def calls_of(fn):
             # a call-only walker reports every one of those functions as reading nothing.
             if m == "jmp" and start <= tgt < end:
                 continue
-            if tgt in _ent or tgt in PRIM:
+            # `is_thunk` is the third clause and it is not cosmetic: a call to an unwind-less
+            # thunk was silently dropped here, which is half of why the 20-byte `raw` read
+            # behind `0x1402d1b50` was invisible. The other half was `calls_of` refusing to
+            # walk it. Both had to change; either one alone still under-reports.
+            if tgt in _ent or tgt in PRIM or is_thunk(tgt):
                 out.append((ins.address, tgt, conditional))
+        elif m in ("ret", "int3") and ext is None:
+            # Only when sweeping an unbounded window: stop at the end of the thunk rather
+            # than running into whatever the linker put next.
+            break
     return out
 
 
