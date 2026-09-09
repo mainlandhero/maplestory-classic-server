@@ -57,6 +57,7 @@ pub mod questitems;
 pub mod remoteattack;
 pub mod returnscroll;
 pub mod secondjob;
+pub mod shanks;
 pub mod server;
 pub mod session;
 pub mod skillpoints;

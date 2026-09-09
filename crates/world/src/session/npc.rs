@@ -706,6 +706,12 @@ impl Session {
 
         // **And a taxi sells a ride instead of talking.** Same shape, and the same failure it
         // fixes: Lyn has no `d0` at all, so clicking their printed the placeholder.
+        // **Shanks, before the taxi branch.** They are disjoint - they are not in `TAXIS` -
+        // but they are the specific case and a specific case reads better first.
+        if let Some(replies) = self.open_shanks_for(template) {
+            return replies;
+        }
+
         if let Some(replies) = self.open_taxi_for(template) {
             return replies;
         }
@@ -947,6 +953,60 @@ impl Session {
         out
     }
 
+    /// **Shanks' yes/no.** `None` for any NPC that is not them, so the click chain carries on.
+    ///
+    /// `awaiting_yes_no` is `true` and the path is `shanks::ASK_PATH`: the flag is what makes
+    /// the reply reach a yes/no handler at all, and the path is what stops the quest branch
+    /// from mistaking the answer for a quest Accept.
+    pub(super) fn open_shanks_for(&mut self, template: u32) -> Option<Vec<Reply>> {
+        let map = self.claimed_character()?.map_id;
+        if !crate::shanks::is_shanks(template, map) {
+            return None;
+        }
+        let step = crate::shanks::opening();
+        self.conversation = Some(Conversation {
+            npc_template: template,
+            quest_id: None,
+            path: crate::shanks::ASK_PATH.to_string(),
+            sent: 0,
+            awaiting_yes_no: true,
+            sent_with_next: false,
+        });
+        Some(crate::shanks::script_replies(&step))
+    }
+
+    /// The player answered Shanks. `None` means "not mine" - fall through.
+    ///
+    /// **Every effect hangs off `Step::Sail`**: it is the only arm carrying a destination, so
+    /// a refusal cannot warp anyone, and by the time one exists the fare is already taken in
+    /// one transaction.
+    fn shanks_reply(&mut self, action: i8) -> Vec<Reply> {
+        self.conversation = None;
+        let Some(mut chr) = self.claimed_character() else { return Vec::new() };
+        let step = crate::shanks::on_answer(&self.store, &self.config, chr.id, action);
+        let mut out = crate::shanks::script_replies(&step);
+        if let crate::shanks::Step::Sail { fare, balance, .. } = step {
+            // The balance moves before the screen does, exactly as the taxi does it.
+            out.extend(self.meso_reply(chr.id));
+            // **Only say it if something was taken.** A free crossing that announced
+            // "You have lost mesos (-0)" would undo the moment the free line just built.
+            if fare > 0 {
+                out.push(Reply {
+                    opcode: net::message::MESSAGE,
+                    body: net::message::meso_lost_line(fare),
+                    what: format!("Message: grey chat line, Shanks' fare of {fare}"),
+                });
+            }
+            let why = format!(
+                "Shanks sailed character {} to Lith Harbor for {fare} mesos (balance {balance}){}",
+                chr.id,
+                if fare == 0 { " - FREE, Mai's Final Training is complete" } else { "" }
+            );
+            out.extend(self.go_to_map(&mut chr, crate::shanks::DESTINATION_MAP, 0, why));
+        }
+        out
+    }
+
     /// **A taxi's menu.** `None` for any NPC that is not one, so the click chain carries on.
     ///
     /// `awaiting_yes_no` is deliberately `false`: a menu is not a yes/no box, and if this
@@ -997,7 +1057,7 @@ impl Session {
             // and this is not one, but the ordering is the one already observed working.
             out.push(Reply {
                 opcode: net::message::MESSAGE,
-                body: net::message::meso_penalty(taxi.fare),
+                body: net::message::meso_lost_line(taxi.fare),
                 what: format!(
                     "Message: Meso Penalty Applied (-{}) - the taxi fare, said out loud. The \
                      client owns the wording; we send the number. Whether a zero plain line \
@@ -2005,6 +2065,13 @@ impl Session {
         // and there is a test in each module asserting neither claims the other's.
         if let Some(index) = crate::jobguide::offer_index(&convo.path) {
             return self.jobguide_reply(index, reply.action);
+        }
+
+        // Shanks' own yes/no, before the generic quest branch for the same reason Phil's is:
+        // the quest arm would claim it, find no quest id, and drop the conversation with NO
+        // PACKET SENT - and they would go silent on the first Yes.
+        if convo.path == crate::shanks::ASK_PATH {
+            return self.shanks_reply(reply.action);
         }
 
         if convo.awaiting_yes_no {

@@ -555,6 +555,18 @@ pub fn meso_gained(gain: i32) -> Vec<u8> {
 ///   plain line as `(+-500)`. Uglier, but one line instead of two.
 ///
 /// It is written this way round because this arm is the client's own *word* for the event.
+pub fn meso_lost_line(amount: u32) -> Vec<u8> {
+    chat_line(chat_category::GREY, &format!("You have lost mesos (-{amount})"))
+}
+
+/// **Superseded by [`meso_lost_line`] for fares.** Kept because it is the client's own word
+/// for the event and the decode above is worth not losing.
+///
+/// The owner, 2026-09-09, after seeing it on screen: *"Currently all of the Taxi Fare gets applied
+/// as a red text 'You have received Meso Penalty <amount>'. Please use the line in the chat
+/// box such as 'You have lost mesos (-500)' instead, this should be possible already as a
+/// grey line."* So the unmeasured question above - whether a zero plain line also draws -
+/// stops mattering for fares: the grey line is one line, in the chat box, with our wording.
 pub fn meso_penalty(amount: u32) -> Vec<u8> {
     // Clamp rather than wrap: a fare larger than i32::MAX is not a thing, and a wrap would
     // turn a charge into a gift.
