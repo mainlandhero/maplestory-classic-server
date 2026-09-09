@@ -124,6 +124,41 @@ the same day.
 exist when that was written, lived 370 s, and reads **2**. `gatescan.py --dumps` is now
 **38 dumps, 38 passing both controls**, still a clean split with no overlap.
 
+**2026-09-09: CHAIRS, THE TRADE INVITE, SHANKS, and a grey fare line.** What is confirmed on a
+screen and what is merely built, kept apart on purpose:
+
+* **Set Up chairs - CONFIRMED ON TWO SCREENS.** Sit, stand, the correct model per chair, the
+  idle tick scaled from the chair's own row, and Tester2 watching Cobalt sit and stand. The owner:
+  *"Sitting in different chairs also reflects the correct chair model."* `net::chair`,
+  `world::chairs`, `world::session::chair`. **Do not spend a run re-testing this half.**
+* **The chair relay killed a client, and it is switched back ON.** `0x02AD` went out at 12
+  bytes where the handler reads 13; Tester2 faulted `0xc0000005` five milliseconds later. I
+  disabled the feature; the owner: *"No, this is unacceptable. The chair appearance across
+  different client is an important part of the game."* Re-enabled with the three controls that
+  were all missing the first time - a depth-6 read count, the pool head's own `u32` counted
+  separately, and a test asserting the body is 13 bytes. The cause was skipping
+  `tools/reads.py`, which exists **because** a short packet killed this client twice before.
+* **MAP CHAIRS STILL DO NOT WORK**, and the negative is measured rather than assumed. The
+  client sends `0x00DA` with a seat index and waits; a live probe read `CUser+0x3c28 = -1`
+  with `IsSitting` false while the owner clicked a Henesys bench. **Every** opcode in
+  `0x0224..0x039F` has been checked and none sets a seat; the only writers of the seat index
+  are the `-1` initialiser, the `0x0224` record at body offset 416, and `SetChair` via
+  `SetSeat`. `0x0318` was tried here and **refuted on screen** - four replies, four retries,
+  never sat.
+* **The trade invite popup - BUILT TODAY, NEVER SEEN.** The owner: *"the trade request pop up never
+  showed up on Cobalt's side."* The whole cause is one field: `type` must be 1 or 2, and a
+  scan of all 31 writers of the balloon-kind field shows the gated site is the **only** one
+  that can build this popup, so a wrong value is a silent total failure. **Accepting still
+  does nothing and that is a known gap, not a regression** - the trade window is `0x0575`
+  mode 4, whose per-member body is dispatched through a virtual call on the open dialog and is
+  undecoded, so it is answered with nothing rather than a guess.
+* **Shanks sails Southperry to Lith Harbor - BUILT, NEVER RUN.** They quote 1000 mesos every
+  time, including to a player who finished "Mai's Final Training"; the waiver comes only after
+  Yes, with an extra line, then a free trip. A test asserts the opening never says "free".
+  They previously answered *"no template for NPC 15"*.
+* **Fares print a grey chat line**, `"You have lost mesos (-500)"`, instead of the red
+  "Meso Penalty" text. Built, unseen.
+
 **2026-09-08: KEY BINDINGS now SAVE to the database, and restore is built but deliberately
 switched off until one number is measured.** The owner bound three skills, clicked CONFIRM, and the
 whole protocol came out of that one capture - `research/keyboard-layout-2026-09-08.md`.
@@ -973,12 +1008,12 @@ which on screen is indistinguishable from absent.
 |---|---|
 | **the heap corruption** | `0xC0000374`, **17 distinct fault events** across ~16 archived runs (4 with dumps), deduplicated on `(timestamp, code, address)`. The damaged word is the identical `0x0000000100000020` every time. **The writer is still not found.** This is what ends a long session - the 2026-09-03 two-client death was at **371 s** of client life - and it is the one thing standing between "two players can play" and "two players can play for an hour". `research/heap-corruption-2026-08-27.md`. Do **not** pass `-HeapFix`: it armed, it held, the client died anyway, and every dump taken with it on is unusable for the free-list argument. *(Only 3 of the 17 sit in a log carrying an `ARMING` line, so client-age-at-death is measurable for 3; "never under ~192 s" is the 2026-09-03 figure and is `UNVERIFIED 2026-09-04` here - one of the three is a 7.9 s instance-guard experiment.)* |
 | **party invite → a party anyone can join** | not blocked, unseen. The `0x1B` outcome, the `0x03` dialog and the `0x13` join-with-block are all decoded [L] and on the wire; the one wire test of `0x13` (2026-09-05 evening) went out **without** the block and killed both clients, and the fix has been in front of a test but not a client. What is left is a screen: the dialog, Accept refreshing both windows, Decline reading as "denied". `research/party-result-0x00A5.md` §10 |
-| **trade and chat rooms** | both are `CMiniRoom`, a subsystem this server has never touched. The client declines **locally and sends no packet at all** - checked the documented way, by grepping `research/msexe-send-opcodes.txt` for the builder rather than eyeballing the tail. There is nothing here to answer; it is a whole feature that does not exist |
+| ~~**trade and chat rooms**~~ | **RETRACTED 2026-09-09 - see below. The trade invite is built and the popup goes out.** The row used to say the client *"declines locally and sends no packet at all"* |
 | party member HP bars | **built, 2026-09-06, unseen.** `0x02B2 {u32 charId, u32 hp, u32 maxHp}`, found by walking back from the gauge to its field to its writer to its handler to its dispatch - the remote router's third, compacted switch, which the 39-slot table hid. Sent to party members on the same field on formation, arrival and every HP change. `research/party-result-0x00A5.md` §12 |
 | dropping mesos | **needs a measured opcode.** The client's meso-drop request appears in no capture; a bag item's drop is `0x0107 dst==0`, but mesos are not a bag slot. One run with the owner dropping mesos names it |
 | `0x0183` accept/decline | **settled from the listing, 2026-09-05 evening**, not blocked. The answer byte is the `0x1B` outcome numbering: the `0x03` handler itself sends 0 (dialog opening), 1 (blocking), 2 (busy) or 3 (already invited) before any click, and the buttons send 4 Decline / 5 Accept. The slot order is [L] from the first capture. `net::party::invite_answer`. Unwatched on a screen: a click of each button, and a faded dialog followed by a re-invite (invites lapse server-side after 60 s) |
 | second-job skill casts | none of the 66 has a cast handler. `firstjob.rs` is the shape it wants |
-| the keyboard layout | not saved because **nothing has ever tried** - neither opcode is known, on either half. `research/keymap-not-saved.md` |
+| the keyboard layout | **HALF DONE, and the half that is missing is the half the owner can see.** The row used to say *"nothing has ever tried - neither opcode is known"*; both are known now (`0x0199` in, `0x05F1` out) and the save is stored per character. **The RESTORE does not run**: `0x0199` carries a *delta* against the client's own default table, so replaying it needs that table, and `net::keymap::CLIENT_DEFAULT_LAYOUT` is `None`. The owner, 2026-09-08, on a fresh client: *"The keyboard layout is back to default"* - that is this gap, not a save failure. One command against a running client fills it: `python tools\keymapdump.py --rust` |
 
 ### What to do next, in order
 
@@ -1586,6 +1621,31 @@ logs on disk are 119 distinct files. Deduplicate by content hash before counting
 those two directories.)*
 Same shape as the cash-shop opcode that sat in the log for three sessions while being reported
 absent: **nobody asked the specific question.**
+
+**"Trade is a feature that does not exist" — RETRACTED 2026-09-09, and the citation was the
+problem.** The blocked-work table said the client *"declines locally and sends no packet at
+all"*, and it named its method, which is what made it convincing: *"checked the documented
+way, by grepping `research/msexe-send-opcodes.txt` for the builder rather than eyeballing the
+tail."* That is the method `CLAUDE.md` prescribes, and it was cited **against the file that
+contains the answer**. `0x017E` appears there **38 times**, and one of those rows is
+`FUN_141826bc0` — the exact builder the decode identified nine days later, sitting in the
+enumeration the whole time. The owner then saw the packet arrive twice in one capture, 8 ms apart.
+
+**Why a correct instrument returned nothing: that file has no feature names in it.**
+`miniroom|trade|chat|party|chair`, case-insensitive, matches **zero** lines. It is opcode →
+function address and nothing else, so a grep of it phrased as a *name* comes back empty for
+every feature that exists, including all the ones that demonstrably do. The search had to be
+phrased as an opcode, and the opcode was what was being looked for.
+
+So this is `CLAUDE.md`'s oldest rule with a new twist worth writing down: it is not enough to
+use the right instrument, because **an instrument can be incapable of answering the question
+in the form you asked it, and still answer.** Empty is a result shape, not a verdict. Ask a
+file what fields it has before concluding from its silence.
+
+**Two rows in that same table are absence claims of the same shape and have not been
+re-checked.** *"dropping mesos - the client's meso-drop request appears in no capture"* and
+*"second-job skill casts - none of the 66 has a cast handler"*. Neither is retracted here;
+both are flagged, because the trade row also looked settled and cited a method.
 
 **The keyboard layout is not saved because nothing has ever tried to save it — 2026-08-28.**
 The owner: *"Upon logout then subsequent login, this customization is completely gone."* This is
