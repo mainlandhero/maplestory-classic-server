@@ -27,7 +27,27 @@ ENC = {
     0x1406EDBC0: "w_u64",
     0x1406EDC80: "w_str",
     0x1406EDE20: "w_raw",
-    0x1406ED610: "SEND",
+    # **This is the DESTRUCTOR, not the send.** Corrected 2026-09-09 while decoding the trade
+    # protocol; it had been labelled SEND here and in research/cash-shop-stage.md,
+    # research/item-drop.md and research/mob-behaviour.md.
+    #
+    # Settled by reading both: 0x1406ED610 takes the packet in rcx and calls into `rcx+0x438`
+    # and `rcx+0x408` - two sub-buffer releases, no socket. 0x1415D01C0 fetches a singleton via
+    # 0x140CAA510 and hands it `[packet+0x434]`. And every builder in this client calls
+    # 0x1415D01C0 FIRST and 0x1406ED610 LAST, which is send-then-destruct:
+    #
+    #     141a01218  call 0x1415d01c0      <- send
+    #     141a01223  call 0x1406ed610      <- ~COutPacket
+    #
+    # Why it matters: a packet-counting pass that treats the destructor as the send counts one
+    # send per BUILDER rather than per send, and misses that `FUN_141826bc0` sends TWO packets
+    # from one stack buffer via COutPacket::Init. That is exactly how the trade invite was
+    # first read as one packet when it is a create followed by an invite.
+    0x1406ED610: "~COutPacket (NOT the send)",
+    0x1415D01C0: "SEND",
+    # Re-initialises the buffer with a new opcode, so ONE builder can emit several packets.
+    # Its absence from this table is the other half of the same blind spot.
+    0x1406EE160: "COutPacket::Init(opcode)",
 }
 
 

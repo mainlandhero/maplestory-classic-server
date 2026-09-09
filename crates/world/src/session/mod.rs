@@ -485,6 +485,7 @@ mod recovery;
 mod regen;
 mod shop;
 mod storage;
+mod trade;
 mod skills;
 #[cfg(test)]
 mod tests;
@@ -782,6 +783,11 @@ impl Session {
             }
             // Sitting down and standing up. BOTH still return the exclusive-request unlock -
             // see session/chair.rs; without it the client cannot even ask to stand.
+            // The trade invite. Answered with a real packet on the invite arm and with
+            // nothing elsewhere - see session/trade.rs; 0x017E does not latch.
+            net::trade::CLIENT_MINIROOM => {
+                return self.on_miniroom(body.get(2..).unwrap_or(&[]))
+            }
             net::chair::CLIENT_CHAIR_SIT => {
                 return self.on_chair_sit(body.get(2..).unwrap_or(&[]))
             }
