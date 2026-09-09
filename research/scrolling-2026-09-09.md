@@ -21,6 +21,7 @@ Labels: **[L]** measured off this client, **[D]** derived from measurements, **[
 | `result` values | `0` fail, `1` success, `2` **destroyed**, `3` "cannot be used", anything else = a fourth arm | [L] |
 | who decides success | **the server**. Nothing in the client recomputes it | [L] |
 | stat change | not in `0x0236`. It comes from `0x0070` InventoryOperation, which this project already builds | [D] |
+| **third packet, mandatory** | **`0x00B8`, empty body** — clears the client's request latch. Without it every later item request is silently dropped | [L] for the latch effect, [I] for it being the *intended* one — §6 |
 | Clean Slate / White Scroll | **no protocol field at all.** Purely server-side policy | [L] for the absence of a field, see §7 for the named blind spot |
 
 All 208 scroll rows in `gm-handbook/scrolls.txt` (ids `2040000`..`2048007`) route to `0x0125`.
@@ -367,43 +368,95 @@ leaves `[ctx+0x2330] = 1`**, and that latch is shared by 37 request builders.
 
 ---
 
-## 6. The open hazard: what clears `[ctx + 0x2330]`
+## 6. `[ctx + 0x2330]` — the latch, and the packets that clear it
 
 `FUN_142cc7a70` sets `[ctx+0x2330] = 1` and `[ctx+0x2334] = tick` immediately after the send,
-and refuses to build anything while `0x2330` is non-zero. [L]
+and refuses to build anything while `0x2330` is non-zero. [L] The latch is shared by 37
+request builders (`research/npc-click.md` §4.3).
 
-`tools/fieldrefs.py 0x2330 --write` over `0x142c00000..0x142e10000` finds these clearers,
-and `research/npc-click.md` §4.3 found the same set: [L]
+### This section was wrong once. The correction is the interesting part
+
+My first pass ran `tools/fieldrefs.py 0x2330 --write` over `0x142c00000..0x142e10000` only,
+cross-checked the clearers it found against `research/msexe-gamestage-cases.txt`, found only
+`0x00A1` / `0x00A2` / `0x018C`, found that the standalone clearers (`FUN_142cd8d70`,
+`FUN_142cd8e90`, `FUN_142cf3810`, `FUN_142cc52a0`, `FUN_142cae700`) have **zero** callers of
+any kind — no `call`, no tail `jmp`, no qword pointer, no 4-byte switch RVA — and concluded
+that the answer could not be reached statically.
+
+That was an instrument's blind spot, not a fact. **`msexe-gamestage-cases.txt` names one
+handler function per case, so a case whose body is *inlined into the dispatcher* is invisible
+to it** — its own header says 104 of 285 labels are that shape. Running the scan over the
+**whole image** puts four write sites inside `FUN_142cbaa80` itself, which is the game-stage
+dispatcher: [L]
 
 ```
-142cd8d70  142cd8e90  142cf3810  142d04af0  142d04b70  142cd87d0  142cc8670
-142cd94e0  142cf2010  142cf2140  142d1cdf0
+142cbae82  mov [rdi+0x2330], ebx    (ebx = 0)
+142cbbd92  mov [rdi+0x2330], ebx
+142cbbe84  xor ebx,ebx ; mov [rdi+0x2330], ebx
+142cbcf3d  xor r8d,r8d ; mov [rdi+0x2330], r8d
 ```
 
-Of these, only three are reachable as game-stage cases (`research/msexe-gamestage-cases.txt`):
-**`0x00A1` → `FUN_142d1cdf0`, `0x00A2` → `FUN_142cd87d0`, `0x018C` → `FUN_142cd94e0`**. [L]
-None of them is plausibly the scroll reply.
+Decoding the switch's own RVA table — `index = opcode - 0x70`, bound `0x32a`, table at
+`0x142cbd9d0`, target = `0x140000000 + entry`, 273 distinct case bodies — maps each write
+site to its opcode: [L]
 
-`FUN_142cd8d70`, `FUN_142cd8e90`, `FUN_142cf3810`, `FUN_142cc52a0` and `FUN_142cae700` have
-**zero** callers of any kind — no `call`, no tail `jmp`, no qword pointer, and no 4-byte RVA
-anywhere in the image (I scanned for the RVA and found only each function's own `.pdata`
-record). Either they are dead, or they are reached through Themida-virtualised dispatch,
-which leaves no trace. **I could not determine what clears the latch after a scroll.** [L]
-that I looked; **not established** what the answer is.
+| clears the latch | how | body reads |
+|---|---|---|
+| `0x00B7` | inlined in `FUN_142cbaa80` @ `0x142cbae80` | `u8, u8` |
+| `0x00B8` **and** `0x00F5` | inlined, **one shared body** @ `0x142cbcf3a` | **nothing** |
+| `0x00F8` | inlined @ `0x142cbbd90` | `u8` |
+| `0x00F9` | inlined @ `0x142cbbe82` | `u8` |
+| `0x00A1` | `FUN_142d1cdf0` | — |
+| `0x00A2` | `FUN_142cd87d0` | — |
+| `0x018C` | `FUN_142cd94e0` | — |
+
+The whole-image scan is now complete: below `0x142cb0000` there are 7 hits, three of them
+`movsd` stores on unrelated classes, and none of them this field. [L]
+
+### `0x00B8` / `0x00F5` is an empty-bodied "you may send again"
+
+```
+142cbcf3a  xor  r8d, r8d
+142cbcf3d  mov  [rdi+0x2330], r8d      <- clear the latch
+142cbcf44  call FUN_1429e3ef0
+142cbcf49  mov  [rdi+0x2334], eax      <- reset the 500 ms throttle's origin
+142cbcf4f  call FUN_1429e3ef0 ; call FUN_142e54b20
+142cbcf5b  call FUN_1429e3ef0 ; call FUN_142e54f40
+142cbcf67  jmp  0x142cbbc10            <- the dispatcher's common exit
+```
+
+**It consumes no packet bytes at all.** [L] A two-byte packet — opcode `0x00B8` (or `0x00F5`)
+and nothing else — is the client's generic unlock.
+
+`research/msexe-gamestage-opcodes.md` fact #4 already described this body as *"reset
+`param_1+0x466`, three `FUN_1429e3ef0` calls"* — and `0x466 * 8 = 0x2330`, so that note and
+this scan are the same measurement seen from two sides. Nobody had connected the
+decompiler's `param_1[0x466]` to the latch. One correction to that note: it says the body
+*"falls through"*; the listing ends it with `jmp 0x142cbbc10`, the dispatcher's common exit.
+[L]
+
+### What this means for the scroll
 
 The `0x0070` handler `FUN_142d51930` does **not** write `0x2330`
 (`tools/fieldrefs.py 0x2330 --lo 0x142d00000 --hi 0x142d60000 --write` returns five rows,
-none in it), and neither does `FUN_142792340`. [L]
+none in it), and neither does `FUN_142792340`, the `0x0236` handler
+(`--lo 0x142700000 --hi 0x142a00000` returns one unrelated `movsd`). [L]
 
-`FUN_142d04af0`, which *is* reachable, is called from seven UI functions and clears the latch
-only when `[ctx+0x226c] != 0` and its `dl` argument is zero — the shape of "a window closed".
-So the second reading is that **the latch is cleared by a client-side UI event, not by a
-packet at all**, in which case nothing is wrong. Both readings are live.
+**So answering a scroll with `0x0236` + `0x0070` alone leaves the latch set**, and the next
+request from any of the 37 classes — every one of those `0x0105`..`0x0135` item requests —
+is silently dropped by the client for the rest of the session. That is this project's
+"always answer" rule in its exact classic form: the client's UI does not freeze, it just
+goes quiet, which is much harder to notice.
 
-**The discriminator costs one client run and no static work: scroll twice in one session.**
-If the second scroll produces a `0x0125` in `world.log`, the latch clears on its own and this
-section is a non-issue. If it produces nothing, the server must find and send whatever clears
-it, and *every* one of the 37 request classes is dead for the rest of the session.
+The fix is one two-byte send. **Send `0x00B8` after the `0x0236` + `0x0070` pair.** It reads
+no body, so there is nothing to get wrong. [D] — the effect on the latch is [L]; that
+`0x00B8` is the *intended* packet for this particular request rather than merely a working
+one is [I], since its candidate names in both reference enums are unrelated
+(`IncubatorHotItemResult` / `CashPetPickUpOnOffResult`) and neither is worth anything.
+
+**Still worth confirming on the first run: scroll twice in one session.** Two `0x0125` lines
+in `world.log` means the unlock works. One means it does not, and `0x00F5`, `0x00F8`, `0x00F9`
+and `0x00B7` are the remaining candidates, in that order of cheapness.
 
 ---
 
@@ -517,6 +570,15 @@ print "The item is destroyed" and leave the item on screen. [D]
 The scroll itself is consumed in every case except `result == 3`, and that too is `0x0070`'s
 job. [D]
 
+### Outbound — `0x00B8`, empty body, to the scroller only
+
+Two bytes, opcode and nothing else. It clears `[ctx+0x2330]` and resets `[ctx+0x2334]`, and
+its case body reads no packet bytes. [L] **Send it on every `0x0125`, including the
+refusals** — the latch is set by the builder before the server has any say in it, so a
+refused scroll latches the client exactly as a successful one does. Without it the next
+request from any of the 37 sharing builders is silently dropped for the rest of the session
+(§6).
+
 ### Clean Slate / White Scroll — server-side policy, no protocol
 
 * Nothing in `0x0125` names a white scroll. **[L]**
@@ -534,7 +596,7 @@ job. [D]
 | open | cheapest discriminator |
 |---|---|
 | **What the trailing `u8` of `0x0125` means.** Two call sites give 0 and 1; `FUN_141782a30` is unidentified. | One capture (below). If the byte is 0 for a normal inventory drag, nothing else needs doing. |
-| **What clears `[ctx+0x2330]` after a scroll** (§6). Two readings, opposite consequences, and the static path is a dead end. | **Scroll twice in one client session.** Second `0x0125` present in `world.log` → non-issue. Absent → the whole request family is latched off and must be chased. |
+| **Whether `0x00B8` is the *right* unlock** for a scroll (§6). That it clears the latch is [L]; that it is the packet the real server sends here is [I]. | **Scroll twice in one client session** with `0x00B8` wired. Two `0x0125` lines in `world.log` → done. One → try `0x00F5`, then `0x00F8`, `0x00F9`, `0x00B7`. |
 | **Whether `enchantDlg != 0` is ever wanted.** Untraced branch into the enchant-UI object. | Nothing needed; send 0. |
 | **What `[srcItem + 0x38]` is**, the field that diverts the request to `0x0116` instead of `0x0125`. | Only matters if a real scroll ever takes that branch; a capture will show `0x0116` instead of `0x0125` if it does. |
 | **Which `0x0236` presentation path is the local user's.** `[vt+0x50]` is `IsLocalUser`-shaped **[I]** from `research/user-chat-round2.md`, never measured. | Broadcast to everyone and watch one screen. |
@@ -560,5 +622,74 @@ already as settled as they can get without a screen.
 ### The one-line ask for a run
 
 Put a scroll and a scrollable equip in the bag, drag the scroll onto the equip **twice**, and
-paste the `<- 0x0125` lines from `world.log`. Two lines means the latch is fine and the body
-is confirmed; one line means §6 is real.
+paste the `<- 0x0125` lines from `world.log`. Two lines confirms both the body *and* that the
+`0x00B8` unlock works; one line means the unlock is the wrong opcode and §6's fallback list
+is next.
+
+---
+
+## 10. Correction log
+
+* **§6 was written wrong first and is now right.** The first version concluded that nothing
+  reachable clears `[ctx+0x2330]` and filed it as an unresolvable hazard. That came from
+  scanning a sub-range of the image and from trusting
+  `research/msexe-gamestage-cases.txt`, which lists one *named handler* per case and
+  therefore cannot show a case whose body is inlined into the dispatcher — its own header
+  says 104 of 285 labels are exactly that shape. The whole-image scan put four writers inside
+  `FUN_142cbaa80`, and decoding the switch's RVA table named the opcodes. This is the same
+  failure mode `CLAUDE.md` records for the `mob+0x42c` write-scan: the tool was working, the
+  question was too narrow. **Widening the range was not a second opinion; reading the switch
+  table was.**
+* The negative that survived: `FUN_142cd8d70`, `FUN_142cd8e90`, `FUN_142cf3810`,
+  `FUN_142cc52a0` and `FUN_142cae700` still have no caller of any kind. They clear the same
+  latch and nothing reaches them. Unexplained, and no longer load-bearing.
+* `tools/ripstrings.py`'s documented positive control does not reproduce (§1). Unrelated to
+  this finding, but the next agent should not trust that docstring.
+
+---
+
+## 11. Correction to the correction: `0x00B8` is NOT needed. Added by the coordinator, 2026-09-09.
+
+§10 concluded that `0x0236` + `0x0070` leave the latch set and that a third packet - `0x00B8`,
+empty body - is **mandatory** on every `0x0125`. **That is wrong, and the way it is wrong is
+the same failure §10 was itself correcting, one turn later and in the mirror.**
+
+`0x007C` `StatChanged` with `bExclRequestSent = 1` clears the latch. **[L]**
+
+```text
+142d547ad  call 0x1406e8ae0     read u8 bExclRequestSent
+142d547b2  test al, al
+142d547b4  je   0x142d547c0     ... byte is 0: skip
+142d547b6  xor  edx, edx
+142d547b8  mov  rcx, r14
+142d547bb  call 0x142cc4430     the SETTER, with 0  ->  [ctx+0x2330] = 0
+```
+
+**Why the scan could not see it.** §10's whole-image pass searched for *inline writes* to
+`+0x2330`. This clear is not an inline write - it is a **call to the setter** `0x142cc4430`
+with `edx = 0`. One shape, missed.
+
+That is exactly, and oppositely, the bug found in `net::dropmoney::LATCHING_REQUESTS` the same
+day: that list was built by searching for `call 0x142cc4430` and was blind to the two opcodes
+that store `+0x2330` **inline**. One search saw only calls; the other saw only writes. Neither
+was wrong about what it found, and both were wrong about what they concluded from silence.
+`CLAUDE.md`: *the two worst wrong answers here both came from searching a known list - one
+looked for the wrong SHAPE.* Twice in one day, in both directions.
+
+**And this one is settled on a screen, not only in a listing.** `0x007C` with
+`bExclRequestSent = 1` is precisely what `world::mesodrop` and every chair handler already
+send, and the owner, 2026-09-09, after the meso drop shipped: *"meso dropping is fine now, inventory
+is fine as well after meso dropping."* An unlock that did not unlock would have shown there
+first.
+
+**So the answer set for a scroll is two packets, not three:** `0x0236` for the effect and
+message, `0x0070` for the stat change - and the unlock rides on whichever `StatChanged` the
+handler already sends, as it does everywhere else in this server.
+
+**Do not implement `0x00B8`.** §10 labels it `[I]` and notes its candidate names in both
+reference enums are unrelated junk. It is an unproven packet solving a problem that does not
+exist, and sending an undecoded opcode is how this client has been killed twice.
+
+The client-run ask is unchanged and still worth doing - **scroll twice in one session** - but
+its meaning is now narrower: it confirms the `0x0125` body and field order. The unlock half is
+already answered.
