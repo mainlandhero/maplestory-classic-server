@@ -237,6 +237,12 @@ pub struct Config {
     /// not fatal - items are still sent, just bare - so a missing file degrades to exactly
     /// the behaviour confirmed on screen on 2026-08-19.
     pub equips: HashMap<u32, EquipTemplate>,
+    /// What each chair adds to the idle tick, keyed by item id, from `gm-handbook/chairs.txt`.
+    ///
+    /// Empty is legal and degrades to exactly the behaviour before chairs existed: the tick
+    /// stays at its flat base. `gm-handbook/` is generated and gitignored, so a clean checkout
+    /// has no table until `python tools/dump_chairs.py` runs. `world::chairs`.
+    pub chairs: HashMap<u32, crate::chairs::Chair>,
     /// Every NPC template's name, spoken dialogue and idle chatter, keyed by template id.
     ///
     /// **Behind a lock, so `!npcreload` reaches connections that are already open.** Every
@@ -1861,6 +1867,7 @@ impl Default for Config {
             set_field_probe: false,
             peer_policy: store::migration::PeerPolicy::Require,
             inventory_slots: None,
+            chairs: HashMap::new(),
             portals: HashMap::new(),
             portal_index: HashMap::new(),
             npcs: HashMap::new(),

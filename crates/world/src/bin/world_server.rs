@@ -83,6 +83,7 @@ fn main() -> ExitCode {
     let mut skills_path = PathBuf::from("gm-handbook/skills.txt");
     let mut mobs_path = PathBuf::from("gm-handbook/mobs.txt");
     let mut equips_path = PathBuf::from("gm-handbook/equips.txt");
+    let mut chairs_path = PathBuf::from("gm-handbook/chairs.txt");
     let mut mob_templates_path = PathBuf::from("gm-handbook/mobtemplates.txt");
     let mut npc_strings_path = PathBuf::from("gm-handbook/npcstrings.txt");
     // Authored source like data/shops.txt: hand-written, committed, and NOT in gm-handbook/,
@@ -151,6 +152,7 @@ fn main() -> ExitCode {
             "--skills" => value().map(|v| skills_path = PathBuf::from(v)),
             "--mobs-file" => value().map(|v| mobs_path = PathBuf::from(v)),
             "--equips" => value().map(|v| equips_path = PathBuf::from(v)),
+            "--chairs" => value().map(|v| chairs_path = PathBuf::from(v)),
             "--mob-templates" => value().map(|v| mob_templates_path = PathBuf::from(v)),
             "--npc-strings" => value().map(|v| npc_strings_path = PathBuf::from(v)),
             "--npc-dialogue" => value().map(|v| npc_dialogue_path = PathBuf::from(v)),
@@ -331,6 +333,17 @@ fn main() -> ExitCode {
         eprintln!(
             "maplecw-world: no equip templates from {} - worn items will have no stats and no upgrade slots. Regenerate with: python tools/dump_equips.py",
             equips_path.display()
+        );
+    }
+
+    // What a chair adds to the idle tick. Empty is legal: the tick stays at its flat base,
+    // which is what it did before chairs existed. Said out loud anyway, because "sitting
+    // changes nothing" reads on screen as the feature being broken rather than ungenerated.
+    config.chairs = world::chairs::load_chairs(&chairs_path);
+    if config.chairs.is_empty() {
+        eprintln!(
+            "maplecw-world: no chair table from {} - sitting will not change idle recovery. Regenerate with: python tools/dump_chairs.py",
+            chairs_path.display()
         );
     }
 

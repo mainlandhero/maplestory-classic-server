@@ -27,6 +27,7 @@ pub mod bag;
 pub mod buff;
 pub mod cashshop;
 pub mod broadcast;
+pub mod chair;
 pub mod channel;
 pub mod codec;
 pub mod combat;
