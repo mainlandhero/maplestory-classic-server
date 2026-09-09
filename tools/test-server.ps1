@@ -3055,6 +3055,30 @@ if ($ServersOnly) {
     Write-Host '  the servers share this console, so closing it takes them with it.' -ForegroundColor Green
     Write-Host ''
 
+    # **Exit forensics, on the path the owner actually launches from - and this is the SECOND
+    # thing found sitting past this return.** `exit-forensics.ps1` is started in exactly one
+    # place, right after the client launch below, which -ServersOnly never reaches. So on
+    # this path `client-exit.log` was never written, and the test plan has been telling the owner
+    # to read it first for weeks. On 2026-09-09 two clients exited after 13.5 minutes and the
+    # file on disk was from 09-06: no exit code, no thread census, nothing.
+    #
+    # That is CLAUDE.md's WER lesson exactly - a step that could only ever come back empty
+    # looks identical to a step that ran and found nothing.
+    #
+    # The watcher attaches to clients it FINDS rather than to one it was handed, so it does
+    # not care that the launcher starts them, and it writes one log per pid because two
+    # clients sharing one file is how the second one's answer overwrites the first's.
+    $exitWatch = Start-Process -FilePath 'powershell' -WindowStyle Hidden -PassThru -ArgumentList @(
+        '-ExecutionPolicy', 'Bypass', '-File', "`"$(Join-Path $here 'client-exit-watch.ps1')`"",
+        '-Root', "`"$root`"", '-ParentPid', $PID
+    )
+    if ($exitWatch) {
+        Write-Host ("exit forensics: watching for clients (pid {0}) -> client-exit-<clientpid>.log" -f $exitWatch.Id) -ForegroundColor Green
+    } else {
+        Write-Host 'exit forensics: COULD NOT START - a client exit will not be measurable' -ForegroundColor Red
+    }
+    Write-Host ''
+
     # **The plan, on the path the owner actually launches from.** It used to sit after the
     # client launch, which -ServersOnly never reaches, so start-servers.cmd printed
     # everything EXCEPT the one thing this file exists to put in front of them. They
