@@ -921,15 +921,12 @@ impl Session {
             // client's builder `FUN_142d4cb40` sets `player+0x2330` through `142cc4430` the
             // moment it sends, so an unanswered one does not fail a drop - it kills the
             // inventory, the ability-point buttons, the cash shop and the item drop for the
-            // rest of the session. Mesos still cannot be dropped; `crate::mesodrop` refuses
-            // AND answers, which is the whole difference.
+            // rest of the session. **Mesos CAN be dropped now** (2026-09-09) - the owner: *"I still
+            // cannot drop mesos"*, and they were right, because the 09-08 fix only stopped the
+            // freeze. `Session::on_drop_money` places the coins; `crate::mesodrop::refuse`
+            // handles every path that does not, and still answers.
             net::dropmoney::CLIENT_DROP_MONEY => {
-                let who = self.claimed_character().map(|c| c.id);
-                return crate::mesodrop::on_drop_money(
-                    &self.store,
-                    who,
-                    body.get(2..).unwrap_or(&[]),
-                );
+                return self.on_drop_money(body.get(2..).unwrap_or(&[]));
             }
             // Anything else whose CLIENT-SIDE builder sets that same exclusive-request latch.
             // Not implemented, but silence here freezes the UI, so it gets the nine-byte

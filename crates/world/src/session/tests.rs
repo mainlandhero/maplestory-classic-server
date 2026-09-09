@@ -9061,41 +9061,100 @@ fn power_guard_reflects_its_share_onto_the_mob() {
 // 0x0143, the meso drop. See crates/world/src/mesodrop.rs and crates/net/src/dropmoney.rs.
 // ---------------------------------------------------------------------------------------
 
-/// **These two calls are the dispatch arm.**
+/// **Mesos actually leave the character and land on the floor.** 2026-09-09.
 ///
-/// The arm itself lives in `session/mod.rs`, which this agent does not own, so it is handed
-/// to the coordinator as a patch. This test exercises the exact expressions that patch uses
-/// - `self.claimed_character().map(|c| c.id)` and `&self.store` against
-/// `crate::mesodrop::on_drop_money` - on a real `Session` with a real claimed character, so
-/// the patch cannot fail to compile or to find a balance.
-///
-/// It asserts all three effects, not one: a packet went back, the balance did not move, and
-/// nothing reached the floor.
+/// The owner: *"I still cannot drop mesos."* They were right - this handler used to refuse every
+/// drop. It asserts all three effects rather than one, which is `CLAUDE.md`'s rule from the
+/// quest turn-in that counted fanfares while the experience doubled beside it: the balance
+/// moved, an object reached the floor, and the reply carries the byte that frees the UI.
 #[test]
-fn a_meso_drop_from_a_claimed_session_is_answered_and_costs_nothing() {
-    let (s, store, id) = claimed_session();
+fn a_meso_drop_leaves_the_character_and_reaches_the_floor() {
+    let (mut s, store, id) = claimed_session();
     store.set_mesos(id, 5_000).unwrap();
+    s.last_position = Some((520, 395));
 
-    let who = s.claimed_character().map(|c| c.id);
-    assert_eq!(who, Some(id), "the arm must find the character it is charging nothing to");
+    let out = s.on_drop_money(&net::dropmoney::drop_money_request(0x101b_5775, 10));
 
-    let out = crate::mesodrop::on_drop_money(
-        &s.store,
-        who,
-        &net::dropmoney::drop_money_request(0x101b_5775, 10),
-    );
-
-    // 1. answered - and with the byte that clears +0x2330, which is the whole bug
-    assert_eq!(out[0].opcode, net::combat::STAT_CHANGED);
+    // 1. THE BALANCE MOVED, and by exactly the amount asked for.
+    assert_eq!(store.mesos(id).unwrap(), 4_990, "10 mesos left the character");
+    // 2. SOMETHING REACHED THE FLOOR.
+    let enter = out
+        .iter()
+        .find(|r| r.opcode == net::drops::DROP_ENTER_FIELD)
+        .expect("a meso drop must put an object on the ground");
+    assert_eq!(enter.body[0], net::drops::DROP_TYPE_MESO, "it is money, not an item");
+    // 3. THE UI IS FREED, and the new balance rides the same packet.
+    assert_eq!(out[0].opcode, net::combat::STAT_CHANGED, "the unlock leads");
     assert_eq!(out[0].body[0], 1, "bExclRequestSent");
-    // 2. the balance is untouched, with the store right there to be spent from
-    assert_eq!(store.mesos(id).unwrap(), 5_000);
-    // 3. nothing on the floor, and no bag packet either
-    assert!(!out.iter().any(|r| r.opcode == net::drops::DROP_ENTER_FIELD));
+    assert!(out[0].what.contains("balance now 4990"), "{}", out[0].what);
+    // A meso drop touches no bag slot, so it must not answer with a bag packet.
     assert!(!out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION));
-    // and the balance is named in the log line, so a run records what was left alone
-    assert!(out[0].what.contains("balance still 5000"), "{}", out[0].what);
 }
+
+/// **A negative amount must not credit the player.**
+///
+/// `0x0143`'s amount is a signed `i32` and the client's own check (`cmp rdi, rax / jle`)
+/// passes a negative. Read as a `u32` it is four billion; handed to `add_mesos` as a
+/// negative delta it would *pay* the dropper. This is the test that says it does neither.
+#[test]
+fn a_negative_meso_drop_is_refused_and_pays_nothing() {
+    let (mut s, store, id) = claimed_session();
+    store.set_mesos(id, 7).unwrap();
+    s.last_position = Some((520, 395));
+
+    for amount in [-1i32, i32::MIN, 0] {
+        let out = s.on_drop_money(&net::dropmoney::drop_money_request(1, amount));
+        assert_eq!(store.mesos(id).unwrap(), 7, "amount {amount} moved the balance");
+        assert!(
+            !out.iter().any(|r| r.opcode == net::drops::DROP_ENTER_FIELD),
+            "amount {amount} reached the floor"
+        );
+        assert_eq!(out[0].body[0], 1, "amount {amount} left the UI latched");
+    }
+}
+
+/// Dropping more than you hold is refused, and the balance is untouched.
+#[test]
+fn a_meso_drop_larger_than_the_balance_is_refused() {
+    let (mut s, store, id) = claimed_session();
+    store.set_mesos(id, 100).unwrap();
+    s.last_position = Some((520, 395));
+
+    let out = s.on_drop_money(&net::dropmoney::drop_money_request(1, 101));
+    assert_eq!(store.mesos(id).unwrap(), 100);
+    assert!(!out.iter().any(|r| r.opcode == net::drops::DROP_ENTER_FIELD));
+    assert!(out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE), "and says why");
+
+    // The control: one less is accepted, so the refusal above is the boundary and not a
+    // handler that refuses everything.
+    let ok = s.on_drop_money(&net::dropmoney::drop_money_request(1, 100));
+    assert_eq!(store.mesos(id).unwrap(), 0, "the whole balance may be dropped");
+    assert!(ok.iter().any(|r| r.opcode == net::drops::DROP_ENTER_FIELD));
+}
+
+/// Every refusal still answers. An unanswered `0x0143` is the freeze this whole module
+/// exists for, and a malformed body must not become a silent return.
+#[test]
+fn every_meso_refusal_still_clears_the_latch() {
+    let (mut s, store, id) = claimed_session();
+    store.set_mesos(id, 50).unwrap();
+
+    // No position: the drop would be placed where it cannot be picked up.
+    s.last_position = None;
+    let no_pos = s.on_drop_money(&net::dropmoney::drop_money_request(1, 10));
+    assert_eq!(no_pos[0].body[0], 1);
+    assert_eq!(store.mesos(id).unwrap(), 50, "a refused drop costs nothing");
+
+    // An unreadable body, answered before anyone has an opinion about the bytes.
+    s.last_position = Some((520, 395));
+    for junk in [vec![], vec![0u8; 3], vec![0u8; 40]] {
+        let out = s.on_drop_money(&junk);
+        assert_eq!(out[0].opcode, net::combat::STAT_CHANGED, "len {}", junk.len());
+        assert_eq!(out[0].body[0], 1, "len {}", junk.len());
+    }
+    assert_eq!(store.mesos(id).unwrap(), 50);
+}
+
 
 /// The other half of the patch: the fall-through that must never let a latching opcode go
 /// unanswered again. `0x0143` reaches it if the specific arm is ever removed, and `0x01FD`

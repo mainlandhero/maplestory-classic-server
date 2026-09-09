@@ -541,6 +541,39 @@ pub struct PlacedDrop {
     pub enter: Reply,
 }
 
+/// The result of a player dropping **mesos**: just the `0x046E`.
+///
+/// Deliberately a different type from [`PlacedDrop`] rather than one with an `Option`. A bag
+/// drop's `removed` is not optional - forgetting it leaves the dropper's inventory latched -
+/// and a meso drop has no bag slot to remove from at all. Two shapes, so a call site cannot
+/// silently take the wrong path, and the balance packet the caller must still send is named
+/// in [`DropTable::drop_money`]'s docs rather than left to be remembered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlacedMoney {
+    pub object_id: u32,
+    pub enter: Reply,
+}
+
+/// One accepted meso drop, as the caller describes it.
+///
+/// **The mesos are already gone from the character when this is called**, the same division
+/// [`DropFromBag`] uses: the store write belongs to the session, and this module has no
+/// database access, which is what lets its tests run without one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DropMoneyOnGround {
+    /// The map the character is standing on.
+    pub map_id: u32,
+    /// Who dropped it. Becomes the owner and the `sourceObjectId`.
+    pub character_id: u32,
+    /// How many mesos. **Always positive** - the call site refuses zero and negative, because
+    /// `0x0143`'s amount is a signed `i32` that the client's own check lets through negative.
+    pub meso: u32,
+    /// Where it comes to rest, already resolved onto a foothold by the caller.
+    pub x: i16,
+    pub y: i16,
+    pub now_ms: u64,
+}
+
 /// One accepted drop, as the caller describes it.
 ///
 /// **The item is already out of the bag when this is called.** The store write belongs to the
@@ -975,6 +1008,55 @@ impl DropTable {
         let enter = drop.enter_reply(net::drops::ENTER_FLOATING);
         self.live.insert(object_id, drop);
         PlacedDrop { object_id, removed, enter }
+    }
+
+    /// **Put a player's mesos on the floor.** `0x0143`, the other half of [`Self::drop_item`].
+    ///
+    /// The owner, 2026-09-09: *"I still cannot drop mesos."* They were right, and it was not a missing
+    /// opcode: `world::mesodrop` decoded `0x0143` and then deliberately **refused** it, because
+    /// the 09-08 work fixed the *freeze* a refused drop caused and never made the drop happen.
+    ///
+    /// # It returns ONE reply, and that is the difference from a bag drop
+    ///
+    /// [`Self::drop_item`] returns a `0x0070` REMOVE as well, because an item leaves a bag
+    /// slot. **Mesos are not in a bag slot**, so there is no inventory operation to send and
+    /// answering with one would be the "wrong reply" failure `CLAUDE.md` names - it would clear
+    /// the latch and leave the client's bag running an entry loop about a slot that never
+    /// changed. The caller sends a `StatChanged` carrying the new balance instead, and that is
+    /// what clears `player+0x2330`.
+    ///
+    /// The drop is **public**, like a player's item drop: the owner, 2026-09-05, *"If a player drops
+    /// an item on the ground, anyone in the map should be able to see it and pick it up."*
+    /// Money has no untradeable override, so this one really is takeable by anyone.
+    ///
+    /// No arc: `source` is the resting place and the delay is zero, the same choice
+    /// [`Self::drop_item`] makes for an item a player sets down rather than one flung off a
+    /// corpse.
+    pub fn drop_money(&mut self, d: DropMoneyOnGround) -> PlacedMoney {
+        debug_assert!(d.meso > 0, "a zero-meso drop is refused at the call site");
+        let object_id = self.mint_object_id();
+        let drop = LiveDrop {
+            object_id,
+            map_id: d.map_id,
+            // `meso > 0` is what makes this a bag of coins; `item` is the documented
+            // placeholder that nothing reads on that path.
+            item: store::Item::bundle(0, 1),
+            inv_type: store::InventoryType::Etc,
+            owner_id: d.character_id,
+            party_id: 0,
+            public: true,
+            x: d.x,
+            y: d.y,
+            meso: d.meso,
+            dropped_at_ms: d.now_ms,
+            source_x: d.x,
+            source_y: d.y,
+            delay_ms: 0,
+        };
+        debug_assert!(drop.is_meso(), "meso > 0 is what selects the money class");
+        let enter = drop.enter_reply(net::drops::ENTER_FLOATING);
+        self.live.insert(object_id, drop);
+        PlacedMoney { object_id, enter }
     }
 
     /// **Pick a drop up.** Opcode-agnostic on purpose: this takes an object id, not a packet.
