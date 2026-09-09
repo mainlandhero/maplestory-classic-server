@@ -28,15 +28,14 @@
 //! unanswered sit would make the client unable to even ask to stand, on top of freezing every
 //! later inventory action. The handler must keep sending the unlock.
 //!
-//! # What is NOT decoded here, stated plainly
+//! # The reply the client waits for
 //!
 //! The owner, same session: *"I also cannot get out of the chair, the server won't let me."* Theirs
-//! client sent **eight** `0x00DA` requests and stayed seated, so the client leaves a chair only
-//! when the server tells it to, and **the packet that does so has not been found**. This module
-//! therefore tracks the state and drives recovery; it does not claim to seat or unseat anybody
-//! on screen. `research/chairs-2026-09-08.md` §4 records what was eliminated.
+//! client sent **eight** `0x00DA` requests and stayed seated. The client seats itself but will
+//! not stand until the server says so, and the packet that says so is [`USER_SIT`] = `0x0318`.
+//! `research/chairs-2026-09-08.md` §12.
 
-use crate::packet::PacketReader;
+use crate::packet::{PacketReader, PacketWriter};
 
 /// Client -> server: "I sat on this Set Up chair." Carries the item id and inventory slot.
 pub const CLIENT_CHAIR_SIT: u16 = 0x00DB;
@@ -46,6 +45,30 @@ pub const CLIENT_CHAIR_CANCEL: u16 = 0x00DA;
 
 /// The `u16` the client sends for *no chair*. `FUN_142cd3a60` writes it as an immediate [L].
 pub const NO_CHAIR: u16 = 0xFFFF;
+
+/// Server -> client. Seats or releases **the local player**, and it is the reply the client
+/// blocks on.
+///
+/// # Why a reply is required at all
+///
+/// The client seats itself - `FUN_1428d72e0` builds the chair object and its caller is the
+/// `0x00DB` builder - so sitting works against a server that does nothing. **Standing does
+/// not.** `FUN_142cd3a60`'s tail re-arms the `ctx+0x2330` latch, stamps a retry timer and
+/// returns without touching the chair, and its caller only asks `IsSitting` then calls it. So
+/// the client asks and waits, which is why eight `0x00DA` retries produced no stand [L].
+///
+/// # How the opcode was pinned
+///
+/// `CField::OnPacket` routes `0x0224 ..= 0x039F` into the user pool (`lea eax,[r9-0x224] /
+/// cmp eax,0x17b / ja`), which hands `0x2C5..` to the **local** user's `FUN_14289a3a0`. Its
+/// jump table is `0x14289d660` with `index = opcode - 0x2C5`, and the chair arm is
+/// **index 83** -> `0x2C5 + 83` = **`0x0318`**.
+///
+/// *Controls, both already in this repo and neither about chairs:* index `0x50` of the same
+/// table is `0x0315`, the revive dialog (`crate::revive`), and index `0xC` is `0x02D1`, the
+/// level-up effect (`research/level-up.md`). The arithmetic is checked against two answers
+/// that were established independently.
+pub const USER_SIT: u16 = 0x0318;
 
 /// Where the item id sits in a `0x00DB` body: after the leading tick.
 const SIT_ITEM_ID_AT: usize = 4;
@@ -79,6 +102,28 @@ pub fn parse_cancel(body: &[u8]) -> Option<Option<u16>> {
     let mut c = PacketReader::new(body);
     let id = c.u16().ok()?;
     Some(if id == NO_CHAIR { None } else { Some(id) })
+}
+
+/// `0x0318`: seat the local player on `chair_id`, or release them with `None`.
+///
+/// The handler decodes two `u32` and branches three ways [L]:
+///
+/// ```text
+/// chairId != 0                 -> construct the chair object          SIT
+/// chairId == 0 && second != 0  -> set a cooldown at +0x4898 and RETURN - NO release
+/// chairId == 0 && second == 0  -> call [vtable+0xb8] with 0            RELEASE
+/// ```
+///
+/// **The middle arm is the trap.** A release built as "chair id zero" with anything non-zero
+/// in the second field sets a timer and returns, leaving the player seated - and it would look
+/// exactly like the bug this fixes. `release()` sends both fields zero for that reason.
+pub fn user_sit(chair_id: Option<u32>) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(chair_id.unwrap_or(0));
+    // Always zero. For a seat it is a duration the client only reads on the release arm; for a
+    // release it MUST be zero or the handler takes the cooldown branch and never stands up.
+    w.u32(0);
+    w.into_vec()
 }
 
 #[cfg(test)]
@@ -115,6 +160,22 @@ mod tests {
         assert_eq!(parse_cancel(&[0x01, 0x00]), Some(Some(1)));
         assert_eq!(parse_cancel(&[0xff]), None);
         assert_eq!(parse_cancel(&[]), None);
+    }
+
+    /// The middle arm of the handler is a trap: `chairId == 0` with a NON-zero second field
+    /// sets a cooldown and returns **without** releasing. A release must be two zero words.
+    #[test]
+    fn a_release_is_two_zero_words_because_the_middle_arm_is_a_trap() {
+        // chairId == 0 with a NON-zero second field sets a cooldown and returns without
+        // releasing. If this ever regresses, the player stays stuck exactly as before.
+        assert_eq!(user_sit(None), vec![0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn a_seat_carries_the_chair_id_first() {
+        let b = user_sit(Some(3_010_005));
+        assert_eq!(u32::from_le_bytes(b[0..4].try_into().unwrap()), 3_010_005);
+        assert_eq!(b.len(), 8);
     }
 
     /// Both must stay in the latching list. If either is ever removed from it, the handler
