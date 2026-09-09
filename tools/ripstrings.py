@@ -13,11 +13,32 @@ look like text - so a run that prints nothing has been *asked* the question.
 
 ## Verify it before you believe it
 
-    python tools/ripstrings.py 0x141b2c7c0 934
+**THE CONTROL BELOW IS STALE AND HAS BEEN SINCE AT LEAST 2026-09-09. DO NOT USE IT.**
 
-must print at least one decoded string, because that function reaches the vector/packet
-code the client names. If a range you expect to be silent and a range you expect to speak
-both print nothing, the instrument is broken, not the binary.
+    python tools/ripstrings.py 0x141b2c7c0 934      # <- BROKEN CONTROL, always silent
+
+It says this "must print at least one decoded string". It cannot: that range contains
+**zero rip-relative `lea` instructions at all** -
+
+    python tools/dis_at.py 0x141b2c7c0 934 | grep -c "lea.*rip"   ->  0
+
+so it can never speak whatever the tool's state. Two agents hit it the same day and drew
+*different* conclusions from the same silence - one called the tool broken and discarded its
+output unread, one called the control stale. The second was right, and the first cost real
+work: the discarded output was the pass that would have attributed the beauty-UI packet.
+
+**A control that cannot produce a positive is worse than no control**, because "it printed
+nothing" then looks like a verdict about the binary. That is this repo's oldest rule and this
+is it happening to a control rather than to a search.
+
+**No replacement control is offered yet, deliberately.** Four functions were tried
+(`0x141C3D3E0`, `0x140d73bf0`, `0x141826bc0`, `0x141E99700`); the tool resolved `lea` targets
+in three of them and decoded **no text in any**, every hit landing in `.data` with no raw
+bytes. That is consistent with this client's strings being **encrypted and decrypted at
+runtime** - which is why `tools/clusterstrings.py` exists - rather than with the tool being
+broken. Until someone finds a function that loads a PLAINTEXT string through a rip-relative
+`lea`, this tool has no verified positive control and **a silent result from it means
+nothing in either direction.** Prefer `clusterstrings.py`.
 
 ## Blind spots
 
