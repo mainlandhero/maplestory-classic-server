@@ -79,6 +79,62 @@ def logged_session_obj():
     return int(hits[-1], 16) if hits else None
 
 
+def scan_process_for_users(pid, slide):
+    """Every CUser in the process, found by its vtable rather than by any offset.
+
+    The session object turned out not to hold a CUser pointer in its first 0x4000 bytes, and
+    two guessed offsets have already produced wrong answers on this bug. A CUser is
+    self-identifying: its first qword is one of five known vtables. So this walks the committed
+    private read-write regions with VirtualQueryEx and looks for those eight bytes, 8-aligned.
+
+    Slow (hundreds of MB) but it cannot be wrong about what it finds: the vtable IS the type.
+    """
+    import ctypes
+    import ctypes.wintypes as w
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    PROCESS_VM_READ = 0x0010
+    PROCESS_QUERY_INFORMATION = 0x0400
+    MEM_COMMIT = 0x1000
+    WRITABLE = 0x04 | 0x40 | 0x02 | 0x20        # RW, RWX, RO, RX - objects live in RW
+
+    class MBI(ctypes.Structure):
+        _fields_ = [("BaseAddress", ctypes.c_void_p), ("AllocationBase", ctypes.c_void_p),
+                    ("AllocationProtect", w.DWORD), ("__a", w.DWORD),
+                    ("RegionSize", ctypes.c_size_t), ("State", w.DWORD),
+                    ("Protect", w.DWORD), ("Type", w.DWORD), ("__b", w.DWORD)]
+
+    h = k32.OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, False, pid)
+    if not h:
+        return []
+    wanted = {(v + slide).to_bytes(8, "little") for v in CUSER_VTABLES}
+    hits = []
+    addr = 0x10000
+    mbi = MBI()
+    read_n = ctypes.c_size_t(0)
+    try:
+        while addr < 0x7FFF_FFFF_0000:
+            if not k32.VirtualQueryEx(h, ctypes.c_void_p(addr), ctypes.byref(mbi),
+                                      ctypes.sizeof(mbi)):
+                break
+            base = mbi.BaseAddress or 0
+            size = mbi.RegionSize or 0
+            if size == 0:
+                break
+            if mbi.State == MEM_COMMIT and (mbi.Protect & WRITABLE) and size <= 64 * 1024 * 1024:
+                buf = ctypes.create_string_buffer(size)
+                if k32.ReadProcessMemory(h, ctypes.c_void_p(base), buf,
+                                         size, ctypes.byref(read_n)):
+                    blob = buf.raw[:read_n.value]
+                    for off in range(0, len(blob) - 8, 8):
+                        if blob[off:off + 8] in wanted:
+                            hits.append(base + off)
+            addr = base + size
+    finally:
+        k32.CloseHandle(h)
+    return hits
+
+
 def find_users(pid, session, slide):
     """Every pointer in the session object that points at a real CUser.
 
@@ -173,13 +229,25 @@ def main():
         print("this cannot report a wrong object the way a fixed offset silently did.")
         print()
         found = find_users(pid, session, slide)
-        if not found:
-            print("No CUser found in the first %#x bytes of the session object." % SCAN_BYTES)
-            print("Nothing is reported rather than reporting a stranger's memory.")
+        if found:
+            print("%d CUser(s) reachable from the session object:" % len(found))
+            for off, ptr, v in found:
+                report_user(pid, ptr, slide, "session + %#x" % off)
+            return 0
+
+        print("No CUser pointer in the first %#x bytes of the session object." % SCAN_BYTES)
+        print("Scanning the whole process for CUser vtables instead - this takes a moment.")
+        print()
+        objs = scan_process_for_users(pid, slide)
+        if not objs:
+            print("No CUser anywhere in committed memory. Nothing is reported.")
             return 1
-        print("%d CUser(s) reachable from the session object:" % len(found))
-        for off, ptr, v in found:
-            report_user(pid, ptr, slide, "session + %#x" % off)
+        print("%d CUser object(s) found by vtable:" % len(objs))
+        for o in objs:
+            try:
+                report_user(pid, o, slide, "memory scan")
+            except OSError:
+                print("  CUser %#x  (unreadable)" % o)
         return 0
     print()
 
