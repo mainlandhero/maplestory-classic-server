@@ -65,8 +65,27 @@
           the same question as the mob-drop one below.
       M7. Two clients: Tester2 walks over Cobalt's coins. ANYONE may take them.
 
-    ---- PART 2: MAP CHAIRS. 0x0252, never on a wire. Henesys is 10001000.
+    ---- PART 2: MAP CHAIRS. Henesys is 10001000.
 
+      C1 AND C2 ARE ANSWERED, 2026-09-09. The owner: "I do see that I sat on a bench." Seat 25
+      went out as 0x0252 and chairprobe read +0x3c28 = 25 with IsSitting TRUE and a valid
+      chair-object checksum. The wire, the client's memory and the screen agree on one
+      number. DO NOT RE-TEST SITTING. What is left is below.
+
+      C3. STAND UP with a movement key. This is now the open question, and it is the one
+          that bit before: on 2026-09-08 the player could sit and NOT get out, and the
+          release is a different packet shape (5 bytes, bSit = 0, and the seat field
+          ABSENT rather than 0xFFFF).
+            you stand, and the probe then reads -1 / FALSE  -> the release works too
+            you are STUCK in the chair                      -> the release is wrong. Say
+                                                               so; that is the 09-08 bug
+                                                               returning in a new place.
+      C4. Two clients: does Tester2 SEE Cobalt on the bench? The 0x02AD relay carrying a
+          map SEAT rather than a chair item id is unmeasured, so either answer is news.
+          A bystander seeing nothing is NOT a regression of the Set Up chair relay, which
+          is confirmed - it is a different field.
+
+      ---- for the record, the run that settled C1/C2 ----
       C1. Sit on a bench.
             you sit and STAY seated -> 0x0252 was the missing packet. Done.
             nothing at all          -> grep world.log for 0x0252. If it WENT OUT, the
@@ -2341,7 +2360,22 @@ function Show-TestPlan {
         Write-Host '   M7. Two clients: Tester2 walks over Cobalt coins. ANYONE may'
         Write-Host '       take them.'
         Write-Host ''
-        Write-Host '  --- PART 2: MAP CHAIRS, 0x0252. Henesys is 10001000 ---' -ForegroundColor Yellow
+        Write-Host '  --- PART 2: MAP CHAIRS. Henesys is 10001000 ---' -ForegroundColor Yellow
+        Write-Host '   C1+C2 ARE ANSWERED 2026-09-09. Map chairs WORK: seat 25 went' -ForegroundColor Green
+        Write-Host '   out as 0x0252, chairprobe read +0x3c28 = 25, IsSitting TRUE,' -ForegroundColor Green
+        Write-Host '   and the owner saw it. DO NOT RE-TEST SITTING.' -ForegroundColor Green
+        Write-Host '   C3. STAND UP with a movement key. THE OPEN ONE, and it bit' -ForegroundColor Yellow
+        Write-Host '       before: on 09-08 you could sit and NOT get out. The'
+        Write-Host '       release is a different shape - 5 bytes, bSit = 0, seat'
+        Write-Host '       field ABSENT rather than 0xFFFF.'
+        Write-Host '         you stand + probe reads -1 / FALSE -> release works'
+        Write-Host '         you are STUCK                      -> the release is'
+        Write-Host '            wrong, and that is the 09-08 bug back in a new place.'
+        Write-Host '   C4. Two clients: does Tester2 SEE Cobalt on the bench? The'
+        Write-Host '       0x02AD relay carrying a map SEAT is unmeasured. A bystander'
+        Write-Host '       seeing nothing is NOT a Set Up chair regression - different'
+        Write-Host '       field.'
+        Write-Host '   ---- for the record, the run that settled C1/C2 ----' -ForegroundColor DarkGray
         Write-Host '   C1. Sit on a bench.'
         Write-Host '         you sit and STAY seated -> 0x0252 was the missing packet'
         Write-Host '         nothing at all          -> grep world.log for 0x0252. If'
