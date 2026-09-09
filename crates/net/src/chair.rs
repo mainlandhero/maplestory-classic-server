@@ -70,6 +70,42 @@ pub const NO_CHAIR: u16 = 0xFFFF;
 /// that were established independently.
 pub const USER_SIT: u16 = 0x0318;
 
+/// Server -> client. **The remote half**: whose chair changed, named by character id.
+///
+/// The owner, 2026-09-08: *"the server needs to relay that action to all of the players in the map
+/// so other players can see you sitting in a specific chair ID as well."* [`USER_SIT`] cannot
+/// do that - it carries no character id and the local dispatcher applies it to
+/// `ctx->localUser`. This one can.
+///
+/// # How it was pinned
+///
+/// `CUserPool::OnPacket` splits its range five ways [L]: `0x0224`, `0x0225`,
+/// `0x0226..=0x0292`, `0x0293..=0x02C4` and `0x02C5..=0x039E` (the local user). The fourth
+/// goes to `FUN_1429bb720`, which decodes a **character id**, looks the user up, and then
+/// dispatches on a byte-indexed table:
+///
+/// ```text
+/// 1429bbb10  add   esi, 0xfffffd6d          ; index = opcode - 0x293
+/// 1429bbb16  cmp   esi, 0x30 / ja default
+/// 1429bbb22  movzx eax, byte [0x1429bbd10 + index]     ; byte table
+/// 1429bbb2b  mov   ecx, dword [0x1429bbcd0 + eax*4]    ; jump table
+/// ```
+///
+/// Dword slot 2 is `FUN_1429d4fd0`, which constructs a chair object, and the byte table maps
+/// that slot from exactly one opcode: **`0x02AD`** [L]. Its neighbour `0x02AE` reaches
+/// `FUN_1429d5290`, unexamined.
+///
+/// # And it is what a MAP chair needs
+///
+/// `0x0318` was tried for map chairs and **refuted on a screen**: the reply went out four
+/// times and the client retried four times without sitting. The local dispatcher has no
+/// seat-index path at all - one chair arm in 218, and the only `SetSeat` call in it is the
+/// release. This is the remaining chair path.
+///
+/// Body: `u32 characterId, u32 chairId, u32` - the pool takes the id, then the handler reads
+/// two more (`0x1406e8f00` is a bare `jmp` to `Decode4`) [L].
+pub const USER_SIT_REMOTE: u16 = 0x02AD;
+
 /// Where the item id sits in a `0x00DB` body: after the leading tick.
 const SIT_ITEM_ID_AT: usize = 4;
 
@@ -126,6 +162,18 @@ pub fn user_sit(chair_id: Option<u32>) -> Vec<u8> {
     w.into_vec()
 }
 
+/// `0x02AD`: tell the map that `character_id` sat on `chair_id`, or stood with `None`.
+///
+/// Same three-`u32` shape as [`user_sit`] with the character id in front. The release is
+/// zeros for the same reason - see [`user_sit`] on the middle arm.
+pub fn user_sit_remote(character_id: u32, chair_id: Option<u32>) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(character_id);
+    w.u32(chair_id.unwrap_or(0));
+    w.u32(0);
+    w.into_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,6 +217,16 @@ mod tests {
         // chairId == 0 with a NON-zero second field sets a cooldown and returns without
         // releasing. If this ever regresses, the player stays stuck exactly as before.
         assert_eq!(user_sit(None), vec![0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn the_remote_form_puts_the_character_first_and_is_three_words() {
+        let b = user_sit_remote(213, Some(3_010_005));
+        assert_eq!(b.len(), 12);
+        assert_eq!(u32::from_le_bytes(b[0..4].try_into().unwrap()), 213);
+        assert_eq!(u32::from_le_bytes(b[4..8].try_into().unwrap()), 3_010_005);
+        assert_eq!(u32::from_le_bytes(b[8..12].try_into().unwrap()), 0);
+        assert_eq!(user_sit_remote(213, None), vec![213, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     }
 
     #[test]
