@@ -93,11 +93,36 @@ impl Session {
                 });
                 crate::server::log("   chair: stood up - release sent, recovery bonus ends");
             }
-            Some(Some(id)) => {
-                // A non-`0xFFFF` id has never been captured. Recorded rather than acted on.
+            Some(Some(seat)) => {
+                // **A MAP chair.** The owner, 2026-09-09: *"I still cannot sit down in chairs that
+                // are present in the maps themselves, such as Henesys."* Their client sent
+                // `0x00DA` with body `1800` - seat index 24 - seven times and got only the
+                // unlock [L]. So `0x00DA` is not only "stand up": with a real index it means
+                // "seat me on map chair N", and `0xFFFF` is the absence of one.
+                //
+                // **This reply is a HYPOTHESIS and is labelled one.** `0x0318` is the only
+                // chair opcode the local user's dispatcher has - `FUN_14289a3a0`'s 218-entry
+                // table has exactly one arm that touches a chair, index 83 - and there is no
+                // seat-index path anywhere in it. So either the index rides that packet's
+                // first field, or the map-chair reply lives outside that dispatcher and has
+                // not been found. Sending it risks nothing already held: today the client
+                // gets the unlock and stays standing.
+                //
+                // Reading the run: the player sits on the bench -> confirmed. Nothing happens
+                // -> map chairs are not this opcode, and the search moves outside the local
+                // user's table.
+                self.seated_chair = None;
+                out.push(Reply {
+                    opcode: net::chair::USER_SIT,
+                    body: net::chair::user_sit(Some(u32::from(seat))),
+                    what: format!(
+                        "UserSit: MAP chair, seat index {seat} - HYPOTHESIS, see \
+                         session/chair.rs. Nothing authenticates."
+                    ),
+                });
                 crate::server::log(&format!(
-                    "   chair: 0x00DA carried chair id {id} rather than 0xFFFF - never seen \
-                     before, not acted on"
+                    "   chair: 0x00DA carried seat index {seat} - a MAP chair, not a stand. \
+                     Replying 0x0318 with it as the chair id. UNTESTED."
                 ));
             }
             None => crate::server::log(&format!(
