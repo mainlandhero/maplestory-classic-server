@@ -24,6 +24,50 @@
 //! carries no speaker, so **the path is the only thing that says who asked**.
 //!
 //! Every prefix here begins `scroll.`, which no other dialogue uses, and a test says so.
+//!
+//! # The hover question, and what is actually known
+//!
+//! The owner, 2026-09-09: *"Pretty sure you can hide the effects on a hover text. Please
+//! investigate that."* Three things were measured and one was not found, and the difference
+//! matters:
+//!
+//! **Measured.** Every string in this client's `QuestData` was enumerated - 322 images, 3969
+//! strings - and every `#<char>` code in them tallied. The codes this client's own content
+//! uses are `#b #k #r #e #n #p #m #t #o #i #c #h #a #s #q #L #l`. **`#v` and `#z` appear zero
+//! times**, and those are the two codes other MapleStory versions use for an icon that
+//! carries a tooltip.
+//!
+//! **Measured.** `Etc/ScriptInfo.img` - the image `FUN_141e3c5d0` reaches beside the `#L%d#`
+//! formatting, per `research/npc-click.md` §2.1 - is **13 bytes, an empty image** in this
+//! client. `String.wz/ToolTipHelp.img` is real and populated but is keyed by fixed UI element
+//! name (`Game/Button/Shop`), not by anything script text could address.
+//!
+//! **Measured, and it is the part that changes the design.** Even if an `#i` icon in a script
+//! window turns out to be hoverable, the tooltip it would show is the *item's own*, and these
+//! three items are repurposed. `String.wz/Etc.img` gives them:
+//!
+//! ```text
+//!   4031066  Treasure Scroll   "A map that shows where the jewels are hidden away."
+//!   4031065  Scroll of Secrets "A mystical scroll written in a lost, ancient language."
+//!   4001009  Event Trophy      "A souvenir for participating in an event. …"
+//! ```
+//!
+//! None of which says what the scroll does here. A hover would have to be told our text, and
+//! there is no code that takes text.
+//!
+//! **Not found, which is not the same as not there.** Two whole-`.text` scans for the markup
+//! parser - one over byte-register comparisons, one widened to 16- and 32-bit registers
+//! because the text is UTF-16 - ranked every 0x400 window by how many distinct ASCII letters
+//! it tests. The top of both rankings is `printf`'s conversion specifiers (`cdiopsux`), not a
+//! markup set. **Neither scan has a positive control**, and both share one blind spot: a
+//! `switch` on the character compiles to a jump table, which shows up as at most two
+//! comparisons. So "no hover code" is *not* established, only "not found by an instrument
+//! that cannot see the most likely shape". `tools/find_switch_tables.py` is the instrument
+//! that could, and it has not been pointed at this.
+//!
+//! What this module does in the meantime: the pick menu is one short line per scroll, and the
+//! description is the first thing [`equip_menu`] says one click later. That is the nearest
+//! thing to "on demand" the client is *known* to support.
 
 use crate::scrolls::{Refusal, Scroll};
 
@@ -95,22 +139,53 @@ pub fn header() -> String {
         .to_string()
 }
 
+/// # The shape of a menu is the client's, and it was measured rather than guessed
+///
+/// The owner, 2026-09-09, with a screenshot: *"the dialogue shown clips"* - the description ran
+/// straight over the top of the selectable line above it.
+///
+/// The first version of this wrote `#L0#…#l\r\n<description>` per entry, which puts **plain
+/// text after a `#l`**. Every `#L` menu in this client's own `QuestData` was then enumerated -
+/// 33 strings - and:
+///
+/// ```text
+///   nothing at all follows the final #l          32 of 33   (the 33rd has a bare #k)
+///   the separator immediately before a #L is \n  81 of 81
+///   one #l closes the whole menu                 30 of 33   (3 close each link)
+/// ```
+///
+/// So text after `#l` is **unattested in 33 out of 33 cases**, and that is the clip. The menu
+/// is the last thing in the string, entries are separated by `\n`, and one `#l` ends it.
+///
+/// The descriptions have not been thrown away - they are the first thing [`equip_menu`] says,
+/// one click later, which is the nearest thing to "on demand" this client demonstrably
+/// supports. See the module docs on the hover question.
+const MENU_SEPARATOR: &str = "\n";
+
 /// The pick menu, over the scrolls the player is actually carrying.
 ///
 /// `held` is `(scroll, count)`. **Only scrolls in the bag are listed**: offering one the player
 /// does not have would be a menu entry whose only outcome is a refusal, and a menu that can
 /// only disappoint is worse than a shorter menu.
+///
+/// # The icon
+///
+/// The owner: *"I also want you to display the item icon as well as part of that line selection."*
+/// `#i<itemId>#` is the icon, and it is attested **164 times** in this client's own quest text
+/// - `"The mirror looks like this: #i4031000#."` - so the code itself is not in doubt.
+///
+/// **What is not attested is an icon INSIDE a `#L` region**: zero of the 33 menu strings put
+/// one there, so whether the list widget makes the row tall enough for a 32px canvas is
+/// [I], and it is the same class of question as the clip above. One screen settles it.
 pub fn pick_menu(held: &[(Scroll, u16)]) -> String {
-    let mut s = header();
-    s.push_str("\r\n");
-    for (i, (scroll, count)) in held.iter().enumerate() {
-        s.push_str(&format!(
-            "\r\n#L{i}##b{}#k (x{count})#l\r\n{}",
-            scroll.name(),
-            describe(*scroll)
-        ));
-    }
-    s
+    let entries: Vec<String> = held
+        .iter()
+        .enumerate()
+        .map(|(i, (scroll, count))| {
+            format!("#L{i}##i{}# #b{}#k (x{count})", scroll.item_id(), scroll.name())
+        })
+        .collect();
+    format!("{}\n\n{}#l", header(), entries.join(MENU_SEPARATOR))
 }
 
 pub fn nothing_to_use() -> String {
@@ -124,19 +199,31 @@ pub fn nothing_equipped() -> String {
         .to_string()
 }
 
-/// The worn-item menu. `worn` is `(equip slot, item name, remaining slots, failed slots)`.
-pub fn equip_menu(scroll: Scroll, worn: &[(u8, String, u8, u8)]) -> String {
-    let mut s = format!(
-        "#b{}#k. {}\r\n\r\nWhich of the things you are wearing shall I use it on?",
+/// The worn-item menu. `worn` is `(equip slot, item id, item name, remaining slots, failed)`.
+///
+/// **This is where the description lives.** It is the first line, as plain text above the
+/// menu, which is the one position for non-link text that this client's own content attests -
+/// see [`MENU_SEPARATOR`]. The pick menu is a list of names and the moment one is chosen this
+/// says what it does, so nothing is lost by keeping the list short.
+///
+/// Same menu shape as [`pick_menu`], for the same measured reason, and the same `#i` icon per
+/// row with the same [I] on an icon inside a `#L`.
+pub fn equip_menu(scroll: Scroll, worn: &[(u8, u32, String, u8, u8)]) -> String {
+    let entries: Vec<String> = worn
+        .iter()
+        .enumerate()
+        .map(|(i, (_, item_id, name, remaining, failed))| {
+            format!(
+                "#L{i}##i{item_id}# #b{name}#k - {remaining} slot(s) left, {failed} failed"
+            )
+        })
+        .collect();
+    format!(
+        "#b{}#k. {}\n\nWhich of the things you are wearing shall I use it on?\n\n{}#l",
         scroll.name(),
-        describe(scroll)
-    );
-    for (i, (_, name, remaining, failed)) in worn.iter().enumerate() {
-        s.push_str(&format!(
-            "\r\n#L{i}##b{name}#k - {remaining} enhancement slot(s) left, {failed} failed#l"
-        ));
-    }
-    s
+        describe(scroll),
+        entries.join(MENU_SEPARATOR)
+    )
 }
 
 /// The confirm box. Deliberately restates BOTH the scroll and the item: the owner asked for a
@@ -208,6 +295,10 @@ pub fn outcome(
 mod tests {
     use super::*;
 
+    /// Written as an escape rather than typed, because a literal CR in this file is invisible
+    /// in a diff and this repo has already lost one to a heredoc halving its backslashes.
+    const CARRIAGE_RETURN: char = '\r';
+
     /// **The path prefix cannot be confused with any other dialogue's.** A type-6 reply carries
     /// no speaker, so if two features shared a prefix each would answer the other's menu.
     #[test]
@@ -252,6 +343,59 @@ mod tests {
         assert!(text.contains("Scroll of Secrets"));
         assert!(text.contains("(x3)"));
         assert!(!text.contains("Event Trophy"), "not held, so not offered");
+    }
+
+    /// **The clip the owner photographed, as an assertion.**
+    ///
+    /// The old pick menu wrote a CRLF and then the description after each `#l`, which is
+    /// plain text following a link close, and the description drew over the
+    /// top of the line above it. 33 of 33 `#L` menus in this client's own `QuestData` end at
+    /// the final `#l`, so plain text after one is unattested - and on screen it clips.
+    ///
+    /// This is asserted on both menus, because both build a list and only one of them was
+    /// photographed.
+    #[test]
+    fn nothing_follows_the_final_link_close_in_any_menu() {
+        let worn = vec![
+            (5u8, 1_402_043u32, "Wizet Secret Agent Suitcase".to_string(), 6u8, 1u8),
+            (11, 1_040_002, "White Undershirt".to_string(), 7, 0),
+        ];
+        for text in [
+            pick_menu(&[(Scroll::Innocence, 1), (Scroll::Chaos, 3), (Scroll::CleanSlate, 1)]),
+            equip_menu(Scroll::Chaos, &worn),
+        ] {
+            assert!(text.ends_with("#l"), "the menu must be the last thing: {text:?}");
+            assert_eq!(text.matches("#l").count(), 1, "one close for the whole menu: {text:?}");
+            // The separator the client's own content uses before a #L, 81 times out of 81.
+            assert!(
+                !text.contains(CARRIAGE_RETURN),
+                "a CR is not the attested separator: {text:?}"
+            );
+        }
+    }
+
+    /// The owner: *"I also want you to display the item icon as well as part of that line
+    /// selection."* `#i<itemId>#`, and the id must be the scroll's own - an icon showing the
+    /// wrong item is worse than no icon, because it reads as a working feature.
+    #[test]
+    fn every_menu_row_carries_its_own_item_icon() {
+        let text = pick_menu(&[(Scroll::Chaos, 3), (Scroll::CleanSlate, 1)]);
+        assert!(text.contains("#L0##i4031065# #bScroll of Secrets#k (x3)"), "{text}");
+        assert!(text.contains("#L1##i4031066# #bTreasure Scroll#k (x1)"), "{text}");
+        let worn = vec![(5u8, 1_402_043u32, "Suitcase".to_string(), 6u8, 1u8)];
+        assert!(equip_menu(Scroll::Chaos, &worn).contains("#L0##i1402043# #bSuitcase#k"),
+                "the worn list draws its own icons too");
+    }
+
+    /// The description did not vanish with the clip fix - it moved one click later, and if it
+    /// ever stops being said there the pick menu becomes three unexplained names.
+    #[test]
+    fn the_equip_menu_still_explains_what_the_chosen_scroll_does() {
+        let worn = vec![(5u8, 1_402_043u32, "Suitcase".to_string(), 6u8, 1u8)];
+        for scroll in [Scroll::Innocence, Scroll::Chaos, Scroll::CleanSlate] {
+            let text = equip_menu(scroll, &worn);
+            assert!(text.contains(describe(scroll)), "{scroll:?}: {text}");
+        }
     }
 
     /// The confirm box must name the scroll AND the item, and must state the odds - a

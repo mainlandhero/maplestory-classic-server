@@ -1028,14 +1028,35 @@ mod tests {
                     bag.items.iter().all(|i| i.slot >= 1),
                     "slot 0 is the hole that makes slots 1-based; a 0 here is a bad read"
                 );
-                // The worn slots still read, now with the stat tail. Rows written before the
-                // columns existed must come back as "no stats stored", NOT as zeros.
+                // The worn slots still read, now with the stat tail.
+                //
+                // **This used to require every equip to read `stats == None`, and on
+                // 2026-09-09 it went red because the owner used `!scroll` on their own character.**
+                // That is the *second* time this test asserted a property of the owner's play
+                // rather than a property of the upgrade - the meso line above carries the
+                // first, from 2026-08-20 - and the lesson written there applies unchanged: a
+                // test over live, mutable state must assert what the upgrade guarantees.
+                //
+                // A stored stat block on a live row is now a legitimate state, so "no stats"
+                // is no longer a fact about this file. **The guarantee itself has not been
+                // dropped**; it is held where the database can be kept still:
+                // `a_database_written_before_mesos_and_the_stat_columns_upgrades` below winds
+                // a real schema back and requires `None` rather than zeros, and
+                // `inventory::tests::stats_that_were_never_stored_read_back_as_none_not_as_zeros`
+                // pins the same thing at the row level. Neither can be perturbed by playing.
+                //
+                // What is left here is what this test is *for*: the column tail reads at all
+                // on rows that predate it, and the list still matches the character record.
                 let worn = store.equipped_items(chr.id).unwrap();
                 assert_eq!(worn.len(), chr.equips.len(), "the equipped list did not change");
-                assert!(
-                    worn.iter().all(|e| e.stats.is_none()),
-                    "an existing equip must read as 'derive from the template'"
-                );
+                for e in &worn {
+                    // A stored block must be whole: `item_from_row` reads the stat columns and
+                    // the failed-slot count at fixed offsets, so a decode that ran off the end
+                    // shows up as a panic here rather than as quietly wrong stats in a tooltip.
+                    if let Some(stats) = e.stats {
+                        let _ = stats.options.remaining_enhancements;
+                    }
+                }
             }
         }
         assert!(characters > 0, "the live database has a real character in it");

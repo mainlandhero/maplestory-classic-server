@@ -117,7 +117,7 @@ impl Session {
         // Step 2: a worn item was picked. Confirm.
         let scroll = npc::scroll_from_equip_path(&convo.path)?;
         let worn = self.worn_list(chr.id);
-        let Some((equip_slot, item_name, _, _)) = worn.get(selection as usize).cloned() else {
+        let Some((equip_slot, _, item_name, _, _)) = worn.get(selection as usize).cloned() else {
             return Some(self.admin_says(
                 template,
                 &npc::nothing_equipped(),
@@ -297,7 +297,61 @@ impl Session {
                 applied.after.remaining
             ),
         });
+        // The sound and the animation, for the scroller and for everyone standing there.
+        out.push(self.publish_scroll_effect(
+            chr.id,
+            chr.map_id,
+            applied.succeeded,
+            scroll.item_id(),
+            item_id,
+        ));
         out
+    }
+
+    /// `0x0236` to the whole map, and the scroller's own copy handed back to be sent.
+    ///
+    /// The owner, 2026-09-09: *"whenever the scrolling via `!scroll` succeeds or fails, it should
+    /// also broadcast the scroll success or scroll fail sound to everyone, just like regular
+    /// scrolling."*
+    ///
+    /// **`Bus::publish` skips `from`**, deliberately and everywhere - it is what stops a
+    /// level-up animation playing twice for the person who levelled. So a packet the subject
+    /// must *also* see is two sends, not one, and this returns the subject's copy rather than
+    /// pushing it, so a caller cannot forget it and leave the scroller watching everyone
+    /// else's screen flash.
+    ///
+    /// The body is byte-identical on both. `research/scrolling-2026-09-09.md` §4: the handler
+    /// appears once across all four user-pool tables, and the character id in the body is the
+    /// scroller on every copy - the dispatcher looks that user up in its own pool and drops
+    /// the packet if there is no such user, so it addresses the subject, not the recipient.
+    ///
+    /// **Nothing supersedes.** Two scrolls are two events, the same rule that keeps two swings
+    /// from rendering as one hit.
+    fn publish_scroll_effect(
+        &mut self,
+        character_id: u32,
+        map: u32,
+        succeeded: bool,
+        scroll_item_id: u32,
+        equip_item_id: u32,
+    ) -> Reply {
+        use net::upgrade::{item_upgrade_effect, ItemUpgradeResult, ITEM_UPGRADE_EFFECT};
+        let result = ItemUpgradeResult::from_success(succeeded);
+        let body = item_upgrade_effect(character_id, result, scroll_item_id, equip_item_id);
+        debug_assert_eq!(body.len(), net::upgrade::ITEM_UPGRADE_EFFECT_LEN);
+        let what = format!(
+            "ItemUpgradeEffect: character {character_id} scrolled {equip_item_id} with \
+             {scroll_item_id}, {result:?} - plays {} on every screen in map {map}. \
+             Nothing authenticates.",
+            if succeeded { "EnchantSuccess_Delay" } else { "EnchantFailure_Delay" }
+        );
+        self.bus().publish(
+            self.subscriber,
+            map,
+            Reply { opcode: ITEM_UPGRADE_EFFECT, body: body.clone(), what: what.clone() },
+            None,
+        );
+        Reply { opcode: ITEM_UPGRADE_EFFECT, body, what }
     }
 
     /// The three scroll ids the character is carrying, with counts, in a stable order.
@@ -329,8 +383,10 @@ impl Session {
             .map(|r| r.slot)
     }
 
-    /// Worn items as the menu wants them: `(equip slot, name, remaining, failed)`.
-    fn worn_list(&self, character_id: u32) -> Vec<(u8, String, u8, u8)> {
+    /// Worn items as the menu wants them: `(equip slot, item id, name, remaining, failed)`.
+    ///
+    /// The item id is carried so the menu can draw the `#i<itemId>#` icon beside each row.
+    fn worn_list(&self, character_id: u32) -> Vec<(u8, u32, String, u8, u8)> {
         let Ok(worn) = self.store.equipped_items(character_id) else { return Vec::new() };
         worn.iter()
             .map(|e| {
@@ -343,7 +399,7 @@ impl Session {
                     ),
                     _ => (0, 0),
                 };
-                (e.slot, self.item_name(e.item_id), remaining, failed)
+                (e.slot, e.item_id, self.item_name(e.item_id), remaining, failed)
             })
             .collect()
     }
@@ -352,30 +408,29 @@ impl Session {
     ///
     /// A missing row is `tuc = 0` and no stats, which makes Chaos refuse and Innocence a no-op
     /// rather than inventing numbers for an item `gm-handbook/equips.txt` does not describe.
+    ///
+    /// # This must go through `EquipTemplate::fresh_stats`, and the reason is a shipped bug
+    ///
+    /// It used to build the 17-field set by hand here, and wrote `inc_pad: t.inc_wat` -
+    /// **the same mistake `EquipTemplate`'s own doc block warns about in as many words**.
+    /// `incPAD` is bit 8 and `incWAT` is bit 16; this client's `Character.wz` carries
+    /// `incWAT` on 202 equips and `incPAD` on **none**, so bit 8 must always be zero.
+    ///
+    /// The owner, 2026-09-09, scrolling a Wizet Secret Agent Suitcase: *"it lost 1 weapon attack
+    /// on the item, but it also gave it 200 attack power"*. `Weapon Attack: +199 (200 -1)` was
+    /// the Chaos roll working exactly as designed; `Attack Power: +200 (0 +200)` beside it was
+    /// this line, copying the weapon's 200 into a stat the item has no base for. The scroll
+    /// was innocent - the *base* it was handed was already wrong, before any roll.
+    ///
+    /// `fresh_stats` is the one function in the workspace that maps this template onto the
+    /// wire's bit order, and it writes a literal `0` at index 8 with a comment saying why.
+    /// Calling it means there is nothing here left to get out of order.
     fn equip_base(&self, item_id: u32) -> EquipBase {
         match self.config.equips.get(&item_id) {
-            Some(t) => EquipBase {
-                tuc: u8::try_from(t.tuc).unwrap_or(u8::MAX),
-                stats: net::opcode::EquipStatSet {
-                    inc_str: t.inc_str,
-                    inc_dex: t.inc_dex,
-                    inc_int: t.inc_int,
-                    inc_luk: t.inc_luk,
-                    inc_mhp: t.inc_mhp,
-                    inc_mmp: t.inc_mmp,
-                    inc_speed: t.inc_speed,
-                    inc_jump: t.inc_jump,
-                    inc_pad: t.inc_wat,
-                    inc_mad: t.inc_mad,
-                    inc_pdd: t.inc_pdd,
-                    inc_mdd: t.inc_mdd,
-                    inc_acc: t.inc_acc,
-                    inc_eva: t.inc_eva,
-                    inc_crt: t.inc_crt,
-                    inc_crd: t.inc_crd,
-                    inc_wat: t.inc_wat,
-                },
-            },
+            Some(t) => {
+                let fresh = t.fresh_stats();
+                EquipBase { tuc: fresh.options.remaining_enhancements, stats: fresh.stats }
+            }
             None => EquipBase::default(),
         }
     }
@@ -388,5 +443,60 @@ impl Session {
         u64::from(nanos)
             .wrapping_mul(6_364_136_223_846_793_005)
             .wrapping_add(self.scroll_roll_counter.wrapping_mul(1_442_695_040_888_963_407))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Config, EquipTemplate};
+    use std::sync::Arc;
+    use store::Store;
+
+    /// The owner's Wizet Secret Agent Suitcase, as `gm-handbook/equips.txt` has it: the attack is
+    /// **`incWAT`**, and there is no `incPAD` column because this client's WZ has no such
+    /// property on any of its 1760 equips.
+    const SUITCASE: u32 = 1_402_043;
+
+    fn session_with_a_weapon(inc_wat: u16) -> Session {
+        let mut config = Config::default();
+        config.equips.insert(
+            SUITCASE,
+            EquipTemplate { tuc: 7, inc_wat, ..EquipTemplate::default() },
+        );
+        Session::new(Arc::new(Store::open_in_memory().unwrap()), Arc::new(config))
+    }
+
+    /// **The base a scroll is measured against must not invent an `incPAD`.**
+    ///
+    /// The owner, 2026-09-09: *"the chaos scroll did something completely unexpected. It lost 1
+    /// weapon attack on the item, but it also gave it 200 attack power."* The tooltip read
+    /// `Weapon Attack: +199 (200 -1)` - the roll working - and `Attack Power: +200 (0 +200)`
+    /// beside it, which is bit 8 carrying the weapon's own attack because `equip_base` built
+    /// the set by hand and wrote `inc_pad: t.inc_wat`.
+    ///
+    /// The two halves are asserted separately on purpose. `inc_wat` alone would still pass
+    /// with the bug present, and `inc_pad` alone would pass on a template that has no attack
+    /// at all - which is 1558 of the 1760 equips, so a fixture picked at random would have
+    /// been silent about this.
+    #[test]
+    fn the_base_for_a_weapon_has_no_attack_power_only_weapon_attack() {
+        let base = session_with_a_weapon(200).equip_base(SUITCASE);
+        assert_eq!(base.stats.inc_wat, 200, "the weapon's attack is incWAT, bit 16");
+        assert_eq!(
+            base.stats.inc_pad, 0,
+            "incPAD is bit 8 and this client's data never carries it; a non-zero here is the \
+             +200 Attack Power line the owner saw"
+        );
+        assert_eq!(base.tuc, 7, "the slot count comes from the same template");
+    }
+
+    /// An item the handbook does not describe gives a base of nothing rather than a guess -
+    /// which is what makes Chaos refuse instead of rolling against invented numbers.
+    #[test]
+    fn an_unknown_equip_has_no_base_at_all() {
+        let base = session_with_a_weapon(200).equip_base(SUITCASE + 1);
+        assert_eq!(base.tuc, 0);
+        assert_eq!(base.stats, net::opcode::EquipStatSet::default());
     }
 }
