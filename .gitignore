@@ -41,6 +41,10 @@ auth-cert-fingerprint.txt
 # 2026-08-19, so it showed as pending after every launch. Runs worth keeping are
 # copied into research/fixtures/ under a name that says what they prove.
 client-exit.log
+# And the per-pid ones the 2026-09-09 watcher writes. One log per client, because a
+# single shared file is overwritten by the second client and takes the first one's
+# answer with it - the same trap the shared hook log already has.
+client-exit-*.log
 
 # Login server run log
 login.log
