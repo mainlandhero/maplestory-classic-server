@@ -47,6 +47,9 @@ impl Session {
                 sit.item_id, sit.slot
             ),
         });
+        if let Some(chr) = self.claimed_character() {
+            self.publish_chair(chr.id, chr.map_id, Some(sit.item_id));
+        }
         match self.config.chairs.get(&sit.item_id) {
             Some(chair) => {
                 self.seated_chair = Some(sit.item_id);
@@ -91,6 +94,9 @@ impl Session {
                            treats as standing up. Nothing authenticates."
                         .to_string(),
                 });
+                if let Some(chr) = self.claimed_character() {
+                    self.publish_chair(chr.id, chr.map_id, None);
+                }
                 crate::server::log("   chair: stood up - release sent, recovery bonus ends");
             }
             Some(Some(seat)) => {
@@ -100,30 +106,33 @@ impl Session {
                 // unlock [L]. So `0x00DA` is not only "stand up": with a real index it means
                 // "seat me on map chair N", and `0xFFFF` is the absence of one.
                 //
-                // **This reply is a HYPOTHESIS and is labelled one.** `0x0318` is the only
-                // chair opcode the local user's dispatcher has - `FUN_14289a3a0`'s 218-entry
-                // table has exactly one arm that touches a chair, index 83 - and there is no
-                // seat-index path anywhere in it. So either the index rides that packet's
-                // first field, or the map-chair reply lives outside that dispatcher and has
-                // not been found. Sending it risks nothing already held: today the client
-                // gets the unlock and stays standing.
+                // **`0x0318` was tried here first and REFUTED on a screen**: the reply went
+                // out four times, the client retried four times and never sat. The local
+                // dispatcher has no seat-index path at all - one chair arm in 218, and its
+                // only `SetSeat` call is the release - so map chairs are not its opcode.
                 //
-                // Reading the run: the player sits on the bench -> confirmed. Nothing happens
-                // -> map chairs are not this opcode, and the search moves outside the local
-                // user's table.
+                // `0x02AD` is the remaining chair path: its handler decodes a character id,
+                // looks the user up in the pool and builds a chair object for them. Being
+                // addressed by character id is also exactly what the map relay needs, so the
+                // same body goes to everyone else.
                 self.seated_chair = None;
-                out.push(Reply {
-                    opcode: net::chair::USER_SIT,
-                    body: net::chair::user_sit(Some(u32::from(seat))),
-                    what: format!(
-                        "UserSit: MAP chair, seat index {seat} - HYPOTHESIS, see \
-                         session/chair.rs. Nothing authenticates."
-                    ),
-                });
-                crate::server::log(&format!(
-                    "   chair: 0x00DA carried seat index {seat} - a MAP chair, not a stand. \
-                     Replying 0x0318 with it as the chair id. UNTESTED."
-                ));
+                if let Some(chr) = self.claimed_character() {
+                    out.push(Reply {
+                        opcode: net::chair::USER_SIT_REMOTE,
+                        body: net::chair::user_sit_remote(chr.id, Some(u32::from(seat))),
+                        what: format!(
+                            "UserSitRemote: character {} on map seat {seat}. 0x0318 was tried \
+                             here first and refuted on a screen; see session/chair.rs. \
+                             Nothing authenticates.",
+                            chr.id
+                        ),
+                    });
+                    self.publish_chair(chr.id, chr.map_id, Some(u32::from(seat)));
+                    crate::server::log(&format!(
+                        "   chair: 0x00DA seat index {seat} - a MAP chair. Sent 0x02AD to the \
+                         player and to the map."
+                    ));
+                }
             }
             None => crate::server::log(&format!(
                 "   chair: 0x00DA did not decode ({} byte body)",
@@ -131,6 +140,32 @@ impl Session {
             )),
         }
         out
+    }
+
+    /// Tell everyone else on the map that this character's chair changed.
+    ///
+    /// The owner, 2026-09-08: *"the server needs to relay that action to all of the players in the
+    /// map so other players can see you sitting in a specific chair ID as well."* `0x02AD`
+    /// carries the character id, so it is the one packet that says *whose* chair changed -
+    /// the local `0x0318` cannot, and that is why both are sent.
+    ///
+    /// `Some(chr)` supersedes on the character id, so a second sit replaces the first in the
+    /// queue rather than stacking behind it.
+    fn publish_chair(&mut self, character: u32, map: u32, chair: Option<u32>) {
+        let what = match chair {
+            Some(c) => format!("UserSitRemote: character {character} sat on chair/seat {c}"),
+            None => format!("UserSitRemote: character {character} stood up"),
+        };
+        self.bus().publish(
+            self.subscriber,
+            map,
+            Reply {
+                opcode: net::chair::USER_SIT_REMOTE,
+                body: net::chair::user_sit_remote(character, chair),
+                what,
+            },
+            Some(character),
+        );
     }
 
     /// What the chair the player is sitting on adds to one idle tick, as `(hp, mp)`.
