@@ -202,15 +202,32 @@ impl ItemKind {
 pub struct Item {
     pub item_id: u32,
     pub kind: ItemKind,
+    /// **How many enhancement slots this equip has lost to FAILED scrolls**, and not yet had
+    /// returned. Server-only: it is never sent and never read from a packet.
+    ///
+    /// The owner, 2026-09-09: *"If the item previously had 2 failed scroll slots, the player is
+    /// allowed to use 2 clean slate scrolls on the item."* So this is a count, not a flag
+    /// about the last action, and `world::scrolls` is the only thing that moves it.
+    ///
+    /// **It lives on `Item` rather than in `EquipStats` because it must travel.** An item has
+    /// no stable row id - the primary key is `(character_id, inv_type, slot)` - so a count
+    /// stored beside the slot would be lost the moment the player unequips or moves it.
+    /// `remove_item` hands back an `Item` and `add_item` takes one, so a field here survives
+    /// every move for free. And it cannot go in `EquipStats`: that struct maps exhaustively
+    /// onto both the wire and the 26 stat columns, so a field there would change a packet.
+    ///
+    /// Always `0` for a bundle. Nothing enforces that in the type because a `CHECK` on the
+    /// column is the wrong shape for a value that is legitimately `0` on most rows.
+    pub failed_slots: u8,
 }
 
 impl Item {
     pub fn equip(item_id: u32) -> Self {
-        Item { item_id, kind: ItemKind::Equip(None) }
+        Item { item_id, kind: ItemKind::Equip(None), failed_slots: 0 }
     }
 
     pub fn bundle(item_id: u32, quantity: u16) -> Self {
-        Item { item_id, kind: ItemKind::Bundle { quantity } }
+        Item { item_id, kind: ItemKind::Bundle { quantity }, failed_slots: 0 }
     }
 
     /// The owner: *"Please do not allow untradeable items to be stored."* Same answer as
@@ -420,13 +437,51 @@ pub(crate) const EQUIP_STAT_COLUMN_COUNT: usize = 26;
 pub(crate) fn item_columns() -> Vec<&'static str> {
     let mut c = vec!["item_id", "kind", "quantity"];
     c.extend_from_slice(&EQUIP_STAT_COLUMNS);
+    // **Server-only, and LAST on purpose.** `Item::failed_slots` is not part of `EquipStats`
+    // and must not be - that struct maps onto the wire. Appending it after the stat block
+    // leaves `equip_stats_from_row`'s indexing untouched, so every stat column is read at
+    // exactly the offset it was before.
+    c.push(FAILED_SLOTS_COLUMN);
     c
+}
+
+/// The one server-only item column. See [`Item::failed_slots`].
+pub(crate) const FAILED_SLOTS_COLUMN: &str = "failed_slots";
+
+/// The `equipment` columns a worn item is read back with, and the reader for them.
+///
+/// **Its own helper because both unequip paths have to carry `failed_slots`**, and a path that
+/// forgets it silently throws away a player's Clean Slate credit at the exact moment they take
+/// the item off - which would look like the scroll never worked. The same reasoning already
+/// applies to the stat block: the comment at the second call site records that it used to
+/// select `item_id` alone and flattened a scrolled item on the way back to the bag.
+pub(crate) fn worn_columns() -> String {
+    format!("{}, {}", EQUIP_STAT_COLUMNS.join(", "), FAILED_SLOTS_COLUMN)
+}
+
+/// `(item_id, stats, failed_slots)` from a row selected with [`worn_columns`] after `item_id`.
+pub(crate) fn worn_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<(u32, Option<EquipStats>, u8)> {
+    let item_id = u32::try_from(row.get::<_, i64>(0)?).unwrap_or(0);
+    let stats = equip_stats_from_row(row, 1)?;
+    // Tolerant of a missing value for the same reason `item_from_row` is: a row written before
+    // the column existed has no failures, which is what 0 says.
+    let failed: i64 = row.get(1 + EQUIP_STAT_COLUMN_COUNT).unwrap_or(0);
+    Ok((item_id, stats, u8::try_from(failed).unwrap_or(0)))
 }
 
 /// The stat columns as SQL declarations. Nullable on purpose: NULL is "no per-item stats
 /// stored", which is a different state from zero. See the module docs.
 pub(crate) fn equip_stat_declarations() -> String {
-    EQUIP_STAT_COLUMNS.iter().map(|c| format!("{c} INTEGER,\n                ")).collect()
+    let mut out: String =
+        EQUIP_STAT_COLUMNS.iter().map(|c| format!("{c} INTEGER,\n                ")).collect();
+    // Server-only; see [`item_columns`]. `NOT NULL DEFAULT 0` unlike the stat columns, and the
+    // difference is real: "no per-item stats stored" is genuinely not the same as zero, but
+    // "no failed slots recorded" IS zero.
+    out.push_str(FAILED_SLOTS_COLUMN);
+    out.push_str(" INTEGER NOT NULL DEFAULT 0,\n                ");
+    out
 }
 
 /// `EquipStats` -> the 26 column values, in [`EQUIP_STAT_COLUMNS`] order.
@@ -610,6 +665,9 @@ pub(crate) fn item_values(item: &Item) -> Vec<Value> {
             out.extend(vec![Value::Null; EQUIP_STAT_COLUMN_COUNT]);
         }
     }
+    // Server-only, last, matching `item_columns`. Written for a bundle too - it is always 0
+    // there, and a `NOT NULL` column has to be given something.
+    out.push(Value::Integer(i64::from(item.failed_slots)));
     out
 }
 
@@ -626,7 +684,15 @@ pub(crate) fn item_from_row(row: &rusqlite::Row<'_>, base: usize) -> rusqlite::R
         // one is a far better failure than an item that disappears.
         ItemKind::Bundle { quantity: u16::try_from(quantity).unwrap_or(1).max(1) }
     };
-    Ok(Item { item_id: u32::try_from(item_id).unwrap_or(0), kind })
+    // Server-only, immediately after the stat block - `item_columns` appends it there.
+    // Tolerant of NULL so a row written before this column existed reads as "no failures",
+    // which is the truthful answer for one.
+    let failed_slots: i64 = row.get(base + 3 + EQUIP_STAT_COLUMN_COUNT).unwrap_or(0);
+    Ok(Item {
+        item_id: u32::try_from(item_id).unwrap_or(0),
+        kind,
+        failed_slots: u8::try_from(failed_slots).unwrap_or(0),
+    })
 }
 
 // -------------------------------------------------------------------------------------
@@ -676,6 +742,16 @@ pub(crate) fn create_tables(conn: &Connection) -> Result<()> {
         "#,
         stats = equip_stat_declarations()
     ))?;
+    // **`inventory` needs the ALTER path too now, and it did not before.** The comment above
+    // says a plain `CREATE TABLE IF NOT EXISTS` is enough "because the table is new" - that was
+    // true when `inventory` was introduced and stopped being true the moment the owner's live
+    // database had one. `CREATE TABLE IF NOT EXISTS` does nothing at all to an existing table,
+    // so `failed_slots` would have appeared only in databases built from scratch, and every
+    // inventory read on the owner's would have failed with "no such column".
+    //
+    // `db::tests::wisps_real_database_upgrades_in_place` caught exactly that, which is what it
+    // is for: it replays their real schema rather than a fresh one.
+    add_equip_stat_columns(conn, "inventory")?;
     add_equip_stat_columns(conn, "equipment")?;
     Ok(())
 }
@@ -705,6 +781,21 @@ pub(crate) fn add_equip_stat_columns(conn: &Connection, table: &str) -> Result<(
             continue;
         }
         conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} INTEGER"), [])?;
+    }
+    // **The server-only column gets the same treatment, and for the same reason.** Both
+    // `inventory` and `equipment` already exist in the owner's live database, so a
+    // `CREATE TABLE IF NOT EXISTS` does nothing to them and the column would appear only in
+    // databases built from scratch - which is the failure this function was written for.
+    //
+    // `NOT NULL DEFAULT 0` is safe on an `ALTER`: SQLite backfills every existing row with the
+    // default, and 0 is the truthful value for an item that predates the column.
+    if !existing.contains(FAILED_SLOTS_COLUMN) {
+        conn.execute(
+            &format!(
+                "ALTER TABLE {table} ADD COLUMN {FAILED_SLOTS_COLUMN} INTEGER NOT NULL DEFAULT 0"
+            ),
+            [],
+        )?;
     }
     Ok(())
 }
@@ -1360,22 +1451,20 @@ impl Store {
             .query_row(
                 &format!(
                     "SELECT item_id, {} FROM equipment WHERE character_id = ?1 AND slot = ?2",
-                    EQUIP_STAT_COLUMNS.join(", ")
+                    worn_columns()
                 ),
                 rusqlite::params![i64::from(character_id), equip_slot],
-                |row| {
-                    Ok((row.get::<_, i64>(0)? as u32, equip_stats_from_row(row, 1)?))
-                },
+                worn_from_row,
             )
             .optional()?;
-        let Some((item_id, stats)) = worn else {
+        let Some((item_id, stats, failed_slots)) = worn else {
             return Err(StoreError::SlotEmpty { slot: u16::from(equip_slot) });
         };
         tx.execute(
             "DELETE FROM equipment WHERE character_id = ?1 AND slot = ?2",
             rusqlite::params![i64::from(character_id), equip_slot],
         )?;
-        let item = Item { item_id, kind: ItemKind::Equip(stats) };
+        let item = Item { item_id, kind: ItemKind::Equip(stats), failed_slots };
         set_slot(&tx, character_id, inv_type, dst, &item)?;
         tx.commit()?;
         Ok(InvItem { inv_type, slot: dst, item })
@@ -1419,13 +1508,13 @@ impl Store {
             .query_row(
                 &format!(
                     "SELECT item_id, {} FROM equipment WHERE character_id = ?1 AND slot = ?2",
-                    EQUIP_STAT_COLUMNS.join(", ")
+                    worn_columns()
                 ),
                 rusqlite::params![i64::from(character_id), equip_slot],
-                |row| Ok((row.get::<_, i64>(0)? as u32, equip_stats_from_row(row, 1)?)),
+                worn_from_row,
             )
             .optional()?;
-        let displaced = worn.as_ref().map(|(item_id, _)| *item_id);
+        let displaced = worn.as_ref().map(|(item_id, _, _)| *item_id);
         if worn.is_some() {
             tx.execute(
                 "DELETE FROM equipment WHERE character_id = ?1 AND slot = ?2",
@@ -1436,9 +1525,13 @@ impl Store {
             "DELETE FROM inventory WHERE character_id = ?1 AND inv_type = ?2 AND slot = ?3",
             rusqlite::params![i64::from(character_id), inv_type.as_u8(), src],
         )?;
-        let columns = EQUIP_STAT_COLUMNS.join(", ");
+        // `worn_columns` rather than the stat columns alone: **putting an item ON has to carry
+        // `failed_slots` too.** Writing only the stat block would let the column fall back to
+        // its `DEFAULT 0`, so a player who scrolled an item, took it off and put it back on
+        // would silently lose every Clean Slate they had earned on it.
+        let columns = worn_columns();
         let placeholders: Vec<String> =
-            (4..4 + EQUIP_STAT_COLUMN_COUNT).map(|i| format!("?{i}")).collect();
+            (4..4 + EQUIP_STAT_COLUMN_COUNT + 1).map(|i| format!("?{i}")).collect();
         let mut values = vec![
             Value::Integer(i64::from(character_id)),
             Value::Integer(i64::from(equip_slot)),
@@ -1452,6 +1545,7 @@ impl Store {
                 values.extend(vec![Value::Null; EQUIP_STAT_COLUMN_COUNT])
             }
         }
+        values.push(Value::Integer(i64::from(item.failed_slots)));
         tx.execute(
             &format!(
                 "INSERT INTO equipment (character_id, slot, item_id, {columns})
@@ -1462,13 +1556,13 @@ impl Store {
         )?;
         // The displaced item lands in `src`, which the DELETE above has just emptied. This
         // is why a swap needs no free slot.
-        if let Some((item_id, stats)) = worn {
+        if let Some((item_id, stats, failed_slots)) = worn {
             set_slot(
                 &tx,
                 character_id,
                 inv_type,
                 src,
-                &Item { item_id, kind: ItemKind::Equip(stats) },
+                &Item { item_id, kind: ItemKind::Equip(stats), failed_slots },
             )?;
         }
         tx.commit()?;
@@ -1699,7 +1793,7 @@ mod tests {
                 chr.id,
                 InventoryType::Equip,
                 3,
-                &Item { item_id: 1040002, kind: ItemKind::Equip(Some(scrolled)) },
+                &Item { item_id: 1040002, kind: ItemKind::Equip(Some(scrolled)), failed_slots: 0 },
             )
             .unwrap();
 
@@ -1711,6 +1805,48 @@ mod tests {
         // And back off again, still intact.
         let back = store.unequip_to_bag(chr.id, 5, None).unwrap();
         assert_eq!(back.item.kind, ItemKind::Equip(Some(scrolled)));
+    }
+
+    /// **The failed-slot count survives the same round trip**, and it is a separate test
+    /// because it travels by a separate mechanism.
+    ///
+    /// `Item::failed_slots` is server-only - it is deliberately NOT in `EquipStats`, so the
+    /// test above would pass with the count being silently reset on every equip. It nearly
+    /// was: the `equipment` INSERT wrote only the stat columns, so the `DEFAULT 0` would have
+    /// taken over the moment a player put the item back on, and every Clean Slate they had
+    /// earned on it would be gone. On screen that reads as "the scroll did nothing".
+    ///
+    /// The owner, 2026-09-09: *"If the item previously had 2 failed scroll slots, the player is
+    /// allowed to use 2 clean slate scrolls on the item."* That promise only holds if the
+    /// count outlives the bag.
+    #[test]
+    fn the_failed_slot_count_survives_the_bag_and_back() {
+        let store = Store::open_in_memory().unwrap();
+        let account = store.create_account("wisp", "correct horse battery").unwrap();
+        let chr = store.create_character(account, 0, &dressed()).unwrap();
+
+        store.unequip_to_bag(chr.id, 5, Some(3)).unwrap();
+        store
+            .set_inventory_slot(
+                chr.id,
+                InventoryType::Equip,
+                3,
+                &Item {
+                    item_id: 1040002,
+                    kind: ItemKind::Equip(Some(EquipStats::default())),
+                    failed_slots: 2,
+                },
+            )
+            .unwrap();
+        // Read straight back out of the bag first, so a failure here separates "the bag lost
+        // it" from "the equip round trip lost it".
+        let in_bag = store.bag_items(chr.id, InventoryType::Equip).unwrap();
+        let row = in_bag.iter().find(|i| i.slot == 3).expect("it is in the bag");
+        assert_eq!(row.item.failed_slots, 2, "the bag row kept the count");
+
+        store.equip_from_bag(chr.id, 3, 5).unwrap();
+        let back = store.unequip_to_bag(chr.id, 5, None).unwrap();
+        assert_eq!(back.item.failed_slots, 2, "on, then off, and the count is still 2");
     }
 
     /// Equipping over a worn item **swaps** it into the slot the new one came from.
@@ -1774,7 +1910,7 @@ mod tests {
                 chr.id,
                 InventoryType::Equip,
                 1,
-                &Item { item_id: 1040002, kind: ItemKind::Equip(Some(scrolled)) },
+                &Item { item_id: 1040002, kind: ItemKind::Equip(Some(scrolled)), failed_slots: 0 },
             )
             .unwrap();
         store.equip_from_bag(chr.id, 1, 5).unwrap();
@@ -1804,7 +1940,7 @@ mod tests {
                 chr,
                 InventoryType::Equip,
                 2,
-                &Item { item_id: 1040002, kind: ItemKind::Equip(Some(EquipStats::default())) },
+                &Item { item_id: 1040002, kind: ItemKind::Equip(Some(EquipStats::default())), failed_slots: 0 },
             )
             .unwrap();
         let zeroed = store.inventory_slot(chr, InventoryType::Equip, 2).unwrap().unwrap();
@@ -1857,7 +1993,7 @@ mod tests {
                 chr,
                 InventoryType::Equip,
                 1,
-                &Item { item_id: 1302000, kind: ItemKind::Equip(Some(stats)) },
+                &Item { item_id: 1302000, kind: ItemKind::Equip(Some(stats)), failed_slots: 0 },
             )
             .unwrap();
         let back = store.inventory_slot(chr, InventoryType::Equip, 1).unwrap().unwrap();
