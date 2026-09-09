@@ -102,8 +102,16 @@ pub const USER_SIT: u16 = 0x0318;
 /// seat-index path at all - one chair arm in 218, and the only `SetSeat` call in it is the
 /// release. This is the remaining chair path.
 ///
-/// Body: `u32 characterId, u32 chairId, u32` - the pool takes the id, then the handler reads
-/// two more (`0x1406e8f00` is a bare `jmp` to `Decode4`) [L].
+/// # Body: FOUR fields, and the fourth is why a client died
+///
+/// `u32 characterId, u32 chairId, u32 second, u8 show` - **13 bytes**. The pool consumes the
+/// character id; `tools/reads.py` counts **three** reads in `FUN_1429d4fd0`, the first two
+/// `u32` (`0x1406e8f00` is a bare `jmp` to `Decode4`) and a `u8` at `0x1429d50e8` [L].
+///
+/// The first version of the builder sent only three `u32`, because the body had been read off
+/// the first 26 instructions and the third read is 260 bytes further in. Tester2's client
+/// faulted `0xc0000005` **five milliseconds** after one went out. `CLAUDE.md` records this
+/// exact mistake - a read walk that came back short - killing the client twice before.
 pub const USER_SIT_REMOTE: u16 = 0x02AD;
 
 /// Where the item id sits in a `0x00DB` body: after the leading tick.
@@ -171,6 +179,27 @@ pub fn user_sit_remote(character_id: u32, chair_id: Option<u32>) -> Vec<u8> {
     w.u32(character_id);
     w.u32(chair_id.unwrap_or(0));
     w.u32(0);
+    // **The byte that was missing, and its absence killed a client.** The first version of
+    // this builder stopped after three `u32`, because the body was read off the first 26
+    // instructions of `FUN_1429d4fd0`. `tools/reads.py` counts **three** reads in that
+    // function - `u32`, `u32`, then a `u8` at `0x1429d50e8` - and the third is 260 bytes
+    // further in. A 12-byte body made the client's `Decode1` underflow, which its own
+    // decoders answer with a C++ throw; Tester2 faulted `0xc0000005` five milliseconds after
+    // one went out, with "30 C++ throw(s) seen before this" in the fault line.
+    //
+    // It is **not** conditional - `reads.py` marks it `gated?` but the branch at
+    // `0x1429d50d5` jumps *to* the read and the fall-through reaches it too - and it gates
+    // whether the chair object is built:
+    //
+    // ```text
+    // 1429d50e8  Decode1 -> al
+    // 1429d50ed  test al, al / je skip
+    // 1429d5100  call 0x141712040      ; CONSTRUCT the chair object
+    // ```
+    //
+    // So it is 1 for a seat and 0 for a release, and the release also takes the earlier
+    // `test chairId / jne` branch into `[vtable+0xc0]`, which is the clear.
+    w.bool(chair_id.is_some());
     w.into_vec()
 }
 
@@ -219,14 +248,22 @@ mod tests {
         assert_eq!(user_sit(None), vec![0, 0, 0, 0, 0, 0, 0, 0]);
     }
 
+    /// **13 bytes, not 12.** The twelve-byte version killed Tester2's client on 2026-09-09;
+    /// `tools/reads.py` counts three reads in `FUN_1429d4fd0` and the third is a `u8`.
+    /// If this length assertion ever fails downward, the packet is a client-killer again.
     #[test]
-    fn the_remote_form_puts_the_character_first_and_is_three_words() {
+    fn the_remote_form_is_three_words_and_the_show_byte() {
         let b = user_sit_remote(213, Some(3_010_005));
-        assert_eq!(b.len(), 12);
+        assert_eq!(b.len(), 13, "u32 char, u32 chair, u32, u8 - reads.py counts three reads");
         assert_eq!(u32::from_le_bytes(b[0..4].try_into().unwrap()), 213);
         assert_eq!(u32::from_le_bytes(b[4..8].try_into().unwrap()), 3_010_005);
         assert_eq!(u32::from_le_bytes(b[8..12].try_into().unwrap()), 0);
-        assert_eq!(user_sit_remote(213, None), vec![213, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(b[12], 1, "show = 1 builds the chair object at 1429d5100");
+
+        let r = user_sit_remote(213, None);
+        assert_eq!(r.len(), 13);
+        assert_eq!(r[12], 0, "show = 0 skips the construction; the clear is the chairId branch");
+        assert_eq!(u32::from_le_bytes(r[4..8].try_into().unwrap()), 0);
     }
 
     #[test]

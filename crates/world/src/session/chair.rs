@@ -115,24 +115,18 @@ impl Session {
                 // looks the user up in the pool and builds a chair object for them. Being
                 // addressed by character id is also exactly what the map relay needs, so the
                 // same body goes to everyone else.
+                //
+                // ***** AND `0x02AD` IS NOW DISABLED: IT KILLED A CLIENT. ***** Tester2
+                // faulted `0xc0000005` five milliseconds after one went out. The body was
+                // built from the first 26 instructions of `FUN_1429d4fd0`, and that function
+                // is much longer - so the client read past the end of a short body. Full note
+                // on `publish_chair`. Map chairs therefore still seat nobody, which is a
+                // cosmetic gap and strictly better than a crash.
                 self.seated_chair = None;
-                if let Some(chr) = self.claimed_character() {
-                    out.push(Reply {
-                        opcode: net::chair::USER_SIT_REMOTE,
-                        body: net::chair::user_sit_remote(chr.id, Some(u32::from(seat))),
-                        what: format!(
-                            "UserSitRemote: character {} on map seat {seat}. 0x0318 was tried \
-                             here first and refuted on a screen; see session/chair.rs. \
-                             Nothing authenticates.",
-                            chr.id
-                        ),
-                    });
-                    self.publish_chair(chr.id, chr.map_id, Some(u32::from(seat)));
-                    crate::server::log(&format!(
-                        "   chair: 0x00DA seat index {seat} - a MAP chair. Sent 0x02AD to the \
-                         player and to the map."
-                    ));
-                }
+                crate::server::log(&format!(
+                    "   chair: 0x00DA seat index {seat} - a MAP chair. NOT answered: 0x02AD is \
+                     disabled after it killed a client on 2026-09-09. session/chair.rs"
+                ));
             }
             None => crate::server::log(&format!(
                 "   chair: 0x00DA did not decode ({} byte body)",
@@ -152,6 +146,26 @@ impl Session {
     /// `Some(chr)` supersedes on the character id, so a second sit replaces the first in the
     /// queue rather than stacking behind it.
     fn publish_chair(&mut self, character: u32, map: u32, chair: Option<u32>) {
+        // ***** DISABLED 2026-09-09: THIS PACKET KILLED A SECOND CLIENT. *****
+        //
+        // The owner: *"Tester2's client actually exited when Cobalt is sitting in a chair."* The
+        // log pins it to the millisecond - `0x02AD` out at `38.247`, `CLIENT FAULT #1
+        // code=0xc0000005 at 0x140ce89d6` at `38.252`, five milliseconds later.
+        //
+        // The body was built from the FIRST 26 INSTRUCTIONS of `FUN_1429d4fd0` - two
+        // `Decode4` after the pool takes the character id - and the function is far longer
+        // than that. A handler that reads past the end of a short body faults exactly like
+        // this. `CLAUDE.md` records this same mistake shipping a truncated packet and killing
+        // the client **twice** before, both times from a read walk that came back short.
+        //
+        // Re-enable only when every read in that handler has been counted with
+        // `tools/reads.py` and the body matches. Until then the seated player is the only one
+        // who sees the chair, which is a cosmetic gap; this was a crash.
+        let _ = (character, map, chair);
+        if true {
+            return;
+        }
+        #[allow(unreachable_code)]
         let what = match chair {
             Some(c) => format!("UserSitRemote: character {character} sat on chair/seat {c}"),
             None => format!("UserSitRemote: character {character} stood up"),
