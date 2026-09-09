@@ -352,6 +352,26 @@
           chat line "You have lost mesos (-1000)". A RED "You have received Meso Penalty"
           means the old path is still live. This is the same check for (k) and for any taxi.
 
+      (m) DROPPING MESOS - NEW 2026-09-09, NEVER SEEN. The owner: "I still cannot drop mesos."
+          Until today the server DECODED the request and then refused it; the 09-08 work
+          only stopped the refusal freezing the inventory.
+          Drop 10 mesos while standing still. Then:
+            a bag of coins on the floor, meso counter down by 10, and you can pick it
+            back up                          -> done.
+            nothing on the floor, and a chat line saying why
+                                             -> a refusal fired. The line says which:
+                                                not enough / not a positive amount /
+                                                walk a step first. That is a REFUSAL,
+                                                not a freeze, and it is working as built.
+            nothing at all and no chat line  -> that is the freeze coming back. Check
+                                                world.log for 0x0143 and say so.
+          THEN TRY THE INVENTORY IMMEDIATELY. The whole reason this opcode matters is that
+          an unanswered one latches +0x2330 and kills the bag, the AP buttons and the cash
+          shop for the rest of the session. Move an item after dropping: if the bag is dead,
+          the reply is not clearing the latch.
+          Drop your WHOLE balance too - that is allowed, and it is the boundary the tests
+          pin. Anyone on the map can pick the coins up, not just you.
+
     T20 (2026-09-08, REWRITTEN AFTER THE 12:01 RUN). THE OVERNIGHT RUN - SURVIVE, do not
     measure. The owner: "our goal is to leave the client running overnight without it exiting."
 
@@ -2439,6 +2459,22 @@ function Show-TestPlan {
         Write-Host '           prints a grey chat line "You have lost mesos (-1000)".'
         Write-Host '           A RED "You have received Meso Penalty" means the old path is'
         Write-Host '           still live. Same check for (k) and for any taxi.'
+        Write-Host '       (m) DROPPING MESOS - NEW TODAY, NEVER SEEN. Until today the' -ForegroundColor Yellow
+        Write-Host '           server decoded the request and REFUSED it. Drop 10 mesos'
+        Write-Host '           while standing still:'
+        Write-Host '             coins on the floor, counter down 10, you can pick them'
+        Write-Host '             back up            -> done'
+        Write-Host '             nothing + a chat line saying why'
+        Write-Host '                                -> a refusal fired, and the line says'
+        Write-Host '                                   which. That is working as built.'
+        Write-Host '             nothing, no line   -> the FREEZE is back. Grep world.log'
+        Write-Host '                                   for 0x0143 and say so.'
+        Write-Host '           THEN MOVE AN ITEM IN YOUR BAG straight after.' -ForegroundColor Yellow
+        Write-Host '           An unanswered 0x0143 latches +0x2330 and kills the bag, the'
+        Write-Host '           AP buttons and the cash shop for the rest of the session.'
+        Write-Host '           A dead bag means the reply is not clearing the latch.'
+        Write-Host '           Dropping your WHOLE balance is allowed. Anyone on the map'
+        Write-Host '           can pick the coins up, not just you.'
         Write-Host '    0i. THE OVERNIGHT RUN - the goal is to SURVIVE, not to measure.' -ForegroundColor Green
         Write-Host '       -PoolSentry -SentryQuiet -SentryRepair -PinPatches -GuardPage'
         Write-Host '       -GuardBucket now DEFAULTS to 0x20+0x40 - TWO classes. Type nothing.' -ForegroundColor Yellow
