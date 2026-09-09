@@ -7,7 +7,10 @@
 //!
 //! **The popup works from here.** The invite arrives, and `0x0575` mode 5 goes to the invited
 //! player with `type = 1`, which is the field that decides whether the client draws anything
-//! at all.
+//! at all - and a follow-up scan of all 31 writers of the balloon-kind field showed it is the
+//! *only* field that can, because the other 30 writers all store a literal immediate and none
+//! of those immediates is the trade popup's. So `type` is not one gate among several; it is
+//! the gate. `crates/net/src/trade.rs`'s `invite` doc carries the counts.
 //!
 //! **The trade WINDOW does not.** Accepting needs `0x0575` mode 4 carrying a payload whose
 //! per-member portion is dispatched through a virtual call on the open dialog - the body is a
