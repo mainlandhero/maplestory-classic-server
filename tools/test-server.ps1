@@ -286,6 +286,33 @@
           point of (e) being a command: the client's click fork is keyed on their TEMPLATE, so
           a summoned copy of their would send bytes identical to clicking them.
 
+      (g) CHAIRS - NEW 2026-09-08, and the reason for this run. Put a chair in the Set Up
+          tab (Red Chair 3010005 gives 30 HP) and DOUBLE-CLICK it. Then STAND STILL for
+          about 15 seconds and watch the HP number.
+            it climbs by 40 per tick  -> the chair is scaling idle recovery. FIXED.
+            it climbs by 10 per tick  -> the server never learned you sat; check world.log
+                                         for an inbound 0x00DB.
+          The Blue Seal Cushion (3010008) is the control worth doing second: it must add
+          10 MP and NO HP at all. If it adds 30 HP, the table was defaulted somewhere.
+
+      (h) STUCK IN THE CHAIR - THIS IS THE ONE MEASUREMENT ONLY WISP CAN TAKE. Standing up
+          is still broken and the packet that releases a chair has NOT been found. While
+          you are stuck, LEAVE THE CLIENT OPEN and say so. One read of CUser+0x3c28 splits
+          the question in half and needs a seated client to exist:
+            it holds 3010005 -> the client seated ITSELF and we are blocking the stand path
+            it holds -1      -> the client never thought it was sitting; the sprite is
+                                cosmetic and this is a different bug entirely
+          Those need opposite work and look identical from outside. Do not close the client
+          to "reset" it - closing it is what lost this measurement last time.
+
+      (i) THE ANTI-CHEAT GATE, and it is TIME-CRITICAL. Run this at about 60 s of client
+          life and again at about 150 s:
+              cd "C:\MapleCW"; python tools\gatescan.py
+          [0x143AC7F3C] flips from 0 to 2 somewhere between 38 s and 194 s of every session
+          (38 dumps, clean split). Two readings inside that window bracket it. A flip at
+          180 s is the client's own clock; a flip at 40 s is something else, and something
+          else is where our stub could be implicated.
+
     T20 (2026-09-08, REWRITTEN AFTER THE 12:01 RUN). THE OVERNIGHT RUN - SURVIVE, do not
     measure. The owner: "our goal is to leave the client running overnight without it exiting."
 
@@ -2320,6 +2347,24 @@ function Show-TestPlan {
         Write-Host '           their QUEST or their greeting, NEVER the favours menu. That is why'
         Write-Host '           (e) is a command - the click fork is keyed on their TEMPLATE, so'
         Write-Host '           a summoned copy would send bytes identical to clicking them.'
+        Write-Host '       (g) CHAIRS - NEW, AND THE REASON FOR THIS RUN.' -ForegroundColor Yellow
+        Write-Host '           Double-click a chair in the Set Up tab (Red Chair = 30 HP),'
+        Write-Host '           then STAND STILL 15s and watch the HP number.'
+        Write-Host '             climbs by 40 per tick -> chair recovery works. FIXED.'
+        Write-Host '             climbs by 10 per tick -> we never saw you sit; check'
+        Write-Host '                                      world.log for an inbound 0x00DB.'
+        Write-Host '           Control: Blue Seal Cushion must add 10 MP and NO HP.'
+        Write-Host '       (h) STUCK IN THE CHAIR - ONLY YOU CAN TAKE THIS ONE.' -ForegroundColor Red
+        Write-Host '           Standing up is STILL BROKEN and the packet is not found.'
+        Write-Host '           WHILE STUCK, LEAVE THE CLIENT OPEN AND SAY SO. One read of' -ForegroundColor Red
+        Write-Host '           CUser+0x3c28 halves the problem, and needs a seated client:'
+        Write-Host '             3010005 -> the client seated itself, we block the stand'
+        Write-Host '             -1      -> it never thought it sat; different bug'
+        Write-Host '           Closing the client is what lost this measurement last time.'
+        Write-Host '       (i) ANTI-CHEAT GATE - TIME-CRITICAL, at ~60s AND ~150s of life:' -ForegroundColor Yellow
+        Write-Host '             cd "C:\MapleCW"; python tools\gatescan.py'
+        Write-Host '           The gate flips 0 -> 2 between 38s and 194s in every session'
+        Write-Host '           (38 dumps, clean split). Two readings bracket it.'
         Write-Host '    0i. THE OVERNIGHT RUN - the goal is to SURVIVE, not to measure.' -ForegroundColor Green
         Write-Host '       -PoolSentry -SentryQuiet -SentryRepair -PinPatches -GuardPage'
         Write-Host '       -GuardBucket now DEFAULTS to 0x20+0x40 - TWO classes. Type nothing.' -ForegroundColor Yellow
