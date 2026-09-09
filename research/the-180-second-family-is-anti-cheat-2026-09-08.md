@@ -536,9 +536,9 @@ otherwise was over-confident.** The live writer runs only when `[0x143AC7F3C] >=
   eight instructions with no branches:
 
 ```
-140c93374  call [rip+...]                       ; GetTickCount
+140c93374  call [rip+...]                       ; GetCurrentThreadId - see §10.3, NOT GetTickCount
 140c9337a  add  eax, 0xf010fa1
-140c9337f  mov  [rip+...], eax                  ; -> 0x143AC7F24
+140c9337f  mov  [rip+...], eax                  ; -> 0x143AC7F24   the THREAD
 140c93385  mov  dword ptr [rip+...], 0xcc       ; -> 0x143AC7F28   the CODE
 140c9338f  mov  qword ptr [rip+...], 0x1ffa28ac ; -> 0x143AC7F30   the VALUE
 140c9339a  mov  dword ptr [rip+...], 0x12cd84   ; -> 0x143AC7F2C   the STATE
@@ -586,3 +586,82 @@ What it cannot do is separate "2 because of our stub" from "2 for everybody". Th
 that is a session with the real `grap64.dll`, which installs `NGService.exe`, a Windows service and
 the `BlackCat64.sys` kernel driver system-wide. **That is not worth it**, and it is not necessary
 first: if the gate can be observed at 0 in any session, the whole question closes without it.
+
+---
+
+## 10. The gate was read - live, and out of all 37 dumps. It is NOT configuration.
+
+The owner ran `tools/gatescan.py` against the client that had been up about three hours. Both
+controls passed (`.text` at `FUN_140c93370` matched the file; `[0x143AC7F28] = 0xCC` and
+`[0x143AC7F30] = 0x1FFA28AC`), so the numbers are the ones named.
+
+### 10.1 The live client reads exactly what the dumps read
+
+`[0x143AC7F3C] = 2` and `[0x143AC7F70] = 2`, both gates OPEN, every other gate `0`, all three
+detector enable flags `0`. So §9.4's second pre-registered reading - *"the gate reads 0 in a
+healthy long-lived session, therefore it is a consequence of whatever leads to a crash"* - is
+**dead**. A three-hour session that never crashed carries the same open gate as a client that
+died in eight minutes.
+
+### 10.2 But the archive had the *before* picture, and nobody had looked
+
+`gatescan.py --dumps` reads the block out of every archived minidump behind the same two
+controls. **37 dumps, 37 pass.** And the gate is not constant:
+
+| `[0x143AC7F3C]` | dumps | process uptime at the dump |
+|---|---|---|
+| **0** | 2 | **11 s, 38 s** |
+| **2** | 35 | **194 s … 7015 s** |
+
+A perfectly clean split with no overlap, and the live 3 h run sits at the top of the second
+row. **The gate is written between 38 s and 194 s of process life, in every session, and never
+changes again.** `0x143AC7F70` flips in the same window; `0x143AC7FDC` moves too - `0` in 35
+dumps, `2` in two of them and `2` in the live run, needing `3`, so there is a second gate one
+step from opening.
+
+This kills "static configuration" outright. §5 inferred it from three byte-identical sessions;
+the two sessions that disagree were sitting in `dumps/` the whole time and were never counted.
+That is the same failure as the cash-shop opcode - **an existing archive answering a question
+nobody asked it** - and it is why §9 was written to be checked rather than believed.
+
+What the window does *not* yet name is the writer. 38 s → 194 s brackets 180 s, and this module
+runs on a 180 s clock, so the obvious candidate is the first firing of a sibling tick. That is a
+guess. **The cheap way to narrow it costs no extra launch:** run `gatescan.py` at ~60 s and
+~150 s of the next client's life. A flip at 180 s is the module's own clock; a flip at 40 s is
+something else, and something else is where our environment could be implicated.
+
+### 10.3 A correction: `0x143AC7F24` is a THREAD ID, not a tick count
+
+§9.3 labelled the initialiser's first field `GetTickCount + 0xF010FA1`. Wrong, and the dumps
+say so loudly. Subtracting the constant gives values that track the **pid in the dump's own
+filename** - `356516 -> 356520`, `322016 -> 322020`, `358616 -> 358612`, `212108 -> 212228` -
+which is the pid/tid allocation space, not a clock, and flatly inconsistent with the tick values
+the same sessions carry elsewhere (212 228 against a `LAST` of 173 292 418).
+
+Tested against something that can disagree: **the value is present in the dump's own thread list
+in 37 of 37 dumps**, and the first attempt at that test returned "0 of 37" purely because it read
+the wrong dict key and found zero threads in every dump - a negative from an instrument that
+could not have produced a positive, caught only because `(0 threads)` was printed beside it.
+
+So the field is `GetCurrentThreadId() + 0xF010FA1`, and that changes a second reading: the
+`call / add eax, 0xf010fa1 / cmp eax, [rip+0x2e4edd6]` at the top of `FUN_140c79130` compares
+against **this same field**, so it is a *have I already recorded from this thread* guard, not a
+time-based dedupe window as §9.3 implied.
+
+The import cannot be named statically - it is not in the static import directory, because
+Themida resolves nearly everything at runtime - so `GetCurrentThreadId` is **[D]** from the
+37/37 thread-list match rather than **[L]** from a symbol.
+
+### 10.4 Where the stub question now stands
+
+Unchanged in substance and better bounded. The detect-report path we mapped has **never run in
+any session ever captured**: `STATE` is the initialiser's `0x12CD84` in all 37 dumps and live,
+the 600 s ticker `LAST` at `0x143AC7F38` is `0` in all 37 and live, and all three detector
+enable flags are `0`. Whatever writes the gate is not that machinery.
+
+So the gate is set early, by something outside `.text`, in every session that lives past ~3
+minutes - 35 for 35. **A verdict that comes back identical in 35 of 35 sessions looks more like
+initialisation-on-first-use than like a judgement about the environment**, which lowers the
+suspicion on the stub without clearing it: our stub, hook and patched client are constant across
+all 37, so they remain uncontrolled. The 60 s / 150 s bracket in §10.2 is the next thing that can
+move this, and it is free.

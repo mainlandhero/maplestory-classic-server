@@ -54,7 +54,7 @@ EXE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 # The record FUN_140c93370 initialises, and the two live gates.
 INIT_FN = 0x140C93370
 RECORD = [
-    (0x143AC7F24, 4, "record tStart      (GetTickCount + 0xF010FA1 at init)"),
+    (0x143AC7F24, 4, "record THREAD      (GetCurrentThreadId + 0xF010FA1; a live tid in 37/37)"),
     (0x143AC7F28, 4, "record CODE        (0xCC written as an immediate at init)"),
     (0x143AC7F2C, 4, "record STATE       (0x12CD84 idle / 0x1AFF01 detection pending)"),
     (0x143AC7F30, 8, "record VALUE       (0x1FFA28AC written as an immediate at init)"),
@@ -103,7 +103,65 @@ def file_bytes_at(va, n):
     return None
 
 
+def scan_dumps():
+    """The same block, out of every archived minidump, behind the same two controls.
+
+    This is what turned the gate from "static configuration" into a measurement. The archive
+    already contained the *before* picture and nobody had looked: the two dumps whose gate
+    reads 0 are the two shortest-lived sessions there are.
+    """
+    import glob
+
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from dumpwalk import MiniDump, parse_misc  # noqa
+
+    want = file_bytes_at(INIT_FN, 8)
+    rows, skipped = [], []
+    for path in sorted(glob.glob(os.path.join("dumps", "*.dmp"))):
+        try:
+            d = MiniDump(path)
+            text = bytes(d.read(INIT_FN, 8))
+            code = d.u32(0x143AC7F28)
+            val = d.u64(0x143AC7F30)
+        except Exception as exc:
+            skipped.append((os.path.basename(path), "unreadable: %s" % exc))
+            continue
+        if text != bytes(want) or code != 0xCC or val != 0x1FFA28AC:
+            skipped.append((os.path.basename(path), "failed a control"))
+            continue
+        misc = parse_misc(d)
+        create = misc.get("create_time") if misc else None
+        rows.append((os.path.basename(path),
+                     d.u32(0x143AC7F3C), d.u32(0x143AC7F70), d.u32(0x143AC7FDC),
+                     (d.timestamp - create) if create else None))
+
+    print("%d dump(s) passed both controls, %d skipped" % (len(rows), len(skipped)))
+    for name, why in skipped:
+        print("   %-44s %s" % (name, why))
+    print()
+    rows.sort(key=lambda r: (r[4] if r[4] is not None else -1))
+    print("%-44s %6s %6s %6s %9s" % ("dump", "f3c", "f70", "fdc", "uptime"))
+    for name, a, b, c, up in rows:
+        print("%-44s %6d %6d %6d %8ss" % (name, a, b, c, up if up is not None else "?"))
+    print()
+    zero = [r for r in rows if r[1] == 0]
+    two = [r for r in rows if r[1] == 2]
+    if zero and two:
+        print("gate 0x143AC7F3C == 0 : %d dump(s), uptimes %s"
+              % (len(zero), sorted(r[4] for r in zero)))
+        print("gate 0x143AC7F3C == 2 : %d dump(s), uptimes %d .. %d"
+              % (len(two), min(r[4] for r in two), max(r[4] for r in two)))
+        print()
+        print("The gate is written between %ds and %ds of process life and never changes after."
+              % (max(r[4] for r in zero), min(r[4] for r in two)))
+    else:
+        print("Only one value of the gate appears in the archive, so it brackets nothing.")
+    return 0
+
+
 def main():
+    if "--dumps" in sys.argv:
+        return scan_dumps()
     pid, base = find_client()
     if pid is None:
         print("MapleStory.exe is not running - nothing to read.")

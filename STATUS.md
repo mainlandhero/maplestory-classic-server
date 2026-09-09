@@ -85,6 +85,29 @@ implicated. `research/the-180-second-family-is-anti-cheat-2026-09-08.md` §9, th
   "byte-identical across three sessions" argument never had power here: all three sessions ran the
   same stub, hook and patched client.
 
+**MEASURED, same evening: the gate is written between 38 s and 194 s of EVERY session.** The owner ran
+the scan against the 3 h client; both controls passed and it reads `[0x143AC7F3C] = 2`,
+`[0x143AC7F70] = 2`, everything else 0 - identical to the dumps, so "the gate is a consequence of
+whatever leads to a crash" is dead. But `gatescan.py --dumps` reads the block out of **all 37
+archived minidumps** behind the same controls, and **two of them read 0**: the two shortest-lived
+sessions there are, at **11 s and 38 s**. Every dump from **194 s** to **7015 s** reads 2, and so
+does the live 3 h run. A clean split with no overlap. **That kills "static configuration"** - the
+disagreeing sessions were in `dumps/` the whole time and were never counted, which is the
+cash-shop failure again: an existing archive answering a question nobody asked it. `0x143AC7FDC`
+also moves (0 in 35, 2 in two dumps and 2 live, needs 3) - a second gate one step from opening.
+
+**Next, and it costs no extra launch:** run `gatescan.py` at ~60 s and ~150 s of the next client's
+life. The 38→194 s window brackets 180 s and this module runs on a 180 s clock, so a flip at 180 s
+is the module's own clock; a flip at 40 s is something else, and something else is where our
+environment could be implicated.
+
+**Correction, made the same evening:** `0x143AC7F24` is `GetCurrentThreadId + 0xF010FA1`, **not**
+`GetTickCount` as first published here. Subtracting the constant gives the pid in each dump's own
+filename (`356516 -> 356520`, `322016 -> 322020`), and the value is in the dump's **own thread
+list in 37 of 37**. The first run of that test said 0 of 37 - because it read the wrong dict key
+and found zero threads in every dump, a negative from an instrument that could not have produced
+a positive. It was caught only because the thread count was printed beside the verdict.
+
 **`tools/gatescan.py` (new) reads all eighteen gates out of the RUNNING client**, read-only
 (`PROCESS_VM_READ`, the same pattern `dump_runtime.py` already uses), refusing to report unless a
 rebase control and a block-fingerprint control both pass. **It needs an elevated shell** - the
