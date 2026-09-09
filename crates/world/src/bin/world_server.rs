@@ -83,6 +83,7 @@ fn main() -> ExitCode {
     let mut skills_path = PathBuf::from("gm-handbook/skills.txt");
     let mut mobs_path = PathBuf::from("gm-handbook/mobs.txt");
     let mut equips_path = PathBuf::from("gm-handbook/equips.txt");
+    let mut scrolls_path = PathBuf::from("gm-handbook/scrolls.txt");
     let mut chairs_path = PathBuf::from("gm-handbook/chairs.txt");
     let mut mob_templates_path = PathBuf::from("gm-handbook/mobtemplates.txt");
     let mut npc_strings_path = PathBuf::from("gm-handbook/npcstrings.txt");
@@ -152,6 +153,7 @@ fn main() -> ExitCode {
             "--skills" => value().map(|v| skills_path = PathBuf::from(v)),
             "--mobs-file" => value().map(|v| mobs_path = PathBuf::from(v)),
             "--equips" => value().map(|v| equips_path = PathBuf::from(v)),
+            "--scrolls" => value().map(|v| scrolls_path = PathBuf::from(v)),
             "--chairs" => value().map(|v| chairs_path = PathBuf::from(v)),
             "--mob-templates" => value().map(|v| mob_templates_path = PathBuf::from(v)),
             "--npc-strings" => value().map(|v| npc_strings_path = PathBuf::from(v)),
@@ -333,6 +335,18 @@ fn main() -> ExitCode {
         eprintln!(
             "maplecw-world: no equip templates from {} - worn items will have no stats and no upgrade slots. Regenerate with: python tools/dump_equips.py",
             equips_path.display()
+        );
+    }
+
+    // The client's own 208 scrolls, which the Treasure Scroll guarantees one of. Empty is
+    // legal and is said out loud for the same reason the equip table's emptiness is: a
+    // Treasure Scroll that finds no scroll to guarantee refuses, and a refusal nobody can
+    // explain looks exactly like a broken item.
+    config.scrolls = world::config::Config::load_scrolls(&scrolls_path);
+    if config.scrolls.is_empty() {
+        eprintln!(
+            "maplecw-world: no scroll table from {} - the Treasure Scroll will find nothing to guarantee. Regenerate with: python tools/dump_scrolls.py",
+            scrolls_path.display()
         );
     }
 

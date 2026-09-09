@@ -24,13 +24,16 @@
 # research/scroll-command-2026-09-09.md.
 #
 # THE HEADER ABOVE APPLIES TO THEM TOO: "Hand edits survive only until the next
-# scrape." If tools/scrape_drops.py is ever run again these three rows go with it and
+# scrape." If tools/scrape_drops.py is ever run again these two rows go with it and
 # the scrolls stop dropping, silently. Whoever runs it next has to put them back or
 # teach the script to keep the global table.
+#
+# 4001009 Event Trophy was a third row here until 2026-09-09. The owner: "Do not use event
+# trophy since it does not stack" - itemdata.txt gives it slotMax 0. Innocence did not
+# go with it; it became one of the Scroll of Secrets' three modes.
 # ---------------------------------------------------------------------------------
-* | 4001009 | 0.01 | 1 | 1 | 0 | Event Trophy (Innocence Scroll)
-* | 4031065 | 0.01 | 1 | 1 | 0 | Scroll of Secrets (Chaos Scroll)
-* | 4031066 | 0.01 | 1 | 1 | 0 | Treasure Scroll (Clean Slate)
+* | 4031065 | 0.01 | 1 | 1 | 0 | Scroll of Secrets (Chaos, Innocence or Clean Slate)
+* | 4031066 | 0.01 | 1 | 1 | 0 | Treasure Scroll (guarantees a real scroll)
 
 # ---- the global table: event items, rolled for every mob -----------------------
 # (empty - no events yet. One line here and every mob in the game can drop it.)

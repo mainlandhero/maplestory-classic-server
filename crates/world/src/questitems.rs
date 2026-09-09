@@ -148,12 +148,11 @@ pub fn audience_for(store: &store::Store, characters: &[u32]) -> Vec<Eligibility
 /// accumulating in a bag"*. That premise does not hold here: these two have a use, `!scroll`,
 /// and are consumed by it. So the exemption is the policy applied, not an exception to it.
 ///
-/// Note `4001009` is **not** listed: its `info/quest` is 0, so nothing gates it in the first
-/// place. Adding it would suggest a gate that does not exist.
+/// `4001009` used to be listed here as **not** needing an exemption - its `info/quest` is 0,
+/// so nothing gated it. It was dropped from the feature entirely on 2026-09-09 because its
+/// `slotMax` is 0, and the note is kept only so the next reader does not go looking for it.
 pub fn is_exempt(item_id: u32) -> bool {
-    crate::secondjob::is_marble(item_id)
-        || item_id == crate::scrolls::CHAOS
-        || item_id == crate::scrolls::CLEAN_SLATE
+    crate::secondjob::is_marble(item_id) || crate::scrolls::REPURPOSED.contains(&item_id)
 }
 
 /// Which items are quest items, and which quests want each of them.
@@ -757,11 +756,14 @@ mod tests {
                 }
             }
         }
-        // 993 scraped rows plus the three GLOBAL scroll rows added by hand on 2026-09-09.
+        // 993 scraped rows plus the two GLOBAL scroll rows added by hand on 2026-09-09.
+        // Three until later the same day, when Event Trophy was dropped from the feature for
+        // not stacking.
+        //
         // Counted rather than adjusted: if a re-scrape drops the hand-written rows this falls
         // to 993 and fails, which is the point - the file's own header warns that hand edits
         // do not survive a scrape, and the scrolls would otherwise stop dropping silently.
-        assert_eq!(rows, 996, "every parseable row in data/drops.txt");
+        assert_eq!(rows, 995, "every parseable row in data/drops.txt");
         assert_eq!(gated_rows, 9, "rows this filter can now remove (15 quest-item rows, 6 marble)");
         assert!(
             gated.contains(&4_031_047),

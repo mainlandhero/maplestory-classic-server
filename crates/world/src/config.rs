@@ -237,6 +237,13 @@ pub struct Config {
     /// not fatal - items are still sent, just bare - so a missing file degrades to exactly
     /// the behaviour confirmed on screen on 2026-08-19.
     pub equips: HashMap<u32, EquipTemplate>,
+    /// **The client's own 208 scrolls**, keyed by item id, from `gm-handbook/scrolls.txt`.
+    ///
+    /// Wanted by the Treasure Scroll, which guarantees a real scroll the player is carrying -
+    /// so it has to know what that scroll would have granted. Empty is legal and degrades to
+    /// "you are not carrying a scroll I can use", which is a refusal the player is told about
+    /// rather than a silent no-op.
+    pub scrolls: HashMap<u32, ScrollTemplate>,
     /// What each chair adds to the idle tick, keyed by item id, from `gm-handbook/chairs.txt`.
     ///
     /// Empty is legal and degrades to exactly the behaviour before chairs existed: the tick
@@ -618,6 +625,70 @@ impl Config {
         out
     }
 
+    /// Every real scroll, from `tools/dump_scrolls.py`'s `scrolls.txt`.
+    ///
+    /// Same skip-the-row-rather-than-half-read rule as [`Config::load_equips`], and the same
+    /// reason: a partially parsed scroll would grant a wrong number of stat points with
+    /// nothing downstream able to tell.
+    ///
+    /// **The column order is NOT the same as `equips.txt`'s** - this file puts `incWAT` at 9
+    /// and `incSpeed`/`incJump` at 15/16, where the equip file has them at 10 and 8/9. The
+    /// indices below are read off that file's own header line and nothing else; copying the
+    /// equip loader's order would compile, run, and silently grant Speed where the player was
+    /// promised Accuracy.
+    pub fn load_scrolls(path: &std::path::Path) -> HashMap<u32, ScrollTemplate> {
+        let mut out = HashMap::new();
+        let Ok(text) = std::fs::read_to_string(path) else { return out };
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let f: Vec<&str> = line.split(',').map(str::trim).collect();
+            // 19 numeric fields then a name, which is not numeric - hence the slice.
+            if f.len() < 19 {
+                continue;
+            }
+            let n: Vec<Option<u32>> = f[..19].iter().map(|x| x.parse::<u32>().ok()).collect();
+            if n.iter().any(Option::is_none) {
+                continue;
+            }
+            let v: Vec<u32> = n.into_iter().map(Option::unwrap).collect();
+            let u = |i: usize| u16::try_from(v[i]).unwrap_or(u16::MAX);
+            out.insert(
+                v[0],
+                ScrollTemplate {
+                    success: u(1),
+                    cursed: u(2),
+                    increments: net::opcode::EquipStatSet {
+                        inc_str: u(3),
+                        inc_dex: u(4),
+                        inc_int: u(5),
+                        inc_luk: u(6),
+                        inc_mhp: u(7),
+                        inc_mmp: u(8),
+                        inc_wat: u(9),
+                        inc_mad: u(10),
+                        inc_pdd: u(11),
+                        inc_mdd: u(12),
+                        inc_acc: u(13),
+                        inc_eva: u(14),
+                        inc_speed: u(15),
+                        inc_jump: u(16),
+                        inc_crt: u(17),
+                        inc_crd: u(18),
+                        // **Not a column, and it must not be invented.** This client's WZ has
+                        // no `incPAD` on any scroll either - `tools/dump_scrolls.py`'s census
+                        // lists the fields it found and `incPAD` is not among them. Bit 8 is
+                        // zero here for the same reason it is zero in `fresh_stats`.
+                        inc_pad: 0,
+                    },
+                },
+            );
+        }
+        out
+    }
+
     /// Every map's mobs, from `tools/dump_portals.py`'s `mobs.txt` - the same `life` walk
     /// that produced the NPCs, filtered to `type == "m"`.
     ///
@@ -921,6 +992,69 @@ pub fn share_balanced(
     seed: u64,
 ) -> Vec<&net::mob::FieldMob> {
     choose_spawns(mobs, cap, seed)
+}
+
+/// One of the client's own scrolls, as `Item.wz`'s `0204.img` has it.
+///
+/// **Field names are the WZ's own**, exactly as [`EquipTemplate`]'s are, and for the same
+/// reason: `tools/dump_scrolls.py` enumerated every scalar `info` property across all 208
+/// scroll nodes, and the set it found is what is here. There is no `incPAD` among them.
+///
+/// [`ScrollTemplate::category`] is the one derived thing, and its derivation is checked
+/// against the client's own names rather than asserted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScrollTemplate {
+    /// Percent. Three values across all 208: 100, 60 and 10.
+    ///
+    /// **The Treasure Scroll ignores this** - it is a guarantee - but it is loaded because a
+    /// menu that does not say what the scroll normally is would be hiding the whole point of
+    /// the item.
+    pub success: u16,
+    /// Percent chance of destroying the item on failure. 156 of 208 are 0.
+    ///
+    /// Also ignored by the Treasure Scroll: a guaranteed success never reaches the failure
+    /// arm, so nothing can be destroyed. That is a consequence of the rule, not a special
+    /// case, and `crate::scrolls` states it where it applies.
+    pub cursed: u16,
+    /// What the scroll adds on success, as the same 17-field set the wire uses.
+    pub increments: net::opcode::EquipStatSet,
+}
+
+impl ScrollTemplate {
+    /// Which equip category a scroll id is for, as the equip id's own leading three digits.
+    ///
+    /// ```text
+    ///   2040000 Hat …          -> 100   1002xxx Hat
+    ///   2040300 Earring …      -> 103   1032xxx Earring
+    ///   2043200 One-Handed BW  -> 132   1322999 Wizet Secret Agent Suitcase
+    ///   2044700 Claw …         -> 147   1472xxx Claw
+    ///   2048000 Pet Equip …    -> 180   180xxxx Pet equip
+    /// ```
+    ///
+    /// **This is derived, so it has a positive control.** Grouping all 208 scrolls by this
+    /// value and printing one name per group gives 24 groups whose names are *Hat*, *Earring*,
+    /// *Topwear*, *Overall Armor*, *Bottomwear*, *Shoes*, *Gloves*, *Shield*, *Cape*,
+    /// *One-Handed Sword*, … *Claw*, *Pet Equip* - the client's own words, agreeing with the
+    /// derived category in 24 of 24 cases. The test below re-runs that check against the real
+    /// file when it is present.
+    ///
+    /// It was also checked against a case that would have caught an id-prefix rule going
+    /// wrong: the owner's suitcase is `1322999`, and its tooltip says *One-Handed Blunt Weapon*.
+    /// `1322999 / 10000 = 132`, and `2043200`'s name is *One-Handed Blunt Weapon Attack
+    /// Scroll*. The screen and the derivation agree.
+    pub fn category(scroll_item_id: u32) -> u32 {
+        100 + (scroll_item_id % 10_000) / 100
+    }
+
+    /// The equip's own category, the other half of the same comparison.
+    pub fn equip_category(equip_item_id: u32) -> u32 {
+        equip_item_id / 10_000
+    }
+
+    /// Can this scroll be used on that equip?
+    pub fn fits(scroll_item_id: u32, equip_item_id: u32) -> bool {
+        Self::category(scroll_item_id) == Self::equip_category(equip_item_id)
+    }
 }
 
 /// One equip's template values, as `Character.wz` has them.
@@ -1884,6 +2018,7 @@ impl Default for Config {
             quest_items: crate::questitems::QuestItems::default(),
             chatter_off: false,
             equips: HashMap::new(),
+            scrolls: HashMap::new(),
             npc_strings: NpcStringTable::default(),
             npc_strings_path: PathBuf::from("gm-handbook/npcstrings.txt"),
             npc_dialogue_path: PathBuf::from("data/npc-dialogue.txt"),
@@ -2240,6 +2375,101 @@ mod spawn_tests {
         assert_eq!(spawn_capacity(1, 1), 1, "a map with a spawn point is never empty");
         assert_eq!(spawn_capacity(0, 1), 1, "and the floor applies even with nothing to fill");
     }
+
+    /// The real scroll table, and the category derivation **against the client's own names**.
+    ///
+    /// The derivation is the risky part: `100 + (id % 10000) / 100` is an arithmetic rule
+    /// asserted about someone else's id scheme, and this repo's standing rule is that a rule
+    /// like that needs something that can disagree with it. The names can. Every scroll whose
+    /// name begins with a category word is checked against the category the arithmetic gives,
+    /// so a scheme that is not what I think it is fails here rather than in a player's
+    /// inventory.
+    #[test]
+    fn every_real_scroll_loads_and_its_category_agrees_with_its_own_name() {
+        let path = std::path::Path::new("../../gm-handbook/scrolls.txt");
+        if !path.exists() {
+            return; // generated data, gitignored - tools/dump_scrolls.py makes it
+        }
+        let scrolls = Config::load_scrolls(path);
+        assert!(scrolls.len() > 200, "only {} scrolls loaded", scrolls.len());
+
+        // A row that reads at all: the Lesser Hat Accuracy Scroll is 100% and +1 Accuracy.
+        let hat = scrolls[&2_040_000];
+        assert_eq!(hat.success, 100);
+        assert_eq!(hat.cursed, 0, "156 of 208 never destroy the item");
+        assert_eq!(hat.increments.inc_acc, 1, "incACC is column 13, not wherever equips.txt has it");
+        assert_eq!(hat.increments.inc_pad, 0, "no scroll in this client carries incPAD");
+
+        // The column-order trap, stated as an assertion: a weapon attack scroll must put its
+        // number in `inc_wat`, and must NOT have moved it into `inc_mad` or `inc_speed` by
+        // reusing the equip loader's indices.
+        let sword = scrolls[&2_043_000];
+        assert!(sword.increments.inc_wat > 0, "a sword attack scroll grants incWAT");
+        assert_eq!(sword.increments.inc_mad, 0);
+        assert_eq!(sword.increments.inc_speed, 0);
+
+        // The control on the derivation. `(word in the name, category the id must give)`,
+        // taken from the client's own scroll names.
+        let expected: &[(&str, u32)] = &[
+            ("Hat ", 100),
+            ("Earring ", 103),
+            ("Topwear ", 104),
+            ("Overall Armor ", 105),
+            ("Bottomwear ", 106),
+            ("Shoes ", 107),
+            ("Gloves ", 108),
+            ("Shield ", 109),
+            ("Cape ", 110),
+            ("One-Handed Sword ", 130),
+            ("One-Handed Axe ", 131),
+            ("One-Handed Blunt Weapon ", 132),
+            ("Dagger ", 133),
+            ("Wand ", 137),
+            ("Staff ", 138),
+            ("Two-handed Sword ", 140),
+            ("Two-handed Axe ", 141),
+            ("Two-handed Blunt Weapon ", 142),
+            ("Spear ", 143),
+            ("Polearm ", 144),
+            ("Bow ", 145),
+            ("Crossbow ", 146),
+            ("Claw ", 147),
+            ("Pet Equip ", 180),
+        ];
+        let text = std::fs::read_to_string(path).unwrap();
+        let mut checked = 0;
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let Some((head, name)) = line.rsplit_once(',') else { continue };
+            let Some(id) = head.split(',').next().and_then(|s| s.trim().parse::<u32>().ok())
+            else {
+                continue;
+            };
+            let name = name.trim();
+            for (word, category) in expected {
+                if name.starts_with(word) {
+                    assert_eq!(
+                        ScrollTemplate::category(id),
+                        *category,
+                        "{id} is named {name:?}, so its category must be {category}"
+                    );
+                    checked += 1;
+                    break;
+                }
+            }
+        }
+        assert!(checked > 190, "only {checked} of ~208 names matched a category word");
+
+        // And the derivation discriminates, rather than agreeing with everything: a hat
+        // scroll must NOT fit the owner's one-handed blunt weapon.
+        assert!(ScrollTemplate::fits(2_043_200, 1_322_999), "1322999 is a One-Handed BW");
+        assert!(!ScrollTemplate::fits(2_040_000, 1_322_999), "a hat scroll is not for a weapon");
+        assert!(!ScrollTemplate::fits(2_043_000, 1_322_999), "nor a One-Handed SWORD scroll");
+    }
+
     /// The four items a created character wears, read back out of the generated table.
     ///
     /// These values are the reason the table exists: a shirt with `incPDD = 6` and `tuc = 7`

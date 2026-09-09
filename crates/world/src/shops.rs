@@ -560,22 +560,23 @@ impl ShopTable {
     /// The policy was already here and already correct; what was wrong is that two places did
     /// not call it. Hence one function with two names rather than three copies of a rule.
     pub fn max_stack(&self, item_id: u32) -> u16 {
-        // **The three repurposed scrolls override the client's own number**, the owner 2026-09-09:
+        // **The two repurposed scrolls override the client's own number**, the owner 2026-09-09:
         // *"can we make all of these items stackable up to a 100 please?"*
         //
         // It has to be an override rather than a data edit for two reasons. `gm-handbook/` is
         // generated and must never be hand-edited - the next dump would silently undo it. And
         // the client's `info/slotMax` describes what those items *were*: `4031065` and
-        // `4031066` carry `slotMax = 1`, which is right for the quest props they are in this
-        // client's data and wrong for the scrolls `crate::scrolls` turns them into. `4001009`
-        // already reached 100 through the fall-through below; naming all three here keeps the
-        // rule in one statement rather than two-thirds of one.
+        // `4031066` both carry `slotMax = 1`, which is right for the quest props they are in
+        // this client's data and wrong for the scrolls `crate::scrolls` turns them into.
         //
-        // **[I], and the risk is on the client side**: nothing has been measured about how
-        // this client draws a stack larger than an item's own `slotMax`. The server decides
-        // quantities and the client has always drawn what it was sent, but a merge or split of
-        // such a stack goes through the client's own UI rule, which is undecoded. Worth one
-        // look on a screen - stack a few, then try splitting them.
+        // **[I], and the risk is on the client side - with one data point already against it.**
+        // Nothing has been measured about how this client draws a stack larger than an item's
+        // own `slotMax`. `4001009` Event Trophy carries `slotMax = 0` and was dropped from the
+        // feature on 2026-09-09 precisely because the owner found it *"does not stack"* on screen -
+        // so the override did not save that one. Whether `slotMax = 1` behaves differently from
+        // `slotMax = 0` here is exactly the open question, and it is worth one look: stack a
+        // few, then try splitting them. 161 of the 359 Etc items already carry `slotMax = 200`
+        // if a swap turns out to be the answer.
         if crate::scrolls::Scroll::from_item_id(item_id).is_some() {
             return crate::scrolls::STACK_LIMIT;
         }
@@ -644,20 +645,19 @@ fn join_ids(ids: &[u32]) -> String {
 mod tests {
     use super::*;
 
-    /// **All three scrolls stack to 100**, overriding the client's own `slotMax`.
+    /// **Both scrolls stack to 100**, overriding the client's own `slotMax`.
     ///
     /// The owner, 2026-09-09: *"can we make all of these items stackable up to a 100 please?"*
-    /// Two of the three carry `info/slotMax = 1` in `gm-handbook/itemdata.txt`, so without the
-    /// override they would be one per bag slot. The data file is generated and must never be
+    /// Both carry `info/slotMax = 1` in `gm-handbook/itemdata.txt`, so without the override
+    /// they would be one per bag slot. The data file is generated and must never be
     /// hand-edited, which is why this lives in code.
+    ///
+    /// Whether the client honours it is still **[I]** - see `max_stack`'s own note, and the
+    /// Event Trophy that did not stack.
     #[test]
-    fn the_three_scrolls_stack_to_one_hundred() {
+    fn the_two_scrolls_stack_to_one_hundred() {
         let shops = ShopTable::default();
-        for id in [
-            crate::scrolls::INNOCENCE,
-            crate::scrolls::CHAOS,
-            crate::scrolls::CLEAN_SLATE,
-        ] {
+        for id in crate::scrolls::REPURPOSED {
             assert_eq!(shops.max_stack(id), crate::scrolls::STACK_LIMIT, "item {id}");
         }
         // The control: the override is not simply "everything stacks". An equip still does not.

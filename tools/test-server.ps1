@@ -739,6 +739,48 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
+     TS. !scroll - REBUILT 2026-09-09 AND NOT SEEN ON A SCREEN SINCE.
+         Run as `maplecw`. `!item 4031065 5` and `!item 4031066 1`, wear a weapon, `!scroll`.
+         Four questions, each with its two readings written down:
+
+         a) THE STACK. `!item 4031065 5` - do five land in ONE bag slot, or five slots?
+              one slot   -> the server-side override beats the client's info/slotMax (=1),
+                            and the whole stacking question is closed. Then try dragging the
+                            stack apart: a split is the client's own UI rule and is undecoded
+              five slots -> the override does NOT beat slotMax, exactly as Event Trophy
+                            (slotMax 0) did not stack. Say so and we swap both ids for two of
+                            the 161 Etc items that already carry slotMax 200
+
+         b) THE MENU ROW. Every row is now `#i<itemId>#` icon + name on ONE line.
+              icon draws, rows do not overlap -> the clip is fixed AND an icon inside a #L
+                            region works. That second half is unattested: ZERO of this
+                            client's own 33 #L menus put an icon in one
+              rows overlap again -> the icon is what breaks the row height, not the text
+                            after #l. Drop the icon, keep the one-line rows
+              no icon, just a gap -> #i is not honoured inside a #L. Same fix
+
+         c) THE SOUND. 0x0236 now goes to the whole map on every success and failure.
+              a sound and a flash on YOUR screen -> the packet lands and the effect is real
+              nothing at all -> the body or the dispatcher is wrong. world.log will show
+                            0x0236 going out either way, so an empty screen is a CLIENT
+                            result, not a server one
+              second client sees it too -> the map broadcast works. Worth one look if T1 is
+                            already running two clients
+
+         d) THE TREASURE SCROLL - NEVER RUN, NOT ONCE. `!item 2043200 2` (a One-Handed Blunt
+            Weapon scroll) while wearing a One-Handed Blunt Weapon, then `!scroll` ->
+            Treasure Scroll -> the weapon -> the list of your own scrolls.
+              the list shows ONLY scrolls that fit that weapon -> the category rule holds on
+                            live data as well as on the 24 names it was checked against
+              the list is empty -> either the scroll is in the Use tab and not being found,
+                            or the category arithmetic is wrong. `!item 2040000 1` (a HAT
+                            scroll) must NOT appear in the list; if it does, the filter is
+                            inverted
+              it applies and the tooltip gains the scroll's own stats -> done
+
+         And the standing one: an `!` command answered by a CHAT BALLOON is the GM gate,
+         not a broken command.
+
      T1. TWO CLIENTS, SAME MAP. Do this first; T2 waits on it.
 
           FOUR AGENTS WENT OVER THIS ON 2026-08-31 AND THE PREDICTION HAS CHANGED.
@@ -2839,6 +2881,35 @@ function Show-TestPlan {
         Write-Host '  If a warp into one goes wrong, the symptom is being STUCK.'
         Write-Host '  (The old T3/T4 are answered and gone: the type-6 menu renders from'
         Write-Host '   the server. Lyn and the Cab both drew one and both were clicked.)'
+        Write-Host ''
+        Write-Host '  TS. !scroll - REBUILT TODAY, NOT SEEN ON A SCREEN SINCE.' -ForegroundColor Magenta
+        Write-Host '      Run as maplecw. !item 4031065 5 / !item 4031066 1, wear a'
+        Write-Host '      weapon, then !scroll. Four questions:'
+        Write-Host '      a) THE STACK. Do five 4031065 land in ONE bag slot?'
+        Write-Host '           one slot   -> the override beats the client slotMax=1.'
+        Write-Host '                         Then try to SPLIT the stack by dragging'
+        Write-Host '           five slots -> it does not, same as Event Trophy did'
+        Write-Host '                         not. Say so and we swap to ids that'
+        Write-Host '                         already carry slotMax 200 (161 of them)'
+        Write-Host '      b) THE MENU ROW. Each row is now icon + name on ONE line.'
+        Write-Host '           draws clean -> the clip is fixed AND an icon works'
+        Write-Host '                          inside a #L. ZERO of this client own 33'
+        Write-Host '                          menus do that, so it is unattested'
+        Write-Host '           overlaps    -> the ICON breaks the row height. Drop it'
+        Write-Host '           gap, no art -> #i is not honoured in a #L. Same fix'
+        Write-Host '      c) THE SOUND. 0x0236 goes to the whole map now.'
+        Write-Host '           sound + flash -> the effect packet is real'
+        Write-Host '           nothing       -> world.log shows 0x0236 leaving either'
+        Write-Host '                            way, so silence is a CLIENT result'
+        Write-Host '      d) TREASURE SCROLL - NEVER RUN, NOT ONCE.' -ForegroundColor Yellow
+        Write-Host '           !item 2043200 2 while wearing a One-Handed Blunt'
+        Write-Host '           Weapon, then !scroll -> Treasure -> the weapon.'
+        Write-Host '           list shows ONLY fitting scrolls -> category rule holds'
+        Write-Host '           list empty -> wrong tab or inverted filter. Control:'
+        Write-Host '                         !item 2040000 1 is a HAT scroll and must'
+        Write-Host '                         NOT appear. If it does, the filter is'
+        Write-Host '                         backwards'
+        Write-Host '      A ! command answered by a CHAT BALLOON is the GM GATE.' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  T1. TWO CLIENTS, SAME MAP. First, and T2 waits on it.' -ForegroundColor White
         Write-Host '      The 0x0224 body WAS 7 bytes short and is fixed - the stat'
