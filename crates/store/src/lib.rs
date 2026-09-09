@@ -32,6 +32,7 @@ pub mod codes;
 pub mod dailyperks;
 pub mod db;
 pub mod inventory;
+pub mod keymap;
 pub mod migration;
 pub mod error;
 pub mod password;
