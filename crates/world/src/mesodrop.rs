@@ -237,4 +237,31 @@ mod tests {
             assert!(!net::dropmoney::latches_the_exclusive_request(op), "{op:#06X}");
         }
     }
+
+    /// **The two opcodes that store the latch INLINE**, added 2026-09-09 after both were found
+    /// to be live freezes in shipped code.
+    ///
+    /// `0x0111` is the summoning sack and `0x0125` is dragging a scroll onto an equip. Neither
+    /// calls `0x142cc4430`, which is what the scan that built [`net::dropmoney::LATCHING_REQUESTS`]
+    /// looked for; both write `[reg+0x2330]` directly and gate on it first. Until this, using
+    /// either one killed the inventory, the AP buttons and the cash shop for the rest of the
+    /// session - the same failure the owner reported for the meso drop on 2026-09-08, sitting
+    /// unfixed in two more places.
+    ///
+    /// This test exists so a future prune of that list cannot quietly drop them again: they
+    /// look like ordinary entries, and the evidence for them is a disassembly note rather than
+    /// a capture.
+    #[test]
+    fn the_two_inline_latching_opcodes_are_covered() {
+        for op in [0x0111u16, 0x0125] {
+            assert!(
+                net::dropmoney::latches_the_exclusive_request(op),
+                "{op:#06X} stores +0x2330 inline; dropping it re-freezes the client"
+            );
+            // And the whole point: the catch-all must produce a real unlock for them.
+            let out = unlock_unhandled_latching_request(op);
+            assert_eq!(out.len(), 1);
+            assert_eq!(out[0].body[0], 1, "bExclRequestSent");
+        }
+    }
 }
