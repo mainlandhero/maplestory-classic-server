@@ -145,8 +145,13 @@ pub fn exclusive_request_unlock() -> Vec<u8> {
     })
 }
 
-/// The 69 outbound opcodes whose builder calls `FUN_142cc4430` with a non-zero value - i.e.
-/// **every request the client refuses to send again until an inbound packet answers it.**
+/// **72 outbound opcodes** the client refuses to send again until an inbound packet answers
+/// them - 70 whose builder calls `FUN_142cc4430` with a non-zero value, and **two that store
+/// `+0x2330` inline and were therefore invisible to the scan below**.
+///
+/// The count in this sentence has been wrong before - it said 69 while the list held 70,
+/// because `0x0107` was added by hand and the number was not. It is 72 and the list is
+/// asserted sorted, unique and of this length by `the_latching_list_holds_its_controls_and_is_sorted`.
 ///
 /// # How this list was produced, and where it is blind
 ///
@@ -169,12 +174,39 @@ pub fn exclusive_request_unlock() -> Vec<u8> {
 /// them.
 pub const LATCHING_REQUESTS: &[u16] = &[
     0x00D2, 0x00D3, 0x00D5, 0x00D6, 0x00D8, 0x00DA, 0x00DB, 0x00EC, 0x00EF, 0x00F8, 0x0105,
-    0x0106, 0x0107, 0x010C, 0x010D, 0x010E, 0x0114, 0x0116, 0x011A, 0x011C, 0x0120, 0x0121,
-    0x0123, 0x0124, 0x012C, 0x012D, 0x0132, 0x0136, 0x0137, 0x0138, 0x0139, 0x013B, 0x013C,
+    0x0106, 0x0107, 0x010C, 0x010D, 0x010E, 0x0111, 0x0114, 0x0116, 0x011A, 0x011C, 0x0120,
+    0x0121, 0x0123, 0x0124, 0x0125, 0x012C, 0x012D, 0x0132, 0x0136, 0x0137, 0x0138, 0x0139,
+    0x013B, 0x013C,
     0x013E, 0x0140, 0x0143, 0x0147, 0x014A, 0x0159, 0x0165, 0x0166, 0x0170, 0x017F, 0x0180,
     0x0186, 0x0189, 0x0190, 0x0197, 0x019D, 0x01A3, 0x01B4, 0x01B5, 0x01B7, 0x01B8, 0x01BD,
     0x01DC, 0x01FD, 0x01FF, 0x023E, 0x023F, 0x0245, 0x0248, 0x0260, 0x029B, 0x02E3, 0x02E5,
     0x02EA, 0x02ED, 0x02F6, 0x02F7,
+    // **Added 2026-09-09. Both were LIVE FREEZES in shipped code, and both were invisible to
+    // the scan that built this list**, which searched for `call 0x142cc4430`. These two do not
+    // call the setter - they store the latch INLINE, and both gate on it first:
+    //
+    //   0x0111 summoning sack  FUN_142ccb0f0  142ccb267 cmp [rbx+0x2330],0
+    //                                         142ccb2ee mov [rbx+0x2330],1
+    //   0x0125 scroll an item  FUN_142cc7a70  142cc7aa6 cmp [rcx+0x2330],0
+    //                                         142cc7b53 mov [rdi+0x2330],1
+    //
+    // So using a summoning sack, or dragging a scroll onto an equip, killed the inventory, the
+    // AP buttons and the cash shop for the rest of the session - the exact failure the owner hit on
+    // 2026-09-08 with the meso drop, sitting unfixed in two more places.
+    //
+    // **The shape, not the set, was the bug.** This file's own doc block already said
+    // `0x0107` "makes 70 by storing to `+0x2330` inline instead" - so the author knew the
+    // inline shape existed, added the one they had tripped over by hand, and left the
+    // enumeration searching only for calls. `CLAUDE.md`: *the two worst wrong answers here
+    // both came from searching a known list - one looked for the wrong SHAPE.*
+    //
+    // **This list is still incomplete and that is measured, not feared.**
+    // `python tools/fieldrefs.py 0x2330 --lo 0x142cc0000 --hi 0x142d60000 --write` returns
+    // about fifteen `mov [reg+0x2330], 1` sites in that ONE range, and mapping each back to an
+    // opcode has not been done. Adding the two confirmed ones closes two known freezes; it
+    // does not make the list a census. The two are inserted in sorted order above, next to
+    // their neighbours, because a test asserts this list stays sorted - and it caught them
+    // appended at the end, which is exactly what that test is for.
 ];
 
 /// Does this inbound opcode latch `player+0x2330` on the way out of the client?
