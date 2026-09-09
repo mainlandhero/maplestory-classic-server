@@ -935,7 +935,12 @@
          takes is the address of a server.
 
          Do this instead. Start the servers ONCE, then run the launcher TWICE:
-             powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -ServersOnly
+             powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -ServersOnly
+             (or just double-click start-servers.cmd, which passes exactly that plus
+              -PoolSentry. **-SetFieldProbe is not optional**: without it the channel
+              answers nothing, picking a character hangs on "Connecting...", and the
+              run plan is not printed either. This line said -ServersOnly alone until
+              2026-09-09, and it cost the owner a launch.)
              C:\MapleCW\target\release\maplecw-launcher.exe      <- sign in as maplecw
              C:\MapleCW\target\release\maplecw-launcher.exe      <- sign in as tester
           THE STUB IS NOW INSTRUMENTED FOR THIS. The launcher writes
@@ -3067,7 +3072,14 @@ function Show-TestPlan {
         Write-Host '  answers NOTHING - Session::handle returns empty for every packet -' -ForegroundColor Red
         Write-Host '  so picking a character will hang on "Connecting...". That is this' -ForegroundColor Red
         Write-Host '  flag, not a bug. The cash shop plan is NOT printed on this branch.' -ForegroundColor Red
-        Write-Host '  Relaunch with -SetFieldProbe to get into the world.' -ForegroundColor Red
+        Write-Host '  Relaunch with -SetFieldProbe to get into the world. THIS LINE:' -ForegroundColor Red
+        Write-Host ''
+        Write-Host ("    powershell -ExecutionPolicy Bypass -File `"{0}\tools\test-server.ps1`" -SetFieldProbe -ServersOnly" -f $root) -ForegroundColor Cyan
+        Write-Host ''
+        Write-Host '  THE RUN PLAN IS ON THAT BRANCH TOO, so on this one you are reading' -ForegroundColor Red
+        Write-Host '  neither the world nor the plan. Written out in full because an' -ForegroundColor Red
+        Write-Host '  elevated window opens in system32, where a relative path is not a' -ForegroundColor Red
+        Write-Host '  shorter way of saying the same thing - it is a command that fails.' -ForegroundColor Red
         Write-Host ''
         Write-Host '  1. click Login. Any character created in an EARLIER run should be there.'
         Write-Host '  2. create one. Check the name first - a name already used is now refused'
