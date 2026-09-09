@@ -1099,6 +1099,48 @@ Where each of the four stands before any of this session's decode work lands:
 | **summoning sacks** | mob spawn, drops, damage, death and EXP all live and confirmed | the item→mob table, and whether the client sends anything but `0x010E` |
 | **hair/face coupons** | hair and face are already persisted character fields; `0x0138` outbound is `UserAvatarModified` | the coupon item list, the valid hair/face values per gender, and `0x0138`'s body |
 
+**2026-09-09, also from the owner: the Maple Island quest chain does not work.** *"I don't seem to
+be able to accept Mai's Final Training quest. Neither can I do the quest to build the Relaxer,
+or the quest that has me deliver letters between Rina and Lucas. Rain also seems to be missing
+their quiz quest. Pio's Relaxer quest also requires the crates to spawn in and around Amherst,
+but those are not spawning."*
+
+**None of this is missing content - every one of these quests is in the client's own data.**
+Amherst is map **1010** and has exactly three NPCs [L]: **Lucas 17, Pio 18, Rain 19**. The
+quests, by the NPC they name [L]:
+
+| quest | name | NPC |
+|---|---|---|
+| **1007 / 1008** | Letter for Lucas / Lucas's Reply | Lucas (17) |
+| **1010** | Mai's Final Training | Rain (19) |
+| **1012** | Pio's Collecting Recycled Goods - hands over `3010000`, The Green Relaxer | Pio (18) |
+| **1013**..**1019** | Rain's Maple Quiz 1-7 | Rain (19) |
+
+*(Rina is **not** on Maple Island - they are template 201 on map 10001000, Henesys. The Amherst
+letter pair is 1007/1008. Worth confirming which NPC the owner means before anything is written.)*
+
+**Two different causes, and they need different work.**
+
+1. **No script offers any of them.** `data/npc-dialogue.txt` has **zero** non-comment rows [L]
+   - it is an empty overlay. The machinery to accept a quest exists and is used:
+   `Session::accept_quest`, `store::start_quest`, `net::script::QUEST_ACTION_START`, and
+   `SCRIPT_TYPE_QUEST_YES_NO` which `jobguide.rs` already sends. So this is the **same gap
+   Shanks had** - the NPC answered *"no template for NPC 15"* until a script was written for
+   them - and the fix is the same shape. **[D]** that this is the cause; nobody has watched one
+   of these NPCs being clicked with the log open, which is the one thing that would settle it.
+
+2. **Pio's quest is blocked on a subsystem that does not exist.** The crates around Amherst are
+   **reactors**, and there is **no reactor code in `crates/` and no reactor dump in
+   `gm-handbook/`** [L] - the word appears once in the whole tree, in an unrelated comment in
+   `drops.rs`. So 1012 cannot work until reactors exist: the data dump, the spawn, the hit, the
+   break, and the drop. That is a feature, not a fix, and it is bigger than the other four
+   combined.
+
+**And 1010 gates something already shipped.** `world::shanks::MAIS_FINAL_TRAINING` is 1010, and
+the free ride to Lith Harbor is waived on it. So the free branch is currently **unreachable** -
+which is also why nobody has ever confirmed it on a screen, and why the test plan lists that one
+branch as unattested. Fixing 1010 and confirming Shanks' waiver are the same job.
+
 Everything below this banner predates that and is the older ordering.
 
 1. **Watch a departure handover and a control rotation on a screen.** Both landed after the
