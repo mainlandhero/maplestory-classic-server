@@ -138,9 +138,23 @@ screen and what is merely built, kept apart on purpose:
   were all missing the first time - a depth-6 read count, the pool head's own `u32` counted
   separately, and a test asserting the body is 13 bytes. The cause was skipping
   `tools/reads.py`, which exists **because** a short packet killed this client twice before.
-* **MAP CHAIRS - THE MECHANISM IS FOUND AND WIRED, AND IT IS UNSEEN.** `0x0252`, body
-  `u32 characterId; u8 bSit; if (bSit) u16 seatIndex` - **7 bytes seated, 5 released**.
-  `research/map-chair-seat-2026-09-09.md`.
+* **MAP CHAIRS WORK - CONFIRMED ON A SCREEN AND IN MEMORY, 2026-09-09.** The owner: *"I do see
+  that I sat on a bench."* `0x0252`, body `u32 characterId; u8 bSit; if (bSit) u16 seatIndex`
+  - **7 bytes seated, 5 released**. `research/map-chair-seat-2026-09-09.md`.
+
+  **Three instruments agree on one number, which is why this one is settled rather than
+  probable.** The wire, the client's own memory, and the screen:
+
+  ```text
+  16:36:30.366 <- 0x00DA  2 byte body 1900          the client asks for seat 25
+  16:36:30.367 -> 0x0252  UserSitResult: character 213 on map seat 25, 7 bytes
+  chairprobe    +0x3c28 chair id = 25, chair obj 0x5a46728, checksum VALID
+                -> IsSitting = TRUE
+  ```
+
+  Both of the probe's own controls passed on that read (`.text` rebase, and the session
+  pointer matching what the hook last logged), and the chair object's ZtlSecure checksum is
+  valid - so the seat index is a value the client built, not a byte we happened to read.
 
   **Why three attempts failed, and it was never the body.** The client has two remote
   dispatchers that resolve the target differently. `0x02AD` lives in `FUN_1429bb720`, which
