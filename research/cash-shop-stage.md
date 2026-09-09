@@ -645,16 +645,31 @@ still needs the 71-byte record whose field meanings past the serial are not esta
 ```asm
 140d73c09  mov  edx, 0xd1
 140d73c13  call 1406ed520          ; COutPacket(0x00D1)
-140d73c1e  call 1415d01c0          ; a per-opcode send census, NOT a packet field (encodes.py
-                                   ;  reports no writes in it)
+140d73c1e  call 1415d01c0          ; SEND  <- corrected 2026-09-09, see below
 140d73c23  mov  edx, 0x68 ; call 14019b780     ; allocate the neutral 0x68-byte stage
 140d73c41  call 141a3ca80                      ; its ctor
 140d73c4c  call 14209ee50                      ; CStage::SetStage(neutral, 0)
-140d73c57  call 1406ed610          ; SendPacket
+140d73c57  call 1406ed610          ; ~COutPacket  <- corrected 2026-09-09
 ```
 
-**`0x00D1` has an empty body.** [L] The client switches to the neutral stage *before* the
-send returns, so from that instant it is rendering nothing and waiting.
+**`0x00D1` has an empty body.** [L]
+
+**Corrected 2026-09-09: the two calls were labelled the wrong way round, and it reversed the
+ordering claim this section made.** `1406ed610` is the **destructor**, not the send:
+`tools/dis_at.py 0x1406ed610` is eleven instructions that release `this+0x438` and tail-jump
+releasing `this+0x408`, and it never touches `this+0x428`, the length field every encoder
+advances [L]. `1415d01c0` is the send. All three calls here take the **same** stack buffer
+`[rsp+0x30]`, which is the ordinary ctor / send / scope-exit shape.
+
+This function is itself a control on that reading, and a good one: `0x00D1`'s body is empty,
+so the send *must* follow the ctor with nothing in between - which is exactly where
+`1415d01c0` sits, and it leaves `1406ed610` in the epilogue position a destructor occupies.
+
+So the sentence that used to be here - *"the client switches to the neutral stage before the
+send returns"* - is backwards. **The packet is already sent before the stage work begins.** The
+client goes neutral immediately after, so the on-screen result is the same (rendering nothing
+and waiting), but nothing about the stage switch is racing the send, and any reasoning that
+leaned on the switch happening first does not hold.
 
 Where it comes from: `tools/callers.py` gives 11 call sites in 10 functions plus 2 tail jumps,
 and all but two are inside the cash-shop class's own abort paths. The one that is a
