@@ -212,3 +212,11 @@ one-byte reads into `ebx` and `edx`, `add rsi,0x5d0; inc edx; lea rcx,[rsi+rbx*8
 after the NPCs when `Config::clocks` lists the map; `world::localtime` supplies **local**
 time via `GetLocalTime`, because `server::log` is UTC and a clock on a wall is read against a
 wristwatch. Test plan step TK says what each screen outcome means. Not yet seen on screen.
+
+**Write-scan on the two flag bytes, whole image** (`tools/fieldrefs.py 0x1c88` / `0x1c89`,
+666939 resync points, the loader's reads at `141841bfd` / `141841c26` present as the
+control): the only byte-sized writers are the field constructor `FUN_141817e70`
+(`mov byte [rax+0x1c88], r15b` and the same for `+0x1c89` - both initialised together) and
+the slot-83/84 wrappers `FUN_1418871f0` / `FUN_141887270`. Every other `+0x1c88` hit is a
+dword, qword or double store on a different class. So the flags start at zero and only
+`0x020C` / `0x020D` change them; nothing in field entry does. [L]
