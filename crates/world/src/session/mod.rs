@@ -166,6 +166,22 @@ pub struct Session {
     seated_map_seat: Option<u16>,
     /// Mixed into each `!scroll` roll so two scrolls in one session cannot share one.
     scroll_roll_counter: u64,
+    /// **The EXP coupon that is running, if one is.** `(percent of normal, expires, item id)`.
+    ///
+    /// The owner, 2026-09-09: *"Once the EXP buff is applied, either the 2x or the 3x EXP buff, are
+    /// we sure that the EXP gained is actually properly being modified?"* It was not - the
+    /// coupon was consumed, granted nothing, and `Restores::exp_percent` was read by no code
+    /// at all. It is read now, by `Session::with_exp_coupon`.
+    ///
+    /// **Not in `buffs`**, which is a list of CTS bits with a wire representation. This has no
+    /// measured CTS bit in this repo and is a server-side rate, so putting it there would
+    /// imply a packet that is never sent.
+    ///
+    /// Session state, so it does NOT survive a channel change or a relog. That is a real
+    /// limitation and it is the honest one to ship first: the alternative is a stored expiry
+    /// on the character row, which is a schema change and a migration for a fifteen-minute
+    /// item.
+    exp_coupon: Option<crate::consumables::ExpCoupon>,
     /// The source address this connection arrived from, if the socket reported one.
     ///
     /// **Recorded and reported, never decisive.** Two clients on one machine share it, so
@@ -478,6 +494,7 @@ impl Drop for Session {
 mod ability;
 mod buff;
 mod chair;
+mod cashitem;
 mod cashshop;
 mod combat;
 mod consume;
@@ -529,6 +546,7 @@ impl Session {
             seated_chair: None,
             seated_map_seat: None,
             scroll_roll_counter: 0,
+            exp_coupon: None,
             peer: None,
             peer_addr: None,
             local_addr: None,
@@ -951,6 +969,13 @@ impl Session {
             // `research/summon-sacks-2026-09-09.md` predicted it would.
             net::summon::CLIENT_SUMMON_SACK => {
                 return self.on_summon_sack(body.get(2..).unwrap_or(&[]));
+            }
+            // **`0x0114` is a Cash-tab item**, and it latches like the rest of the family.
+            // The owner, 2026-09-09: *"I just tried using the Equip expansion coupon"* and *"Using
+            // the AP and SP reset cash items also does not perform the function."* Both are
+            // this opcode; their own capture named it after the plan asked for one click.
+            net::cashitem::CLIENT_USE_CASH_ITEM => {
+                return self.on_use_cash_item(body.get(2..).unwrap_or(&[]));
             }
             // Anything else whose CLIENT-SIDE builder sets that same exclusive-request latch.
             // Not implemented, but silence here freezes the UI, so it gets the nine-byte

@@ -96,7 +96,17 @@ impl Session {
         for event in events {
             match event {
                 crate::broadcast::Event::Experience { amount, why, white } => {
-                    out.extend(self.award_experience(amount, &why, white, false));
+                    // **The recipient's own coupon, not the killer's.** A share arrives as a
+                    // plain number computed on somebody else's connection; the buff that
+                    // multiplies it belongs to whoever is being paid, and this is the only
+                    // place that knows.
+                    let (amount, coupon_note) = self.with_exp_coupon(amount);
+                    out.extend(self.award_experience(
+                        amount,
+                        &format!("{why}{coupon_note}"),
+                        white,
+                        false,
+                    ));
                 }
                 crate::broadcast::Event::PartyHeal { percent, caster } => {
                     out.extend(self.heal_percent(percent, &format!("Heal from character {caster}")));

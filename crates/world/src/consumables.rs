@@ -149,6 +149,51 @@ impl Restores {
     }
 }
 
+/// A running EXP coupon.
+///
+/// The owner, 2026-09-09: *"Once the EXP buff is applied, either the 2x or the 3x EXP buff, are we
+/// sure that the EXP gained is actually properly being modified?"*
+///
+/// It was not. [`Restores::exp_percent`] was parsed, stored, and **read by nothing** - so the
+/// coupon was consumed and did precisely nothing. This is the state that makes it real.
+///
+/// # It is a percentage OF NORMAL, not a bonus
+///
+/// The client's own data gives `2450000` **200** and `2450001` **300** - two times and three
+/// times, not +200% and +300%. Reading it as a bonus would make the 3x coupon a 4x, which is
+/// the exact class of mistake `CLAUDE.md`'s "the unit, not the arithmetic" section collects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExpCoupon {
+    /// Percentage of normal experience. `300` is triple.
+    pub percent: u32,
+    /// Session milliseconds at which it stops.
+    pub expires_ms: u64,
+    /// Which coupon, for the log and the player-facing line.
+    pub item_id: u32,
+}
+
+impl ExpCoupon {
+    /// Is it still running at `now_ms`?
+    pub fn active_at(&self, now_ms: u64) -> bool {
+        now_ms < self.expires_ms
+    }
+
+    /// `amount` after this coupon. **Truncated, not rounded** - the same choice the existing
+    /// EXP rate makes, and `the_exp_rate_multiplies_a_kill` pins it there for 1.5x.
+    pub fn applied(&self, amount: u64) -> u64 {
+        amount.saturating_mul(u64::from(self.percent)) / 100
+    }
+
+    /// `2450001` -> `"3x"`. For the log line and for anything shown to a player.
+    pub fn label(&self) -> String {
+        if self.percent.is_multiple_of(100) {
+            format!("{}x", self.percent / 100)
+        } else {
+            format!("{}%", self.percent)
+        }
+    }
+}
+
 /// `2023000` GM's Blessing of Wind and `2023001` GM's Blessing of Precision.
 ///
 /// The owner, 2026-09-09: *"Using either item should trigger an effect for all players on a map

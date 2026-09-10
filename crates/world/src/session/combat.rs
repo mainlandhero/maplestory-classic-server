@@ -1366,6 +1366,39 @@ impl Session {
     }
 
 
+
+    /// `amount` after this session's own EXP coupon, and a note for the log.
+    ///
+    /// The owner, 2026-09-09: *"Once the EXP buff is applied, either the 2x or the 3x EXP buff, are
+    /// we sure that the EXP gained is actually properly being modified?"* It was not. The
+    /// percentage was parsed out of the client's own data, stored on the item, and **read by
+    /// nothing**, so the coupon was consumed and changed no number anywhere.
+    ///
+    /// # Where it is applied, and where it deliberately is not
+    ///
+    /// **Only on kill experience, and only to the recipient's own share.** The pool in
+    /// [`Session::exp_for_kill`] is split between everyone who did damage, so multiplying it
+    /// there would pay the whole map out of one player's coupon. Each session therefore
+    /// applies its own, at the two points where a session pays *itself*: its cut of its own
+    /// kill, and a share collected off the bus.
+    ///
+    /// Not on `!exp`, which means "give me exactly this much" and has a test saying so, and
+    /// not on quest turn-ins - the existing EXP rate already draws that same line, and
+    /// `the_quest_exp_rate_multiplies_a_turn_in_and_the_kill_rate_does_not` pins it.
+    ///
+    /// An expired coupon is dropped on read rather than swept by the tick: there is exactly
+    /// one reader, so there is nowhere for a stale value to be seen from.
+    pub(super) fn with_exp_coupon(&mut self, amount: u64) -> (u64, String) {
+        let now = self.clock_ms;
+        let Some(coupon) = self.exp_coupon else { return (amount, String::new()) };
+        if !coupon.active_at(now) {
+            self.exp_coupon = None;
+            return (amount, String::new());
+        }
+        let boosted = coupon.applied(amount);
+        (boosted, format!(" [{} EXP coupon: {amount} -> {boosted}]", coupon.label()))
+    }
+
     /// Award experience for a kill, splitting it by who actually did the damage.
     ///
     /// The owner, 2026-08-20, with a screenshot: *"if I was the person who dealt majority damage,
@@ -1412,9 +1445,12 @@ impl Session {
         };
         // Ours first, and through the same reason-line builder everyone else gets, so the
         // two paths cannot drift apart.
+        // **The killer's own cut, through their own coupon.** Not the pool above - that is
+        // split between everybody who helped, and one player's coupon must not pay the map.
+        let (mine_amount, coupon_note) = self.with_exp_coupon(mine.cut_of(worth));
         let out = self.award_experience(
-            mine.cut_of(worth),
-            &Self::share_reason(why, mine),
+            mine_amount,
+            &format!("{}{coupon_note}", Self::share_reason(why, mine)),
             mine.majority,
             false,
         );
