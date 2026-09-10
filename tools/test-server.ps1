@@ -674,6 +674,39 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
+     TD. THE FOUR THINGS FIXED AFTER THE LAST RUN. All four came out of that run, and
+         none has been seen working. Quick, and they need no setup beyond a bag.
+
+         a) REAL SCROLLING, the client's own window - drag a scroll onto an equip.
+            `0x0125` was decoded in full and NEVER HANDLED; your four attempts got the
+            latch unlock and nothing else.
+            **`!item 2040400 3`** - a topwear DEF scroll, 100% success and cursed 0, so it
+            cannot destroy anything. Use THAT one first.
+              the stats change and a sound plays -> the whole path works
+              "cannot be used here" -> a refusal, and world.log names which one
+              nothing at all -> grep world.log for 0x0236. If it went out, the client
+                            did not draw it; if it did not, the handler refused early
+            THEN, deliberately: **`!item 2040403 3`** is the same scroll at 10% success and
+            **cursed 50** - it DESTROYS the shirt on half its failures. That arm has never
+            run, and a destroy has to remove the item from the screen as well as say so.
+            Wear something you do not want before trying it.
+
+         b) PARTIAL DROP - drag 2 out of a stack of 5 onto the ground.
+              2 on the floor and 3 still in the slot -> mode 1 works
+              the whole slot empties on screen -> the mode is wrong, and the store will
+                            disagree with the screen. Say so, do not close the client
+
+         c) THE MESO CAP. The client's own box stops you at 10000; the server now
+            refuses above it too. Nothing to see unless it misfires:
+              dropping exactly 10000 works -> the boundary is right
+              10000 refused -> off by one, and the chat line says the cap
+
+         d) THE LADDER. Climb a ladder, drop mesos AND an item from part way up.
+              they fall from you down to the floor -> fixed
+              they appear on the floor with no fall -> the arc is still zero-length
+              they hang in the air at your feet -> the snap was lost, and they will not
+                            be pickable. That is the worse failure of the two
+
      TS. !scroll - REBUILT 2026-09-09 AND NOT SEEN ON A SCREEN SINCE.
          Run as `maplecw`. Five questions, each with its readings written down.
 
@@ -2329,6 +2362,33 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
+        Write-Host '  TD. THE FOUR THINGS FIXED AFTER THE LAST RUN.' -ForegroundColor Magenta
+        Write-Host '      All four came out of that run. None has been seen working.'
+        Write-Host '      a) REAL SCROLLING - drag a scroll onto an equip in the'
+        Write-Host '         inventory. 0x0125 was decoded and NEVER HANDLED; your'
+        Write-Host '         four tries got the latch unlock and nothing else.'
+        Write-Host '         !item 2040400 3 - topwear DEF, 100% and cursed 0,'
+        Write-Host '         so it CANNOT destroy anything. That one first.' -ForegroundColor Yellow
+        Write-Host '           stats change + a sound -> the whole path works'
+        Write-Host '           "cannot be used here" -> a refusal; world.log names it'
+        Write-Host '           nothing -> grep world.log for 0x0236. Went out = the'
+        Write-Host '                      client did not draw it. Did not = refused'
+        Write-Host '         THEN on purpose: !item 2040403 3 is 10% with CURSED 50.'
+        Write-Host '         It DESTROYS the shirt on half its failures - that arm'
+        Write-Host '         has never run. Wear something you do not want.' -ForegroundColor Yellow
+        Write-Host '      b) PARTIAL DROP - drag 2 of a stack of 5 to the ground.'
+        Write-Host '           2 on the floor, 3 still in the slot -> mode 1 works'
+        Write-Host '           the slot EMPTIES -> wrong mode, and the store now'
+        Write-Host '                      disagrees with the screen. Say so'
+        Write-Host '      c) THE MESO CAP. Server now refuses over 10000 too.'
+        Write-Host '           exactly 10000 works -> the boundary is right'
+        Write-Host '           10000 refused -> off by one'
+        Write-Host '      d) THE LADDER. Climb one, drop mesos AND an item.'
+        Write-Host '           they FALL from you to the floor -> fixed'
+        Write-Host '           they appear on the floor, no fall -> arc still zero'
+        Write-Host '           they HANG at your feet -> the snap was lost and they'
+        Write-Host '                      cannot be picked up. The worse failure' -ForegroundColor Yellow
+        Write-Host ''
         Write-Host '  TS. !scroll - REBUILT TODAY, NOT SEEN ON A SCREEN SINCE.' -ForegroundColor Magenta
         Write-Host '      Run as maplecw. Five questions:'
         Write-Host '      a) EMPTY-HANDED. DO THIS BEFORE YOU !item ANYTHING -' -ForegroundColor Yellow
