@@ -332,6 +332,13 @@ pub struct Applied {
     /// a real scroll can grant several stats at once - `2040800` grants Attack Power *and*
     /// Accuracy. Chaos pushes at most one; Clean Slate and Innocence push none.
     pub changes: Vec<(&'static str, i32)>,
+    /// **The item is gone.** Only a real scroll with a non-zero `cursed` can do this, and only
+    /// on the failure arm.
+    ///
+    /// Kept separate from `succeeded` because they are different questions: a destroy IS a
+    /// failure, and a caller that treats `!succeeded` as "the item survived and lost a slot"
+    /// would leave a destroyed item in the bag. Every construction below sets it explicitly.
+    pub destroyed: bool,
 }
 
 /// Apply one scroll. `roll` is any number; only its residues are used, so a caller may pass a
@@ -364,6 +371,8 @@ pub fn apply(
             succeeded: true,
             slot_spent: false,
             changes: Vec::new(),
+            // Nothing a Scroll of Secrets does can destroy an item, on any of its three modes.
+            destroyed: false,
         }),
 
         SecretsMode::Chaos => {
@@ -383,7 +392,7 @@ pub fn apply(
                 // The slot it just ate is now a slot Clean Slate can give back.
                 after.failed_slots = after.failed_slots.saturating_add(1);
             }
-            Ok(Applied { after, succeeded, slot_spent: true, changes })
+            Ok(Applied { after, succeeded, slot_spent: true, changes, destroyed: false })
         }
 
         SecretsMode::CleanSlate => {
@@ -402,7 +411,7 @@ pub fn apply(
                 after.failed_slots -= 1;
             }
             // A failed Clean Slate takes nothing - it only fails to give.
-            Ok(Applied { after, succeeded, slot_spent: false, changes: Vec::new() })
+            Ok(Applied { after, succeeded, slot_spent: false, changes: Vec::new(), destroyed: false })
         }
     }
 }
@@ -460,7 +469,80 @@ pub fn apply_treasure(
         set(&mut after.stats, next);
         changes.push((*name, i32::from(next) - i32::from(now)));
     }
-    Ok(Applied { after, succeeded: true, slot_spent: true, changes })
+    // A guarantee never reaches a failure arm, so it never reaches a destroy either.
+    Ok(Applied { after, succeeded: true, slot_spent: true, changes, destroyed: false })
+}
+
+/// **A real scroll, rolled** - the client's own scrolling window, `0x0125`.
+///
+/// The owner, 2026-09-09: *"Just tried scrolling the topwear, it did not work."* It did not: the
+/// opcode was decoded that day and never handled. This is the rule behind it.
+///
+/// `success_pct` and `cursed_pct` come straight from `gm-handbook/scrolls.txt`, which is the
+/// client's own `0204.img`. Across all 208 scrolls `success` takes exactly three values - 100,
+/// 60 and 10 - and **156 of them have `cursed = 0`**, so most scrolls cannot destroy anything.
+///
+/// # Three outcomes, and the third is why [`Applied::destroyed`] exists
+///
+/// * **success** - the increments are added and one slot is spent.
+/// * **failure** - one slot is spent and banked as a failed slot, so a Clean Slate can undo it
+///   exactly as it can undo a failed Chaos. Nothing else changes.
+/// * **destroyed** - a failure that additionally rolled under `cursed_pct`. The item is gone;
+///   the caller must remove it rather than write `after` back.
+///
+/// A destroy is a *kind of* failure, not an alternative to one, which is why `succeeded` is
+/// false on that arm too. A caller reading only `succeeded` would write the item back with a
+/// slot missing and leave a destroyed item in the bag, so `destroyed` is checked first.
+///
+/// # The two rolls are independent residues
+///
+/// `roll % 100` decides success and `(roll / 100) % 100` decides the destroy. Deriving the
+/// second from the first would make "failed" and "destroyed" the same event for some scrolls
+/// and impossible for others.
+pub fn apply_real(
+    base: &EquipBase,
+    state: &EquipState,
+    success_pct: u16,
+    cursed_pct: u16,
+    increments: &EquipStatSet,
+    roll: u64,
+) -> Result<Applied, Refusal> {
+    let _ = base;
+    if state.remaining == 0 {
+        return Err(Refusal::NoSlotsLeft);
+    }
+    let succeeded = (roll % 100) < u64::from(success_pct);
+    let mut after = *state;
+    // **Every arm spends the slot**, which is the real game's rule and the same one the owner gave
+    // for Chaos: "failed chaos scroll will eat a slot".
+    after.remaining -= 1;
+
+    if !succeeded {
+        after.failed_slots = after.failed_slots.saturating_add(1);
+        let destroyed = cursed_pct > 0 && ((roll / 100) % 100) < u64::from(cursed_pct);
+        return Ok(Applied {
+            after,
+            succeeded: false,
+            slot_spent: true,
+            changes: Vec::new(),
+            destroyed,
+        });
+    }
+
+    let mut changes = Vec::new();
+    for (name, get, set) in STATS {
+        let granted = get(increments);
+        if granted == 0 {
+            continue;
+        }
+        let now = get(&after.stats);
+        // Saturating for the same reason `apply_treasure` saturates: a wrap would read on
+        // screen as the scroll having removed the stat it granted.
+        let next = now.saturating_add(granted);
+        set(&mut after.stats, next);
+        changes.push((*name, i32::from(next) - i32::from(now)));
+    }
+    Ok(Applied { after, succeeded: true, slot_spent: true, changes, destroyed: false })
 }
 
 fn succeeds(chance: Chance, roll: u64) -> bool {
@@ -714,6 +796,74 @@ mod tests {
         assert!(out.succeeded);
         assert!(out.slot_spent);
         assert!(out.changes.is_empty());
+    }
+
+    /// **A real scroll succeeds, fails, or destroys - and the slot goes on every arm.**
+    ///
+    /// The owner: *"Just tried scrolling the topwear, it did not work."* `0x0125` was decoded and
+    /// never handled. `success` and `cursed` are the client's own numbers.
+    #[test]
+    fn a_real_scroll_rolls_success_failure_and_destruction() {
+        let b = base(7, 100);
+        let grant = EquipStatSet { inc_wat: 5, ..Default::default() };
+
+        // 100% never fails, whatever the roll.
+        for roll in [0u64, 59, 99, 12_345] {
+            let out = apply_real(&b, &state(7, 0, 100), 100, 0, &grant, roll).unwrap();
+            assert!(out.succeeded, "roll {roll}");
+            assert!(!out.destroyed);
+            assert_eq!(out.after.stats.inc_wat, 105);
+            assert_eq!(out.after.remaining, 6, "a slot goes even on a guaranteed scroll");
+        }
+
+        // 10% fails on a roll of 50. The slot still goes, and it is banked for a Clean Slate.
+        let out = apply_real(&b, &state(7, 0, 100), 10, 0, &grant, 50).unwrap();
+        assert!(!out.succeeded);
+        assert!(!out.destroyed, "cursed is 0 on 156 of the 208 scrolls");
+        assert_eq!(out.after.remaining, 6);
+        assert_eq!(out.after.failed_slots, 1, "a Clean Slate can undo a real scroll's failure");
+        assert_eq!(out.after.stats.inc_wat, 100, "a failure grants nothing");
+
+        // The destroy arm: a failure AND a cursed roll under the percentage.
+        let out = apply_real(&b, &state(7, 0, 100), 10, 50, &grant, 50).unwrap();
+        assert!(!out.succeeded);
+        assert!(out.destroyed, "roll/100 % 100 == 0, which is under 50");
+        // The two residues are independent: same success roll, a cursed roll that misses.
+        let out = apply_real(&b, &state(7, 0, 100), 10, 50, &grant, 50 + 100 * 90).unwrap();
+        assert!(!out.succeeded, "the success residue is unchanged");
+        assert!(!out.destroyed, "but 90 is not under 50");
+    }
+
+    /// A scroll needs a slot, and an item with none is refused before anything is spent.
+    #[test]
+    fn a_real_scroll_is_refused_when_no_slots_are_left() {
+        let b = base(7, 100);
+        let grant = EquipStatSet { inc_wat: 5, ..Default::default() };
+        assert_eq!(
+            apply_real(&b, &state(0, 3, 100), 100, 0, &grant, 0),
+            Err(Refusal::NoSlotsLeft)
+        );
+    }
+
+    /// **A destroy is a failure, not an alternative to one.** A caller that reads only
+    /// `succeeded` would write the item back with a slot missing and leave a destroyed item in
+    /// the bag, so both flags must agree about that.
+    #[test]
+    fn a_destroyed_item_also_reports_the_scroll_as_failed() {
+        let b = base(7, 100);
+        let grant = EquipStatSet { inc_wat: 5, ..Default::default() };
+        let out = apply_real(&b, &state(7, 0, 100), 10, 100, &grant, 50).unwrap();
+        assert!(out.destroyed);
+        assert!(!out.succeeded, "destroyed implies failed");
+        // And nothing a Scroll of Secrets does can ever set it.
+        for mode in SecretsMode::ALL {
+            for roll in [0u64, 99, 4_242] {
+                if let Ok(a) = apply(mode, &b, &state(7, 1, 100), Chance::Rolled, roll) {
+                    assert!(!a.destroyed, "{mode:?} must never destroy an item");
+                }
+            }
+        }
+        assert!(!apply_treasure(&b, &state(7, 0, 100), &grant).unwrap().destroyed);
     }
 
     /// **The Treasure Scroll succeeds and spends a slot.** The owner: *"automatically succeed the
