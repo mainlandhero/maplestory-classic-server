@@ -674,6 +674,20 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
+     TC. ONE CAPTURE I NEED, AND IT COSTS NOTHING. **Use a `5680002` Use Tab 5-slot
+         Coupon** (`!item 5680002 1`, then double-click it in the CASH tab).
+         The +5 rule is written and tested; what is NOT established is which packet the
+         client sends. These are Cash items whose own data is
+         `{"script": "cash_5680002", "npc": 9010000}` with `notConsume 1` - so the client
+         applies nothing itself and asks the SERVER to run a script. `0x010E`'s ten id
+         ranges do not include `568xxxx`, so it is not that one, and no archived run has
+         a confirmed cash-item use in it.
+           an UNKNOWN opcode appears in world.log -> that is the answer. Send me the line
+           nothing appears at all -> the client refused it locally, and the coupon needs
+                         a different route entirely
+         Guessing the opcode is the one thing I will not do here, so this one grep is
+         what unblocks it.
+
      TD. THE FOUR THINGS FIXED AFTER THE LAST RUN. All four came out of that run, and
          none has been seen working. Quick, and they need no setup beyond a bag.
 
@@ -2362,6 +2376,18 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
+        Write-Host '  TC. ONE CAPTURE, AND IT COSTS NOTHING.' -ForegroundColor Magenta
+        Write-Host '      !item 5680002 1, then double-click it in the CASH tab.'
+        Write-Host '      The +5 rule is written and tested. What is NOT known is'
+        Write-Host '      which packet the client sends: these are Cash items whose'
+        Write-Host '      own data is script cash_5680002 / npc 9010000 with'
+        Write-Host '      notConsume 1, so the client asks the SERVER to run a'
+        Write-Host '      script. 0x010E does not cover 568xxxx and no archived run'
+        Write-Host '      has a cash-item use in it.'
+        Write-Host '        an UNKNOWN opcode in world.log -> that IS the answer'
+        Write-Host '        nothing at all -> refused locally; different route'
+        Write-Host '      I will not guess the opcode, so this grep unblocks it.' -ForegroundColor Yellow
+        Write-Host ''
         Write-Host '  TD. THE FOUR THINGS FIXED AFTER THE LAST RUN.' -ForegroundColor Magenta
         Write-Host '      All four came out of that run. None has been seen working.'
         Write-Host '      a) REAL SCROLLING - drag a scroll onto an equip in the'
