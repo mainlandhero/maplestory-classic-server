@@ -37,6 +37,21 @@ like a server that is not running. It cost one of the owner's manual launches on
 and stakes a login claim the login server matches to the process that owns the socket; the
 game socket itself carries no credential and never has. Say so in every progress report.
 
+**2026-09-10: the station clock is decoded and wired - `0x01BC`, type 1, `u8 hour, u8 minute,
+u8 second` - and NOT YET SEEN ON SCREEN.** The owner's 2026-09-09 report was *"the server clock
+does not seem to work. It just stays on 00:00."* The day before, this was written up as
+**blocked behind an unfound `CStage::OnPacket`**. That was wrong: `CField::OnPacket`
+(`FUN_141820080`, `0x1a4..0x5ab`) had been in `research/msexe-gamestage-dispatch.md` since
+2026-08-19, and the "not found yet" sentence it rested on was a stale line in a sibling file.
+A review caught it. The whole 128-case dense switch is now enumerated in
+`research/msexe-field-cases.txt`; case `0x01BC` is vtable slot 59 -> `FUN_1418564d0`, whose
+type-1 arm reads three bytes and calls the widget's set-time, which divides by 12 for the
+AM/PM display [L]. The send is **gated on `gm-handbook/clocks.txt`** (three maps: Ellinia
+Station and the two Orbis station maps) because the widget fetch throws on a map that built
+none, and it carries **local** time from `GetLocalTime`, not the log's UTC. Test plan step
+**TK** says what each outcome on the Ellinia Station wall means.
+`research/field-clock-2026-09-09.md`, third pass.
+
 **2026-09-08: the client token is a SESSION credential now, and an account can only be logged
 in once.** Two changes, and they only work together.
 

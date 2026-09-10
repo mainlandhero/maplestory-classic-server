@@ -1,4 +1,8 @@
-# The station clock, 2026-09-09 — diagnosed, not fixed
+# The station clock, 2026-09-09 — diagnosed, mis-blocked, then found on 2026-09-10
+
+> **Read the third pass at the bottom first.** The first two passes are kept as written
+> because the second one is a worked example of believing a stale sentence; the answer is
+> `0x01BC`, type 1, `u8 hour, u8 minute, u8 second`, and it is wired.
 
 The owner, with a screenshot of Ellinia Station: *"In the station maps such as Ellinia Station, the
 server clock does not seem to work. It just stays on 00:00."*
@@ -137,3 +141,74 @@ this project derived from the character record for the Equip tab, from a differe
 
 It is now `net::inventory::inventory_grow`, and the 5-slot coupons widen the tab on screen
 instead of saying "change maps or relog to see them".
+
+
+---
+
+# Third pass, 2026-09-10: FOUND. The "blocker" was a stale sentence, and the review caught it
+
+The owner asked for a review of the second pass. Its conclusion - *the clock is behind
+`CStage::OnPacket`, which has not been found* - rested on one sentence in
+`research/msexe-gamestage-opcodes.md`. That sentence was written on 2026-08-19 and overtaken
+**the same day**: `research/msexe-gamestage-dispatch.md` has had `FUN_141820080` =
+`CField::OnPacket`, `0x01a4..0x05ab`, in its range table since then, and so has the
+project memory. The second pass never looked. Its "zero calls from the inbound-handler space
+into the clock code" was scanned over `0x142c00000..0x142f00000`, and the field dispatcher
+lives at `0x141820080` - **outside the scanned range**. Enumerate before you filter, again.
+
+## What is measured
+
+**The dense switch.** `FUN_141820080` does `lea eax,[rdx-0x1a4]; cmp eax,0x7f; ja default`
+and jumps through a 128-entry table of image-relative RVAs at `0x141822158`. All 128 cases,
+each with the handler its stub calls, are in `research/msexe-field-cases.txt`. [L]
+
+**`0x01BC` is the clock.** Its case is `add rcx,-0x18; mov rax,[rcx]; call [rax+0x1d8]` -
+vtable slot 59 - and slot 59 in every field vtable is `FUN_1418564d0`. That function reads a
+`u8` type, refuses anything above `0x11`, and jumps through an 18-entry table at
+`0x141856f9c`. The arms read: [L]
+
+```text
+type 0  0x14185652d  u32 seconds      -> FUN_142d98870(global, |seconds|); <= 0 destroys it
+type 1  0x141856566  u8 h, u8 m, u8 s -> FUN_1418a7dd0(field+0x220) then FUN_1415ea5c0(widget, h, m, s)
+type 2  0x1418565af  u32 seconds      -> builder FUN_141839a60
+type 3  0x141856f81  (no arm)
+type 4  0x14185662a  u32, u32         -> a gauge, UI resource 0x310
+5..17   read; 8, 11, 12, 15 have no arm
+```
+
+That is the v214 `ClockType` order - EventTimer 0, HMSClock 1, SecondsClock 2, TimerGauge 4 -
+with matching shapes. The reference scores 1 of 8 here, so the shapes carry it.
+
+**The unit is a 24-hour hour.** `FUN_1415ea5c0` multiplies by `0x2aaaaaab` (divide by 12),
+stores the quotient's non-zero-ness at `widget+0x288` (PM), `hour % 12` at `+0x28c` with 0
+mapped to 12, minute at `+0x290`, second at `+0x294`, and `GetTickCount` at `+0x2a8` so the
+widget ticks on its own afterwards. That is the AM/PM display in the screenshot. [L]
+
+**Why it must be gated on the map.** `FUN_1418a7dd0` returns `[holder+8]` and, when that is
+null, calls `FUN_142e52ed0(0x431, 0)` - the throw helper this client uses everywhere - and
+the type-1 arm calls the setter on the result with no check. A map whose image has no
+`clock` node never builds the widget (`FUN_141841430` only runs the construction when
+`FUN_14023b360(img, "clock")` returns a node). So the server sends `0x01BC` only on maps
+listed in `gm-handbook/clocks.txt`, which `tools/dump_portals.py` now emits from the same
+node. [L]
+
+**The widget's home.** The map loader stores it through `FUN_1418a74f0` into the holder at
+`field+0x220`; `[field+0x228]` is the raw pointer. Case `0x01C4` calls `FUN_1418396d0`,
+which reads no packet and releases exactly that pointer - **DestroyClock**. Case `0x01C5`
+takes a `u8` and walks the id-keyed tree at `field+0x230` - destroy a timer by id. Cases
+`0x020C` / `0x020D` are vtable slots 83 / 84: `u8 flag` -> `field+0x1c88` / `+0x1c89`, then a
+widget setter; the loader reads those two bytes back when it builds the widget, which is how
+the two were found. [L]
+
+## What the review did NOT change
+
+`0x007B` InventoryGrow stands: the bytes re-read from the exe this pass are the same two
+one-byte reads into `ebx` and `edx`, `add rsi,0x5d0; inc edx; lea rcx,[rsi+rbx*8]`, and
+`research/bag-lists.md` line 109 has the same base and stride from the character record.
+
+## Wired
+
+`net::clock::clock_hms` builds `01 hh mm ss`; `session::field::on_field_entered` sends it
+after the NPCs when `Config::clocks` lists the map; `world::localtime` supplies **local**
+time via `GetLocalTime`, because `server::log` is UTC and a clock on a wall is read against a
+wristwatch. Test plan step TK says what each screen outcome means. Not yet seen on screen.

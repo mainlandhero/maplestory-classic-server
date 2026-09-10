@@ -674,6 +674,20 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
+     TK. THE STATION CLOCK - FOUND AND WIRED 2026-09-10. `!map 10002090` (Ellinia Station).
+         The wall clock sat at 00:00 because nothing ever sent it a time. It is `0x01BC`
+         type 1 - hour, minute, second - read out of CField::OnPacket, and the server now
+         sends your machine's LOCAL time on entry to any map whose Map.wz image declares a
+         `clock` node (gm-handbook/clocks.txt; Ellinia Station is one of them).
+           it shows the time on your taskbar, AM/PM right, and it TICKS -> done
+           it shows a time four hours off -> UTC got through; localtime.rs is wrong
+           still 00:00 -> grep world.log for 0x01BC on that entry. Sent = the client
+                         ignored it; not sent = clocks.txt does not list the map
+           the client DIES on entry -> the widget was missing when the packet arrived,
+                         which the decode says throws. Every map in clocks.txt is one
+                         whose image declares the node, so this is the reading I do
+                         not expect. Say which map.
+
      TF. THE FREE MARKET DOOR, which is the one that can strand somebody if it is wrong.
          From **Henesys Market** (10001040) walk into the `market00` portal, then walk back
          out of the Free Market Entrance's `out00`.
@@ -2394,6 +2408,21 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
+        Write-Host '  TK. THE STATION CLOCK - found and wired today.' -ForegroundColor Magenta
+        Write-Host '      !map 10002090 (Ellinia Station). It sat at 00:00 because'
+        Write-Host '      nothing ever sent a time. Now 0x01BC type 1 (h, m, s) goes'
+        Write-Host '      out with your LOCAL time on entry to any map whose image'
+        Write-Host '      declares a clock node (gm-handbook/clocks.txt).'
+        Write-Host '        taskbar time, AM/PM right, and it TICKS -> done'
+        Write-Host '        four hours off -> UTC got through; localtime.rs is wrong'
+        Write-Host '        still 00:00 -> grep world.log for 0x01BC on the entry.'
+        Write-Host '                       sent = the client ignored it; not sent ='
+        Write-Host '                       the map is not in clocks.txt'
+        Write-Host '        client DIES on entry -> the widget was missing when the' -ForegroundColor Yellow
+        Write-Host '                       packet came, which the decode says throws.'
+        Write-Host '                       Not expected on any map in clocks.txt.'
+        Write-Host '                       Say which map.'
+        Write-Host ''
         Write-Host '  TF. THE FREE MARKET DOOR - can strand you if it is wrong.' -ForegroundColor Magenta
         Write-Host '      From HENESYS MARKET (10001040) walk into market00, then'
         Write-Host '      walk back out of the Free Market via out00.'

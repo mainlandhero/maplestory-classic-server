@@ -9457,3 +9457,59 @@ fn a_drop_lands_where_the_mob_finished_its_path_not_where_it_started() {
     });
     assert_eq!(src, (456, 395), "an arc starting behind the corpse is the bug on screen");
 }
+
+/// **The field clock goes out on a map that declares one, with the local time.** The owner,
+/// 2026-09-09, in Ellinia Station: the clock sat at 00:00 because nothing ever sent
+/// `0x01BC`. This pins the send, its shape - type 1, hour, minute, second - and that the
+/// time is the machine's wall clock rather than a constant or UTC.
+#[test]
+fn entering_a_map_with_a_clock_node_sends_the_local_time() {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    store.set_gm("maplecw", true).unwrap();
+    let chr = net::opcode::Character { name: "TestCharD".to_string(), map_id: 40, ..Default::default() };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    store.set_character_map(id, 40).unwrap();
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    let config = Config {
+        clocks: [40u32].into_iter().collect(),
+        set_field_probe: true,
+        ..Config::default()
+    };
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    assert!(s.claim_for_character(id).contains("claimed the migration"));
+
+    // Sample the wall clock on both sides of the call so a second boundary cannot fake a
+    // mismatch; the body must agree with one of the two.
+    let before = crate::localtime::local_hms();
+    let out = s.on_field_entered();
+    let after = crate::localtime::local_hms();
+
+    let clocks: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::clock::FIELD_CLOCK).collect();
+    assert_eq!(clocks.len(), 1, "exactly one clock per entry: {out:?}");
+    let body = &clocks[0].body;
+    assert_eq!(body.len(), net::clock::CLOCK_HMS_LEN);
+    assert_eq!(body[0], net::clock::CLOCK_TYPE_HMS, "type 1 is the wall clock");
+    let sent = (body[1], body[2], body[3]);
+    assert!(
+        sent == before || sent == after,
+        "sent {sent:?}, but the wall clock read {before:?} before and {after:?} after"
+    );
+    assert!(clocks[0].what.contains("FieldClock"), "{}", clocks[0].what);
+}
+
+/// **The control: no clock node, no packet.** The client's type-1 arm fetches the widget
+/// with no null check and the fetch throws on a map that built none, so an unconditional
+/// send would be a crash on every ordinary map. A map missing from `Config::clocks` must
+/// get nothing.
+#[test]
+fn entering_a_map_without_a_clock_node_sends_no_clock() {
+    let (mut s, _store, _id) = gm_session();
+    // `gm_session`'s config has an empty clock table, so whatever map the character is on
+    // is one without a clock.
+    let out = s.on_field_entered();
+    assert!(
+        !out.iter().any(|r| r.opcode == net::clock::FIELD_CLOCK),
+        "a clock went out on a map with no clock node: {out:?}"
+    );
+}

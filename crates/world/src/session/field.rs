@@ -67,6 +67,29 @@ impl Session {
                 ),
             }));
 
+        // **The field clock, for the maps that have one.** The owner, 2026-09-09, in Ellinia
+        // Station: *"the server clock does not seem to work. It just stays on 00:00."* The
+        // client builds the widget itself from the map's `clock` node at field entry and
+        // then waits for `0x01BC` to tell it the time. Nothing ever did. `net::clock` has
+        // the decode.
+        //
+        // **Gated on the map, not sent everywhere**: the client's type-1 arm fetches the
+        // widget with no null check and the fetch throws when the map built none.
+        // `Config::clocks` is the list of maps whose image declares the node.
+        //
+        // Local time rather than UTC - `crate::localtime` says why.
+        if self.config.clocks.contains(&chr.map_id) {
+            let (h, m, s) = crate::localtime::local_hms();
+            out.push(Reply {
+                opcode: net::clock::FIELD_CLOCK,
+                body: net::clock::clock_hms(h, m, s),
+                what: format!(
+                    "FieldClock: type 1, {h:02}:{m:02}:{s:02} local - map {} declares a clock node, so the widget exists to receive it",
+                    chr.map_id
+                ),
+            });
+        }
+
         // Mobs, from the same WZ `life` walk that produced the NPCs and for the same
         // reason: the client's field loader only preloads `Mob/%07d.img` art, and the pool
         // is destroyed and rebuilt empty on every field entry, so they must be re-sent

@@ -156,6 +156,7 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         // Outbound, so that a run's log does not read as if the server were guessing.
         0x007C => "STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order)",
         0x01A0 => "SET_FIELD",
+        0x01BC => "FIELD_CLOCK (u8 type; type 1 = u8 hour, u8 minute, u8 second, 24-hour)",
         0x03D1 => "MOB_LEAVE_FIELD (u32 objectId, u8 deathType, u8, [u32, u32])",
         0x03D2 => "MOB_CHANGE_CONTROLLER (u8 level - 0 DESPAWNS - then the mob body)",
         0x03F0 => "MOB_HP_CHANGE (u32 objectId, u32 hp, u8 showBar) - moves the health bar",
