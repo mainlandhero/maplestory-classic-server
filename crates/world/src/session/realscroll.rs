@@ -395,10 +395,14 @@ impl Session {
         }
     }
 
-    /// The `0x0070` for the scroll's own slot: mode 1 with what is left, mode 3 when the slot
-    /// emptied. **The same rule the partial drop follows**, and for the same reason - a mode 3
-    /// on a stack of five would clear the slot while four are still there.
-    fn scroll_slot_reply(&self, character_id: u32, slot: u16, scroll_id: u32) -> Reply {
+    /// The `0x0070` for a consumed Use-tab item's own slot: mode 1 with what is left, mode 3
+    /// when the slot emptied. **The same rule the partial drop follows**, and for the same
+    /// reason - a mode 3 on a stack of five would clear the slot while four are still there.
+    ///
+    /// Shared with `session::summonsack`, which consumes a sack the same way. It lives here
+    /// because this is where it was first needed; the two callers must not grow separate
+    /// copies, because a copy is where one of them quietly stops handling the stack case.
+    pub(super) fn scroll_slot_reply(&self, character_id: u32, slot: u16, scroll_id: u32) -> Reply {
         let left = self
             .bag_slot_item(character_id, store::InventoryType::Use, slot)
             .filter(|i| i.item_id == scroll_id)

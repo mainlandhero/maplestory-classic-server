@@ -170,8 +170,22 @@ struct FieldState {
     /// Set once the spawn points have been registered, so entering twice does not double
     /// the field.
     seeded: bool,
+    /// The next object id [`Fields::summon_mob`] will hand out on this map.
+    ///
+    /// `0` means "not started"; the first call begins at [`SUMMON_OBJECT_ID_BASE`]. A summoned
+    /// mob has no spawn point, so it cannot borrow a spawn point's id, and it must not collide
+    /// with one either - `due_respawns` looks its mobs up in `config.mobs` by object id and a
+    /// collision would make a kill resurrect the wrong thing.
+    next_summon_id: u32,
     drops: crate::drops::DropTable,
 }
+
+/// Where summoned-mob object ids start.
+///
+/// Map spawn points are numbered from 2000 by the config loader, so this is far clear of them,
+/// and the gap is deliberate: an id that is merely *probably* free is the kind of thing that
+/// works until a map with a lot of mobs comes along.
+pub const SUMMON_OBJECT_ID_BASE: u32 = 100_000;
 
 /// Every map on this channel.
 #[derive(Debug)]
@@ -277,6 +291,60 @@ impl Fields {
                 field.pending.push((now_ms.saturating_add(delay), mob.object_id));
             }
         }
+    }
+
+    /// **Put a mob on a map that has no spawn point for it.** A summoning sack.
+    ///
+    /// The owner, 2026-09-09: *"I just also tried summoning the GM Black Sack Jr. Balrog lvl 80"* -
+    /// `0x0111`, which was decoded in full and never handled.
+    ///
+    /// # It is not a respawn, and that difference is the whole function
+    ///
+    /// [`Fields::due_respawns`] looks each pending id up in `config.mobs` and skips anything it
+    /// cannot find, so a summoned mob could never come back through it. That is **correct**: a
+    /// sack's mob is summoned once and stays dead. This inserts straight into the live pool and
+    /// registers no pending entry, so a kill removes it and nothing refills it -
+    /// `Fields::hurt`'s respawn push is already gated on `config.mob_respawn_s`, which has no
+    /// row for an id that is not a spawn point.
+    ///
+    /// The id comes from a per-map counter starting at [`SUMMON_OBJECT_ID_BASE`] rather than
+    /// from the spawn-point range, because a collision there would make killing a summoned mob
+    /// schedule a respawn of somebody else's.
+    ///
+    /// `appear_type` is [`net::mob::APPEAR_SPAWNING`], and that is not cosmetic: it is the
+    /// value that gives the client the spawn animation, and `net::mob`'s own docs record that
+    /// the alternatives write gate fields this server does not fill.
+    pub fn summon_mob(
+        &self,
+        map: u32,
+        template_id: u32,
+        at: (i16, i16),
+        fh: i16,
+        hp: u64,
+    ) -> LiveMob {
+        let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
+        let field = maps.entry(map).or_default();
+        let mut id = if field.next_summon_id == 0 {
+            SUMMON_OBJECT_ID_BASE
+        } else {
+            field.next_summon_id
+        };
+        // Skip anything the client cannot use as a pool key, and anything already live -
+        // the second is belt and braces, but a duplicate key silently replaces a mob.
+        loop {
+            id = net::mob::next_usable_object_id(id);
+            if !field.mobs.contains_key(&id) {
+                break;
+            }
+            id = id.wrapping_add(1);
+        }
+        field.next_summon_id = id.wrapping_add(1);
+
+        let mut spawn = net::mob::FieldMob::new(id, template_id, at.0, at.1, fh, hp);
+        spawn.appear_type = net::mob::APPEAR_SPAWNING;
+        let live = LiveMob { spawn, hp, at: Some(at), damage_by: Vec::new() };
+        field.mobs.insert(id, live.clone());
+        live
     }
 
     /// Every mob currently alive on a map, at its current position - what an arriving player
