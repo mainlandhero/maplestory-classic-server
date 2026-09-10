@@ -34,6 +34,7 @@ pub mod codec;
 pub mod combat;
 pub mod dropmoney;
 pub mod drops;
+pub mod equipgender;
 pub mod error;
 pub mod handshake;
 pub mod inventory;

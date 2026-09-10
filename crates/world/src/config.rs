@@ -432,6 +432,23 @@ impl Config {
             }
             if target != 0 {
                 links.insert((map, f[2].to_string()), (target, f[4].to_string()));
+                continue;
+            }
+            // **A script portal has target 0 and still leads somewhere.** The owner, 2026-09-09:
+            // *"Ellinia should also have a portal to go to Ellinia Station right here, but
+            // this portal does not exist where I expect it."* It does - `Map.wz` puts its
+            // destination in a `script` name rather than in `tm`, and the dumper used to drop
+            // that field, so 41 portals arrived here looking exactly like spawn points.
+            //
+            // Folded into `links` rather than kept in a second table on purpose: every
+            // existing caller - the transfer handler, the taxi's reachability walk, the
+            // return-scroll check - then treats them as the ordinary portals they are.
+            // `crate::scriptportals` resolves only the ones whose destination is DERIVED from
+            // the data; the rest stay dead and are listed there by name.
+            if let Some(script) = f.get(5).filter(|s| !s.is_empty()) {
+                if let Some((to_map, to_portal)) = crate::scriptportals::destination(script) {
+                    links.insert((map, f[2].to_string()), (to_map, to_portal.to_string()));
+                }
             }
         }
         (links, index)
