@@ -1,7 +1,8 @@
 //! The five **5-slot coupons**, `5680000`..`5680004`.
 //!
 //! The owner, 2026-09-09: *"Also make sure that these items when used, also increase the
-//! appropriate maximum slots up by 5, but maximum should be 200 slots."*
+//! appropriate maximum slots up by 5"* - and then, from the item's own tooltip, *"Also seems
+//! like I was wrong, inventory can be only expanded up to 150 slots."* See [`MAX_SLOTS`].
 //!
 //! ```text
 //!   5680000  Storage Room 5-slot Coupon
@@ -15,30 +16,36 @@
 //! touches no store and no packet, so all of it is testable without a database, and the
 //! session joins it to both.
 //!
-//! # What is decided here and what is still open
+//! # The trigger was unknown for exactly one turn, and then the owner captured it
 //!
-//! The **effect** is settled: `+5`, capped at [`MAX_SLOTS`], on the tab the id names.
+//! These are Cash items whose own `spec` is `{"script": "cash_5680000", "npc": 9010000}` with
+//! `info/notConsume = 1`, so the client applies nothing itself - it asks the server to act.
+//! `0x010E`'s ten id ranges do not include `568xxxx`, so it was not that opcode, and no
+//! archived run had a cash-item use in it. Rather than guess, the plan asked for one click.
 //!
-//! The **trigger is not.** These are Cash items and their `spec` is
-//! `{"script": "cash_5680000", "npc": 9010000}` with `info/notConsume = 1` - so the client
-//! does not apply anything itself, it asks the server to run a script and expects the Maple
-//! Administrator to answer. Which packet carries that request **is not established**:
-//! `research/summon-sacks-2026-09-09.md` §2 enumerates the ten id ranges that gate `0x010E`
-//! and `5680000` is in none of them, so it is not that opcode. Nothing in the archive is a
-//! confirmed cash-item use, either.
+//! It is **`0x0114`**, and the body is the same ten-byte shape as the summoning sack:
 //!
-//! **So no opcode is wired, deliberately.** Guessing one and answering it is how this project
-//! has previously moved a client into a state nobody has read. One capture settles it: use a
-//! coupon and `world.log` names the opcode, at which point [`SlotCoupon::for_item`] is one
-//! match arm away from being connected.
+//! ```text
+//! 02:02:17.218 <- 0x0114 UNKNOWN, 10 byte body dd6b3601030080ab5600
+//!                                              tick     slot 3  0x56ab80 = 5680000
+//! ```
+//!
+//! Three attempts in that run, all answered with the latch unlock and nothing else.
+//! `net::cashitem` decodes it and `session::cashitem` handles it.
 
-/// **The ceiling the owner set**, for every tab and for storage.
+/// **The ceiling, and it is the client's own number rather than mine.**
 ///
-/// A policy number, not a measured one - which matters, because the client draws these
-/// windows and nothing here has established what it does above 200. It is applied as a clamp
-/// rather than a refusal: a coupon used at 198 takes the tab to 200 and is spent, which is
-/// the reading that cannot leave a player holding a coupon they can never use.
-pub const MAX_SLOTS: u16 = 200;
+/// The owner first said 200 and then corrected it from the item's own tooltip: *"Also seems like I
+/// was wrong, inventory can be only expanded up to 150 slots."* The coupon says so itself -
+///
+/// > *"Double-click to expand your Equip tab by 5 slots. You can have up to 150 slots."*
+///
+/// which is much better evidence than a policy number, because it is what the player is told
+/// and therefore what they will hold the server to.
+///
+/// Applied as a clamp rather than a refusal: a coupon used at 148 takes the tab to 150 and is
+/// spent, which is the reading that cannot leave a player holding a coupon they can never use.
+pub const MAX_SLOTS: u16 = 150;
 
 /// How many slots one coupon adds, before the clamp.
 pub const SLOTS_PER_COUPON: u16 = 5;
@@ -88,8 +95,8 @@ impl SlotCoupon {
 ///
 /// **`None` is a refusal and it must reach the player**, because the alternative - clamping
 /// silently - spends a coupon and changes nothing, which is the shape of bug `CLAUDE.md`'s
-/// Heena section is about. A coupon used at 198 is *not* a refusal: it goes to 200 and is
-/// spent, and this returns `Some(200)` for it.
+/// Heena section is about. A coupon used at 148 is *not* a refusal: it goes to 150 and is
+/// spent, and this returns `Some(150)` for it.
 pub fn widened(current: u16) -> Option<u16> {
     if current >= MAX_SLOTS {
         return None;
@@ -138,22 +145,22 @@ mod tests {
         assert_eq!(targets.len(), 5, "two coupons widen the same thing");
     }
 
-    /// **+5, and 200 is a ceiling rather than a step.**
+    /// **+5, and 150 is a ceiling rather than a step.**
     #[test]
-    fn a_coupon_adds_five_and_stops_at_two_hundred() {
+    fn a_coupon_adds_five_and_stops_at_the_ceiling() {
         assert_eq!(widened(24), Some(29));
         assert_eq!(widened(100), Some(105));
-        assert_eq!(widened(194), Some(199));
-        // The partial step: 198 + 5 would be 203, and it must land exactly on the ceiling
+        assert_eq!(widened(140), Some(145));
+        // The partial step: 148 + 5 would be 153, and it must land exactly on the ceiling
         // rather than overshoot or refuse.
-        assert_eq!(widened(198), Some(MAX_SLOTS), "a partial step still spends the coupon");
-        assert_eq!(widened(199), Some(MAX_SLOTS));
+        assert_eq!(widened(148), Some(MAX_SLOTS), "a partial step still spends the coupon");
+        assert_eq!(widened(149), Some(MAX_SLOTS));
         // At the ceiling it refuses, so the caller can keep the coupon and say why.
         assert_eq!(widened(MAX_SLOTS), None);
         assert_eq!(widened(u16::MAX), None, "and above it, which a bad write could produce");
     }
 
-    /// Repeated use walks to exactly 200 and then stops, rather than oscillating or
+    /// Repeated use walks to exactly 150 and then stops, rather than oscillating or
     /// overshooting - the property a player actually experiences.
     #[test]
     fn using_coupons_until_they_stop_lands_exactly_on_the_ceiling() {
@@ -166,7 +173,7 @@ mod tests {
             assert!(used < 100, "it never stopped");
         }
         assert_eq!(slots, MAX_SLOTS);
-        // 24 -> 199 in 35 steps of five, then one partial step to 200.
-        assert_eq!(used, 36);
+        // 24 -> 149 in 25 steps of five, then one partial step to 150.
+        assert_eq!(used, 26);
     }
 }

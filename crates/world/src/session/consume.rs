@@ -210,6 +210,41 @@ impl Session {
         character_id: u32,
         map: u32,
     ) -> Vec<Reply> {
+        // **The EXP coupon, which is a rate rather than a stat.** The owner: *"are we sure that
+        // the EXP gained is actually properly being modified?"* It was not - this field was
+        // read by nothing, so the coupon was consumed and did nothing at all.
+        //
+        // It is set before the CTS block returns, because a coupon has no CTS bit and would
+        // otherwise leave through the early return below having changed nothing.
+        let mut out = Vec::new();
+        if restores.exp_percent > 0 && restores.duration_ms > 0 {
+            let coupon = crate::consumables::ExpCoupon {
+                percent: restores.exp_percent,
+                expires_ms: self.clock_ms.saturating_add(u64::from(restores.duration_ms)),
+                item_id,
+            };
+            // A second coupon REPLACES the first rather than stacking or being refused.
+            // Stacking would make two 2x coupons a 4x, which no version of this game does,
+            // and refusing would eat the item - the worst of the three.
+            self.exp_coupon = Some(coupon);
+            let line = format!(
+                "{} experience for {} minutes.",
+                coupon.label(),
+                restores.duration_ms / 60_000
+            );
+            out.push(Reply {
+                opcode: net::notice::CHAT_NOTICE,
+                body: net::notice::chat_notice(&line),
+                what: format!(
+                    "ChatNotice: item {item_id} starts a {} EXP coupon, {} ms. Applied to KILL \
+                     experience only - not to !exp and not to quest turn-ins, which is where \
+                     the existing rate draws the same line.",
+                    coupon.label(),
+                    restores.duration_ms
+                ),
+            });
+        }
+
         let buffs = restores.buffs();
         // A restore-only potion takes this path too and must leave with nothing: an empty
         // `0x007D` would set a mask with no bits and is not worth sending.
@@ -222,7 +257,7 @@ impl Session {
                     restores.unsupported().join(", ")
                 ));
             }
-            return Vec::new();
+            return out;
         }
         let stats: Vec<net::buff::TemporaryStat> = buffs
             .iter()
@@ -264,7 +299,7 @@ impl Session {
                 restores.unsupported().join(", ")
             ));
         }
-        let mut out = vec![mine];
+        out.push(mine);
         if crate::consumables::blesses_the_whole_map(item_id) {
             let name = self.claimed_character().map(|c| c.name).unwrap_or_default();
             self.bus().publish(

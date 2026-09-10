@@ -4281,6 +4281,91 @@ fn the_exp_rate_multiplies_a_kill() {
     assert!(s.exp_for_kill(2).1.contains("1.5x"), "and the log says why");
 }
 
+/// **The EXP coupon actually multiplies a kill**, which it did not until 2026-09-09.
+///
+/// The owner: *"Once the EXP buff is applied, either the 2x or the 3x EXP buff, are we sure that
+/// the EXP gained is actually properly being modified?"* No - `Restores::exp_percent` was
+/// parsed, stored and read by nothing, so the coupon was consumed and changed no number.
+///
+/// This drives the real thing: drink the real `2450001` out of the real generated table, then
+/// kill, and count the experience the character actually banked.
+#[test]
+fn an_exp_coupon_triples_a_kill_and_expires() {
+    let path = std::path::Path::new("../../gm-handbook/consumables.txt");
+    if !path.exists() {
+        return; // generated, gitignored
+    }
+    let (mut s, store, id) = gm_session();
+    let mut mob_exp = std::collections::HashMap::new();
+    mob_exp.insert(2u32, 15u32);
+    s.config = Arc::new(Config {
+        mob_exp,
+        consumables: crate::consumables::Consumables::load(path),
+        ..(*s.config).clone()
+    });
+    let exp_now = |store: &Arc<Store>| {
+        store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().exp
+    };
+
+    // The control: without a coupon a kill is worth its face value, so the assertion below
+    // is about the coupon and not about the kill.
+    let before = exp_now(&store);
+    s.award_experience(s.exp_for_kill(2).0, "a kill", true, false);
+    assert_eq!(exp_now(&store) - before, 15, "1x with no coupon");
+
+    // Drink a real 3x coupon. Seeded straight into the bag rather than through `!item`,
+    // which refuses any id the test config's (empty) item table does not name.
+    store
+        .add_item(id, store::InventoryType::Use, &store::Item::bundle(2_450_001, 1), 100)
+        .unwrap();
+    let out = s.on_use_item(&net::useitem::use_item(0, 1, 2_450_001, 0));
+    assert!(
+        out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE
+            && notice_text(r).contains("3x experience")),
+        "the player must be told it started: {out:?}"
+    );
+
+    let before = exp_now(&store);
+    let (amount, note) = s.with_exp_coupon(s.exp_for_kill(2).0);
+    assert_eq!(amount, 45, "15 tripled");
+    assert!(note.contains("3x EXP coupon"), "and the log says so: {note}");
+    s.award_experience(amount, "a kill", true, false);
+    assert_eq!(exp_now(&store) - before, 45, "the character really banked triple");
+
+    // **It ends.** A coupon that never expires is a permanent rate change nobody asked for.
+    s.clock_ms += 900_000;
+    let (amount, note) = s.with_exp_coupon(s.exp_for_kill(2).0);
+    assert_eq!(amount, 15, "back to face value after fifteen minutes");
+    assert!(note.is_empty());
+}
+
+/// **A second coupon replaces the first**, rather than stacking or being refused.
+///
+/// Stacking would make two 2x coupons a 4x, which no version of this game does; refusing
+/// would eat the item, which is the worst of the three.
+#[test]
+fn a_second_exp_coupon_replaces_rather_than_stacks() {
+    let path = std::path::Path::new("../../gm-handbook/consumables.txt");
+    if !path.exists() {
+        return;
+    }
+    let (mut s, store, id) = gm_session();
+    s.config = Arc::new(Config {
+        consumables: crate::consumables::Consumables::load(path),
+        ..(*s.config).clone()
+    });
+    for item in [2_450_000u32, 2_450_001] {
+        store
+            .add_item(id, store::InventoryType::Use, &store::Item::bundle(item, 1), 100)
+            .unwrap();
+    }
+    // The 2x first, then the 3x on top of it.
+    s.on_use_item(&net::useitem::use_item(0, 1, 2_450_000, 0));
+    assert_eq!(s.with_exp_coupon(100).0, 200, "the 2x is running");
+    s.on_use_item(&net::useitem::use_item(0, 2, 2_450_001, 0));
+    assert_eq!(s.with_exp_coupon(100).0, 300, "the 3x replaced it - NOT 600");
+}
+
 /// `!exp` is NOT multiplied. It means "give me exactly this much".
 #[test]
 fn the_exp_command_is_not_multiplied() {
