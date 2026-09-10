@@ -251,6 +251,27 @@ impl Session {
                         .map(|i| i.item.item_id)
                 })
                 .unwrap_or(0);
+            // **A female character cannot wear a male top, and the client agrees.**
+            //
+            // The owner, 2026-09-09: *"Cobalt does not seem to be wearing a top, but does have a
+            // top equipped when logging into the game."* The server was sending it correctly -
+            // `avatar_look` puts slot 5 / `1040021` on the wire and the client has the art -
+            // and the client still refused to draw it, because `1040021` is a MALE top on a
+            // female character. `net::equipgender` has the derivation from the client's own
+            // `MakeCharInfo.img`.
+            //
+            // The client was right; the bug was that this let their put it on. Checked here
+            // rather than in the store, because the store has the item and the slot but not
+            // the character's gender, and passing it in would put a rendering rule into the
+            // layer that only knows about rows.
+            if !net::equipgender::may_wear(incoming, chr.gender) {
+                return self.inventory_refused(
+                    &m,
+                    &format!(
+                        "item {incoming} is not made for this character's gender, and the                          client will not draw it even if the server allows it - which is how                          a character ends up looking undressed on the character-select screen"
+                    ),
+                );
+            }
             if let Some(other) = net::overall::conflicting_slot(incoming) {
                 if let Some(worn_there) = self
                     .store

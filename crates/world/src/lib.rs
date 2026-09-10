@@ -57,6 +57,7 @@ pub mod questitems;
 pub mod remoteattack;
 pub mod returnscroll;
 pub mod scrollnpc;
+pub mod scriptportals;
 pub mod scrolls;
 pub mod secondjob;
 pub mod shanks;

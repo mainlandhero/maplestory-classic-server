@@ -173,6 +173,14 @@ pub const FARE_MESOS: u32 = 500;
 /// both would make the 500 meaningless. Nothing in this client carries either figure.
 pub const FERRY_FARE_MESOS: u32 = 1_000;
 
+/// What a VIP cab charges for the run to Ant Tunnel Park.
+///
+/// The owner, 2026-09-09: *"VIP Cabs should transport players to Dungeon: Ant Tunnel Park for
+/// 10,000 mesos."* Twenty times a regular cab, which is the point of the tier - and unlike
+/// [`FARE_MESOS`] it is a number that was chosen rather than inferred, so it is stated here
+/// once and read by the two rows that use it.
+pub const VIP_FARE_MESOS: u32 = 10_000;
+
 /// The line break: the **two characters** backslash and `n`.
 ///
 /// Not a real `0x0A`. See the module doc for the listing - a token beginning with `\` and one
@@ -210,7 +218,22 @@ pub enum Network {
     /// ship is not a portal - so without this the third-job instructors in El Nath cannot be
     /// reached by any means a player has.
     Ossyria,
+    /// **The VIP cabs' one dungeon run.** The owner, 2026-09-09: *"the VIP Cabs should behave
+    /// differently from normal Taxi Cabs. VIP Cabs should transport players to Dungeon: Ant
+    /// Tunnel Park for 10,000 mesos."*
+    ///
+    /// A network of its own rather than an extra stop on [`Network::Victoria`], because
+    /// [`destinations`] builds a network's menu out of the OTHER taxis' home maps - and Ant
+    /// Tunnel Park has no taxi standing in it. Putting it on the Victoria list would also
+    /// offer it from every regular cab at 500 mesos, which is the opposite of what was asked.
+    Dungeon,
 }
+
+/// Where a [`Network::Dungeon`] cab goes.
+///
+/// `10005070` is **Ant Tunnel Park**, from `gm-handbook/maps.txt` - the client's own name for
+/// it, not a guess at which of the eight Ant Tunnel maps was meant.
+pub const DUNGEON_STOPS: [u32; 1] = [10_005_070];
 
 /// How an NPC talks. Same mechanism, different fare, different stops - different words.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -304,20 +327,22 @@ pub struct Taxi {
 /// 10005000, 600,    -282,   75,  40, -332, -232, 0, Regular Cab
 /// ```
 ///
-/// **The VIP cabs charge the same fare as the regular ones**, which the classic game did
-/// not. The owner asked for one modest fee; a second price tier is a decision nobody has made,
-/// and inventing one here would put a number on screen that no one chose. Recorded rather
-/// than silently done. **[I]**
+/// **The VIP cabs are no longer regular cabs**, and that was a decision rather than a
+/// discovery. This block used to read *"a second price tier is a decision nobody has made,
+/// and inventing one here would put a number on screen that no one chose"* - so it was
+/// recorded and left alone. The owner made it on 2026-09-09: *"VIP Cabs should transport players
+/// to Dungeon: Ant Tunnel Park for 10,000 mesos."* They are [`Network::Dungeon`] at
+/// [`VIP_FARE_MESOS`] now.
 ///
 /// **Lyn is a taxi and the Lith Harbor VIP Cab is one too**, so Lith Harbor has two. That is
 /// what the data says; both work, and they differ only in voice.
 pub const TAXIS: &[Taxi] = &[
     // ---- the Victoria Island cabs, unchanged -------------------------------------------
-    Taxi { template: 104, name: "VIP Cab", home_map: 10_000_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS },
+    Taxi { template: 104, name: "VIP Cab", home_map: 10_000_000, voice: Voice::Cab, network: Network::Dungeon, fare: VIP_FARE_MESOS },
     Taxi { template: 900_003, name: "Lyn", home_map: 10_000_000, voice: Voice::TourGuide, network: Network::Victoria, fare: FARE_MESOS },
     Taxi { template: 200, name: "Regular Cab", home_map: 10_001_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS },
     Taxi { template: 301, name: "Regular Cab", home_map: 10_002_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS },
-    Taxi { template: 302, name: "VIP Cab", home_map: 10_002_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS },
+    Taxi { template: 302, name: "VIP Cab", home_map: 10_002_000, voice: Voice::Cab, network: Network::Dungeon, fare: VIP_FARE_MESOS },
     Taxi { template: 400, name: "Regular Cab", home_map: 10_003_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS },
     Taxi { template: 500, name: "Regular Cab", home_map: 10_004_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS },
     Taxi { template: 600, name: "Regular Cab", home_map: 10_005_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS },
@@ -387,6 +412,11 @@ pub fn taxi_for(template: u32, map: u32) -> Option<&'static Taxi> {
 /// `Session::on_npc_click` resolves the click against `config.npcs[chr.map_id]`, so the
 /// character is on `home_map` by construction.
 pub fn destinations(taxi: &Taxi) -> Vec<u32> {
+    // **A dungeon cab's stops are a list, not the other cabs' home maps.** Ant Tunnel Park
+    // has no taxi standing in it, so the derivation below would give it an empty menu.
+    if taxi.network == Network::Dungeon {
+        return DUNGEON_STOPS.iter().copied().filter(|&m| m != taxi.home_map).collect();
+    }
     let mut maps: Vec<u32> = TAXIS
         .iter()
         // **Its own network, and only its own.** Without this the three Ossyria rows would
@@ -923,13 +953,31 @@ mod tests {
 
         let victoria: Vec<&Taxi> =
             TAXIS.iter().filter(|t| t.network == Network::Victoria).collect();
-        assert_eq!(victoria.len(), 8, "the cabs are untouched");
+        // Six, not eight: the two VIP Cabs moved to `Network::Dungeon` on 2026-09-09.
+        assert_eq!(victoria.len(), 6, "the regular cabs and Lyn");
         let mut towns: Vec<u32> = victoria.iter().map(|t| t.home_map).collect();
         towns.sort_unstable();
         towns.dedup();
+        // **Still all six towns, and that is the check that matters.** Lith Harbor keeps Lyn
+        // and Ellinia keeps Regular Cab 301, so moving the VIP rows out cost no town its
+        // service. If it ever does, a town silently loses its taxi and this catches it.
         assert_eq!(towns, TOWNS, "the six Victoria Island towns");
         for t in &victoria {
             assert_eq!(t.fare, FARE_MESOS, "a cab charges the cab fare");
+        }
+
+        // **The VIP cabs.** The owner: *"VIP Cabs should transport players to Dungeon: Ant Tunnel
+        // Park for 10,000 mesos."*
+        let vip: Vec<&Taxi> = TAXIS.iter().filter(|t| t.network == Network::Dungeon).collect();
+        assert_eq!(vip.len(), 2, "Lith Harbor and Ellinia have the VIP cabs");
+        for t in &vip {
+            assert_eq!(t.name, "VIP Cab");
+            assert_eq!(t.fare, VIP_FARE_MESOS, "twenty times a regular cab");
+            assert_eq!(destinations(t), vec![10_005_070], "Ant Tunnel Park, and only that");
+        }
+        // And no regular cab reaches it, or the tier is pointless.
+        for t in TAXIS.iter().filter(|t| t.network != Network::Dungeon) {
+            assert!(!destinations(t).contains(&10_005_070), "row {} offers the dungeon", t.template);
         }
 
         let ferry: Vec<&Taxi> = TAXIS.iter().filter(|t| t.network == Network::Ossyria).collect();
@@ -1091,6 +1139,7 @@ mod tests {
             let want = match t.network {
                 Network::Victoria => 5, // six towns minus its own
                 Network::Ossyria => 2,  // three ports minus its own
+                Network::Dungeon => DUNGEON_STOPS.len(), // Ant Tunnel Park, and no cab is in it
             };
             assert_eq!(d.len(), want, "row {} on map {}", t.template, t.home_map);
             assert!(!d.contains(&t.home_map), "row {} offers its own map", t.template);
@@ -1101,12 +1150,17 @@ mod tests {
             // as "there exists such a row" rather than "the row on that map is in this
             // network", because Sleepywood hosts one of each - it is the interchange - and
             // the stronger phrasing would fail on the very map the design depends on.
-            for m in &d {
-                assert!(
-                    TAXIS.iter().any(|o| o.home_map == *m && o.network == t.network),
-                    "row {} offers map {m}, which its own network does not serve",
-                    t.template
-                );
+            // **A dungeon stop is deliberately NOT a taxi's home map** - that is the whole
+            // reason it needed its own network - so the containment below is asked only of
+            // the two networks that are built out of `TAXIS`.
+            if t.network != Network::Dungeon {
+                for m in &d {
+                    assert!(
+                        TAXIS.iter().any(|o| o.home_map == *m && o.network == t.network),
+                        "row {} offers map {m}, which its own network does not serve",
+                        t.template
+                    );
+                }
             }
         }
         // And the containment, stated as the thing that would actually be a bug: no cab ever
