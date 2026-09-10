@@ -572,7 +572,41 @@ pub struct DropMoneyOnGround {
     /// Where it comes to rest, already resolved onto a foothold by the caller.
     pub x: i16,
     pub y: i16,
+    /// **Where the player actually was** when they dropped it, before the foothold snap.
+    ///
+    /// See [`arc_from`]. Equal to `(x, y)` for someone standing on the ground, and higher up
+    /// for someone on a ladder or in mid-air - which is the case the owner reported.
+    pub from_x: i16,
+    /// See [`DropMoneyOnGround::from_x`].
+    pub from_y: i16,
     pub now_ms: u64,
+}
+
+/// The arc a hand-made drop travels: from where the player is to where it comes to rest.
+///
+/// The owner, 2026-09-09: *"Whenever the character is on a ladder, the mesos drop location is
+/// incorrect. It doesn't come out of the player's current ladder location, but more closer to
+/// the ground."*
+///
+/// Both hand-drop paths resolved the player's position onto the foothold **below** them and
+/// then used that one point as the resting place *and* as the arc's source. That snap is
+/// deliberate and stays - a drop left hanging where a jumping player happened to be is drawn
+/// outside the client's pick-up box and cannot be collected. What was wrong is using the
+/// snapped point as the **source**: it gives the arc zero length, so the coins are simply
+/// drawn on the ground and never appear to leave the player.
+///
+/// The client already knows how to animate this - it is the same `srcX`/`srcY`/`delay` block
+/// a mob's drop uses, and the reason a snail's loot arcs out of the corpse instead of
+/// appearing. So: **source is where the player is, resting place is the ground beneath.**
+///
+/// Returns the source and the delay. A player standing on the ground gets `(x, y)` and `0`,
+/// which is byte-for-byte what this sent before, so the common case is unchanged.
+pub fn arc_from(from: (i16, i16), rest: (i16, i16)) -> ((i16, i16), u32) {
+    if from == rest {
+        (rest, 0)
+    } else {
+        (from, DROP_FLIGHT_MS)
+    }
 }
 
 /// One accepted drop, as the caller describes it.
@@ -599,6 +633,12 @@ pub struct DropFromBag {
     pub slot: u16,
     /// The item, exactly as the store handed it back.
     pub item: store::Item,
+    /// **Where the player actually was** when they dropped it, before the foothold snap.
+    /// See [`arc_from`] - this is what makes the item fall from a ladder rather than appear
+    /// on the ground.
+    pub from_x: i16,
+    /// See [`DropFromBag::from_x`].
+    pub from_y: i16,
     /// **How many are still in that slot afterwards.** `None` means the slot is now empty.
     ///
     /// This is what makes a partial drop possible, and it decides which `0x0070` goes out:
@@ -982,6 +1022,7 @@ impl DropTable {
             "mode 3 needs a positive bag slot; an equipped-slot drop is refused at the call site"
         );
         let object_id = self.mint_object_id();
+        let (source, delay) = arc_from((d.from_x, d.from_y), (d.x, d.y));
         let drop = LiveDrop {
             object_id,
             map_id: d.map_id,
@@ -996,10 +1037,11 @@ impl DropTable {
             y: d.y,
             meso: 0, // a bag drop is always an item
             dropped_at_ms: d.now_ms,
-            // A player setting an item down has no arc: it lands where they are standing.
-            source_x: d.x,
-            source_y: d.y,
-            delay_ms: 0,
+            // A player standing on the ground has no arc, and this returns exactly what it
+            // used to for them. One on a LADDER does: see `arc_from`.
+            source_x: source.0,
+            source_y: source.1,
+            delay_ms: delay,
         };
         debug_assert!(
             d.remaining_in_slot != Some(0),
@@ -1072,6 +1114,7 @@ impl DropTable {
     pub fn drop_money(&mut self, d: DropMoneyOnGround) -> PlacedMoney {
         debug_assert!(d.meso > 0, "a zero-meso drop is refused at the call site");
         let object_id = self.mint_object_id();
+        let (source, delay) = arc_from((d.from_x, d.from_y), (d.x, d.y));
         let drop = LiveDrop {
             object_id,
             map_id: d.map_id,
@@ -1086,9 +1129,11 @@ impl DropTable {
             y: d.y,
             meso: d.meso,
             dropped_at_ms: d.now_ms,
-            source_x: d.x,
-            source_y: d.y,
-            delay_ms: 0,
+            // Coins fall from the player, not from the ground under them. The owner, on a ladder:
+            // *"It doesn't come out of the player's current ladder location"*.
+            source_x: source.0,
+            source_y: source.1,
+            delay_ms: delay,
         };
         debug_assert!(drop.is_meso(), "meso > 0 is what selects the money class");
         let enter = drop.enter_reply(net::drops::ENTER_FLOATING);
@@ -1302,6 +1347,8 @@ mod tests {
             remaining_in_slot: None,
             x: 473,
             y: 395,
+            from_x: 473,
+            from_y: 395,
             now_ms,
         }
     }
@@ -1874,6 +1921,63 @@ mod tests {
         assert!(whole_slot_is_leaving(1, 1), "an equip");
         assert!(!whole_slot_is_leaving(3, 10), "3 of 10 leaves 7, so mode 1 rather than mode 3");
         assert!(whole_slot_is_leaving(5, 0), "an empty slot cannot hold anything back");
+    }
+
+    /// **A drop made on a ladder falls from the player, not from the ground under them.**
+    ///
+    /// The owner, 2026-09-09: *"Whenever the character is on a ladder, the mesos drop location is
+    /// incorrect. It doesn't come out of the player's current ladder location, but more closer
+    /// to the ground."*
+    ///
+    /// Both halves are asserted, because the fix is a pair and either alone would be wrong:
+    /// the item must still come to REST on the ground (or it is drawn outside the client's
+    /// pick-up box and cannot be collected) and its arc must START at the player.
+    #[test]
+    fn a_drop_from_a_ladder_arcs_down_from_the_player() {
+        // 200 px up a ladder, landing on the floor below.
+        let (source, delay) = arc_from((473, 195), (473, 395));
+        assert_eq!(source, (473, 195), "the arc starts where the player is");
+        assert_eq!(delay, DROP_FLIGHT_MS, "and it takes time, or it is not an arc");
+
+        // **The control: someone standing on the ground is unchanged.** This is the common
+        // case and it must stay byte for byte what it was, or every ordinary drop grows an
+        // animation nobody asked for.
+        let (source, delay) = arc_from((473, 395), (473, 395));
+        assert_eq!(source, (473, 395));
+        assert_eq!(delay, 0, "no arc for a player already on the floor");
+    }
+
+    /// The same, through the real `drop_item`, so the wiring is covered and not just the
+    /// helper - a correct `arc_from` that nothing calls would pass the test above.
+    #[test]
+    fn the_drop_paths_carry_the_arc_into_the_packet() {
+        let mut t = DropTable::default();
+        let on_ladder = DropFromBag {
+            from_y: 195, // up a ladder; `dropping` rests it at y 395
+            ..dropping(Item::equip(SWORD), 0)
+        };
+        let placed = t.drop_item(on_ladder);
+        let live = t.get(placed.object_id).unwrap();
+        assert_eq!((live.x, live.y), (473, 395), "it still lands on the floor");
+        assert_eq!(live.source_y, 195, "but it comes out of the ladder");
+        assert_eq!(live.delay_ms, DROP_FLIGHT_MS);
+
+        // And the money path, which is the one the owner was looking at.
+        let placed = t.drop_money(DropMoneyOnGround {
+            map_id: MAP,
+            character_id: WISP,
+            meso: 100,
+            x: 473,
+            y: 395,
+            from_x: 473,
+            from_y: 195,
+            now_ms: 0,
+        });
+        let live = t.get(placed.object_id).unwrap();
+        assert!(live.is_meso());
+        assert_eq!((live.x, live.y), (473, 395));
+        assert_eq!(live.source_y, 195, "the coins come out of the ladder");
+        assert_eq!(live.delay_ms, DROP_FLIGHT_MS);
     }
 
     /// The whole shape of the run this unblocks, in one test.

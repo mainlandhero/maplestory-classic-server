@@ -69,7 +69,10 @@ impl Session {
         // uncollectable as one inside a wall, and it is the same 10-px pick-up box either
         // way. The fallback is the player's own position, so a player already standing on
         // the ground sees no change at all.
-        let (x, y) = self.config.footholds.rest_at(chr.map_id, x, y, (x, y));
+        // **`(x, y)` is where the player IS; `rest` is where the drop comes to land.** Both
+        // are needed: the snap keeps the item inside the client's pick-up box, and the
+        // un-snapped point is what the coins fall FROM. See `crate::drops::arc_from`.
+        let (rest_x, rest_y) = self.config.footholds.rest_at(chr.map_id, x, y, (x, y));
 
         let in_slot = self
             .store
@@ -113,8 +116,10 @@ impl Session {
                 slot,
                 item,
                 remaining_in_slot,
-                x,
-                y,
+                x: rest_x,
+                y: rest_y,
+                from_x: x,
+                from_y: y,
                 now_ms: now,
             })
         });
@@ -170,6 +175,19 @@ impl Session {
             );
         }
         let want = req.amount as u32;
+        // **The client's own cap, enforced here too.** The owner, 2026-09-09: *"The client restricts
+        // dropping of mesos to 10k, we should also mimic that on the server side."* Its dialog
+        // says "You may only enter a number equal to or lower than 10000".
+        //
+        // That box is a UI rule; this is a packet. The amount is an `i32` the client chose, and
+        // the field has already fooled this server once - see the doc block above on the sign.
+        // A limit enforced only in a dialog is enforced only against people using the dialog.
+        if want > crate::mesodrop::MAX_DROP {
+            return crate::mesodrop::refuse(
+                &format!("asked to drop {want}, over the {} cap", crate::mesodrop::MAX_DROP),
+                Some(crate::mesodrop::TOO_MUCH_AT_ONCE),
+            );
+        }
         let balance = match self.store.mesos(chr.id) {
             Ok(v) => v,
             Err(e) => {
@@ -191,7 +209,7 @@ impl Session {
                 Some(crate::mesodrop::WALK_FIRST),
             );
         };
-        let (x, y) = self.config.footholds.rest_at(chr.map_id, x, y, (x, y));
+        let (rest_x, rest_y) = self.config.footholds.rest_at(chr.map_id, x, y, (x, y));
 
         // **The transition.** Nothing below runs unless this succeeded, and the drop is built
         // from `left`, the balance the store returned, rather than from `balance - want`.
@@ -210,8 +228,10 @@ impl Session {
                 map_id: map,
                 character_id: chr.id,
                 meso: want,
-                x,
-                y,
+                x: rest_x,
+                y: rest_y,
+                from_x: x,
+                from_y: y,
                 now_ms: now,
             })
         });

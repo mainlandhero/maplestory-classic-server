@@ -635,6 +635,8 @@ mod tests {
             remaining_in_slot: None,
             x: 0,
             y: 0,
+            from_x: 0,
+            from_y: 0,
             now_ms: 0,
         });
         let live = t.get(placed.object_id).expect("the drop is on the floor");

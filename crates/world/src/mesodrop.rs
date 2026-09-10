@@ -66,6 +66,32 @@ pub const NOT_A_POSITIVE_AMOUNT: &str = "That is not an amount you can drop.";
 /// is standing is drawn outside the client's pick-up box and cannot be collected.
 pub const WALK_FIRST: &str = "Walk a step first, then try again.";
 
+/// **The most mesos that may leave in one drop.**
+///
+/// The owner, 2026-09-09, with a screenshot of the client's own dialog: *"The client restricts
+/// dropping of mesos to 10k, we should also mimic that on the server side."* The client says
+/// **"You may only enter a number equal to or lower than 10000."**
+///
+/// # Why the server has to say it too, when the client already does
+///
+/// Because the client's box is a **UI** rule and `0x0143` is a **packet**. The amount is an
+/// `i32` the client chose, and this project has already been bitten once by trusting that
+/// field: it is signed, `142d4cb5f` sign-extends it, and the client's only check is
+/// `cmp rdi, rax / jle` against the player's money, **which a negative passes** - read as
+/// unsigned that is four billion mesos. A rule enforced only in a dialog box is enforced only
+/// against people using the dialog box.
+///
+/// So this is the same class of guard as the negative-amount one beside it, not a cosmetic
+/// echo of the client.
+pub const MAX_DROP: u32 = 10_000;
+
+/// The line for a drop over [`MAX_DROP`].
+///
+/// Deliberately the client's own number rather than a rounder word like "too many": the player
+/// has just been told *"equal to or lower than 10000"* by their own UI, and a server that
+/// disagrees about the figure would read as a different rule rather than the same one.
+pub const TOO_MUCH_AT_ONCE: &str = "You may only drop 10000 mesos at a time.";
+
 /// Refuse a meso drop, **and still answer it**.
 ///
 /// # The unlock is not optional and is not a detail
@@ -201,11 +227,26 @@ mod tests {
         assert_eq!(out[0].body[0], 1);
     }
 
-    /// The three player-facing lines are distinct, so a run's screenshot says which refusal
-    /// fired. Three identical strings would pass every other test in this file.
+    /// **The cap is the client's own number**, and it must stay that number.
+    ///
+    /// The owner's screenshot of the client's dialog: *"You may only enter a number equal to or
+    /// lower than 10000."* If the server's figure and the client's ever disagreed, a player
+    /// would be told two different rules by the same game, so the line quotes the constant's
+    /// value and this holds the two together.
+    #[test]
+    fn the_cap_matches_the_number_the_client_puts_on_screen() {
+        assert_eq!(MAX_DROP, 10_000);
+        assert!(
+            TOO_MUCH_AT_ONCE.contains(&MAX_DROP.to_string()),
+            "the line must name the same figure the client does: {TOO_MUCH_AT_ONCE}"
+        );
+    }
+
+    /// The player-facing lines are distinct, so a run's screenshot says which refusal
+    /// fired. Identical strings would pass every other test in this file.
     #[test]
     fn the_three_refusal_lines_are_distinct() {
-        let all = [NOT_ENOUGH, NOT_A_POSITIVE_AMOUNT, WALK_FIRST];
+        let all = [NOT_ENOUGH, NOT_A_POSITIVE_AMOUNT, WALK_FIRST, TOO_MUCH_AT_ONCE];
         for (i, a) in all.iter().enumerate() {
             assert!(!a.is_empty());
             for b in &all[i + 1..] {

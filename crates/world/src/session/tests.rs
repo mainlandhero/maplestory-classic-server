@@ -5473,6 +5473,8 @@ fn a_pick_up_the_bag_refuses_still_clears_the_clients_latch() {
             remaining_in_slot: None,
             x: 0,
             y: 0,
+            from_x: 0,
+            from_y: 0,
             now_ms: 0,
         })
     });
@@ -5520,6 +5522,8 @@ fn a_full_equip_bag_does_not_stop_a_use_item_being_picked_up() {
             remaining_in_slot: None,
             x: 0,
             y: 0,
+            from_x: 0,
+            from_y: 0,
             now_ms: 0,
         })
     });
@@ -9236,6 +9240,41 @@ fn a_meso_drop_larger_than_the_balance_is_refused() {
     // handler that refuses everything.
     let ok = s.on_drop_money(&net::dropmoney::drop_money_request(1, 100));
     assert_eq!(store.mesos(id).unwrap(), 0, "the whole balance may be dropped");
+    assert!(ok.iter().any(|r| r.opcode == net::drops::DROP_ENTER_FIELD));
+}
+
+/// **The client's own 10 000 cap, enforced on the packet.**
+///
+/// The owner, 2026-09-09, with a screenshot of the client's dialog: *"The client restricts dropping
+/// of mesos to 10k, we should also mimic that on the server side."*
+///
+/// The dialog is a UI rule and `0x0143` is a packet. This field has already fooled this server
+/// once - it is signed, and the client's own check passes a negative - so "the client would
+/// never send that" is not a guarantee the server may rely on.
+///
+/// **The boundary is asserted from both sides.** A test that only refuses 10 001 would pass on
+/// a handler that refuses everything, and one that only accepts 10 000 would pass on a handler
+/// with no cap at all.
+#[test]
+fn a_meso_drop_over_the_clients_own_cap_is_refused() {
+    let (mut s, store, id) = claimed_session();
+    store.set_mesos(id, 50_000).unwrap();
+    s.last_position = Some((520, 395));
+
+    let cap = crate::mesodrop::MAX_DROP as i32;
+    let out = s.on_drop_money(&net::dropmoney::drop_money_request(1, cap + 1));
+    assert_eq!(store.mesos(id).unwrap(), 50_000, "nothing left the balance");
+    assert!(!out.iter().any(|r| r.opcode == net::drops::DROP_ENTER_FIELD), "nor the floor");
+    assert_eq!(out[0].body[0], 1, "and the UI must not be left latched");
+    assert!(
+        out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE),
+        "a refusal nobody is told about is the failure this module exists for"
+    );
+
+    // The control: exactly the cap is accepted, so the refusal is a boundary and not a
+    // handler that says no to everything.
+    let ok = s.on_drop_money(&net::dropmoney::drop_money_request(1, cap));
+    assert_eq!(store.mesos(id).unwrap(), 40_000, "10000 really left");
     assert!(ok.iter().any(|r| r.opcode == net::drops::DROP_ENTER_FIELD));
 }
 
