@@ -31,6 +31,7 @@ pub mod codes;
 /// quality-of-life options. See its module docs for why the answer is a transition.
 pub mod dailyperks;
 pub mod db;
+pub mod fieldreturn;
 pub mod inventory;
 pub mod keymap;
 pub mod migration;

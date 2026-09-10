@@ -704,6 +704,23 @@ impl Session {
         // Without it every walk lands on the map's spawn point, which is right for a login
         // and wrong for a door - the character pops out somewhere else entirely.
         let mut arrival = 0u8;
+
+        // **The Free Market's door is resolved before the table, because the table cannot
+        // hold it.** The owner, 2026-09-09: *"The server should keep track of which town the user
+        // entered from, and then when the user leaves the Free Market, it should return them
+        // to the proper portal which they have entered from."*
+        //
+        // All four of these portals have target `0` in `portals.txt` and no row anywhere names
+        // them, so the static lookup below would fall through to "re-send the current map" -
+        // which is what standing on them did until now. `crate::freemarket` has the working.
+        if let Some(r) = &req {
+            if let Some((to, at, note)) = self.free_market_door(&chr, &r.portal_name) {
+                arrival =
+                    self.config.portal_index.get(&(to, at.clone())).copied().unwrap_or(0);
+                return self.go_to_map(&mut chr, to, arrival, note);
+            }
+        }
+
         let (target, note) = match &req {
             Some(r) => match r.target_field.or_else(|| {
                 self.config.portals.get(&(chr.map_id, r.portal_name.clone())).map(|(to, tn)| {
@@ -754,6 +771,87 @@ impl Session {
     /// goes out **after** it as well. `research/user-hit.md` §6.2 enumerated ~65 sites that
     /// gate an action on the sign of the client's HP; the character has to be positive in the
     /// client's own copy or it arrives in town unable to do anything.
+    /// The Free Market's one-way door: `(destination map, arrival portal, log line)`.
+    ///
+    /// `None` for every portal that is not one of the four, which is all but four of 3679.
+    ///
+    /// # Entering writes the memory BEFORE the warp
+    ///
+    /// `CLAUDE.md`'s Heena rule in its most literal form. If the write fails, the warp does not
+    /// happen - because the alternative is a character standing in a hall whose exit has
+    /// nothing to read, and the exit is the only way out. Refusing to enter is recoverable;
+    /// entering without a memory is the state that needs a GM.
+    ///
+    /// # Leaving clears it, and the fallback is only ever reached by a character who was
+    /// already inside
+    ///
+    /// The memory is persisted, so a relog keeps it. [`crate::freemarket::FALLBACK`] exists
+    /// for the one case the design cannot cover: someone standing in the hall at the moment
+    /// this shipped. It is logged loudly when it fires, because if it ever fires for anyone
+    /// else the write-before-warp rule above has been broken somewhere.
+    fn free_market_door(
+        &mut self,
+        chr: &net::opcode::Character,
+        portal: &str,
+    ) -> Option<(u32, String, String)> {
+        use crate::freemarket as fm;
+
+        if fm::is_entrance(chr.map_id, portal) {
+            if let Err(e) = self.store.set_field_return(
+                chr.id,
+                store::fieldreturn::KIND_FREE_MARKET,
+                chr.map_id,
+                portal,
+            ) {
+                crate::server::log(&format!(
+                    "   free market: could NOT remember {}'s way back to map {} ({e}); refusing \
+                     to let them in rather than stranding them in the hall",
+                    chr.id, chr.map_id
+                ));
+                return None;
+            }
+            return Some((
+                fm::HALL,
+                fm::HALL_ARRIVAL.to_string(),
+                format!(
+                    "portal {portal:?} -> the Free Market. Remembered the way back: map {} \
+                     portal {portal:?}",
+                    chr.map_id
+                ),
+            ));
+        }
+
+        if !fm::is_exit(chr.map_id, portal) {
+            return None;
+        }
+        let remembered = self
+            .store
+            .field_return(chr.id, store::fieldreturn::KIND_FREE_MARKET)
+            .ok()
+            .flatten();
+        let (to, at, how) = match remembered {
+            Some((map, p)) => (map, p, "the way they came in"),
+            None => {
+                crate::server::log(&format!(
+                    "   free market: character {} is leaving with nothing remembered, so they \
+                     go to the fallback. This should be unreachable - the memory is written \
+                     before the warp in - so it means either they were already in the hall \
+                     before this shipped, or the write-before-warp rule has been broken.",
+                    chr.id
+                ));
+                (fm::FALLBACK.0, fm::FALLBACK.1.to_string(), "the FALLBACK - nothing remembered")
+            }
+        };
+        // Forget it only once the destination is decided, so a failed read cannot lose the
+        // memory as well as the answer.
+        let _ = self.store.clear_field_return(chr.id, store::fieldreturn::KIND_FREE_MARKET);
+        Some((
+            to,
+            at.clone(),
+            format!("portal {portal:?} -> out of the Free Market to map {to} portal {at:?} ({how})"),
+        ))
+    }
+
     fn revive(&mut self, mut chr: net::opcode::Character) -> Vec<Reply> {
         let died_on = chr.map_id;
         let lost = net::revive::death_exp_loss(chr.level, chr.exp);
@@ -832,5 +930,129 @@ impl Session {
             chr.id, chr.map_id, payload
         );
         out
+    }
+}
+
+#[cfg(test)]
+mod free_market_tests {
+    use super::*;
+    use crate::config::Config;
+    use std::sync::Arc;
+    use store::Store;
+
+    /// A session with the REAL portal table, and a character standing on `map`.
+    fn on_map(map: u32) -> Option<(Session, Arc<Store>, u32)> {
+        let path = std::path::Path::new("../../gm-handbook/portals.txt");
+        if !path.exists() {
+            return None; // generated, gitignored
+        }
+        let (portals, portal_index) = Config::load_portals(path);
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character {
+            name: "Walker".to_string(),
+            map_id: map,
+            ..Default::default()
+        };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        store.create_migration(account, id, 0, 0).unwrap();
+        let mut s = Session::new(
+            store.clone(),
+            Arc::new(Config { portals, portal_index, ..Config::default() }),
+        );
+        s.claim_for_character(id);
+        Some((s, store, id))
+    }
+
+    /// The claimed character, standing on `map`.
+    ///
+    /// The map is set on the local record rather than written back, because
+    /// `free_market_door` reads `chr.map_id` from the record it is handed - which is exactly
+    /// how the real caller passes it, out of the live `Character` mid-transfer.
+    fn standing_on(s: &Session, map: u32) -> net::opcode::Character {
+        let mut chr = s.claimed_character().expect("a claimed character");
+        chr.map_id = map;
+        chr
+    }
+
+    /// **Enter from Henesys, leave, land back in Henesys.** The owner: *"The server should keep
+    /// track of which town the user entered from, and then when the user leaves the Free
+    /// Market, it should return them to the proper portal which they have entered from."*
+    ///
+    /// Driven through `free_market_door` rather than the constants, so the memory, the store
+    /// round trip and the clear are all exercised together.
+    #[test]
+    fn the_free_market_returns_you_to_the_town_you_came_from() {
+        let Some((mut s, store, id)) = on_map(10_001_040) else { return };
+
+        // In, from Henesys Market.
+        let chr = standing_on(&s, 10_001_040);
+        let (to, at, note) = s.free_market_door(&chr, "market00").expect("an entrance");
+        assert_eq!(to, crate::freemarket::HALL);
+        assert_eq!(at, crate::freemarket::HALL_ARRIVAL);
+        assert!(note.contains("Remembered"), "{note}");
+        assert_eq!(
+            store.field_return(id, store::fieldreturn::KIND_FREE_MARKET).unwrap(),
+            Some((10_001_040, "market00".to_string())),
+            "the way back is written BEFORE the warp"
+        );
+
+        // Out again.
+        let chr = standing_on(&s, crate::freemarket::HALL);
+        let (to, at, note) = s.free_market_door(&chr, "out00").expect("the exit");
+        assert_eq!((to, at.as_str()), (10_001_040, "market00"), "back to Henesys Market");
+        assert!(note.contains("the way they came in"), "{note}");
+        assert_eq!(
+            store.field_return(id, store::fieldreturn::KIND_FREE_MARKET).unwrap(),
+            None,
+            "and the memory is spent"
+        );
+    }
+
+    /// **The town is remembered per entry, not hard-coded.** A test that only ever entered
+    /// from Henesys would pass on an implementation that always returned Henesys - which is
+    /// exactly what the fallback does.
+    #[test]
+    fn entering_from_el_nath_returns_to_el_nath_not_the_fallback() {
+        let Some((mut s, _store, _id)) = on_map(20_001_010) else { return };
+        assert_ne!(20_001_010, crate::freemarket::FALLBACK.0, "or this test proves nothing");
+
+        let chr = standing_on(&s, 20_001_010);
+        s.free_market_door(&chr, "market00").expect("El Nath is an entrance");
+        let chr = standing_on(&s, crate::freemarket::HALL);
+        let (to, at, _) = s.free_market_door(&chr, "out00").expect("the exit");
+        assert_eq!((to, at.as_str()), (20_001_010, "market00"));
+    }
+
+    /// Leaving with nothing remembered lands on the fallback rather than failing - a player
+    /// in the hall must always have a way out, because the exit has no static destination.
+    #[test]
+    fn leaving_with_no_memory_uses_the_fallback_instead_of_stranding() {
+        let Some((mut s, _store, _id)) = on_map(crate::freemarket::HALL) else { return };
+        let chr = standing_on(&s, crate::freemarket::HALL);
+        let (to, at, note) = s.free_market_door(&chr, "out00").expect("the exit still answers");
+        assert_eq!((to, at.as_str()), crate::freemarket::FALLBACK);
+        assert!(note.contains("FALLBACK"), "and it says so: {note}");
+    }
+
+    /// **Every other portal is untouched.** This hook runs before the static table on every
+    /// walk in the game, so a predicate that was even slightly too broad would reroute
+    /// ordinary doors.
+    #[test]
+    fn no_ordinary_portal_is_diverted() {
+        let Some((mut s, _store, _id)) = on_map(10_002_000) else { return };
+        let chr = standing_on(&s, 10_002_000);
+        for portal in ["west00", "top00", "in00", "in01", "in03", "out00", "nonsense"] {
+            assert!(
+                s.free_market_door(&chr, portal).is_none(),
+                "Ellinia's {portal} was diverted into the Free Market path"
+            );
+        }
+        // Including a town that HAS an entrance, on its other portals.
+        let chr = standing_on(&s, 10_004_000);
+        assert!(s.free_market_door(&chr, "market00").is_some(), "Perion's IS an entrance");
+        for portal in ["out00", "in00", "west00"] {
+            assert!(s.free_market_door(&chr, portal).is_none(), "Perion's {portal}");
+        }
     }
 }
