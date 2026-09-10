@@ -674,6 +674,24 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
+     TF. THE FREE MARKET DOOR, which is the one that can strand somebody if it is wrong.
+         From **Henesys Market** (10001040) walk into the `market00` portal, then walk back
+         out of the Free Market Entrance's `out00`.
+           you land back in Henesys Market -> the memory works
+           you land somewhere else -> say WHERE. Henesys is also the FALLBACK, so do the
+                         second half below before believing the first
+           nothing happens on either -> the portal is still dead; grep world.log for
+                         "free market"
+         **Then the half that tells the two apart**: do it again from **El Nath Market**
+         (20001010, `!map 20001010`). El Nath is NOT the fallback, so landing there proves
+         the town is remembered rather than hard-coded.
+           back to El Nath -> done, and the fallback is not being used
+           back to HENESYS -> the memory is not being read; it is falling through
+         And the one that costs a rescue if it is broken: enter the Free Market, **log out
+         and back in**, then leave. The memory is in the database, so it should still work.
+           back to your town -> it survives a relog
+           back to Henesys from El Nath -> the row is not persisting
+
      TC. ONE CAPTURE I NEED, AND IT COSTS NOTHING. **Use a `5680002` Use Tab 5-slot
          Coupon** (`!item 5680002 1`, then double-click it in the CASH tab).
          The +5 rule is written and tested; what is NOT established is which packet the
@@ -2376,6 +2394,20 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
+        Write-Host '  TF. THE FREE MARKET DOOR - can strand you if it is wrong.' -ForegroundColor Magenta
+        Write-Host '      From HENESYS MARKET (10001040) walk into market00, then'
+        Write-Host '      walk back out of the Free Market via out00.'
+        Write-Host '        back in Henesys Market -> the memory works'
+        Write-Host '        somewhere else -> say WHERE'
+        Write-Host '        nothing at all -> grep world.log for "free market"'
+        Write-Host '      THEN from EL NATH MARKET (!map 20001010) - El Nath is NOT' -ForegroundColor Yellow
+        Write-Host '      the fallback, so landing there proves the town is'
+        Write-Host '      REMEMBERED and not hard-coded. Henesys alone cannot.'
+        Write-Host '        back to El Nath -> done'
+        Write-Host '        back to HENESYS -> it is falling through to the fallback'
+        Write-Host '      AND: enter, LOG OUT and back in, then leave. The memory is'
+        Write-Host '      in the database and should survive.'
+        Write-Host ''
         Write-Host '  TC. ONE CAPTURE, AND IT COSTS NOTHING.' -ForegroundColor Magenta
         Write-Host '      !item 5680002 1, then double-click it in the CASH tab.'
         Write-Host '      The +5 rule is written and tested. What is NOT known is'

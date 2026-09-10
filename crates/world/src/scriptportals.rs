@@ -48,9 +48,17 @@
 //! `market00` returns you to whichever town you entered from, `rand_ola` picks at random,
 //! and the PQ and Zakum portals are gated on party and boss state.
 //!
-//! They are named above rather than guessed at. In particular the town-to-Free-Market
-//! direction is *not* implemented on its own: sending someone to the Free Market without the
-//! return leg would strand them there, which is worse than a portal that does nothing.
+//! # The four `market*` scripts are now handled, and NOT by adding them here
+//!
+//! The owner asked for the Free Market next, with the state that makes it work: *"The server should
+//! keep track of which town the user entered from, and then when the user leaves the Free
+//! Market, it should return them to the proper portal which they have entered from."*
+//!
+//! That is a destination which depends on the player, so it cannot be a row in
+//! [`DESTINATIONS`] no matter how the table is shaped - the key is a script name and the
+//! answer is per-character. `crate::freemarket` holds the rule, `store::fieldreturn` holds the
+//! memory, and `session::field` resolves them before this table is consulted. The remaining
+//! three - `rand_ola`, `PQ_01_nextstage_portal` and `Zakum05` - are still unresolved.
 
 /// Where one script portal leads: `(map, arrival portal name)`.
 ///
@@ -62,13 +70,20 @@ pub const DESTINATIONS: [(&str, u32, &str); 2] = [
     ("pt_10002071_down", 10_006_060, "east00"),
 ];
 
-/// The scripts this server knows about and deliberately does **not** resolve, with why.
+/// The scripts this server knows about and deliberately does **not** resolve **here**, with
+/// why.
 ///
 /// Listed so that "nothing happened" on one of them is a known gap rather than a mystery, and
 /// so the count in the module docs can be checked against the data.
+///
+/// **The four `market*` scripts are handled, just not by this module.** Their destination is
+/// per-player state, which is precisely what a table keyed on a script name cannot hold -
+/// `crate::freemarket` and `store::fieldreturn` own them, and `session::field` resolves them
+/// before the static lookup. They stay listed here because a reader asking "why is
+/// `market01` not in `DESTINATIONS`" deserves the answer at the place they are looking.
 pub const UNIMPLEMENTED: [(&str, &str); 5] = [
-    ("market00", "returns to whichever town you entered the Free Market from - per-player state"),
-    ("market01", "town -> Free Market; not wired without the return leg, which would strand you"),
+    ("market00", "the Free Market's exit - per-player state, handled by crate::freemarket"),
+    ("market01", "town -> Free Market - handled by crate::freemarket, which also remembers the way back"),
     ("market02", "town -> Free Market; see market01"),
     ("market03", "town -> Free Market; see market01"),
     ("rand_ola", "Ola Ola picks an exit at random"),

@@ -44,6 +44,7 @@ pub mod firstjob;
 pub mod consumables;
 pub mod damage;
 pub mod footholds;
+pub mod freemarket;
 pub mod itemrecovery;
 pub mod jobguide;
 pub mod jobs;
