@@ -336,7 +336,63 @@ mod tests {
                 .unwrap_or_else(|| panic!("{id} is not in the GLOBAL drop table"));
             assert_eq!(row.chance_bp, 1, "{id} must be 0.01%, which is 1 basis point");
             assert_eq!((row.min_qty, row.max_qty), (1, 1), "{id} drops one at a time");
+            // **The dialogue quotes this number, so the quote is tied to the file here.**
+            // `crate::scrollnpc::nothing_to_use` tells the player how rare the scrolls are;
+            // that text renders `scrolls::GLOBAL_DROP_CHANCE_BP`, and this is what stops the
+            // two from drifting apart. Editing either side alone fails.
+            assert_eq!(
+                row.chance_bp,
+                crate::scrolls::GLOBAL_DROP_CHANCE_BP,
+                "{id}'s rate in data/drops.txt and the rate the NPC quotes must be the same"
+            );
         }
+    }
+
+    /// **`4001009` Event Trophy must not drop from anything, anywhere.**
+    ///
+    /// The owner, 2026-09-09: *"Now that we got rid of Event Trophy's function, make sure that it
+    /// is no longer dropping globally."*
+    ///
+    /// The global row was deleted, and a grep of `data/drops.txt` says so. That grep is not
+    /// this test. `CLAUDE.md`'s standing rule is to **enumerate before you filter**, and the
+    /// question "does it drop" has two tables behind it, not one: a per-mob row would keep it
+    /// dropping while the global table looked clean, and no amount of reading the global
+    /// section would show that.
+    ///
+    /// So this walks **every entry of both tables** and requires the id to appear in neither.
+    /// It is also the guard against the file's own documented fragility - these rows are hand
+    /// written into a generated file, and a re-scrape that reintroduced the item would
+    /// otherwise be silent.
+    #[test]
+    fn the_event_trophy_drops_from_nothing_at_all() {
+        const EVENT_TROPHY: u32 = 4_001_009;
+        let tables = DropTables::load(std::path::Path::new("../../data/drops.txt"));
+        assert!(tables.problems.is_empty(), "{:?}", tables.problems);
+
+        assert!(
+            !tables.global.iter().any(|e| e.item_id == EVENT_TROPHY),
+            "4001009 is still in the GLOBAL table"
+        );
+        let mobs: Vec<u32> = tables
+            .per_mob
+            .iter()
+            .filter(|(_, rows)| rows.iter().any(|e| e.item_id == EVENT_TROPHY))
+            .map(|(template, _)| *template)
+            .collect();
+        assert!(mobs.is_empty(), "4001009 still drops from mob template(s) {mobs:?}");
+
+        // **The control: this search can find something.** An assertion that nothing matches
+        // is worthless if the walk is broken - `per_mob` empty, or the file unread - and both
+        // failures look exactly like a pass. `4000001` Snail Shell is in the per-mob table and
+        // the two scrolls are in the global one, so each half is proved able to speak.
+        assert!(
+            tables.per_mob.values().any(|rows| rows.iter().any(|e| e.item_id == 4_000_001)),
+            "the per-mob walk found no Snail Shell, so it could not have found a trophy either"
+        );
+        assert!(
+            tables.global.iter().any(|e| e.item_id == crate::scrolls::SCROLL_OF_SECRETS),
+            "the global walk found no Scroll of Secrets, so it proves nothing about 4001009"
+        );
     }
 
     const SAMPLE: &str = "\

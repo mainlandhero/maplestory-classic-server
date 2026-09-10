@@ -328,10 +328,47 @@ pub fn mode_menu(guaranteed: [bool; 3]) -> String {
     )
 }
 
+/// Shown when the player has neither scroll - so it has to say **which** two and **where**.
+///
+/// The owner, 2026-09-09: *"When the player does not have any of the scrolls in their inventory,
+/// `!scroll` should tell them what drops to look for along with the proper item links in the
+/// dialogue."*
+///
+/// # The links are the client's own, not our strings
+///
+/// `#i<itemId>#` is the icon and `#t<itemId>#` is the **name, looked up in the client's own
+/// `String.wz`**. Both are attested in this client's quest text - `#i` 164 times as a plain
+/// icon, `#t` 1771 times - and the pairing `#i4000016:# #t4000016:#` is exactly how the
+/// client's own quest-progress lines are written.
+///
+/// Using `#t` rather than [`Scroll::name`] here is deliberate: this screen is the one telling
+/// a player what to hunt for, so the name it shows must be the name the *item* shows when it
+/// lands on the ground. If the two ever disagreed, this is the screen that would be lying.
+///
+/// # The rate is rendered, not typed
+///
+/// From [`crate::scrolls::GLOBAL_DROP_CHANCE_BP`], which `droptables`' test pins to the actual
+/// rows in `data/drops.txt`. A hand-typed "0.01%" here would survive a change to the drop table
+/// and quietly become false.
+///
+/// This is a plain say, not a menu - there is no `#L` in it - so the multi-line layout that
+/// [`MENU_SEPARATOR`] warns about does not apply.
 pub fn nothing_to_use() -> String {
-    "You are not carrying any of my scrolls. They turn up in the wider world, rarely - \
-     keep hunting and one will find you."
-        .to_string()
+    let bp = crate::scrolls::GLOBAL_DROP_CHANCE_BP;
+    let mut s = String::from(
+        "You are not carrying either of my scrolls. These are the two to look for:\n",
+    );
+    for scroll in [Scroll::Secrets, Scroll::Treasure] {
+        let id = scroll.item_id();
+        s.push_str(&format!("\n#i{id}# #b#t{id}##k\n{}\n", describe_item(scroll)));
+    }
+    s.push_str(&format!(
+        "\nAny monster in Maple World may drop one, at {}% - about one in {}. \
+         Keep hunting, and one will find you.",
+        f64::from(bp) / 100.0,
+        10_000 / bp.max(1)
+    ));
+    s
 }
 
 pub fn nothing_equipped() -> String {
@@ -617,6 +654,30 @@ mod tests {
         assert!(e.contains("#L0##i1322999# #bWizet Secret Agent Suitcase#k"), "{e}");
         let r = real_scroll_menu("Suitcase", &offered());
         assert!(r.contains("#L0##i2043200#"), "{r}");
+    }
+
+    /// **The empty-handed screen has to name both scrolls, link them, and say where.**
+    ///
+    /// The owner: *"tell them what drops to look for along with the proper item links"*. A player
+    /// who types `!scroll` with nothing in the bag is the one person who most needs to be
+    /// told what to hunt for, and the old wording told them nothing at all.
+    #[test]
+    fn the_empty_handed_line_links_both_scrolls_and_says_where_they_drop() {
+        let text = nothing_to_use();
+        for scroll in [Scroll::Secrets, Scroll::Treasure] {
+            let id = scroll.item_id();
+            // The icon and the client's OWN name lookup, not our string - this screen must
+            // show what the item on the ground will show.
+            assert!(text.contains(&format!("#i{id}#")), "no icon for {id}: {text}");
+            assert!(text.contains(&format!("#t{id}#")), "no name link for {id}: {text}");
+            assert!(text.contains(describe_item(scroll)), "no description for {id}: {text}");
+        }
+        // The rate, rendered from the constant the drop-table test pins to the real file.
+        assert!(text.contains("0.01%"), "{text}");
+        assert!(text.contains("one in 10000"), "{text}");
+        // And it must not be a menu: a `#L` here would put selectable rows on a say box.
+        assert!(!text.contains("#L"), "{text}");
+        assert!(!text.contains("#l"), "{text}");
     }
 
     /// The mode menu is the one screen where all three effects are compared, so it must say

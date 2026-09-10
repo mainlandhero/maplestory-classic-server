@@ -81,6 +81,18 @@ pub const REPURPOSED: [u32; 2] = [SCROLL_OF_SECRETS, TREASURE_SCROLL];
 /// The success chance of Chaos and Clean Slate when the daily free pass is spent, in percent.
 pub const ROLLED_SUCCESS_PCT: u32 = 60;
 
+/// **How often each scroll drops, in basis points**, for the one screen that has to tell a
+/// player where to find them.
+///
+/// The number that matters lives in `data/drops.txt`, not here - this is the copy the dialogue
+/// renders, and a copy is a claim. `droptables`'
+/// `the_two_scrolls_drop_globally_at_one_basis_point` asserts the file's rows equal this
+/// constant, so the two cannot drift: change the file and that test fails, change this and it
+/// fails too.
+///
+/// 1 basis point is 0.01%, or one kill in ten thousand, per monster.
+pub const GLOBAL_DROP_CHANCE_BP: u32 = 1;
+
 /// **How many of one scroll fit in a bag slot.** The owner, 2026-09-09: *"can we make all of these
 /// items stackable up to a 100 please?"*
 ///
