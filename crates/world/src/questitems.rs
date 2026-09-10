@@ -632,6 +632,7 @@ mod tests {
             inv_type: store::InventoryType::Etc,
             slot: 1,
             item: store::Item::bundle(4_000_001, 3),
+            remaining_in_slot: None,
             x: 0,
             y: 0,
             now_ms: 0,

@@ -509,6 +509,101 @@ fn a_drop_leaves_the_bag_and_lands_on_the_floor() {
     assert_eq!(s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.len()), 1, "and it is on the floor");
 }
 
+/// The Use tab's wire number, from the store's own enum rather than a literal - `net::inventory`
+/// exports `INV_EQUIP` and `INV_DECO` only, and a hand-written `2` here would be a claim.
+fn use_tab() -> i8 {
+    store::InventoryType::Use.as_u8() as i8
+}
+
+/// **Dropping 2 of a stack of 5 leaves 3 in the bag and puts 2 on the floor.**
+///
+/// The owner, 2026-09-09: *"I see that partial drop is not implemented, I also need this
+/// implemented please."* It used to refuse, and the refusal said why: mode 1 UpdateQuantity
+/// *"which net::inventory does not build"*. It had been built since and the guard was never
+/// revisited.
+///
+/// **The mode is the whole test.** A mode 3 REMOVE here would clear the slot on screen while
+/// the store still held three - the two ends then disagree about a slot, and the player reads
+/// it as having lost three items. So this asserts the mode, the number the client is told,
+/// and the number the store kept, because any one of the three alone can be right while the
+/// others are wrong.
+#[test]
+fn dropping_part_of_a_stack_sends_mode_1_and_keeps_the_rest() {
+    let (mut s, store, id) = gm_session();
+    s.handle(&gm_chat("!item 2000000 5"));
+    s.last_position = Some((520, 395));
+
+    // count 2 out of the 5 sitting in Use slot 1.
+    let out = s.on_inventory_move(&inventory_move(use_tab(), 1, 0, 2));
+
+    assert_eq!(out[0].opcode, net::inventory::INVENTORY_OPERATION, "the 0x0070 goes first");
+    assert_eq!(
+        out[0].body[7],
+        net::inventory::MODE_QUANTITY,
+        "mode 1, NOT mode 3 - the slot is not empty: {}",
+        out[0].what
+    );
+    assert_eq!(out[0].body[0], 1, "bExclRequestSent - the UI must not latch");
+    assert_eq!(
+        out[0].body,
+        net::inventory::inventory_quantity(use_tab(), 1, 3),
+        "the client must be told THREE are left"
+    );
+    assert_eq!(out[1].opcode, net::drops::DROP_ENTER_FIELD, "then the item on the ground");
+
+    // And the store agrees with what the client was told.
+    let left: Vec<u16> = store
+        .bag(id)
+        .unwrap()
+        .items_in(store::InventoryType::Use)
+        .map(|i| i.item.kind.quantity())
+        .collect();
+    assert_eq!(left, vec![3], "three stay in the bag");
+    assert_eq!(s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.len()), 1);
+}
+
+/// Dropping the **whole** stack still sends mode 3, because the slot really is empty.
+///
+/// The control for the test above: if the partial path had simply replaced the whole-slot
+/// path, that one would still pass and every full drop would leave a slot drawing 0.
+#[test]
+fn dropping_a_whole_stack_still_sends_mode_3() {
+    let (mut s, store, id) = gm_session();
+    s.handle(&gm_chat("!item 2000000 5"));
+    s.last_position = Some((520, 395));
+
+    let out = s.on_inventory_move(&inventory_move(use_tab(), 1, 0, 5));
+
+    assert_eq!(out[0].body[7], net::inventory::MODE_REMOVE, "{}", out[0].what);
+    assert_eq!(
+        store.bag(id).unwrap().items_in(store::InventoryType::Use).count(),
+        0,
+        "the slot really is empty"
+    );
+}
+
+/// **Asking for more than is there takes what is there**, rather than refusing.
+///
+/// A stack can shrink between the drag starting and the packet arriving, and refusing on that
+/// race would look to the player like the drop silently failed. The slot must end empty and
+/// the reply must be mode 3, not a mode 1 claiming a negative remainder.
+#[test]
+fn asking_to_drop_more_than_the_slot_holds_drops_what_is_there() {
+    let (mut s, store, id) = gm_session();
+    s.handle(&gm_chat("!item 2000000 3"));
+    s.last_position = Some((520, 395));
+
+    let out = s.on_inventory_move(&inventory_move(use_tab(), 1, 0, 99));
+
+    assert_eq!(out[0].body[7], net::inventory::MODE_REMOVE, "{}", out[0].what);
+    assert_eq!(
+        store.bag(id).unwrap().items_in(store::InventoryType::Use).count(),
+        0,
+        "the whole slot left"
+    );
+    assert_eq!(s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.len()), 1);
+}
+
 /// The pick-up reads the drop id at **offset 13**, the offset one run measured.
 ///
 /// It used to search every byte offset, because the layout was unknown. It is known now,
@@ -5375,6 +5470,7 @@ fn a_pick_up_the_bag_refuses_still_clears_the_clients_latch() {
             inv_type: store::InventoryType::Equip,
             slot: 1,
             item: store::Item::equip(1302000),
+            remaining_in_slot: None,
             x: 0,
             y: 0,
             now_ms: 0,
@@ -5421,6 +5517,7 @@ fn a_full_equip_bag_does_not_stop_a_use_item_being_picked_up() {
             inv_type: store::InventoryType::Use,
             slot: 1,
             item: store::Item::bundle(2000000, 3),
+            remaining_in_slot: None,
             x: 0,
             y: 0,
             now_ms: 0,
