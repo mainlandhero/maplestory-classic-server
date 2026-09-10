@@ -16,6 +16,14 @@
 //! touches no store and no packet, so all of it is testable without a database, and the
 //! session joins it to both.
 //!
+//! # The tab widens on screen, and that took a second decode
+//!
+//! The first version of this wrote the row and told the player to change maps, because
+//! nothing could change the count live. **`0x007B` InventoryGrow** was decoded afterwards -
+//! while chasing the station clock, of all things - and `net::inventory::inventory_grow`
+//! carries the working. Storage has no equivalent packet and still needs the window reopened,
+//! which the notice says only for storage.
+//!
 //! # The trigger was unknown for exactly one turn, and then the owner captured it
 //!
 //! These are Cash items whose own `spec` is `{"script": "cash_5680000", "npc": 9010000}` with
