@@ -495,6 +495,7 @@ mod recovery;
 mod regen;
 mod realscroll;
 mod scroll;
+mod summonsack;
 mod shop;
 mod storage;
 mod trade;
@@ -943,6 +944,13 @@ impl Session {
             // exists precisely so a refusal is still an answer.
             net::upgrade::CLIENT_ITEM_UPGRADE => {
                 return self.on_item_upgrade(body.get(2..).unwrap_or(&[]));
+            }
+            // **`0x0111` is the summoning sack**, and it latches for the same reason.
+            // The owner, 2026-09-09: *"I just also tried summoning the GM Black Sack Jr. Balrog
+            // lvl 80"* - it arrived and fell through to the unlock arm below, exactly as
+            // `research/summon-sacks-2026-09-09.md` predicted it would.
+            net::summon::CLIENT_SUMMON_SACK => {
+                return self.on_summon_sack(body.get(2..).unwrap_or(&[]));
             }
             // Anything else whose CLIENT-SIDE builder sets that same exclusive-request latch.
             // Not implemented, but silence here freezes the UI, so it gets the nine-byte

@@ -84,6 +84,7 @@ fn main() -> ExitCode {
     let mut mobs_path = PathBuf::from("gm-handbook/mobs.txt");
     let mut equips_path = PathBuf::from("gm-handbook/equips.txt");
     let mut scrolls_path = PathBuf::from("gm-handbook/scrolls.txt");
+    let mut sacks_path = PathBuf::from("gm-handbook/summonsacks.txt");
     let mut chairs_path = PathBuf::from("gm-handbook/chairs.txt");
     let mut mob_templates_path = PathBuf::from("gm-handbook/mobtemplates.txt");
     let mut npc_strings_path = PathBuf::from("gm-handbook/npcstrings.txt");
@@ -154,6 +155,7 @@ fn main() -> ExitCode {
             "--mobs-file" => value().map(|v| mobs_path = PathBuf::from(v)),
             "--equips" => value().map(|v| equips_path = PathBuf::from(v)),
             "--scrolls" => value().map(|v| scrolls_path = PathBuf::from(v)),
+            "--summon-sacks" => value().map(|v| sacks_path = PathBuf::from(v)),
             "--chairs" => value().map(|v| chairs_path = PathBuf::from(v)),
             "--mob-templates" => value().map(|v| mob_templates_path = PathBuf::from(v)),
             "--npc-strings" => value().map(|v| npc_strings_path = PathBuf::from(v)),
@@ -347,6 +349,17 @@ fn main() -> ExitCode {
         eprintln!(
             "maplecw-world: no scroll table from {} - the Treasure Scroll will find nothing to guarantee. Regenerate with: python tools/dump_scrolls.py",
             scrolls_path.display()
+        );
+    }
+
+    // What each summoning sack lets out. Empty is legal and is said out loud: a sack that
+    // finds no row refuses, and a refusal nobody can explain looks exactly like the unhandled
+    // opcode this replaced.
+    config.summon_sacks = world::config::load_summon_sacks(&sacks_path);
+    if config.summon_sacks.is_empty() {
+        eprintln!(
+            "maplecw-world: no summoning-sack table from {} - sacks will refuse. Regenerate with: python tools/dump_summon_sacks.py",
+            sacks_path.display()
         );
     }
 

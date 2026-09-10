@@ -244,6 +244,13 @@ pub struct Config {
     /// "you are not carrying a scroll I can use", which is a refusal the player is told about
     /// rather than a silent no-op.
     pub scrolls: HashMap<u32, ScrollTemplate>,
+    /// What each summoning sack lets out, keyed by item id, from
+    /// `gm-handbook/summonsacks.txt`.
+    ///
+    /// Empty is legal and degrades to the behaviour before `0x0111` was handled: the sack is
+    /// refused, the latch is cleared, and the log says the table is missing rather than
+    /// leaving a silent no-op that looks identical to the unhandled opcode.
+    pub summon_sacks: HashMap<u32, SummonSack>,
     /// What each chair adds to the idle tick, keyed by item id, from `gm-handbook/chairs.txt`.
     ///
     /// Empty is legal and degrades to exactly the behaviour before chairs existed: the tick
@@ -992,6 +999,53 @@ pub fn share_balanced(
     seed: u64,
 ) -> Vec<&net::mob::FieldMob> {
     choose_spawns(mobs, cap, seed)
+}
+
+/// What one summoning sack lets out.
+///
+/// From `0210.img/<id>/mob`, a **sibling of `info`** rather than a child of it - the brief
+/// that decoded this said "in the consumable's info block" and it is not there.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SummonSack {
+    /// The mob templates, **one entry per mob to spawn**.
+    ///
+    /// A template listed twice in the WZ means spawn two of it, so this is a `Vec` with
+    /// repeats rather than a set - `2100007` lists `700005` twice and is the only sack in
+    /// this client that does. Collapsing it to a set would halve that summon silently.
+    pub mobs: Vec<u32>,
+}
+
+/// Every summoning sack, from `tools/dump_summon_sacks.py`'s `summonsacks.txt`.
+///
+/// The `mobs` column is `templateId:prob` joined by `;`. **`prob` is deliberately discarded**:
+/// it is 100 on all nine entries across all eight sacks, so nothing in this client exercises a
+/// probability roll, and a server that stored it would be carrying a field it could never
+/// demonstrate it read correctly.
+pub fn load_summon_sacks(path: &std::path::Path) -> HashMap<u32, SummonSack> {
+    let mut out = HashMap::new();
+    let Ok(text) = std::fs::read_to_string(path) else { return out };
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        // `itemId, slotMax, price, mobCount, mobs, name` - and the name may contain commas,
+        // so the mobs column is taken by index rather than by splitting the whole line.
+        let f: Vec<&str> = line.split(',').map(str::trim).collect();
+        if f.len() < 5 {
+            continue;
+        }
+        let Ok(item_id) = f[0].parse::<u32>() else { continue };
+        let mobs: Vec<u32> = f[4]
+            .split(';')
+            .filter_map(|entry| entry.split(':').next()?.trim().parse::<u32>().ok())
+            .collect();
+        if mobs.is_empty() {
+            continue;
+        }
+        out.insert(item_id, SummonSack { mobs });
+    }
+    out
 }
 
 /// One of the client's own scrolls, as `Item.wz`'s `0204.img` has it.
@@ -2019,6 +2073,7 @@ impl Default for Config {
             chatter_off: false,
             equips: HashMap::new(),
             scrolls: HashMap::new(),
+            summon_sacks: HashMap::new(),
             npc_strings: NpcStringTable::default(),
             npc_strings_path: PathBuf::from("gm-handbook/npcstrings.txt"),
             npc_dialogue_path: PathBuf::from("data/npc-dialogue.txt"),
@@ -2468,6 +2523,38 @@ mod spawn_tests {
         assert!(ScrollTemplate::fits(2_043_200, 1_322_999), "1322999 is a One-Handed BW");
         assert!(!ScrollTemplate::fits(2_040_000, 1_322_999), "a hat scroll is not for a weapon");
         assert!(!ScrollTemplate::fits(2_043_000, 1_322_999), "nor a One-Handed SWORD scroll");
+    }
+
+    /// **The eight sacks load, and the one that summons TWO really carries two.**
+    ///
+    /// `2100007` lists `700005` twice in the client's own data, and it is the only sack that
+    /// does - so it is the single row that can tell a `Vec` apart from a set. A loader that
+    /// deduplicated would halve that summon and pass on all seven others.
+    #[test]
+    fn the_summoning_sacks_load_and_the_double_one_is_not_collapsed() {
+        let path = std::path::Path::new("../../gm-handbook/summonsacks.txt");
+        if !path.exists() {
+            return; // generated data, gitignored - tools/dump_summon_sacks.py makes it
+        }
+        let sacks = load_summon_sacks(path);
+        assert_eq!(sacks.len(), 8, "this client has eight sacks: {sacks:?}");
+        // The owner's: GM Black Sack: Jr. Balrog Level 80.
+        assert_eq!(sacks[&2_100_006].mobs, vec![800_023]);
+        assert_eq!(sacks[&2_100_000].mobs, vec![700_004], "the plain Black Sack");
+        assert_eq!(
+            sacks[&2_100_007].mobs,
+            vec![700_005, 700_005],
+            "listed twice means summon two"
+        );
+        // Every template a sack names must exist, or the summon has no HP to give it.
+        let templates = load_mob_templates(std::path::Path::new("../../gm-handbook/mobtemplates.txt"));
+        if !templates.is_empty() {
+            for (item, sack) in &sacks {
+                for t in &sack.mobs {
+                    assert!(templates.contains_key(t), "sack {item} names unknown mob {t}");
+                }
+            }
+        }
     }
 
     /// The four items a created character wears, read back out of the generated table.
