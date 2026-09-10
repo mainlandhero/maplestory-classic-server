@@ -664,6 +664,81 @@ mod tests {
         assert_eq!(shops.max_stack(1_040_002), 1, "an equip is one per slot");
     }
 
+    /// **The server half of the stacking question, which is the half that can be settled
+    /// without a client.**
+    ///
+    /// The owner, 2026-09-09: *"We need to now test the stacking mechanic of the treasure scroll
+    /// and scroll of secrets."* That has two halves and only one of them is testable here:
+    ///
+    /// * **does the SERVER put five in one slot** - this test; and
+    /// * **does the CLIENT accept a quantity above the item's own `info/slotMax`** - which is
+    ///   `slotMax = 1` for both of these, and needs a screen. Step TS(a) of the launch plan.
+    ///
+    /// Separating them matters, because if the server were splitting them into five slots the
+    /// client would never get the chance to refuse, and a run would blame the wrong end.
+    ///
+    /// This drives the exact composition `!scroll`'s own `!item` path uses -
+    /// `session/gm.rs:1157` takes `shops.max_stack(item_id)` and hands it straight to
+    /// `store.add_item` - rather than asserting on `max_stack` alone, which the test above
+    /// already does and which would pass even if `place_into_bag` ignored the number entirely.
+    #[test]
+    fn the_store_really_does_put_a_hundred_scrolls_in_one_slot() {
+        let store = store::Store::open_in_memory().unwrap();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = store
+            .create_character(
+                account,
+                0,
+                &net::opcode::Character { name: "Stacker".to_string(), ..Default::default() },
+            )
+            .unwrap()
+            .id;
+        let shops = ShopTable::default();
+
+        for id in crate::scrolls::REPURPOSED {
+            let max = shops.max_stack(id);
+            // Five, the way `!item 4031065 5` asks for them.
+            let placed = store
+                .add_item(chr, store::InventoryType::Etc, &store::Item::bundle(id, 5), max)
+                .unwrap();
+            assert_eq!(placed.len(), 1, "{id}: five must land in ONE slot, got {placed:?}");
+            assert_eq!(placed[0].item.kind.quantity(), 5, "{id}");
+
+            // Another five merge into the same slot rather than opening a second.
+            let more = store
+                .add_item(chr, store::InventoryType::Etc, &store::Item::bundle(id, 5), max)
+                .unwrap();
+            assert_eq!(more.len(), 1, "{id}: a second five must MERGE, got {more:?}");
+            assert_eq!(more[0].slot, placed[0].slot, "{id}: same slot");
+            assert_eq!(more[0].item.kind.quantity(), 10, "{id}");
+        }
+
+        // **And the limit is a limit.** 95 more takes the first stack to its ceiling and
+        // starts a second, which is what proves the 100 is being read rather than ignored -
+        // an implementation that stacked without bound would put 105 in one slot and pass
+        // every assertion above.
+        let id = crate::scrolls::SCROLL_OF_SECRETS;
+        let spill = store
+            .add_item(chr, store::InventoryType::Etc, &store::Item::bundle(id, 95), 100)
+            .unwrap();
+        let total: u32 = store
+            .bag_items(chr, store::InventoryType::Etc)
+            .unwrap()
+            .iter()
+            .filter(|r| r.item.item_id == id)
+            .map(|r| u32::from(r.item.kind.quantity()))
+            .sum();
+        assert_eq!(total, 105, "nothing may be lost in the spill: {spill:?}");
+        let slots: Vec<u16> = store
+            .bag_items(chr, store::InventoryType::Etc)
+            .unwrap()
+            .iter()
+            .filter(|r| r.item.item_id == id)
+            .map(|r| r.slot)
+            .collect();
+        assert_eq!(slots.len(), 2, "105 is two slots, 100 and 5: {slots:?}");
+    }
+
     const SHOPS: &str = "../../data/shops.txt";
     const NAMES: &str = "../../gm-handbook/items.txt";
     const DATA: &str = "../../gm-handbook/itemdata.txt";
