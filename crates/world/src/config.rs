@@ -328,6 +328,13 @@ pub struct Config {
     /// Empty means "unknown", not "nothing exists" - see [`Config::map_exists`].
     pub fields: std::collections::HashSet<u32>,
 
+    /// Maps whose Map.wz image declares a top-level `clock` node - the ones that build a
+    /// wall-clock widget for `0x01BC` to set. From `gm-handbook/clocks.txt`.
+    ///
+    /// Empty means no clock is ever sent, which is the safe direction: the client's
+    /// set-time path throws for a widget the map did not build. `net::clock`.
+    pub clocks: std::collections::HashSet<u32>,
+
     /// Where a character who dies on each map comes back, from
     /// `gm-handbook/returnmaps.txt`'s **`reviveMap`** column.
     ///
@@ -544,6 +551,27 @@ impl Config {
                 continue;
             }
             if let Ok(id) = line.parse::<u32>() {
+                out.insert(id);
+            }
+        }
+        out
+    }
+
+    /// Load `gm-handbook/clocks.txt` - `map, x, y, width, height`, one row per map whose
+    /// Map.wz image has a top-level `clock` node.
+    ///
+    /// Only the map id is kept. The placement is the client's business - it builds the
+    /// widget itself - and the server's whole job is to know WHERE one exists, because
+    /// `0x01BC` on a map without a widget throws in the client. `net::clock`.
+    pub fn load_clocks(path: &std::path::Path) -> std::collections::HashSet<u32> {
+        let mut out = std::collections::HashSet::new();
+        let Ok(text) = std::fs::read_to_string(path) else { return out };
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some(Ok(id)) = line.split(',').next().map(|f| f.trim().parse::<u32>()) {
                 out.insert(id);
             }
         }
@@ -2103,6 +2131,7 @@ impl Default for Config {
             item_names: HashMap::new(),
             send_mobs: true,
             fields: std::collections::HashSet::new(),
+            clocks: std::collections::HashSet::new(),
             revive_maps: HashMap::new(),
             footholds: crate::footholds::Footholds::default(),
             consumables: crate::consumables::Consumables::default(),
@@ -2766,6 +2795,37 @@ mod spawn_tests {
         }
         // And a map with no field image is still refused, which is the check that is real.
         assert!(!config.map_exists(104040000));
+    }
+
+    /// **Ellinia Station declares a clock, and every clock map is a real field.** The first
+    /// half is the owner's screenshot; the second is the property the gate relies on - a map in
+    /// `clocks.txt` that is not in `fields.txt` would be one the server could never send a
+    /// player to anyway, but it would mean the two dumps disagree about what a map is.
+    #[test]
+    fn the_clock_table_lists_ellinia_station_and_only_real_fields() {
+        let clocks = std::path::Path::new("../../gm-handbook/clocks.txt");
+        let fields = std::path::Path::new("../../gm-handbook/fields.txt");
+        if !clocks.exists() || !fields.exists() {
+            return; // generated data, gitignored
+        }
+        let clocks = Config::load_clocks(clocks);
+        let fields = Config::load_fields(fields);
+        assert!(clocks.contains(&10_002_090), "Ellinia Station has a clock node: {clocks:?}");
+        assert!(!clocks.is_empty());
+        for map in &clocks {
+            assert!(fields.contains(map), "{map} declares a clock but has no field image");
+        }
+        // The control: a map with no clock node is not in it. Ellinia town itself.
+        assert!(!clocks.contains(&10_002_000), "Ellinia has no clock node");
+        // And the loader reads the FIRST column, so a placement row parses to its map id.
+        let dir = std::env::temp_dir().join(format!("maplecw-clocks-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("clocks.txt");
+        std::fs::write(&p, "# header\n10002090, 635, -226, 200, 200\n\n7, 0, 0, 0, 0\n").unwrap();
+        let parsed = Config::load_clocks(&p);
+        assert_eq!(parsed.len(), 2);
+        assert!(parsed.contains(&10_002_090) && parsed.contains(&7));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The crowd threshold the owner adopted: 75% below six players on the field, 100% at six or

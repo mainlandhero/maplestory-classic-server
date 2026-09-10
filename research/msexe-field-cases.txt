@@ -1,0 +1,149 @@
+# CField::OnPacket (FUN_141820080) - the dense switch for opcodes 0x01A4..0x0223
+#
+# Read 2026-09-10 from the 128-entry table of image-relative dword RVAs at 0x141822158:
+#   lea eax,[rdx-0x1a4] ; cmp eax,0x7f ; ja default ; mov eax,[imagebase + rax*4 + 0x1822158] ; add rax,imagebase ; jmp rax
+# Columns: opcode, case body VA, the handler a stub calls (blank when the body is inline or
+# a virtual call), then the first six instructions of the body.
+#
+# A body at 0x141821e24 is NOT a handler: it is the default arm, which range-checks
+# [op-0x224] < 0x17c and forwards to the user pool (FUN_1429b9300). Those opcodes are
+# unhandled by CField.
+# Stubs of the shape 'add rcx,-0x18 ; mov rdx,rbx ; call F' pass (this-0x18, packet) to F.
+# 'call qword ptr [rax + 0xNNN]' after 'mov rax,[rcx]' is a virtual on the same vtable that
+# holds FUN_1418224c0 at +0x70; slot +0x1d8 (case 0x01BC) is FUN_1418564d0, the field clock.
+#
+# Established from this table so far:
+#   0x01BC  FieldClock     FUN_1418564d0 via vtable +0x1d8: u8 type (0..0x11), type 1 = u8 h, u8 m, u8 s
+#   0x01C4  DestroyClock   FUN_1418396d0: no packet reads; releases the map clock at field+0x228
+#   0x01C5  (destroy a timer by id) FUN_1418398b0(this, u8)
+#   0x020C / 0x020D  vtable +0x298 / +0x2a0: u8 flag -> field+0x1c88 / +0x1c89, then a clock widget setter
+#   0x0224..  the user pool (research/user-pool-tables.md)
+#
+0x01a4  0x1418200f4  0x141845e20  add rcx, -0x18 ; mov rdx, rbx ; call 0x141845e20 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rdx, rbx
+0x01a5  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01a6  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01a7  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01a8  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01a9  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01aa  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01ab  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01ac  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01ad  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01ae  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01af  0x141820105  0x141845ff0  add rcx, -0x18 ; mov rdx, rbx ; call 0x141845ff0 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rax, qword ptr [rcx]
+0x01b0  0x141820116               add rcx, -0x18 ; mov rax, qword ptr [rcx] ; mov rdx, qword ptr [rip + 0x22883f4] ; call qword ptr [rax + 0x78] ; jmp 0x141822125 ; add rcx, -0x18
+0x01b1  0x14182012c  0x1418463c0  add rcx, -0x18 ; mov rdx, rbx ; call 0x1418463c0 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rdx, rbx
+0x01b2  0x14182013d  0x1418473d0  add rcx, -0x18 ; mov rdx, rbx ; call 0x1418473d0 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rdx, rbx
+0x01b3  0x14182014e  0x1418486b0  add rcx, -0x18 ; mov rdx, rbx ; call 0x1418486b0 ; jmp 0x141822125 ; lea rcx, [rsp + 0x60] ; call 0x1409fe4f0
+0x01b4  0x14182015f  0x1409fe4f0  lea rcx, [rsp + 0x60] ; call 0x1409fe4f0 ; nop  ; mov rdx, rbx ; lea rcx, [rsp + 0x60] ; call 0x1409fe560
+0x01b5  0x1418201bf  0x1406e8ae0  mov rcx, rbx ; call 0x1406e8ae0 ; test al, al ; jne 0x141822125 ; mov edx, 0xb8 ; lea rcx, [rsp + 0x50]
+0x01b6  0x141820215  0x14184a570  add rcx, -0x18 ; mov rdx, rbx ; call 0x14184a570 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rdx, rbx
+0x01b7  0x141820226  0x141853820  add rcx, -0x18 ; mov rdx, rbx ; call 0x141853820 ; jmp 0x141822125 ; mov rcx, rbx ; call 0x1406e8c20
+0x01b8  0x141820237  0x1406e8c20  mov rcx, rbx ; call 0x1406e8c20 ; mov rcx, qword ptr [rsi + 0x50] ; mov dword ptr [rcx + 0x20], eax ; mov rax, qword ptr [rsi + 0x50] ; mov ecx, dword ptr [rax + 0x20]
+0x01b9  0x1418202e8  0x141853ce0  add rcx, -0x18 ; mov rdx, rbx ; call 0x141853ce0 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rdx, rbx
+0x01ba  0x1418202f9  0x141855170  add rcx, -0x18 ; mov rdx, rbx ; call 0x141855170 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rdx, rbx
+0x01bb  0x14182030a  0x141856140  add rcx, -0x18 ; mov rdx, rbx ; call 0x141856140 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rax, qword ptr [rcx]
+0x01bc  0x14182031b               add rcx, -0x18 ; mov rax, qword ptr [rcx] ; mov rdx, rbx ; call qword ptr [rax + 0x1d8] ; jmp 0x141822125 ; mov rcx, rbx
+0x01bd  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01be  0x141820330  0x1406e8ae0  mov rcx, rbx ; call 0x1406e8ae0 ; movzx ecx, al ; test al, al ; jne 0x141820377 ; mov rcx, qword ptr [rip + 0x22aed5a]
+0x01bf  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01c0  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01c1  0x1418203eb  0x141b1f960  mov edx, 1 ; mov rcx, qword ptr [rip + 0x229e689] ; call 0x141b1f960 ; test al, al ; jne 0x141822125 ; mov rbx, qword ptr [rip + 0x228998d]
+0x01c2  0x141820435  0x1406e8ae0  mov rcx, rbx ; call 0x1406e8ae0 ; movzx eax, al ; test eax, eax ; je 0x141822125 ; mov esi, eax
+0x01c3  0x1418204a3  0x1406e9050  lea rdx, [rsp + 0x50] ; mov rcx, rbx ; call 0x1406e9050 ; nop  ; mov rcx, rbx ; call 0x1406e8c20
+0x01c4  0x1418204d5  0x1418396d0  add rcx, -0x18 ; call 0x1418396d0 ; jmp 0x141822125 ; mov rcx, rbx ; call 0x1406e8ae0 ; movzx edx, al
+0x01c5  0x1418204e3  0x1406e8ae0  mov rcx, rbx ; call 0x1406e8ae0 ; movzx edx, al ; lea rcx, [rsi - 0x18] ; call 0x1418398b0 ; jmp 0x141822125
+0x01c6  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01c7  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01c8  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01c9  0x1418204fc  0x141857c90  add rcx, -0x18 ; mov rdx, rbx ; call 0x141857c90 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rdx, rbx
+0x01ca  0x14182050d  0x141857f50  add rcx, -0x18 ; mov rdx, rbx ; call 0x141857f50 ; jmp 0x141822125 ; lea r14, [rcx - 0x18] ; lea rdx, [rsp + 0x50]
+0x01cb  0x14182051e  0x1406e9050  lea r14, [rcx - 0x18] ; lea rdx, [rsp + 0x50] ; mov rcx, rbx ; call 0x1406e9050 ; nop  ; mov rcx, rbx
+0x01cc  0x141820647  0x1406e9050  lea r14, [rcx - 0x18] ; lea rdx, [rsp + 0x50] ; mov rcx, rbx ; call 0x1406e9050 ; nop  ; mov rcx, rbx
+0x01cd  0x1418207e4  0x141881890  add rcx, -0x18 ; mov rdx, rbx ; call 0x141881890 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rax, qword ptr [rcx]
+0x01ce  0x1418207f5               add rcx, -0x18 ; mov rax, qword ptr [rcx] ; mov rdx, rbx ; call qword ptr [rax + 0x260] ; jmp 0x141822125 ; add rcx, -0x18
+0x01cf  0x1418206ff  0x1406e8c20  lea r12, [rcx - 0x18] ; mov rcx, rbx ; call 0x1406e8c20 ; test eax, eax ; jle 0x141822125 ; lea rcx, [rsp + 0x60]
+0x01d0  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01d1  0x14182080a  0x141858810  add rcx, -0x18 ; mov rdx, rbx ; call 0x141858810 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rdx, rbx
+0x01d2  0x14182081b  0x141858a80  add rcx, -0x18 ; mov rdx, rbx ; call 0x141858a80 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rax, qword ptr [rcx]
+0x01d3  0x14182082c               add rcx, -0x18 ; mov rax, qword ptr [rcx] ; mov rdx, rbx ; call qword ptr [rax + 0x1e8] ; jmp 0x141822125 ; mov rcx, rbx
+0x01d4  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01d5  0x141820ab8  0x141a36090  mov rcx, qword ptr [rcx + 0x90] ; add rcx, 0x1800 ; mov rdx, rbx ; call 0x141a36090 ; jmp 0x141822125 ; add rcx, -0x18
+0x01d6  0x141820ad3  0x1418667c0  add rcx, -0x18 ; mov rdx, rbx ; call 0x1418667c0 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rdx, rbx
+0x01d7  0x141820ae4  0x1418671c0  add rcx, -0x18 ; mov rdx, rbx ; call 0x1418671c0 ; jmp 0x141822125 ; mov rcx, qword ptr [rcx + 0x90] ; add rcx, 0x17c0
+0x01d8  0x141820b10  0x1419fc340  mov rcx, qword ptr [rcx + 0x90] ; add rcx, 0x17c0 ; mov rdx, rbx ; call 0x1419fc340 ; jmp 0x141822125 ; add rcx, -0x18
+0x01d9  0x141820af5  0x1419fc220  mov rcx, qword ptr [rcx + 0x90] ; add rcx, 0x17c0 ; mov rdx, rbx ; call 0x1419fc220 ; jmp 0x141822125 ; mov rcx, qword ptr [rcx + 0x90]
+0x01da  0x141820b2b  0x141868c00  add rcx, -0x18 ; mov rdx, rbx ; call 0x141868c00 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rdx, rbx
+0x01db  0x141820b3c  0x14190a760  add rcx, -0x18 ; mov rdx, rbx ; call 0x14190a760 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rdx, rbx
+0x01dc  0x141820b4d  0x14190c940  add rcx, -0x18 ; mov rdx, rbx ; call 0x14190c940 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rdx, rbx
+0x01dd  0x141820b5e  0x14190ce60  add rcx, -0x18 ; mov rdx, rbx ; call 0x14190ce60 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rdx, rbx
+0x01de  0x141820b6f  0x14190cea0  add rcx, -0x18 ; mov rdx, rbx ; call 0x14190cea0 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rdx, rbx
+0x01df  0x141820b80  0x14190d1a0  add rcx, -0x18 ; mov rdx, rbx ; call 0x14190d1a0 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rdx, rbx
+0x01e0  0x141820b91  0x141869e90  add rcx, -0x18 ; mov rdx, rbx ; call 0x141869e90 ; jmp 0x141822125 ; cmp qword ptr [rip + 0x22a8a16], 0 ; je 0x141822125
+0x01e1  0x141820ba2  0x1406e8c20  cmp qword ptr [rip + 0x22a8a16], 0 ; je 0x141822125 ; mov rcx, rbx ; call 0x1406e8c20 ; mov edi, eax ; mov rsi, qword ptr [rip + 0x22a89ff]
+0x01e2  0x141820cbe  0x1406e8c20  mov rcx, rbx ; call 0x1406e8c20 ; mov esi, eax ; mov rcx, rbx ; call 0x1406e8c20 ; mov edi, eax
+0x01e3  0x141820cf3  0x1418f84b0  add rcx, -0x18 ; mov rdx, rbx ; call 0x1418f84b0 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rdx, rbx
+0x01e4  0x141820d04  0x1418fd5e0  add rcx, -0x18 ; mov rdx, rbx ; call 0x1418fd5e0 ; jmp 0x141822125 ; mov rcx, rbx ; call 0x1406e8c20
+0x01e5  0x141820d15  0x1406e8c20  mov rcx, rbx ; call 0x1406e8c20 ; mov edi, eax ; mov rcx, rbx ; call 0x1406e8b80 ; movzx esi, ax
+0x01e6  0x141820d8b  0x1424357f0  mov rcx, rbx ; call 0x1424357f0 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rdx, rbx ; call 0x14186ad30
+0x01e7  0x141820d98  0x14186ad30  add rcx, -0x18 ; mov rdx, rbx ; call 0x14186ad30 ; jmp 0x141822125 ; mov rcx, rbx ; call 0x1406e8c20
+0x01e8  0x141820841  0x1406e8c20  mov rcx, rbx ; call 0x1406e8c20 ; test eax, eax ; jle 0x141822125 ; mov esi, eax ; mov rcx, rbx
+0x01e9  0x141820895  0x1406e8c20  mov rcx, rbx ; call 0x1406e8c20 ; test eax, eax ; jle 0x141822125 ; mov esi, eax ; xor r15d, r15d
+0x01ea  0x14182093c               mov rcx, qword ptr [rip + 0x22a0f95] ; test rcx, rcx ; je 0x141822125 ; lea rdx, [rsp + 0x50] ; call 0x142df6c00 ; nop 
+0x01eb  0x141820a33               mov rcx, qword ptr [rip + 0x22a0e9e] ; test rcx, rcx ; je 0x141822125 ; lea rdx, [rsp + 0x50] ; call 0x142df6c00 ; nop 
+0x01ec  0x141820da9  0x1406e8c20  mov rcx, rbx ; call 0x1406e8c20 ; mov rcx, qword ptr [rip + 0x22876e8] ; call 0x142cb9550 ; jmp 0x141822125 ; add rcx, -0x18
+0x01ed  0x141820dc2  0x14186beb0  add rcx, -0x18 ; mov rdx, rbx ; call 0x14186beb0 ; jmp 0x141822125 ; mov rcx, rbx ; call 0x1406e8ae0
+0x01ee  0x141820dd3  0x1406e8ae0  mov rcx, rbx ; call 0x1406e8ae0 ; movzx ecx, al ; mov rax, qword ptr [rsi + 0x90] ; mov dword ptr [rax + 0x19b0], ecx ; jmp 0x141822125
+0x01ef  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01f0  0x141820e0f  0x141873200  add rcx, -0x18 ; mov rdx, rbx ; call 0x141873200 ; jmp 0x141822125 ; mov rcx, rbx ; call 0x1406e8c20
+0x01f1  0x141820df0  0x1406e8ae0  mov rcx, rbx ; call 0x1406e8ae0 ; test al, al ; setne cl ; mov rax, qword ptr [rsi + 0x90] ; mov byte ptr [rax + 0x1c50], cl
+0x01f2  0x141820e20  0x1406e8c20  mov rcx, rbx ; call 0x1406e8c20 ; mov edi, eax ; mov rcx, rbx ; call 0x1406e8ae0 ; movzx esi, al
+0x01f3  0x141820eea  0x14187d690  add rcx, -0x18 ; mov rdx, rbx ; call 0x14187d690 ; jmp 0x141822125 ; mov edx, 0x1be ; lea rcx, [rsp + 0x50]
+0x01f4  0x141820efb  0x1408a9e40  mov edx, 0x1be ; lea rcx, [rsp + 0x50] ; call 0x1408a9e40 ; xor edx, edx ; mov rcx, rax ; call 0x140d84b70
+0x01f5  0x141820f19  0x1425d0680  mov rcx, rbx ; call 0x1425d0680 ; jmp 0x141822125 ; mov rcx, qword ptr [rcx + 0x90] ; add rcx, 0x1af8 ; mov rdx, rbx
+0x01f6  0x141820f26  0x14177daf0  mov rcx, qword ptr [rcx + 0x90] ; add rcx, 0x1af8 ; mov rdx, rbx ; call 0x14177daf0 ; jmp 0x141822125 ; add rcx, -0x18
+0x01f7  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x01f8  0x1418214b4               mov rax, qword ptr [rcx + 0x90] ; cmp qword ptr [rax + 0x1b58], 0 ; je 0x141822125 ; mov rcx, rbx ; call 0x1406e8c20 ; mov edi, eax
+0x01f9  0x1418215c4               mov rax, qword ptr [rcx + 0x90] ; cmp qword ptr [rax + 0x1b58], 0 ; je 0x141822125 ; mov rcx, rbx ; call 0x1406e8c20 ; mov edi, eax
+0x01fa  0x141821669               mov rax, qword ptr [rcx + 0x90] ; mov rcx, qword ptr [rax + 0x1b58] ; test rcx, rcx ; je 0x141822125 ; call 0x14156dab0 ; jmp 0x141822125
+0x01fb  0x141820f41  0x14187eb80  add rcx, -0x18 ; mov rdx, rbx ; call 0x14187eb80 ; jmp 0x141822125 ; mov rcx, rbx ; call 0x1406e8c20
+0x01fc  0x141820f52  0x1406e8c20  mov rcx, rbx ; call 0x1406e8c20 ; mov r9, qword ptr [rsi + 0x90] ; mov r8, qword ptr [r9 + 0x1bb0] ; mov rdx, qword ptr [r8 + 8] ; mov rcx, r8
+0x01fd  0x141821016  0x1406e8c20  mov rcx, rbx ; call 0x1406e8c20 ; mov rcx, qword ptr [rsi + 0x90] ; mov rdx, qword ptr [rcx + 0x1bb0] ; mov rcx, qword ptr [rdx + 8] ; mov rdi, rdx
+0x01fe  0x14182109a  0x1406e8c20  mov rcx, rbx ; call 0x1406e8c20 ; mov r13d, eax ; mov rcx, rbx ; call 0x1406e8c20 ; mov r12d, eax
+0x01ff  0x141821114  0x1406e8c20  mov rcx, rbx ; call 0x1406e8c20 ; mov edi, eax ; mov rcx, qword ptr [rsi + 0x90] ; sub rcx, -0x80 ; call 0x1402fa540
+0x0200  0x14182115a  0x14187ef10  add rcx, -0x18 ; mov rdx, rbx ; call 0x14187ef10 ; jmp 0x141822125 ; add rcx, -0x18 ; mov rdx, rbx
+0x0201  0x14182116b  0x14187f150  add rcx, -0x18 ; mov rdx, rbx ; call 0x14187f150 ; jmp 0x141822125 ; mov rcx, qword ptr [rip + 0x2287395] ; test rcx, rcx
+0x0202  0x14182117c  0x14276df20  mov rcx, qword ptr [rip + 0x2287395] ; test rcx, rcx ; je 0x14182118d ; call 0x14276df20 ; mov rcx, rbx ; call 0x1406e8c20
+0x0203  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x0204  0x1418212d0  0x1406e8c20  mov rcx, rbx ; call 0x1406e8c20 ; mov rcx, qword ptr [rsi + 0x90] ; mov dword ptr [rcx + 0x290], eax ; jmp 0x141822125 ; mov rcx, rbx
+0x0205  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x0206  0x1418212ea  0x1406e8ae0  mov rcx, rbx ; call 0x1406e8ae0 ; test al, al ; setne r14b ; mov rcx, rbx ; call 0x1406e8c20
+0x0207  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x0208  0x141821366  0x1406e8c20  lea r12, [rcx - 0x18] ; mov rcx, rbx ; call 0x1406e8c20 ; test eax, eax ; jle 0x141822125 ; mov r14d, eax
+0x0209  0x1418213f1  0x1406e9050  lea rdx, [rsp + 0x50] ; mov rcx, rbx ; call 0x1406e9050 ; nop  ; mov rcx, rbx ; call 0x1406e8c20
+0x020a  0x141821446  0x1406e9050  lea rdx, [rsp + 0x60] ; mov rcx, rbx ; call 0x1406e9050 ; nop  ; lea rdx, [rsp + 0x50] ; mov rcx, rbx
+0x020b  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x020c  0x14182168a               add rcx, -0x18 ; mov rax, qword ptr [rcx] ; mov rdx, rbx ; call qword ptr [rax + 0x298] ; jmp 0x141822125 ; add rcx, -0x18
+0x020d  0x14182169f               add rcx, -0x18 ; mov rax, qword ptr [rcx] ; mov rdx, rbx ; call qword ptr [rax + 0x2a0] ; jmp 0x141822125 ; mov r8d, 4
+0x020e  0x1418216b4  0x1406e9170  mov r8d, 4 ; lea rdx, [rbp - 0x60] ; mov rcx, rbx ; call 0x1406e9170 ; cmp dword ptr [rbp - 0x60], 1 ; jne 0x141822125
+0x020f  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x0210  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x0211  0x1418216e6               add rcx, -0x18 ; mov rax, qword ptr [rcx] ; mov rdx, rbx ; call qword ptr [rax + 0x2b8] ; jmp 0x141822125 ; lea rcx, [rsp + 0x60]
+0x0212  0x1418216fb  0x1408da260  lea rcx, [rsp + 0x60] ; call 0x1408da260 ; mov r8d, 0x1c ; lea rdx, [rsp + 0x60] ; mov rcx, rbx ; call 0x1406e9170
+0x0213  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x0214  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x0215  0x1418217a5  0x141887780  add rcx, -0x18 ; mov rdx, rbx ; call 0x141887780 ; jmp 0x141822125 ; mov rax, qword ptr [rcx + 0x90] ; mov rcx, qword ptr [rax + 0x1c58]
+0x0216  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x0217  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x0218  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x0219  0x1418217b6               mov rax, qword ptr [rcx + 0x90] ; mov rcx, qword ptr [rax + 0x1c58] ; test rcx, rcx ; je 0x141822125 ; mov rdx, rbx ; call 0x1412494a0
+0x021a  0x1418217da               mov rax, qword ptr [rcx + 0x90] ; mov rcx, qword ptr [rax + 0x1c68] ; test rcx, rcx ; je 0x141822125 ; mov rdx, rbx ; call 0x141255430
+0x021b  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x021c  0x1418217fe               mov rax, qword ptr [rcx + 0x90] ; cmp qword ptr [rax + 0x1d20], 0 ; jne 0x1418218b5 ; mov edx, 0x20 ; lea rcx, [rip + 0x22b5081] ; call 0x14019b780
+0x021d  0x1418218e2  0x141883f20  add rcx, -0x18 ; mov rdx, rbx ; call 0x141883f20 ; jmp 0x141822125 ; mov rcx, rbx ; call 0x1406e8c20
+0x021e  0x141821e24               lea eax, [r9 - 0x224] ; cmp eax, 0x17b ; ja 0x141821e46 ; mov edx, r9d ; mov rcx, qword ptr [rip + 0x229fd54] ; call 0x1429b9300
+0x021f  0x1418218f3  0x1406e8c20  mov rcx, rbx ; call 0x1406e8c20 ; mov r14d, eax ; mov rcx, rbx ; call 0x1406e8c20 ; mov edi, eax
+0x0220  0x14182192f  0x14188eb30  add rcx, -0x18 ; mov rdx, rbx ; call 0x14188eb30 ; jmp 0x141822125 ; mov rcx, rbx ; call 0x1406e8c20
+0x0221  0x141821940  0x1406e8c20  mov rcx, rbx ; call 0x1406e8c20 ; mov edi, eax ; mov rcx, rbx ; call 0x1406e8c20 ; mov edx, edi
+0x0222  0x141821960  0x14188ee00  add rcx, -0x18 ; mov rdx, rbx ; call 0x14188ee00 ; jmp 0x141822125 ; mov rcx, rbx ; call 0x1406e8c20
+0x0223  0x141821971  0x1406e8c20  mov rcx, rbx ; call 0x1406e8c20 ; mov dword ptr [rbp - 0x60], eax ; mov rcx, qword ptr [rsi + 0x90] ; sub rcx, -0x80 ; call 0x1402fa540

@@ -223,10 +223,19 @@ In both references `BEGIN_STAGE = SetField` is the entry immediately after
 > **`0x01A0` .. `0x01AA`**. `SetFarmField` and `SetCashShop` follow it;
 > `BEGIN_FIELD / TransferFieldReqIgnored` is about `0x01A3`.
 
-It is **outside `FUN_142cbaa80`**, one slot past its last case, in `CStage::OnPacket` -
+It is **outside `FUN_142cbaa80`**, one slot past its last case, in a stage `OnPacket` -
 which is why the channel dispatcher has no case that could answer the client's `0x007D`
-migration hello. That function has not been found yet; it is the next thing to look for,
-and `0x01A0` is the case label to look for inside it.
+migration hello.
+
+> **STALE, corrected 2026-09-10.** The sentence that used to follow here - *"that function
+> has not been found yet; it is the next thing to look for"* - was overtaken the same day it
+> was written and never struck. `FUN_142097ee0` handles `0x01a0..0x01a3` (SetField) and
+> **`FUN_141820080` is `CField::OnPacket`, `0x01a4..0x05ab`** - both in the range table in
+> `research/msexe-gamestage-dispatch.md`, and the dense 128-case switch is enumerated in
+> `research/msexe-field-cases.txt`. On 2026-09-09 the stale sentence was read as current and
+> the station clock was reported as **blocked behind an unfound dispatcher** for a day. It
+> was behind a found one, three files over. Nothing in this file's own tables is affected;
+> this note exists so the sentence cannot be believed a third time.
 
 The two outliers corroborate the block boundary rather than contradicting it: `0x275` and
 `0x39a` sit far past `0x1a0`, i.e. inside the `FIELD` block, which is exactly where a

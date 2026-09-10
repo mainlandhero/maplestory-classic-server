@@ -244,6 +244,20 @@ fn main() -> ExitCode {
     config.item_names =
         world::config::Config::load_id_names(&PathBuf::from("gm-handbook/items.txt"));
     config.fields = world::config::Config::load_fields(&fields_path);
+    // Which maps draw a wall clock. A missing file is safe - no clock is sent anywhere,
+    // which is exactly the state before 2026-09-10 - so it warns and carries on. Sending
+    // to a map that is NOT in the list is the unsafe direction (the client throws), and an
+    // empty list cannot do that.
+    let clocks_path = PathBuf::from("gm-handbook/clocks.txt");
+    config.clocks = world::config::Config::load_clocks(&clocks_path);
+    if config.clocks.is_empty() {
+        eprintln!(
+            "maplecw-world: no clock table from {} - field clocks will stay at 00:00. Regenerate with: python tools/dump_portals.py",
+            clocks_path.display()
+        );
+    } else {
+        println!("maplecw-world: clocks: {} maps declare a field clock", config.clocks.len());
+    }
     // Where a dead character comes back. A missing file is not fatal - revive then leaves
     // the player where they fell, which is wrong but safe - so it warns rather than exits.
     let revive_path = PathBuf::from("gm-handbook/returnmaps.txt");
