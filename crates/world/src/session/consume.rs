@@ -174,9 +174,122 @@ impl Session {
             ),
         }];
         out.extend(self.stack_change_replies(inv, slot, left));
+        out.extend(self.buff_from_item(req.item_id, &restores, chr.id, chr.map_id));
         // **Eating the thing can be the turn-in.** The owner, 2026-08-21: *"Once the user
         // consumes the apple, the quest would be completed."*
         out.extend(self.quests_completed_by_consuming(req.item_id));
+        out
+    }
+
+    /// The **timed stats** a consumable grants, if it grants any.
+    ///
+    /// The owner, 2026-09-09: *"Drinking the Dexterity Potion or the Magic Potion also does not
+    /// give me the proper buff and subtract the item by 1."* Both do now, and the reason
+    /// neither did is that this table only ever carried HP and MP - so the server's refusal,
+    /// *"item 2002003 restores nothing this server knows about"*, was true and useless. It
+    /// restores nothing. It buffs `eva 5` for ten minutes.
+    ///
+    /// # The GM's Blessings reach the whole map
+    ///
+    /// The owner, same day: *"Using either item should trigger an effect for all players on a map
+    /// saying who is the person that gave the blessing, and give everyone on the map the
+    /// appropriate buff."*
+    ///
+    /// `0x007D` is *"your* temporary stats changed", so the same bytes handed to every client
+    /// on the map buff every one of them - there is no separate "remote" form to build. The
+    /// announcement is a chat notice carrying the giver's name, because the client has no
+    /// string of its own for a thing this game does not have.
+    ///
+    /// **`Bus::publish` skips the publisher**, so the giver's own copy is in the returned
+    /// replies and the map's copy goes through the bus - the same two-send shape the scroll
+    /// effect uses, for the same reason.
+    fn buff_from_item(
+        &mut self,
+        item_id: u32,
+        restores: &crate::consumables::Restores,
+        character_id: u32,
+        map: u32,
+    ) -> Vec<Reply> {
+        let buffs = restores.buffs();
+        // A restore-only potion takes this path too and must leave with nothing: an empty
+        // `0x007D` would set a mask with no bits and is not worth sending.
+        if buffs.is_empty() || restores.duration_ms == 0 {
+            if !restores.unsupported().is_empty() {
+                crate::server::log(&format!(
+                    "   item {item_id}: {} cannot be sent - no measured CTS bit for it in this \
+                     repo, and guessing one sends a number to an unknown stat. The rest of the \
+                     item still applied.",
+                    restores.unsupported().join(", ")
+                ));
+            }
+            return Vec::new();
+        }
+        let stats: Vec<net::buff::TemporaryStat> = buffs
+            .iter()
+            .map(|&(bit, value)| net::buff::TemporaryStat {
+                bit,
+                value: i16::try_from(value).unwrap_or(i16::MAX),
+                reason: item_id,
+                duration_ms: restores.duration_ms,
+            })
+            .collect();
+        // Remember them the same way a skill's are, so the tick expires them and a re-drink
+        // replaces rather than stacks.
+        let expires_ms = self.clock_ms.saturating_add(u64::from(restores.duration_ms));
+        for stat in &stats {
+            self.buffs.retain(|b| b.bit != stat.bit);
+            self.buffs.push(super::buff::ActiveBuff {
+                bit: stat.bit,
+                skill_id: item_id,
+                expires_ms,
+                value: stat.value,
+            });
+        }
+        let described: Vec<String> =
+            stats.iter().map(|s| format!("CTS {} = {}", s.bit, s.value)).collect();
+        let body = net::buff::temporary_stat_set_with_tail(&stats, net::buff::TAIL_LEN);
+        let mine = Reply {
+            opcode: net::buff::TEMPORARY_STAT_SET,
+            body: body.clone(),
+            what: format!(
+                "TemporaryStatSet: item {item_id} grants {} for {} ms. Nothing authenticates.",
+                described.join(", "),
+                restores.duration_ms
+            ),
+        };
+        if !restores.unsupported().is_empty() {
+            crate::server::log(&format!(
+                "   item {item_id}: granted {} but {} could not be sent - no measured CTS bit.",
+                described.join(", "),
+                restores.unsupported().join(", ")
+            ));
+        }
+        let mut out = vec![mine];
+        if crate::consumables::blesses_the_whole_map(item_id) {
+            let name = self.claimed_character().map(|c| c.name).unwrap_or_default();
+            self.bus().publish(
+                self.subscriber,
+                map,
+                Reply {
+                    opcode: net::buff::TEMPORARY_STAT_SET,
+                    body,
+                    what: format!(
+                        "TemporaryStatSet: character {character_id}'s {item_id} blesses the \
+                         whole of map {map} with {}",
+                        described.join(", ")
+                    ),
+                },
+                None,
+            );
+            let line = crate::consumables::blessing_announcement(&name, item_id);
+            let notice = Reply {
+                opcode: net::notice::CHAT_NOTICE,
+                body: net::notice::chat_notice(&line),
+                what: format!("ChatNotice: {line}"),
+            };
+            self.bus().publish(self.subscriber, map, notice.clone(), None);
+            out.push(notice);
+        }
         out
     }
 

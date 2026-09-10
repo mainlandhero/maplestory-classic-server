@@ -21,7 +21,18 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-/// What one item restores when it is used.
+/// What one item does when it is used.
+///
+/// # It is not only HP and MP, and believing that made most potions look broken
+///
+/// The owner, 2026-09-09: *"Drinking the Dexterity Potion or the Magic Potion also does not give me
+/// the proper buff and subtract the item by 1."* The server's own refusal said why - *"item
+/// 2002003 restores nothing this server knows about"* - and it was right on its own terms:
+/// `2002003` restores nothing. It **buffs**, `eva 5` for ten minutes.
+///
+/// The fields below are the whole `spec` census across the 89 consumables that have one, not
+/// a guess at what a potion might carry. `script`, `npc`, `moveTo` and `morph` are other
+/// mechanics with their own handlers and are deliberately absent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Restores {
     /// A flat number of HP.
@@ -32,12 +43,95 @@ pub struct Restores {
     pub hp_percent: u32,
     /// A percentage of maximum MP, 0..=100.
     pub mp_percent: u32,
+    /// **Milliseconds** the buff fields last. `0` means this item has no timed effect.
+    pub duration_ms: u32,
+    pub pad: u32,
+    pub mad: u32,
+    pub pdd: u32,
+    pub mdd: u32,
+    pub acc: u32,
+    pub eva: u32,
+    pub speed: u32,
+    pub jump: u32,
+    pub crt: u32,
+    pub crd: u32,
+    /// Experience as a **percentage of normal**: the 3x coupon carries `300`.
+    pub exp_percent: u32,
+    /// The **Indie** index space, which is not the CTS space - see [`Restores::buffs`].
+    pub indie_speed: u32,
+    /// See [`Restores::indie_speed`].
+    pub indie_jump: u32,
 }
 
 impl Restores {
     /// Nothing at all - the value for an item with no row.
     pub fn is_nothing(&self) -> bool {
         *self == Restores::default()
+    }
+
+    /// Does using this restore HP or MP?
+    pub fn restores_anything(&self) -> bool {
+        self.hp | self.mp | self.hp_percent | self.mp_percent != 0
+    }
+
+    /// **The timed stats this grants, as `(CTS bit, value)`.**
+    ///
+    /// # Every bit here is measured, and the ones that are not are absent
+    ///
+    /// `research/magic-damage.md` §7.4 reads `FUN_14087c130`, the client's own attacker-totals
+    /// builder, taking **nine consecutive CTS values 83..91 in index order** and adding each to
+    /// a totals field whose meaning is pinned by what seeds it and what consumes it. That is
+    /// [`L`]-grade and it is the source of every row below except Speed, which this project
+    /// already sends for Nimble Feet.
+    ///
+    /// ```text
+    ///   83 PAD   84 AttackPower   85 MAD   86 PDD   87 MDD
+    ///   88 ACC   89 EVA           90 crit rate      91 crit damage      92 Speed
+    /// ```
+    ///
+    /// **`jump`, `indie_speed`, `indie_jump` and `exp_percent` are deliberately not here.**
+    /// There is no measured CTS bit for any of them in this repo, and the Indie names are a
+    /// *separate index space* that the `0x007D` decoder shows no sign of carrying
+    /// (`research/magic-damage.md` §7.3's named blind spot). Guessing a bit would send a
+    /// number to an unknown stat, which is worse than the item doing nothing, because a wrong
+    /// stat is indistinguishable from a right one until somebody reads the stat window.
+    /// [`Restores::unsupported`] names them instead so the server can say so out loud.
+    pub fn buffs(&self) -> Vec<(u32, u32)> {
+        let mut out = Vec::new();
+        for (bit, value) in [
+            (net::buff::CTS_ATTACK_POWER, self.pad),
+            (net::buff::CTS_MAGIC_ATTACK, self.mad),
+            (net::buff::CTS_WEAPON_DEFENCE, self.pdd),
+            (net::buff::CTS_MAGIC_DEFENCE, self.mdd),
+            (net::buff::CTS_ACCURACY, self.acc),
+            (net::buff::CTS_EVASION, self.eva),
+            (net::buff::CTS_CRIT_RATE, self.crt),
+            (net::buff::CTS_CRIT_DAMAGE, self.crd),
+            (net::buff::CTS_SPEED, self.speed),
+        ] {
+            if value > 0 {
+                out.push((bit, value));
+            }
+        }
+        out
+    }
+
+    /// The parts of this row the server knows about but **cannot send**, for the log.
+    ///
+    /// A silent omission here is the failure this whole module was just fixed for: an item
+    /// that half works looks exactly like an item that works, until someone counts.
+    pub fn unsupported(&self) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        for (name, value) in [
+            ("jump", self.jump),
+            ("indieSpeed", self.indie_speed),
+            ("indieJump", self.indie_jump),
+        ] {
+            if value > 0 {
+                out.push(name);
+            }
+        }
+        out
     }
 
     /// How much HP this actually restores for a character with `max_hp`, flat plus percent.
@@ -53,6 +147,36 @@ impl Restores {
     pub fn mp_for(&self, max_mp: u32) -> u32 {
         self.mp.saturating_add(max_mp.saturating_mul(self.mp_percent) / 100)
     }
+}
+
+/// `2023000` GM's Blessing of Wind and `2023001` GM's Blessing of Precision.
+///
+/// The owner, 2026-09-09: *"Using either item should trigger an effect for all players on a map
+/// saying who is the person that gave the blessing, and give everyone on the map the
+/// appropriate buff."*
+///
+/// **A list of two ids rather than a range or a name test.** `String.wz` also has `5121000`
+/// and `5121001` under the same two names - the Cash-shop copies - and a name match would
+/// sweep those in without anyone deciding to. If they should behave the same way, they go in
+/// this array and the decision is visible.
+pub const MAP_WIDE_BLESSINGS: [u32; 2] = [2_023_000, 2_023_001];
+
+/// Does using this item bless everyone standing on the map?
+pub fn blesses_the_whole_map(item_id: u32) -> bool {
+    MAP_WIDE_BLESSINGS.contains(&item_id)
+}
+
+/// The line the whole map is shown, naming who gave it.
+///
+/// The client has no string for this - it is not a mechanic this game has - so the server
+/// supplies the wording, exactly as it does for the `!scroll` dialogue.
+pub fn blessing_announcement(giver: &str, item_id: u32) -> String {
+    let what = match item_id {
+        2_023_000 => "the Blessing of Wind",
+        2_023_001 => "the Blessing of Precision",
+        _ => "a blessing",
+    };
+    format!("{giver} has given everyone here {what}.")
 }
 
 /// Every item that restores something.
@@ -75,8 +199,31 @@ impl Consumables {
         }
     }
 
-    /// Parse the TSV-ish `itemId, hp, mp, hpR, mpR` body.
+    /// Parse the body of `gm-handbook/consumables.txt`.
+    ///
+    /// ```text
+    /// itemId, hp, mp, hpR, mpR, time, pad, mad, pdd, mdd, acc, eva, speed, jump, crt, crd,
+    ///         expBuff, indieSpeed, indieJump
+    /// ```
+    ///
+    /// # `>=`, never `==`, and the reason is written in another file's scar tissue
+    ///
+    /// This used to require **exactly five** columns. The generator grew fourteen more on
+    /// 2026-09-09 and every single row would have failed to parse - so every potion in the
+    /// game would have stopped restoring HP, and the symptom would have been the bug that
+    /// change was made to fix, only worse.
+    ///
+    /// `config.rs`'s equip loader carries the same note from 2026-08-28, when exactly that
+    /// happened to `equips.txt`: *"An `!= 19` here skipped every row of the new file, and the
+    /// symptom would have been the 2026-08-19 bug returning exactly."* The fix there was to
+    /// take a minimum and read by index, and it is the fix here.
+    ///
+    /// A row **shorter** than the five original columns is still a problem rather than a
+    /// partial read: a half-parsed potion would restore a number nobody wrote down.
     pub fn parse(text: &str) -> Self {
+        /// The five columns this parser has always required. Anything past them is optional,
+        /// so an older file still loads and only loses the buffs it never had.
+        const REQUIRED: usize = 5;
         let mut by_id = HashMap::new();
         let mut problems = 0;
         for line in text.lines() {
@@ -85,24 +232,44 @@ impl Consumables {
                 continue;
             }
             let f: Vec<&str> = line.split(',').map(str::trim).collect();
-            if f.len() != 5 {
+            if f.len() < REQUIRED {
                 problems += 1;
                 continue;
             }
-            let parsed: Option<(u32, u32, u32, u32, u32)> = (|| {
-                Some((
-                    f[0].parse().ok()?,
-                    f[1].parse().ok()?,
-                    f[2].parse().ok()?,
-                    f[3].parse().ok()?,
-                    f[4].parse().ok()?,
-                ))
-            })();
-            match parsed {
-                Some((id, hp, mp, hp_percent, mp_percent)) => {
-                    by_id.insert(id, Restores { hp, mp, hp_percent, mp_percent });
+            // Absent trailing columns read as zero, which is what an older file means.
+            let at = |i: usize| -> Option<u32> {
+                match f.get(i) {
+                    None => Some(0),
+                    Some(s) => s.parse().ok(),
                 }
-                None => problems += 1,
+            };
+            let parsed = (|| {
+                Some(Restores {
+                    hp: at(1)?,
+                    mp: at(2)?,
+                    hp_percent: at(3)?,
+                    mp_percent: at(4)?,
+                    duration_ms: at(5)?,
+                    pad: at(6)?,
+                    mad: at(7)?,
+                    pdd: at(8)?,
+                    mdd: at(9)?,
+                    acc: at(10)?,
+                    eva: at(11)?,
+                    speed: at(12)?,
+                    jump: at(13)?,
+                    crt: at(14)?,
+                    crd: at(15)?,
+                    exp_percent: at(16)?,
+                    indie_speed: at(17)?,
+                    indie_jump: at(18)?,
+                })
+            })();
+            match (f[0].parse::<u32>().ok(), parsed) {
+                (Some(id), Some(r)) => {
+                    by_id.insert(id, r);
+                }
+                _ => problems += 1,
             }
         }
         Consumables { by_id, source: String::new(), problems }
@@ -191,5 +358,103 @@ mod tests {
     fn an_unreadable_line_is_counted_rather_than_swallowed() {
         let c = Consumables::parse(SAMPLE);
         assert_eq!(c.problems, 1);
+    }
+
+    /// **The four items the owner reported, read out of the real generated table.**
+    ///
+    /// *"Drinking the Dexterity Potion or the Magic Potion also does not give me the proper
+    /// buff"*, *"I also just tried using the GM's Blessing of the Wind and GM's Blessing of
+    /// Precision"*, *"I also just tried using the x3 EXP Coupon"*. All four were refused with
+    /// *"restores nothing this server knows about"*, and all four are buffs.
+    #[test]
+    fn the_reported_items_carry_the_buffs_the_client_says_they_do() {
+        let path = Path::new("../../gm-handbook/consumables.txt");
+        if !path.exists() {
+            return; // generated, gitignored - tools/dump_itemdata.py makes it
+        }
+        let c = Consumables::load(path);
+        // The control: the Red Potion still reads, so a failure below is about the new
+        // columns and not about the file having stopped parsing altogether. This is the
+        // check that would have caught an `f.len() != 5` surviving the column change.
+        assert_eq!(c.get(2_000_000).map(|r| r.hp), Some(100), "Red Potion is still 100 flat HP");
+
+        let magic = c.get(2_002_001).expect("Magic Potion");
+        assert_eq!(magic.mad, 10);
+        assert_eq!(magic.duration_ms, 600_000, "ten minutes, in MILLISECONDS");
+        assert!(!magic.restores_anything(), "it is a buff, not a restore");
+        assert_eq!(magic.buffs(), vec![(net::buff::CTS_MAGIC_ATTACK, 10)]);
+
+        // **The Dexterity Potion buffs EVA, not DEX.** The name says one thing and the
+        // client's own data says another, and the data wins - worth an assertion precisely
+        // because the name would talk somebody out of it.
+        let dex = c.get(2_002_003).expect("Dexterity Potion");
+        assert_eq!(dex.eva, 5);
+        assert_eq!(dex.buffs(), vec![(net::buff::CTS_EVASION, 5)]);
+
+        let precision = c.get(2_023_001).expect("GM's Blessing of Precision");
+        assert_eq!(precision.acc, 20);
+        assert_eq!(precision.duration_ms, 3_600_000, "an hour");
+        assert_eq!(precision.buffs(), vec![(net::buff::CTS_ACCURACY, 20)]);
+        assert!(blesses_the_whole_map(2_023_001));
+
+        // **Wind is the honest gap.** Its stats are `indieSpeed`/`indieJump`, the Indie index
+        // space, and this repo has no measured CTS bit for either. It must report them as
+        // unsupported rather than quietly send them to a guessed bit.
+        let wind = c.get(2_023_000).expect("GM's Blessing of Wind");
+        assert_eq!((wind.indie_speed, wind.indie_jump), (30, 10));
+        assert!(wind.buffs().is_empty(), "no measured bit, so nothing is sent");
+        assert_eq!(wind.unsupported(), vec!["indieSpeed", "indieJump"]);
+        assert!(blesses_the_whole_map(2_023_000));
+
+        // The EXP coupon is a rate, not a stat, and carries no CTS bit here either.
+        let coupon = c.get(2_450_001).expect("3x EXP Coupon");
+        assert_eq!(coupon.exp_percent, 300);
+        assert_eq!(coupon.duration_ms, 900_000, "fifteen minutes");
+        assert!(coupon.buffs().is_empty());
+    }
+
+    /// **A row shorter than the table is a problem; a row longer is not.**
+    ///
+    /// This parser required *exactly* five columns until the generator grew fourteen more, at
+    /// which point every row in the file would have failed and every potion in the game would
+    /// have stopped restoring HP. `config.rs`'s equip loader carries the same scar from
+    /// 2026-08-28. Both directions are pinned so neither can come back.
+    #[test]
+    fn an_older_five_column_file_still_loads_and_a_short_row_does_not() {
+        let old = "# itemId, hp, mp, hpR, mpR\n2000000, 100, 0, 0, 0\n";
+        let c = Consumables::parse(old);
+        assert_eq!(c.problems, 0, "a five-column file is still legal");
+        let r = c.get(2_000_000).expect("the row loaded");
+        assert_eq!(r.hp, 100);
+        assert_eq!(r.duration_ms, 0, "absent columns read as zero, not as garbage");
+        assert!(r.buffs().is_empty());
+
+        // Four columns is genuinely broken - a half-read potion would restore a number
+        // nobody wrote down.
+        assert_eq!(Consumables::parse("2000000, 100, 0, 0\n").problems, 1);
+    }
+
+    /// Every CTS bit this module can emit is one of the nine the client's own totals builder
+    /// reads, and no two stats share one - a collision would make one potion silently
+    /// overwrite another's stat.
+    #[test]
+    fn every_emitted_bit_is_in_the_measured_run_and_they_are_distinct() {
+        let everything = Restores {
+            pad: 1, mad: 2, pdd: 3, mdd: 4, acc: 5, eva: 6, speed: 7, crt: 8, crd: 9,
+            duration_ms: 1000,
+            ..Default::default()
+        };
+        let bits: Vec<u32> = everything.buffs().iter().map(|&(b, _)| b).collect();
+        assert_eq!(bits.len(), 9, "nine stats in, nine bits out: {bits:?}");
+        for b in &bits {
+            assert!((83..=92).contains(b), "bit {b} is outside the measured 83..=92 run");
+        }
+        let mut sorted = bits.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), bits.len(), "two stats share a bit: {bits:?}");
+        // And the values travel with their own bit rather than by position.
+        assert!(everything.buffs().contains(&(net::buff::CTS_ACCURACY, 5)));
+        assert!(everything.buffs().contains(&(net::buff::CTS_SPEED, 7)));
     }
 }
