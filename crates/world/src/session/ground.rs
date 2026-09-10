@@ -39,7 +39,7 @@ impl Session {
         m: &net::inventory::InventoryMove,
         chr: &net::opcode::Character,
     ) -> Vec<Reply> {
-        use crate::drops::{whole_slot_is_leaving, DropFromBag, PARTIAL_STACK_REFUSAL};
+        use crate::drops::{whole_slot_is_leaving, DropFromBag};
 
         // `src < 0` with `dst == 0` is a drag straight off the character rather than out of
         // a bag slot. Never tested, and mode 3 on a negative slot makes the reply's length
@@ -80,13 +80,27 @@ impl Session {
         if in_slot == 0 {
             return self.refuse_drop(m, "there is nothing in that slot");
         }
-        // A partial stack needs `0x0070` mode 1, which is not built. Refusing keeps the whole
-        // stack in the bag, which is the safe direction.
-        if !whole_slot_is_leaving(net::drops::drop_count(m), in_slot) {
-            return self.refuse_drop(m, PARTIAL_STACK_REFUSAL);
-        }
+        // **Dropping part of a stack.** The owner, 2026-09-09: *"I see that partial drop is not
+        // implemented, I also need this implemented please."*
+        //
+        // This used to refuse, and the refusal's own words were the reason: *"needs a 0x0070
+        // mode 1 UpdateQuantity, which net::inventory does not build"*. `inventory_quantity`
+        // HAS been built since - `net/src/inventory.rs`, mode read at `142d521fe`, tagged
+        // [L] - and the guard was never revisited. `CLAUDE.md`'s "built is not wired", found
+        // by reading the refusal rather than the module it named.
+        //
+        // `drop_count` turns the `-1` a non-bundle carries into 1, so `requested` is always
+        // at least one. Asking for more than is there takes what is there rather than
+        // refusing: the client draws the number and a stack can shrink between the drag
+        // starting and the packet arriving.
+        let requested = net::drops::drop_count(m).min(in_slot);
+        let whole = whole_slot_is_leaving(requested, in_slot);
+        let remaining_in_slot = if whole { None } else { Some(in_slot - requested) };
 
-        let item = match self.store.remove_item(chr.id, inv, slot, None) {
+        // `None` takes the slot, `Some(n)` takes n. **Both go through the store first**, so a
+        // store that refuses leaves nothing on the floor - the same order the meso drop uses.
+        let take = if whole { None } else { Some(requested) };
+        let item = match self.store.remove_item(chr.id, inv, slot, take) {
             Ok(i) => i,
             Err(e) => return self.refuse_drop(m, &format!("the store would not release it: {e}")),
         };
@@ -98,6 +112,7 @@ impl Session {
                 inv_type: inv,
                 slot,
                 item,
+                remaining_in_slot,
                 x,
                 y,
                 now_ms: now,

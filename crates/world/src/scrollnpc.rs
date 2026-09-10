@@ -258,7 +258,35 @@ pub fn header() -> String {
 ///
 /// So text after `#l` is **unattested in 33 out of 33 cases**, and that is the clip. Every
 /// menu below is therefore the last thing in its string, one row per line, one `#l` at the end.
-const MENU_SEPARATOR: &str = "\n";
+///
+/// # A line break is the two characters `\` and `n`, NOT a newline byte
+///
+/// The owner, 2026-09-09, with a screenshot of the empty-handed screen: *"Some spacing issues in
+/// that dialogue"* - every break had vanished and the whole thing ran together as one
+/// paragraph, without even a space where the breaks had been.
+///
+/// The first census of this client's menus said the separator before a `#L` was "`\n`, 81
+/// times out of 81". That reading was right about the characters and wrong about what they
+/// are. Dumping a quest string byte for byte:
+///
+/// ```text
+///   "#o6# #a100001#\n#o7# #a100002#"
+///    23 6f 36 23 20 23 61 31 30 30 30 30 31 23 5c 6e 23 6f 37 ...
+///                                            ^^^^^  backslash, then 'n'
+/// ```
+///
+/// **`5c 6e`, two printable ASCII characters** - not `0a`. This client's own content stores
+/// the *escape sequence* and its text renderer converts it; a real newline byte is dropped
+/// entirely, which is exactly what the screenshot showed.
+///
+/// This is `CLAUDE.md`'s "the unit, not the arithmetic" in a new place: the value was right
+/// and its encoding was not, and the failure looked like bad wording rather than a bug.
+const LINE_BREAK: &str = r"\n";
+
+/// Two breaks - a blank line between blocks.
+const PARAGRAPH: &str = r"\n\n";
+
+const MENU_SEPARATOR: &str = LINE_BREAK;
 
 /// Assemble a menu the way this client's own content does: a lead paragraph, a blank line,
 /// then the rows and nothing after them.
@@ -267,7 +295,7 @@ const MENU_SEPARATOR: &str = "\n";
 /// each of the other three the moment they grew a description, because they were four
 /// separate `format!`s that merely happened to agree.
 fn menu(lead: &str, rows: &[String]) -> String {
-    format!("{lead}\n\n{}#l", rows.join(MENU_SEPARATOR))
+    format!("{lead}{PARAGRAPH}{}#l", rows.join(MENU_SEPARATOR))
 }
 
 /// One selectable row: `#L<n>#` then the item's icon, its name, and whatever trails it.
@@ -351,19 +379,20 @@ pub fn mode_menu(guaranteed: [bool; 3]) -> String {
 /// rows in `data/drops.txt`. A hand-typed "0.01%" here would survive a change to the drop table
 /// and quietly become false.
 ///
-/// This is a plain say, not a menu - there is no `#L` in it - so the multi-line layout that
-/// [`MENU_SEPARATOR`] warns about does not apply.
+/// This is a plain say, not a menu - there is no `#L` in it - so the "nothing after `#l`" rule
+/// does not apply. The [`LINE_BREAK`] encoding does, and this screen is where that was found.
 pub fn nothing_to_use() -> String {
     let bp = crate::scrolls::GLOBAL_DROP_CHANCE_BP;
-    let mut s = String::from(
-        "You are not carrying either of my scrolls. These are the two to look for:\n",
-    );
+    let mut s = String::from("You are not carrying either of my scrolls. These are the two to look for:");
     for scroll in [Scroll::Secrets, Scroll::Treasure] {
         let id = scroll.item_id();
-        s.push_str(&format!("\n#i{id}# #b#t{id}##k\n{}\n", describe_item(scroll)));
+        s.push_str(&format!(
+            "{PARAGRAPH}#i{id}# #b#t{id}##k{LINE_BREAK}{}",
+            describe_item(scroll)
+        ));
     }
     s.push_str(&format!(
-        "\nAny monster in Maple World may drop one, at {}% - about one in {}. \
+        "{PARAGRAPH}Any monster in Maple World may drop one, at {}% - about one in {}. \
          Keep hunting, and one will find you.",
         f64::from(bp) / 100.0,
         10_000 / bp.max(1)
@@ -385,14 +414,16 @@ pub fn nothing_equipped() -> String {
 pub fn equip_menu(branch: Branch, worn: &[(u8, u32, String, u8, u8)]) -> String {
     let lead = match branch {
         Branch::Secrets(mode) => {
-            format!("#b{}#k. {}\n\nWhich of the things you are wearing shall I use it on?",
-                    mode.name(), describe(mode))
+            format!(
+                "#b{}#k. {}{PARAGRAPH}Which of the things you are wearing shall I use it on?",
+                mode.name(),
+                describe(mode)
+            )
         }
-        Branch::Treasure => {
-            "#bTreasure Scroll#k. I will make one of your own scrolls succeed outright.\n\n\
-             Which of the things you are wearing is it for?"
-                .to_string()
-        }
+        Branch::Treasure => format!(
+            "#bTreasure Scroll#k. I will make one of your own scrolls succeed \
+             outright.{PARAGRAPH}Which of the things you are wearing is it for?"
+        ),
     };
     let rows: Vec<String> = worn
         .iter()
@@ -432,7 +463,7 @@ pub fn real_scroll_menu(item_name: &str, offered: &[(u32, String, u16, u16)]) ->
     menu(
         &format!(
             "These are the scrolls you carry that fit your #b{item_name}#k. \
-             Whichever you choose will succeed.\n\nWhich one?"
+             Whichever you choose will succeed.{PARAGRAPH}Which one?"
         ),
         &rows,
     )
@@ -455,7 +486,8 @@ pub fn confirm(action: Confirmed, item_name: &str, real_name: &str, guaranteed: 
                 )
             };
             format!(
-                "Use a #bScroll of Secrets#k as a #b{}#k on your #b{item_name}#k?\n\n{}\n{odds}\n\n\
+                "Use a #bScroll of Secrets#k as a #b{}#k on your \
+                 #b{item_name}#k?{PARAGRAPH}{}{LINE_BREAK}{odds}{PARAGRAPH}\
                  The scroll is used up either way.",
                 mode.name(),
                 describe(mode)
@@ -463,8 +495,8 @@ pub fn confirm(action: Confirmed, item_name: &str, real_name: &str, guaranteed: 
         }
         Confirmed::Treasure { .. } => format!(
             "Use your #bTreasure Scroll#k to guarantee a #b{real_name}#k on your \
-             #b{item_name}#k?\n\nIt will succeed, and one enhancement slot will be used.\n\n\
-             Both scrolls are used up."
+             #b{item_name}#k?{PARAGRAPH}It will succeed, and one enhancement slot will be \
+             used.{PARAGRAPH}Both scrolls are used up."
         ),
     }
 }
@@ -527,7 +559,7 @@ pub fn outcome(
             }
         }
     };
-    format!("{head}\n\nEnhancement slots remaining: #b{remaining}#k.")
+    format!("{head}{PARAGRAPH}Enhancement slots remaining: #b{remaining}#k.")
 }
 
 #[cfg(test)]
@@ -537,6 +569,69 @@ mod tests {
     /// Written as an escape rather than typed, because a literal CR in this file is invisible
     /// in a diff and this repo has already lost one to a heredoc halving its backslashes.
     const CARRIAGE_RETURN: char = '\r';
+
+    /// Every string this module hands to a dialogue packet.
+    fn every_line() -> Vec<String> {
+        let worn_rows = worn();
+        let mut out = every_menu();
+        out.push(nothing_to_use());
+        out.push(nothing_equipped());
+        out.push(no_scroll_fits("Wizet Secret Agent Suitcase"));
+        out.push(cancelled());
+        for r in [
+            Refusal::NoSlotsLeft,
+            Refusal::NothingToRestore,
+            Refusal::AlreadyAtBase,
+            Refusal::NoScrollFits,
+        ] {
+            out.push(refused(r));
+        }
+        for mode in SecretsMode::ALL {
+            let a = Confirmed::Secrets { mode, equip_slot: worn_rows[0].0 };
+            out.push(confirm(a, "Suitcase", "", true));
+            out.push(confirm(a, "Suitcase", "", false));
+            out.push(outcome(a, "Suitcase", "", true, &[("Weapon Attack", 3)], 5));
+            out.push(outcome(a, "Suitcase", "", false, &[], 5));
+        }
+        let t = Confirmed::Treasure { equip_slot: 5, real_scroll: 2_043_200 };
+        out.push(confirm(t, "Suitcase", "Attack Scroll", false));
+        out.push(outcome(t, "Suitcase", "Attack Scroll", true, &[("Weapon Attack", 1)], 5));
+        out.push(outcome(t, "Suitcase", "Attack Scroll", true, &[], 5));
+        out
+    }
+
+    /// **A line break is the two characters `\` and `n`, never a newline byte.**
+    ///
+    /// The owner, 2026-09-09, of the empty-handed screen: *"Some spacing issues in that dialogue"* -
+    /// every break had vanished and the text ran together as one paragraph. The client stores
+    /// the ESCAPE SEQUENCE in its own content and its renderer converts it; a real `0x0a` is
+    /// dropped silently. Dumping one of the client's own quest strings:
+    ///
+    /// ```text
+    ///   "#o6# #a100001#\n#o7# #a100002#"   ->  ... 61 31 23  5c 6e  23 6f 37 ...
+    ///                                                        ^^^^^ backslash, 'n'
+    /// ```
+    ///
+    /// This holds EVERY string the module produces, not just the one that was photographed,
+    /// because the failure is invisible in a diff and reads on screen as clumsy wording rather
+    /// than as a bug.
+    #[test]
+    fn no_dialogue_line_contains_a_real_newline_byte() {
+        for text in every_line() {
+            assert!(
+                !text.contains('\n'),
+                "a real newline is dropped by the client; use LINE_BREAK: {text:?}"
+            );
+            assert!(!text.contains(CARRIAGE_RETURN), "and a CR is not it either: {text:?}");
+        }
+        // The control: this predicate is not vacuous - the escape really is present, and it
+        // really is two characters.
+        let bytes = nothing_to_use().into_bytes();
+        assert!(
+            bytes.windows(2).any(|w| w == b"\\n"),
+            "the empty-handed screen must carry the escape sequence"
+        );
+    }
 
     fn worn() -> Vec<(u8, u32, String, u8, u8)> {
         vec![

@@ -218,11 +218,6 @@ pub const PICK_UP_CANDIDATE_FIRST: u16 = 0x0329;
 /// The highest candidate. See [`PICK_UP_CANDIDATE_FIRST`].
 pub const PICK_UP_CANDIDATE_LAST: u16 = 0x032E;
 
-/// Why a partial stack is refused rather than half-dropped.
-pub const PARTIAL_STACK_REFUSAL: &str =
-    "dropping part of a stack needs a 0x0070 mode 1 UpdateQuantity, which net::inventory does \
-     not build - the whole slot goes or nothing does";
-
 /// Could this inbound opcode be the player's pick-up request?
 ///
 /// **This is a filter for a measurement, not an answer.** It is true for all six candidates
@@ -251,14 +246,20 @@ pub fn drop_is_locked_to_owner_forever(item_id: u32) -> bool {
 
 /// Is the client asking for everything in the slot?
 ///
-/// A partial stack cannot be expressed with the packets this server can build: taking 3 of 10
-/// needs `0x0070` **mode 1 UpdateQuantity** with the remainder, and `net::inventory` builds
-/// modes 0, 2 and 3 only. Sending a mode 3 Remove instead would empty the slot on screen while
-/// the server kept seven, which is a desync the player would read as losing an item.
+/// **This chooses which `0x0070` goes out, and it no longer chooses whether to refuse.**
+/// Until 2026-09-09 a partial drop was rejected outright, on the stated grounds that mode 1
+/// UpdateQuantity was not built. It *was* built - `net::inventory::inventory_quantity`, mode
+/// read at `142d521fe`, **[L]** - and the guard outlived its own reason by long enough for
+/// the refusal text to be the only thing still asserting it. The owner: *"I see that partial drop
+/// is not implemented, I also need this implemented please."*
 ///
-/// So the caller checks this **before** touching the bag and refuses with
-/// [`PARTIAL_STACK_REFUSAL`] if it is false. `requested` is `net::drops::drop_count`, which
-/// already turns the `-1` a non-bundle carries into 1.
+/// `true` means the slot empties and the reply is mode 3 REMOVE; `false` means some stay and
+/// the reply is mode 1 carrying the remainder. Getting that backwards is the failure worth
+/// naming: a mode 3 on a partial drop empties the slot on screen while the store still holds
+/// the rest, and the player reads it as having lost them.
+///
+/// `requested` is `net::drops::drop_count`, which already turns the `-1` a non-bundle carries
+/// into 1, and the caller clamps it to what is actually in the slot.
 pub fn whole_slot_is_leaving(requested: u16, in_slot: u16) -> bool {
     requested >= in_slot
 }
@@ -598,6 +599,17 @@ pub struct DropFromBag {
     pub slot: u16,
     /// The item, exactly as the store handed it back.
     pub item: store::Item,
+    /// **How many are still in that slot afterwards.** `None` means the slot is now empty.
+    ///
+    /// This is what makes a partial drop possible, and it decides which `0x0070` goes out:
+    /// `None` is mode 3 REMOVE, `Some(n)` is mode 1 UPDATE QUANTITY carrying `n`. Sending a
+    /// mode 3 when the server kept some would empty the slot on screen while the store still
+    /// held items - a desync the player reads as losing them.
+    ///
+    /// `Some(0)` is not a legal way to say "empty": the client's mode 1 draws the number it is
+    /// given, and a zero would leave a slot showing 0 rather than clearing. A debug assertion
+    /// in [`DropPool::drop_item`] catches it.
+    pub remaining_in_slot: Option<u16>,
     /// Where it lands. See the module docs - the server has no player position today.
     pub x: i16,
     /// See [`DropFromBag::x`].
@@ -989,21 +1001,46 @@ impl DropTable {
             source_y: d.y,
             delay_ms: 0,
         };
+        debug_assert!(
+            d.remaining_in_slot != Some(0),
+            "an emptied slot is None, not Some(0) - mode 1 would draw a slot holding 0"
+        );
         let inv_type = d.inv_type.as_u8() as i8;
-        let removed = Reply {
-            opcode: net::inventory::INVENTORY_OPERATION,
-            body: net::inventory::inventory_removed(inv_type, d.slot as i16),
-            what: format!(
-                "InventoryOperation REMOVE: item {} x{} leaves {:?} slot {} for the floor of \
-                 map {}. This goes FIRST: bExclRequestSent = 1 is what clears the client's \
-                 +0x2330 latch, and until it lands every later inventory action is dropped \
-                 before it is built.",
-                drop.item_id(),
-                drop.quantity(),
-                d.inv_type,
-                d.slot,
-                d.map_id
-            ),
+        // **Which `0x0070` depends on whether anything is left.** Both carry
+        // `bExclRequestSent = 1`, which is the byte that clears the client's `+0x2330` latch;
+        // whichever one goes out, it must go out, or every later inventory action is dropped
+        // before it is built.
+        let removed = match d.remaining_in_slot {
+            None => Reply {
+                opcode: net::inventory::INVENTORY_OPERATION,
+                body: net::inventory::inventory_removed(inv_type, d.slot as i16),
+                what: format!(
+                    "InventoryOperation REMOVE: item {} x{} leaves {:?} slot {} for the floor of \
+                     map {}. This goes FIRST: bExclRequestSent = 1 is what clears the client's \
+                     +0x2330 latch, and until it lands every later inventory action is dropped \
+                     before it is built.",
+                    drop.item_id(),
+                    drop.quantity(),
+                    d.inv_type,
+                    d.slot,
+                    d.map_id
+                ),
+            },
+            Some(left) => Reply {
+                opcode: net::inventory::INVENTORY_OPERATION,
+                body: net::inventory::inventory_quantity(inv_type, d.slot as i16, left),
+                what: format!(
+                    "InventoryOperation UPDATE QUANTITY: x{} of item {} leave {:?} slot {} for \
+                     the floor of map {}, and {left} stay behind. Mode 1 rather than mode 3 \
+                     because the slot is NOT empty - a mode 3 here would clear it on screen \
+                     while the store still held {left}.",
+                    drop.quantity(),
+                    drop.item_id(),
+                    d.inv_type,
+                    d.slot,
+                    d.map_id
+                ),
+            },
         };
         let enter = drop.enter_reply(net::drops::ENTER_FLOATING);
         self.live.insert(object_id, drop);
@@ -1260,6 +1297,9 @@ mod tests {
             inv_type: InventoryType::Equip,
             slot: 1,
             item,
+            // The whole slot leaves, which is what every test here was written against.
+            // Partial drops have their own tests.
+            remaining_in_slot: None,
             x: 473,
             y: 395,
             now_ms,
@@ -1832,9 +1872,8 @@ mod tests {
     fn a_partial_stack_is_refused_rather_than_half_dropped() {
         assert!(whole_slot_is_leaving(10, 10));
         assert!(whole_slot_is_leaving(1, 1), "an equip");
-        assert!(!whole_slot_is_leaving(3, 10), "3 of 10 needs a mode 1 nobody builds");
+        assert!(!whole_slot_is_leaving(3, 10), "3 of 10 leaves 7, so mode 1 rather than mode 3");
         assert!(whole_slot_is_leaving(5, 0), "an empty slot cannot hold anything back");
-        assert!(!PARTIAL_STACK_REFUSAL.is_empty());
     }
 
     /// The whole shape of the run this unblocks, in one test.
