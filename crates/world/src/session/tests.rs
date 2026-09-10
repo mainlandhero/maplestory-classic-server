@@ -9458,10 +9458,11 @@ fn a_drop_lands_where_the_mob_finished_its_path_not_where_it_started() {
     assert_eq!(src, (456, 395), "an arc starting behind the corpse is the bug on screen");
 }
 
-/// **The field clock goes out on a map that declares one, with the local time.** The owner,
+/// **The field clock goes out on a map that declares one, with UTC.** The owner,
 /// 2026-09-09, in Ellinia Station: the clock sat at 00:00 because nothing ever sent
 /// `0x01BC`. This pins the send, its shape - type 1, hour, minute, second - and that the
-/// time is the machine's wall clock rather than a constant or UTC.
+/// time is UTC - the owner, 2026-09-10: "this needs to read the UTC time" - rather than a
+/// constant or the machine's zone.
 #[test]
 fn entering_a_map_with_a_clock_node_sends_the_local_time() {
     let store = Arc::new(Store::open_in_memory().unwrap());
@@ -9481,9 +9482,9 @@ fn entering_a_map_with_a_clock_node_sends_the_local_time() {
 
     // Sample the wall clock on both sides of the call so a second boundary cannot fake a
     // mismatch; the body must agree with one of the two.
-    let before = crate::localtime::local_hms();
+    let before = crate::serverclock::utc_hms();
     let out = s.on_field_entered();
-    let after = crate::localtime::local_hms();
+    let after = crate::serverclock::utc_hms();
 
     let clocks: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::clock::FIELD_CLOCK).collect();
     assert_eq!(clocks.len(), 1, "exactly one clock per entry: {out:?}");
@@ -9512,4 +9513,101 @@ fn entering_a_map_without_a_clock_node_sends_no_clock() {
         !out.iter().any(|r| r.opcode == net::clock::FIELD_CLOCK),
         "a clock went out on a map with no clock node: {out:?}"
     );
+}
+
+/// A session standing in Ellinia with the station door in its portal table - the shape the
+/// real config has after `load_portals` folds `world::scriptportals` in.
+fn session_in_ellinia_with_the_station_door() -> (Session, u32) {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    store.set_gm("maplecw", true).unwrap();
+    let chr = net::opcode::Character {
+        name: "Cobalt".to_string(),
+        map_id: 10_002_000,
+        ..Default::default()
+    };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    store.set_character_map(id, 10_002_000).unwrap();
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    let mut portals = std::collections::HashMap::new();
+    portals.insert((10_002_000u32, "in03".to_string()), (10_002_090u32, "out00".to_string()));
+    let mut portal_index = std::collections::HashMap::new();
+    portal_index.insert((10_002_090u32, "out00".to_string()), 2u8);
+    let config = Config { portals, portal_index, set_field_probe: true, ..Config::default() };
+    let mut s = Session::new(store, Arc::new(config));
+    assert!(s.claim_for_character(id).contains("claimed the migration"));
+    (s, id)
+}
+
+/// **The owner's own press, byte for byte, walks through the door.** `world.log` 2026-09-10
+/// 11:27:53.035: `0x014A`, body `000400696e30333a0303f4`. Yesterday this was logged UNKNOWN
+/// and answered with nothing, with the destination sitting in the table the whole time.
+#[test]
+fn wisps_script_portal_press_reaches_ellinia_station() {
+    let (mut s, _id) = session_in_ellinia_with_the_station_door();
+    let body = [0x00, 0x04, 0x00, b'i', b'n', b'0', b'3', 0x3a, 0x03, 0x03, 0xf4];
+    let out = s.on_portal_script(&body);
+    let warp = out
+        .iter()
+        .find(|r| r.opcode == net::opcode::SET_FIELD)
+        .unwrap_or_else(|| panic!("no SetField for the station door: {out:?}"));
+    assert!(
+        warp.what.contains("map 10002090 portal 2"),
+        "it must land on the station's out00, index 2: {}",
+        warp.what
+    );
+    assert_eq!(
+        out.iter().filter(|r| r.opcode == net::opcode::SET_FIELD).count(),
+        1,
+        "one warp, not a re-send plus a warp"
+    );
+}
+
+/// **The control: a script portal the server cannot resolve is answered, and not with a
+/// warp.** `rand_ola` and the PQ portals are real script portals with no destination here;
+/// re-entering the map under the player would be worse than the unlock, and silence is
+/// against the standing rule.
+#[test]
+fn an_unresolved_script_portal_is_answered_without_a_warp() {
+    let (mut s, _id) = session_in_ellinia_with_the_station_door();
+    let mut body = vec![0x00, 0x08, 0x00];
+    body.extend_from_slice(b"rand_ola");
+    body.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+    let out = s.on_portal_script(&body);
+    assert!(!out.is_empty(), "an unanswered request is the one thing this must never be");
+    assert!(
+        !out.iter().any(|r| r.opcode == net::opcode::SET_FIELD),
+        "an unknown script portal must not warp anywhere: {out:?}"
+    );
+    // And a body too short to parse gets the same treatment rather than a panic.
+    let out = s.on_portal_script(&[0x00, 0x04, 0x00, b'i']);
+    assert!(!out.is_empty());
+    assert!(!out.iter().any(|r| r.opcode == net::opcode::SET_FIELD));
+}
+
+/// **The walked door and the script portal resolve through ONE path.** The same table entry,
+/// reached by `0x00D1` and by `0x014A`, must produce the same destination and arrival - if
+/// the two handlers ever drift, a door works on foot and not by script, or the reverse.
+#[test]
+fn the_walked_door_and_the_script_portal_agree() {
+    let (mut s, _id) = session_in_ellinia_with_the_station_door();
+    // 0x00D1: 16 bytes of integrity block, u32 target = -1, u16 len, name, u16 x, u16 y.
+    let mut walk = vec![0u8; 16];
+    walk.extend_from_slice(&u32::MAX.to_le_bytes());
+    walk.extend_from_slice(&4u16.to_le_bytes());
+    walk.extend_from_slice(b"in03");
+    walk.extend_from_slice(&[0x3a, 0x03, 0x03, 0xf4]);
+    let by_walk = s.on_transfer_field(&walk);
+    let (mut s2, _id) = session_in_ellinia_with_the_station_door();
+    let by_script =
+        s2.on_portal_script(&[0x00, 0x04, 0x00, b'i', b'n', b'0', b'3', 0x3a, 0x03, 0x03, 0xf4]);
+    let pick = |out: &[Reply]| {
+        out.iter()
+            .find(|r| r.opcode == net::opcode::SET_FIELD)
+            .map(|r| r.what.clone())
+            .expect("a SetField")
+    };
+    let (a, b) = (pick(&by_walk), pick(&by_script));
+    assert!(a.contains("map 10002090 portal 2"), "{a}");
+    assert!(b.contains("map 10002090 portal 2"), "{b}");
 }

@@ -674,16 +674,31 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
-     TK. THE STATION CLOCK - FOUND AND WIRED 2026-09-10. `!map 10002090` (Ellinia Station).
-         The wall clock sat at 00:00 because nothing ever sent it a time. It is `0x01BC`
-         type 1 - hour, minute, second - read out of CField::OnPacket, and the server now
-         sends your machine's LOCAL time on entry to any map whose Map.wz image declares a
-         `clock` node (gm-handbook/clocks.txt; Ellinia Station is one of them).
-           it shows the time on your taskbar, AM/PM right, and it TICKS -> done
-           it shows a time four hours off -> UTC got through; localtime.rs is wrong
-           still 00:00 -> grep world.log for 0x01BC on that entry. Sent = the client
+     TK. THE STATION: THE DOOR, THEN THE CLOCK. Both 2026-09-10.
+
+         a) THE DOOR. In Ellinia, stand where you stood for the screenshot - top right,
+            (819, -3072), the `in03` spot - and press UP.
+            Yesterday's fix put the destination in the table and the door stayed dead,
+            because a SCRIPT portal (pt 7/8) does not send the ordinary `0x00D1` at all.
+            Your two presses this morning at 11:27:53 sent **`0x014A`** - `u8, "in03",
+            x, y` - which the server logged as UNKNOWN and never answered. Twelve captures
+            of it across three runs, every one "in03". It is handled now, and it goes
+            through the same named-portal lookup as a walk, so THE FREE MARKET DOORS ARE
+            THE SAME PACKET (all four are pt 7) - TF below was untestable until this.
+              you arrive in Ellinia Station -> done, and TF is worth doing
+              nothing -> grep world.log for 0x014A. If it is there and no SetField
+                         follows, the lookup missed: say what the log line says
+              you arrive somewhere else -> say where; the reverse-link derivation is wrong
+
+         b) THE CLOCK, once you are in the station. It sat at 00:00 because nothing ever
+            sent it a time. It is `0x01BC` type 1 - hour, minute, second - and it carries
+            **UTC**, per your correction this morning: the same time every world.log line
+            is stamped with, so the wall and the log agree.
+              it shows UTC (your taskbar plus four hours), AM/PM right, and TICKS -> done
+              it shows your taskbar time -> local got through; serverclock.rs is wrong
+              still 00:00 -> grep world.log for 0x01BC on that entry. Sent = the client
                          ignored it; not sent = clocks.txt does not list the map
-           the client DIES on entry -> the widget was missing when the packet arrived,
+              the client DIES on entry -> the widget was missing when the packet arrived,
                          which the decode says throws. Every map in clocks.txt is one
                          whose image declares the node, so this is the reading I do
                          not expect. Say which map.
@@ -2408,20 +2423,30 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
-        Write-Host '  TK. THE STATION CLOCK - found and wired today.' -ForegroundColor Magenta
-        Write-Host '      !map 10002090 (Ellinia Station). It sat at 00:00 because'
-        Write-Host '      nothing ever sent a time. Now 0x01BC type 1 (h, m, s) goes'
-        Write-Host '      out with your LOCAL time on entry to any map whose image'
-        Write-Host '      declares a clock node (gm-handbook/clocks.txt).'
-        Write-Host '        taskbar time, AM/PM right, and it TICKS -> done'
-        Write-Host '        four hours off -> UTC got through; localtime.rs is wrong'
-        Write-Host '        still 00:00 -> grep world.log for 0x01BC on the entry.'
+        Write-Host '  TK. THE STATION: THE DOOR, THEN THE CLOCK.' -ForegroundColor Magenta
+        Write-Host '      a) THE DOOR. In Ellinia, stand where the screenshot was -'
+        Write-Host '         top right, the in03 spot - and press UP.'
+        Write-Host '         Yesterday put the destination in the table and the door'
+        Write-Host '         stayed dead: a SCRIPT portal never sends 0x00D1. Your two'
+        Write-Host '         presses at 11:27:53 sent 0x014A, which was UNKNOWN and'
+        Write-Host '         unanswered. Handled now, through the same lookup as a walk,'
+        Write-Host '         so THE FREE MARKET DOORS ARE THE SAME PACKET - TF was' -ForegroundColor Yellow
+        Write-Host '         untestable until this.' -ForegroundColor Yellow
+        Write-Host '           you arrive in Ellinia Station -> done; then do TF'
+        Write-Host '           nothing -> grep world.log for 0x014A. There with no'
+        Write-Host '                      SetField after it = the lookup missed'
+        Write-Host '           somewhere else -> say where'
+        Write-Host '      b) THE CLOCK, once in the station. It sat at 00:00 because'
+        Write-Host '         nothing sent a time. 0x01BC type 1 (h, m, s) now carries'
+        Write-Host '         UTC per your correction - the same time world.log stamps.'
+        Write-Host '           UTC (taskbar + 4h), AM/PM right, and it TICKS -> done'
+        Write-Host '           your taskbar time -> local got through; serverclock.rs'
+        Write-Host '           still 00:00 -> grep world.log for 0x01BC on the entry.'
         Write-Host '                       sent = the client ignored it; not sent ='
         Write-Host '                       the map is not in clocks.txt'
-        Write-Host '        client DIES on entry -> the widget was missing when the' -ForegroundColor Yellow
+        Write-Host '           client DIES on entry -> the widget was missing when the' -ForegroundColor Yellow
         Write-Host '                       packet came, which the decode says throws.'
         Write-Host '                       Not expected on any map in clocks.txt.'
-        Write-Host '                       Say which map.'
         Write-Host ''
         Write-Host '  TF. THE FREE MARKET DOOR - can strand you if it is wrong.' -ForegroundColor Magenta
         Write-Host '      From HENESYS MARKET (10001040) walk into market00, then'

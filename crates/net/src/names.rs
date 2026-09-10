@@ -99,6 +99,8 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         // client answered 1000/1002/1003/1005). It is the quest request and that field is a
         // quest id. See research/npc-dialogue.md.
         0x00D1 => "CLIENT_TRANSFER_FIELD (portal; 0xFFFFFFFF target means resolve the name)",
+        0x014A => "CLIENT_PORTAL_SCRIPT (u8, str portal, i16 x, i16 y) - a SCRIPT portal (pt 7/8); never 0x00D1",
+        0x014C => "CLIENT_PORTAL_TELEPORT (u8, str from, str to, i16 x, i16 y, i16 x2, i16 y2, u8) - an in-map hidden-portal hop the client performs itself",
         0x00DC => "CLIENT_FIELD_ENTERED (once per SetField, ~420 ms after; empty body)",
         0x00E7 => "CLIENT_CHAT (u32 tick, u16-length text, u8 tab)",
         0x0231 => "USER_CHAT (balloon over the head, and the chat log line)",

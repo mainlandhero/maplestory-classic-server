@@ -791,6 +791,11 @@ impl Session {
                 return self.on_cash_shop_exit()
             }
             CLIENT_TRANSFER_FIELD => return self.on_transfer_field(body.get(2..).unwrap_or(&[])),
+            // A SCRIPT portal (pt 7/8) never sends 0x00D1; it sends this. Found 2026-09-10
+            // when the Ellinia Station door stayed dead with its destination in the table.
+            net::portalscript::CLIENT_PORTAL_SCRIPT => {
+                return self.on_portal_script(body.get(2..).unwrap_or(&[]))
+            }
             net::storage::CLIENT_STORAGE => {
                 return self.on_storage_request(body.get(2..).unwrap_or(&[]))
             }

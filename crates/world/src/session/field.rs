@@ -77,14 +77,16 @@ impl Session {
         // widget with no null check and the fetch throws when the map built none.
         // `Config::clocks` is the list of maps whose image declares the node.
         //
-        // Local time rather than UTC - `crate::localtime` says why.
+        // **UTC, which is server time.** The first version sent the machine's local time and
+        // The owner saw EDT on the wall: *"this needs to read the UTC time."* `crate::serverclock`.
+        // It is also what every `world.log` stamp shows, so the wall and the log agree.
         if self.config.clocks.contains(&chr.map_id) {
-            let (h, m, s) = crate::localtime::local_hms();
+            let (h, m, s) = crate::serverclock::utc_hms();
             out.push(Reply {
                 opcode: net::clock::FIELD_CLOCK,
                 body: net::clock::clock_hms(h, m, s),
                 what: format!(
-                    "FieldClock: type 1, {h:02}:{m:02}:{s:02} local - map {} declares a clock node, so the widget exists to receive it",
+                    "FieldClock: type 1, {h:02}:{m:02}:{s:02} UTC - map {} declares a clock node, so the widget exists to receive it",
                     chr.map_id
                 ),
             });
@@ -722,54 +724,114 @@ impl Session {
             return self.revive(chr);
         }
 
-        // Where the character ARRIVES. The source portal names its destination portal in
-        // the WZ's `tn`, and the stat block wants that portal's index on the target map.
-        // Without it every walk lands on the map's spawn point, which is right for a login
-        // and wrong for a door - the character pops out somewhere else entirely.
-        let mut arrival = 0u8;
-
-        // **The Free Market's door is resolved before the table, because the table cannot
-        // hold it.** The owner, 2026-09-09: *"The server should keep track of which town the user
-        // entered from, and then when the user leaves the Free Market, it should return them
-        // to the proper portal which they have entered from."*
-        //
-        // All four of these portals have target `0` in `portals.txt` and no row anywhere names
-        // them, so the static lookup below would fall through to "re-send the current map" -
-        // which is what standing on them did until now. `crate::freemarket` has the working.
-        if let Some(r) = &req {
-            if let Some((to, at, note)) = self.free_market_door(&chr, &r.portal_name) {
-                arrival =
-                    self.config.portal_index.get(&(to, at.clone())).copied().unwrap_or(0);
-                return self.go_to_map(&mut chr, to, arrival, note);
-            }
-        }
-
-        let (target, note) = match &req {
-            Some(r) => match r.target_field.or_else(|| {
-                self.config.portals.get(&(chr.map_id, r.portal_name.clone())).map(|(to, tn)| {
-                    arrival = self
-                        .config
-                        .portal_index
-                        .get(&(*to, tn.clone()))
-                        .copied()
-                        .unwrap_or(0);
-                    *to
-                })
-            }) {
-                Some(t) => (t, format!("portal {:?} -> map {t} portal {arrival}", r.portal_name)),
-                None => (
-                    chr.map_id,
-                    format!(
-                        "portal {:?} on map {} is NOT in the portal table, so this re-sends the current map rather than guessing a destination",
-                        r.portal_name, chr.map_id
-                    ),
-                ),
-            },
-            None => (chr.map_id, "the body was too short to parse - re-sending the current map".to_string()),
+        let Some(r) = req else {
+            let here = chr.map_id;
+            return self.go_to_map(
+                &mut chr,
+                here,
+                0,
+                "the body was too short to parse - re-sending the current map".to_string(),
+            );
         };
 
-
+        // A walked door that is not in the table re-sends the current map rather than
+        // guessing a destination. That is the right answer for `0x00D1`, because the client
+        // is waiting on a SetField; the script portal below chooses differently.
+        let (target, arrival, note) = match self.resolve_named_portal(&chr, r.target_field, &r.portal_name) {
+            Some(found) => found,
+            None => (
+                chr.map_id,
+                0,
+                format!(
+                    "portal {:?} on map {} is NOT in the portal table, so this re-sends the current map rather than guessing a destination",
+                    r.portal_name, chr.map_id
+                ),
+            ),
+        };
         self.go_to_map(&mut chr, target, arrival, note)
+    }
+
+    /// `0x014A` - the player pressed up on a **script** portal (`pt` 7 or 8).
+    ///
+    /// The owner, 2026-09-10: *"The portal in Ellinia to go to Ellinia Station still currently does
+    /// not exist."* It existed in the table since the day before; what did not exist was a
+    /// handler for the packet a script portal sends, which is this one and never `0x00D1`.
+    /// Their two presses sat in `world.log` as UNKNOWN. `net::portalscript` has the capture and
+    /// the builder that agrees with it.
+    ///
+    /// Resolution is [`Self::resolve_named_portal`], shared with the walked door, so the
+    /// Free Market's `pt 7` doors - which send this too - and the two derived script portals
+    /// land the same way whichever packet carries them.
+    ///
+    /// **Unresolved is answered with the unlock, not a re-send of the map.** `rand_ola`, the
+    /// PQ portals and Zakum's door are real script portals with no destination here; putting
+    /// the player back through a `SetField` of the map they are standing in would be a
+    /// visible stutter for nothing. Twelve unanswered presses did not freeze the client, so
+    /// this may not latch at all, but the standing rule is to answer every request.
+    pub(super) fn on_portal_script(&mut self, body: &[u8]) -> Vec<Reply> {
+        let unlock = || {
+            crate::mesodrop::unlock_unhandled_latching_request(
+                net::portalscript::CLIENT_PORTAL_SCRIPT,
+            )
+        };
+        let Some(req) = net::portalscript::parse_portal_script(body) else {
+            crate::server::log(&format!(
+                "   script portal: a {} byte 0x014A body that does not parse; unlock only",
+                body.len()
+            ));
+            return unlock();
+        };
+        let Some(mut chr) = self.claimed_character() else { return unlock() };
+        match self.resolve_named_portal(&chr, None, &req.portal_name) {
+            Some((target, arrival, note)) => {
+                let note = format!("script {note}, pressed at ({}, {})", req.x, req.y);
+                self.go_to_map(&mut chr, target, arrival, note)
+            }
+            None => {
+                crate::server::log(&format!(
+                    "   script portal: {:?} on map {} has no destination this server knows \
+                     (world::scriptportals lists the ones it does not); unlock only",
+                    req.portal_name, chr.map_id
+                ));
+                unlock()
+            }
+        }
+    }
+
+    /// Where a named portal on the character's current map leads: `(map, arrival index,
+    /// note)`, or `None` when nothing here knows.
+    ///
+    /// **One path for both request opcodes.** The walked door (`0x00D1`) and the script
+    /// portal (`0x014A`) both come here, so a destination cannot work on foot and fail by
+    /// script or the reverse - which is exactly the shape the station door was in for a day.
+    ///
+    /// The arrival index matters: the source portal names its destination portal in the
+    /// WZ's `tn`, and the stat block wants that portal's index on the target map. Without it
+    /// every door lands on the map's spawn point, which is right for a login and wrong for a
+    /// door.
+    ///
+    /// **The Free Market's doors are resolved before the table, because the table cannot
+    /// hold them.** The owner, 2026-09-09: *"The server should keep track of which town the user
+    /// entered from, and then when the user leaves the Free Market, it should return them to
+    /// the proper portal which they have entered from."* All four have target `0` in
+    /// `portals.txt` and no row anywhere names them. `crate::freemarket` has the working, and
+    /// `free_market_door` writes the memory before returning, so the caller must warp.
+    fn resolve_named_portal(
+        &mut self,
+        chr: &net::opcode::Character,
+        explicit_target: Option<u32>,
+        portal_name: &str,
+    ) -> Option<(u32, u8, String)> {
+        if let Some((to, at, note)) = self.free_market_door(chr, portal_name) {
+            let arrival = self.config.portal_index.get(&(to, at)).copied().unwrap_or(0);
+            return Some((to, arrival, note));
+        }
+        if let Some(t) = explicit_target {
+            return Some((t, 0, format!("portal {portal_name:?} -> map {t} portal 0")));
+        }
+        let (to, tn) = self.config.portals.get(&(chr.map_id, portal_name.to_string()))?;
+        let arrival = self.config.portal_index.get(&(*to, tn.clone())).copied().unwrap_or(0);
+        Some((*to, arrival, format!("portal {portal_name:?} -> map {to} portal {arrival}")))
     }
 
     /// Bring a dead character back: town, 50 HP, and 10% of their experience unless they are

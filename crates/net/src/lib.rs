@@ -52,6 +52,7 @@ pub mod npcchat;
 pub mod opcode;
 pub mod packet;
 pub mod party;
+pub mod portalscript;
 pub mod quest;
 pub mod revive;
 pub mod abilityup;

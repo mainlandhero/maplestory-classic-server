@@ -48,9 +48,21 @@ A review caught it. The whole 128-case dense switch is now enumerated in
 type-1 arm reads three bytes and calls the widget's set-time, which divides by 12 for the
 AM/PM display [L]. The send is **gated on `gm-handbook/clocks.txt`** (three maps: Ellinia
 Station and the two Orbis station maps) because the widget fetch throws on a map that built
-none, and it carries **local** time from `GetLocalTime`, not the log's UTC. Test plan step
-**TK** says what each outcome on the Ellinia Station wall means.
+none, and it carries **UTC** - the first version sent local time, the owner saw EDT on the wall
+and said *"this needs to read the UTC time"*, so it is server time, the same the log stamps.
+Test plan step **TK** says what each outcome on the Ellinia Station wall means.
 `research/field-clock-2026-09-09.md`, third pass.
+
+**2026-09-10, later: the Ellinia Station door was still dead, and so were the Free Market
+doors, for one reason - a SCRIPT portal never sends `0x00D1`.** The owner: *"The portal in Ellinia
+to go to Ellinia Station still currently does not exist."* Their two presses that morning are
+in `world.log` as **`0x014A`** - `u8, str "in03", i16 x, i16 y` - logged UNKNOWN and never
+answered; twelve captures across three runs, every one `in03`, and the client's own builder
+(`FUN_1428b2330`: `u8, str, i16, i16`) agrees [L]. Yesterday's fix put the destination in
+the portal table and left the request unhandled - "built is not wired", one file over.
+`0x014A` now resolves through the same named-portal path as a walk, which covers the Free
+Market too: all four of its doors are `pt 7` script portals and were sending the same
+packet. Step TK(a), then TF. `research/script-portal-request-2026-09-10.md`.
 
 **2026-09-08: the client token is a SESSION credential now, and an account can only be logged
 in once.** Two changes, and they only work together.
