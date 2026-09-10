@@ -209,9 +209,12 @@ one-byte reads into `ebx` and `edx`, `add rsi,0x5d0; inc edx; lea rcx,[rsi+rbx*8
 ## Wired
 
 `net::clock::clock_hms` builds `01 hh mm ss`; `session::field::on_field_entered` sends it
-after the NPCs when `Config::clocks` lists the map; `world::localtime` supplies **local**
-time via `GetLocalTime`, because `server::log` is UTC and a clock on a wall is read against a
-wristwatch. Test plan step TK says what each screen outcome means. Not yet seen on screen.
+after the NPCs when `Config::clocks` lists the map; `world::serverclock` supplies **UTC**.
+The first version sent local time through `GetLocalTime`; the owner saw it the same morning -
+*"The clock is reflecting EDT time of the machine, this needs to read the UTC time"* - so it
+is server time now, which is also what every `world.log` stamp shows. Test plan step TK says
+what each screen outcome means. The packet reached a screen once (07:28 local) and drew EDT,
+which is the one measurement so far: the opcode, the shape and the gate are right.
 
 **Write-scan on the two flag bytes, whole image** (`tools/fieldrefs.py 0x1c88` / `0x1c89`,
 666939 resync points, the loader's reads at `141841bfd` / `141841c26` present as the

@@ -23,6 +23,13 @@
 //! made them underivable and is also what makes the exit genuinely dangerous - a player in the
 //! hall with nothing remembered has no way out that the map data can supply.
 //!
+//! # All four doors are `pt 7`, so the client sends `0x014A` for them, never `0x00D1`
+//!
+//! Found 2026-09-10 through the Ellinia Station door, which had the same shape: the
+//! destination was resolved and the door stayed dead because a script portal's request is
+//! a different opcode (`net::portalscript`). `session::field` resolves this module's doors
+//! from **both** handlers through one path, so whichever packet arrives lands the same way.
+//!
 //! # The client offers no fallback either
 //!
 //! `80002000`'s own `info/returnMap` is **80002000** - itself. So a character who somehow

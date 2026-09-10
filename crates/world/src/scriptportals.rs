@@ -29,6 +29,18 @@
 //!   Zakum05                   1   the Zakum door
 //! ```
 //!
+//! # The request is `0x014A`, not `0x00D1` - and the table alone was a dead door
+//!
+//! The owner, 2026-09-10, the morning after the table shipped: *"The portal in Ellinia to go to
+//! Ellinia Station still currently does not exist."* It did not work because a script portal
+//! (`pt` 7 or 8) never sends the ordinary transfer-field request. Their two presses are in
+//! `world.log` as `0x014A`, body `00 | "in03" | i16 x | i16 y`, logged UNKNOWN and never
+//! answered - and the same packet sits in three archived runs, twelve times, every one
+//! `in03`. The client's own builder `FUN_1428b2330` encodes `u8, str, i16, i16`.
+//! `net::portalscript` parses it and `session::field::on_portal_script` resolves it through
+//! the same lookup a walk uses. The Free Market's four doors are `pt 7` and send the same
+//! packet, so they were equally dead. "Built is not wired", one file over from the wiring.
+//!
 //! # Only the two that are DERIVED are implemented
 //!
 //! A script portal's destination is not in its own row, so it has to come from somewhere. For
