@@ -124,18 +124,36 @@ impl Session {
             chr.id,
             coupon.what()
         ));
-        // **The count is drawn from what the client was told at field entry**, and this
-        // server has no packet that changes it live - `net::bag` builds the lists and their
-        // slot count together, as part of the character record. So the row is written now and
-        // the window catches up on the next map change or login, and the player is TOLD that
-        // rather than left wondering why the tab looks the same.
+        // **The tab widens on screen now**, which it did not when this shipped an hour ago.
         //
-        // Saying so is the point: a silent half-effect is the failure this whole session has
-        // been unpicking. If a live packet is ever decoded, this line is where it goes.
-        let mut out = self.cash_item_notice(format!(
-            "Your {} now holds {widened} slots. Change maps or relog to see them.",
-            coupon.what()
-        ));
+        // That version wrote the row and told the player "change maps or relog to see them",
+        // because nothing here could change the count live - the client draws it from the
+        // character record it got at field entry. `0x007B` InventoryGrow was decoded while
+        // chasing the station clock: `u8 invType, u8 slots`, and the handler resizes
+        // `charData + 0x5d0 + invType*8` to `slots + 1`. See `net::inventory::inventory_grow`.
+        //
+        // **Storage has no such packet and still needs a relog**, so the line says so for
+        // that one and not for the others - a caveat printed where it does not apply teaches
+        // players to ignore it.
+        let mut out = Vec::new();
+        let line = match coupon {
+            SlotCoupon::Tab(inv) => {
+                let slots = u8::try_from(widened).unwrap_or(u8::MAX);
+                out.push(Reply {
+                    opcode: net::inventory::INVENTORY_GROW,
+                    body: net::inventory::inventory_grow(inv.as_u8(), slots),
+                    what: format!(
+                        "InventoryGrow: the {:?} tab is now {widened} slots. The client adds                          the 1-based hole itself, so this carries the logical count.",
+                        inv
+                    ),
+                });
+                format!("Your {} now holds {widened} slots.", coupon.what())
+            }
+            SlotCoupon::Storage => format!(
+                "Your storage now holds {widened} slots. Reopen it to see them.",
+            ),
+        };
+        out.extend(self.cash_item_notice(line));
         out.extend(self.stack_change_replies(store::InventoryType::Cash, slot, 0));
         out
     }

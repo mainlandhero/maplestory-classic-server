@@ -67,3 +67,73 @@ opcode and send it: this project's rule is that guessing an opcode moves the cli
 state nobody has read, and the Cash-item opcode was left unwired for exactly one turn rather
 than guessed — which turned out to be the right call when the capture named `0x0114` and it
 was not any of the obvious candidates.
+
+
+---
+
+# Second pass, same day: the search was wrong, and the blocker has a name
+
+The first pass above concluded "not established" off two instruments that both returned
+nothing. **Both of those negatives were worthless, and one of them was worthless for a reason
+the tool documents about itself.**
+
+## The clock IS read, and the reference was invisible to `xref.py`
+
+`xref.py` matches `lea reg,[rip+disp32]` and `mov reg,imm64`. Its own docstring names the
+blind spot: *"`mov rax, [rip+disp32]` - a data READ, not an address"* - and that is exactly
+how a global interned-string pointer is loaded. So "0 code references" said nothing.
+
+An operand-level scan - every instruction whose rip-relative target resolves into a wanted set,
+whatever the mnemonic - with a **positive control** (`0x143414f08` "ladderRope%d", known to be
+referenced at `0x141e7dd32`) found the control **and exactly one clock reference**:
+
+```text
+0x143a48320  the interned 'clock' pointer   1 reference
+      00014184145a  mov  rdi, qword ptr [rip + 0x2206ebf]
+```
+
+`0x14184145a` is inside **`FUN_141841430`** (2252 bytes, `0x141841430..0x141841cfc`), which
+reads the map's `clock` node. It has exactly one caller, `FUN_1418224c0`. So the widget is
+real, it is constructed from the map data, and the earlier "0 references" was a property of
+the search.
+
+The other tool agreed and was also worthless: `rtti.py --list Clock` is empty, but RTTI only
+names classes with virtual functions reached by `dynamic_cast`, so a plain UI object never
+appears. **Two instruments agreeing is not corroboration when they share a blind spot** -
+`CLAUDE.md` has a section on precisely this, and it happened again here.
+
+## No channel handler touches it, and that is not a surprise once you look at the range
+
+Every `call`/`jmp` from the whole inbound-handler address space (`0x142c00000..0x142f00000`)
+into the clock class's neighbourhood (`0x141840000..0x141846000`) was enumerated: **zero**.
+
+The reason is the dispatcher. `FUN_142cbaa80` - the channel switch, 273 cases - covers
+`0x0070..0x019f` plus two outliers, and **stops before `0x01A0`**.
+`research/msexe-gamestage-opcodes.md` already records what that means: `0x01A0` SetField and
+the whole field-packet block are dispatched by **`CStage::OnPacket`**, and *"that function has
+not been found yet; it is the next thing to look for, and `0x01A0` is the case label to look
+for inside it."*
+
+So the clock packet is behind the same unfound dispatcher as SetField. **No search inside the
+known switch could ever have found it**, which is also why none of the 294 v214 candidate
+names in that table is a Clock - the table only covers the switch that stops at `0x019f`.
+
+## What would settle it
+
+Find `CStage::OnPacket`. That is an existing open item in this repo, not a new one, and it
+unblocks more than the clock: every field-block packet from `0x01A0` up is behind it.
+
+`tools/find_switch_tables.py --min 40` was tried and is not the way in - it returns 263 runs
+dominated by false positives (a 99990-"case" run in a 366-byte function). A jump table for a
+sparse opcode block is likely a byte index table plus a smaller RVA run, which that tool's
+shape assumption does not cover.
+
+## What this pass DID land
+
+Reading the candidate-name table for the clock turned up `0x007B` = **InventoryGrow**, and the
+handler confirms it independently of the name: `FUN_142d54700` reads `u8 invType, u8 slots` and
+resizes `charData + 0x5d0 + invType*8` to `slots + 1`. That base and indexing are the **same**
+this project derived from the character record for the Equip tab, from a different packet.
+
+It is now `net::inventory::inventory_grow`, and the 5-slot coupons widen the tab on screen
+instead of saying "change maps or relog to see them".

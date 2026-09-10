@@ -427,12 +427,89 @@ pub fn move_changes_the_avatar(inv_type: i8, old_pos: i16, new_pos: i16) -> bool
     (inv_type == INV_EQUIP || inv_type == INV_DECO) && (old_pos < 0 || new_pos < 0)
 }
 
+// -------------------------------------------------------------------------------------
+// `0x007B` InventoryGrow - a tab gets more slots, without a relog
+// -------------------------------------------------------------------------------------
+
+/// Server -> client: **this bag tab now holds this many slots.**
+///
+/// The owner, 2026-09-09, on the 5-slot coupons. The first version of that feature wrote the new
+/// count to the database and told the player *"change maps or relog to see them"*, because
+/// nothing here could change the count live - the client draws it from the character record
+/// it was handed at field entry.
+///
+/// # It was found while chasing the station clock, and it is decoded rather than named
+///
+/// `research/msexe-gamestage-opcodes.md`'s candidate column calls `0x007B` *InventoryGrow*,
+/// and a candidate name from the v214 tree is worth nothing on its own - `CLAUDE.md` scores
+/// that source at **1 of 8**. The handler settles it. `FUN_142d54700`, 107 bytes, entire:
+///
+/// ```asm
+/// 142d5471d  call 1406e8ae0        ; u8  -> ebx
+/// 142d54728  call 1406e8ae0        ; u8  -> edx
+/// 142d54735  add  rsi, 0x5d0       ; charData + 0x5d0
+/// 142d5473c  inc  edx              ; slots + 1
+/// 142d54741  lea  rcx, [rsi+rbx*8] ; + invType*8   -> that tab's list
+/// 142d54745  call 14030ee00        ; resize it
+/// ```
+///
+/// **`0x5d0` and the `+ index*8` are the same base this project established from a different
+/// packet.** `equipped_block_with_bag`'s own doc block, written for the character record:
+/// *"`[R14 + 0x5d0]` with `R15 = 1` is `charData + 0x5d8`, index 1 of the six the size loop
+/// walks - the Equip tab."* Two independent reads landing on one offset is what makes this
+/// **[L]** rather than a name someone liked the look of.
+///
+/// The `inc edx` is the **1-based slot hole** this module's header is about: the client
+/// allocates `slots + 1` entries so that slot 0 can be the hole. So the field carries the
+/// logical slot count - the same number `inventory_size_block` sends - and **must not** be
+/// pre-incremented here, or every coupon would add six.
+pub const INVENTORY_GROW: u16 = 0x007B;
+
+/// Body length: two bytes, and there is no tail.
+pub const INVENTORY_GROW_LEN: usize = 2;
+
+/// Build an [`INVENTORY_GROW`] body.
+///
+/// `inv_type` is the wire tab number - the same 1..=5 `InventoryType::as_u8` gives, which is
+/// the index the handler multiplies by 8. `slots` is the tab's new logical size.
+pub fn inventory_grow(inv_type: u8, slots: u8) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(inv_type); // 142d5471d -> ebx, the tab index
+    w.u8(slots); //    142d54728 -> edx, and the client adds the 1-based hole itself
+    w.into_vec()
+}
+
+
 #[cfg(test)]
 mod pet_tests {
     use super::*;
 
     /// The window is the client's own, and its EDGES are what matter - one digit outside it
-    /// and the client's tooltip takes the bundle path, which is the shape we do send.
+    /// and the client's tooltip takes the bundle path, which is the shape we do send.    /// **`0x007B` InventoryGrow, against the handler rather than against a candidate name.**
+    ///
+    /// `research/msexe-gamestage-opcodes.md` calls this one *InventoryGrow* from the v214
+    /// tree, and this repo scores that source at 1 of 8 - so the name is not the evidence.
+    /// `FUN_142d54700` is: two `u8` reads, then
+    /// `resize(charData + 0x5d0 + invType*8, slots + 1)`. Both fields are pinned here.
+    #[test]
+    fn inventory_grow_is_two_bytes_the_tab_then_its_logical_size() {
+        let b = inventory_grow(2, 40);
+        assert_eq!(b.len(), INVENTORY_GROW_LEN, "two bytes, no tail");
+        assert_eq!(b[0], 2, "the tab index the handler multiplies by 8");
+        assert_eq!(b[1], 40, "the LOGICAL count - the client adds the 1-based hole itself");
+
+        // **Not pre-incremented.** The handler does `inc edx` before resizing, so adding one
+        // here would make every 5-slot coupon add six.
+        for slots in [24u8, 100, 150] {
+            assert_eq!(inventory_grow(1, slots)[1], slots, "{slots} must go out unchanged");
+        }
+        // Every real tab index round-trips, including the Cash tab the coupons live in.
+        for inv in [1u8, 2, 3, 4, 5] {
+            assert_eq!(inventory_grow(inv, 30)[0], inv);
+        }
+    }
+
+
     #[test]
     fn the_pet_window_is_the_clients_own() {
         assert!(is_pet(5_000_000), "the first");
