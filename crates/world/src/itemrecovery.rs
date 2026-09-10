@@ -538,9 +538,15 @@ mod tests {
     /// `2210xxx` items, which is `CLAUDE.md`'s *"enumerate before you filter"* in miniature:
     /// a range that looks generous is still a filter, and only a count can tell you it was
     /// too small.
+    ///
+    /// **It happened a second time on 2026-09-09**, and the count caught it again: the table
+    /// grew buff columns, so items that buff without restoring joined it - among them
+    /// `2450001`, the 3x EXP Coupon, which is past the old `2_400_000` end. The range is now
+    /// the whole Use-tab id space, because any narrower bound is a guess about which items
+    /// the client's own data happens to contain.
     fn every_restoring_item(c: &Consumables) -> Vec<(u32, Restores)> {
         let all: Vec<(u32, Restores)> =
-            (2_000_000u32..=2_400_000).filter_map(|id| c.get(id).map(|r| (id, r))).collect();
+            (2_000_000u32..=2_999_999).filter_map(|id| c.get(id).map(|r| (id, r))).collect();
         assert_eq!(all.len(), c.len(), "the id sweep missed rows the table holds");
         assert!(all.len() > 20, "the sweep found only {} items", all.len());
         all

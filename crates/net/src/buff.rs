@@ -456,6 +456,65 @@ pub const CTS_WEAPON_DEFENCE: u32 = 86;
 /// same doubt as [`CTS_WEAPON_DEFENCE`] - read that one.
 pub const CTS_MAGIC_DEFENCE: u32 = 87;
 
+// ---------------------------------------------------------------------------------------
+// The rest of the 83..91 run
+// ---------------------------------------------------------------------------------------
+//
+// [`CTS_WEAPON_DEFENCE`] and [`CTS_MAGIC_DEFENCE`] are two rows of a table, and the other
+// seven were established by the same read at the same time. They are named here because the
+// potions need them - the owner, 2026-09-09: *"Drinking the Dexterity Potion or the Magic Potion
+// also does not give me the proper buff"*, and those two are `mad 10` and `eva 5`.
+//
+// `research/magic-damage.md` §7.4: `FUN_14087c130`, the attacker-totals builder, reads **nine
+// consecutive CTS values 83..91 in index order** and adds each to a totals field:
+//
+// ```asm
+// 14087cf34  getter(secStat+0x398)  (CTS 83)  add [rbx+0x00]
+// 14087cf49  getter(secStat+0x3c8)  (CTS 84)  add [rbx+0x04]
+// 14087cf5e  getter(secStat+0x404)  (CTS 85)  add [rbx+0x08]
+// 14087cf73  getter(secStat+0x440)  (CTS 86)  add [rbx+0x0c]
+// 14087cf89  getter(secStat+0x47c)  (CTS 87)  add [rbx+0x14]
+// 14087cf9f  getter(secStat+0x4b8)  (CTS 88)  add [rbx+0x18]
+// 14087cfb5  getter(secStat+0x4f4)  (CTS 89)  add [rbx+0x1c]
+// 14087cfcb  getter(secStat+0x530)  (CTS 90)  add [rbx+0x20]
+// 14087cfe8  getter(secStat+0x56c)  (CTS 91)  add [rbx+0x24]
+// ```
+//
+// **The order is what identifies them**, and each field is pinned independently by what seeds
+// it and what consumes it: `+0x0c` is seeded `floor(STR/4)` and `+0x14` `floor(INT/4)` - the
+// guide's WDEF and MDEF - `+0x18` is seeded with the accuracy line, `+0x08` is multiplied
+// through the whole magic product, `+0x20` is read as a crit rate percent and `+0x24` as a
+// crit damage percent. **[L]** for the run, **[D]** for each name.
+//
+// The doubt recorded on 86/87 applies to all of them equally and is not repeated on each: it
+// is about whether the SERVER is meant to reach these stats this way, not about what the
+// client does with them once they arrive.
+
+/// **83** - the physical attack total, `+0x00`. The whole physical bracket multiplies by it.
+pub const CTS_ATTACK_POWER: u32 = 83;
+
+/// **85** - the magic attack total, `+0x08`, seeded `floor(INT/2)`.
+///
+/// The Magic Potion (`2002001`) is `mad 10` for ten minutes and this is the bit it rides.
+pub const CTS_MAGIC_ATTACK: u32 = 85;
+
+/// **88** - accuracy, `+0x18`, seeded with the client's own accuracy line.
+///
+/// `GM's Blessing of Precision` (`2023001`) is `acc 20` for an hour.
+pub const CTS_ACCURACY: u32 = 88;
+
+/// **89** - avoidability, `+0x1c`.
+///
+/// The Dexterity Potion (`2002003`) is `eva 5` for ten minutes - which is worth noting,
+/// because the *name* says DEX and the client's own data says evasion. The data wins.
+pub const CTS_EVASION: u32 = 89;
+
+/// **90** - critical rate, `+0x20`, read as a percent.
+pub const CTS_CRIT_RATE: u32 = 90;
+
+/// **91** - critical damage, `+0x24`, read as a percent.
+pub const CTS_CRIT_DAMAGE: u32 = 91;
+
 /// How long a granted stat lasts - or that `Skill.wz` says nothing at all.
 ///
 /// # `0` and "absent" are different things, and this project has already paid for merging them
