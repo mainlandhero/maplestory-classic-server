@@ -493,6 +493,7 @@ mod pools;
 mod rates;
 mod recovery;
 mod regen;
+mod realscroll;
 mod scroll;
 mod shop;
 mod storage;
@@ -931,6 +932,17 @@ impl Session {
             // handles every path that does not, and still answers.
             net::dropmoney::CLIENT_DROP_MONEY => {
                 return self.on_drop_money(body.get(2..).unwrap_or(&[]));
+            }
+            // **`0x0125` is the client's own scrolling window**, and it latches too. The owner,
+            // 2026-09-09: *"Just tried scrolling the topwear, it did not work."* It did not:
+            // the opcode was decoded in full that day and never handled, so it fell through
+            // to the unlock arm below and the player got a cleared latch and nothing else -
+            // four times in one run, at 00:59:09 and 00:59:13 in `world.log`.
+            //
+            // `on_item_upgrade` answers every path, including the refusals: `result = 3`
+            // exists precisely so a refusal is still an answer.
+            net::upgrade::CLIENT_ITEM_UPGRADE => {
+                return self.on_item_upgrade(body.get(2..).unwrap_or(&[]));
             }
             // Anything else whose CLIENT-SIDE builder sets that same exclusive-request latch.
             // Not implemented, but silence here freezes the UI, so it gets the nine-byte

@@ -1482,6 +1482,29 @@ impl Store {
     ///
     /// Per-item stats travel with the item, which is the reason `equipment` was given the same
     /// columns; see the module docs.
+    /// **Destroy a worn item outright.** For a cursed scroll that failed.
+    ///
+    /// `Ok(false)` means the slot was already empty and nothing was deleted, which the caller
+    /// must treat as a refusal rather than a success - the same contract as
+    /// [`Store::set_worn_equip`], and for the same reason: the two answers look identical from
+    /// the outside and only one of them means the player lost an item.
+    ///
+    /// **There is deliberately no bag-slot equivalent here.** A bagged item is removed with
+    /// [`Store::remove_item`], which already exists and already reports what it took.
+    ///
+    /// This is the only path in the workspace that deletes an item a character is *wearing*,
+    /// and it exists because 52 of this client's 208 scrolls carry a non-zero `cursed`. It is
+    /// not reachable from any Scroll of Secrets or Treasure Scroll - neither can fail into a
+    /// destroy - so a call here always came from `0x0125`.
+    pub fn destroy_worn_equip(&self, character_id: u32, equip_slot: u8) -> Result<bool> {
+        let conn = self.conn();
+        let n = conn.execute(
+            "DELETE FROM equipment WHERE character_id = ?1 AND slot = ?2",
+            rusqlite::params![i64::from(character_id), i64::from(equip_slot)],
+        )?;
+        Ok(n > 0)
+    }
+
     pub fn unequip_to_bag(
         &self,
         character_id: u32,

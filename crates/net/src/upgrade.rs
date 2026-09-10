@@ -34,15 +34,75 @@
 //! (`result = 2`) the item must be removed by `0x0070` as well - this packet alone prints
 //! "the item is destroyed" and leaves it sitting on screen. **[D]**
 //!
-//! # The `0x00B8` unlock is deliberately not mentioned here
+//! # Two callers, and only one of them ever latches
 //!
-//! A real scroll arrives as `0x0125`, whose client-side builder sets the `ctx+0x2330`
-//! exclusive-request latch before the server has any say in it, so that path owes an unlock.
-//! **`!scroll` is not that path**: it runs off NPC dialogue, `0x0125` is never built, and the
-//! latch is never set. Sending an unlock for a latch nobody took would be a guess dressed as
-//! caution. If `0x0125` is ever wired, that is where `0x00B8` belongs.
+//! **`!scroll`** runs off NPC dialogue. `0x0125` is never built, the `ctx+0x2330` latch is
+//! never set, and there is nothing to unlock.
+//!
+//! **`0x0125`** - the client's own scrolling window, handled since 2026-09-09 in
+//! `world::session::realscroll` - does latch: the client's builder sets `+0x2330` before the
+//! server has any say in it. It is answered by `0x0236` plus a `0x0070`, and the `0x0070`
+//! carries `bExclRequestSent = 1`, which is what clears the latch.
+//!
+//! **No `0x00B8` on either path.** The first reading of `research/scrolling-2026-09-09.md`
+//! concluded a third packet was needed; that correction was itself corrected the same day -
+//! the scan behind it looked at inline writes and missed the setter *call*. `0x007C` already
+//! unlocks, confirmed on the owner's screen.
 
 use crate::packet::PacketWriter;
+
+/// Client -> server: **"put this scroll on that equip."** The client's own scrolling UI.
+///
+/// The owner, 2026-09-09: *"Just tried scrolling the topwear, it did not work."* It did not: this
+/// opcode was decoded in full on 2026-09-09 and never handled, so the server answered it with
+/// nothing but the latch unlock. `world.log` of that run:
+///
+/// ```text
+/// 00:59:09.274 <- 0x0125 UNKNOWN, 11 byte body 5696fc000d000100fbff00
+/// 00:59:09.275 -> 0x007C StatChanged: UNLOCK ONLY. 0x0125 is not handled ...
+/// ```
+///
+/// which decodes to exactly what they did: scroll in Use slot **13**, onto `dstInvType 1` slot
+/// **-5**, the worn topwear.
+pub const CLIENT_ITEM_UPGRADE: u16 = 0x0125;
+
+/// Body length of a [`CLIENT_ITEM_UPGRADE`]. Measured on the wire four times in one run.
+pub const ITEM_UPGRADE_REQUEST_LEN: usize = 11;
+
+/// A decoded [`CLIENT_ITEM_UPGRADE`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ItemUpgradeRequest {
+    /// `FUN_1429e3ef0()`. Echo nothing, ignore it.
+    pub tick: u32,
+    /// The scroll's slot. Inventory type 2 (Use) or 5 (Cash); **always > 0**. **[L]**
+    pub src_slot: u16,
+    /// `1` = equip inventory, `6` = the extended equip window. Never anything else. **[L]**
+    pub dst_inv_type: u16,
+    /// The equip's slot, **signed**: negative means a worn item. The owner's topwear was `-5`.
+    pub dst_slot: i16,
+    /// Observed 0 (inventory drag) and 1 (the other UI path). **Meaning not established** -
+    /// accept both and do not branch on it, which is what the decode note says in as many
+    /// words. Carried so a future capture can be compared against it rather than re-derived.
+    pub flag: u8,
+}
+
+/// Decode a [`CLIENT_ITEM_UPGRADE`] body. `None` when it is not the length the client sends.
+///
+/// **`dst_slot` is read as an `i16` and that is the whole point.** Read unsigned, the owner's `-5`
+/// is 65531, which names no slot and would turn every worn-item scroll into a refusal.
+pub fn parse_item_upgrade(body: &[u8]) -> Option<ItemUpgradeRequest> {
+    if body.len() < ITEM_UPGRADE_REQUEST_LEN {
+        return None;
+    }
+    let u16_at = |i: usize| u16::from_le_bytes([body[i], body[i + 1]]);
+    Some(ItemUpgradeRequest {
+        tick: u32::from_le_bytes([body[0], body[1], body[2], body[3]]),
+        src_slot: u16_at(4),
+        dst_inv_type: u16_at(6),
+        dst_slot: u16_at(8) as i16,
+        flag: body[10],
+    })
+}
 
 /// Server -> the whole map: a scroll finished. Drives the chat line and the field effect.
 pub const ITEM_UPGRADE_EFFECT: u16 = 0x0236;
@@ -160,5 +220,46 @@ mod tests {
     fn success_is_one_and_failure_is_zero() {
         assert_eq!(ItemUpgradeResult::from_success(true) as u8, 1);
         assert_eq!(ItemUpgradeResult::from_success(false) as u8, 0);
+    }
+
+    /// **The real body the owner's client sent**, byte for byte out of `world.log`, decoded to
+    /// exactly what they were doing on screen: a scroll in Use slot 13 onto their worn topwear.
+    ///
+    /// A capture is the only thing that can disagree with a field-offset table, so the table
+    /// is asserted against one rather than against itself.
+    #[test]
+    fn the_captured_request_decodes_to_what_was_on_the_screen() {
+        // 00:59:09.274 <- 0x0125 UNKNOWN, 11 byte body 5696fc000d000100fbff00
+        let body = [0x56, 0x96, 0xfc, 0x00, 0x0d, 0x00, 0x01, 0x00, 0xfb, 0xff, 0x00];
+        let r = parse_item_upgrade(&body).expect("11 bytes is the length the client sends");
+        assert_eq!(r.tick, 0x00fc_9656);
+        assert_eq!(r.src_slot, 13, "the scroll's Use slot");
+        assert_eq!(r.dst_inv_type, 1, "1 = the equip inventory");
+        assert_eq!(r.dst_slot, -5, "NEGATIVE - a worn item. Topwear is slot 5");
+        assert_eq!(r.flag, 0, "an inventory drag");
+    }
+
+    /// **`dst_slot` must be signed.** Read as a `u16`, the owner's `-5` is 65531 - a slot that
+    /// names nothing, so every attempt to scroll something you are WEARING would refuse, and
+    /// wearing it is the only way to scroll it from that window.
+    #[test]
+    fn a_worn_slot_is_negative_not_a_huge_positive() {
+        let body = [0, 0, 0, 0, 1, 0, 1, 0, 0xfb, 0xff, 0];
+        let r = parse_item_upgrade(&body).unwrap();
+        assert_eq!(r.dst_slot, -5);
+        assert!(r.dst_slot < 0, "the sign is what says 'worn'");
+        // A bag slot is positive and must stay so.
+        let body = [0, 0, 0, 0, 1, 0, 1, 0, 0x05, 0x00, 0];
+        assert_eq!(parse_item_upgrade(&body).unwrap().dst_slot, 5);
+    }
+
+    /// A short body decodes to nothing rather than to a default - a default here would scroll
+    /// whatever happens to be in slot 0.
+    #[test]
+    fn a_short_body_is_refused_rather_than_defaulted() {
+        for n in 0..ITEM_UPGRADE_REQUEST_LEN {
+            assert_eq!(parse_item_upgrade(&[0u8; ITEM_UPGRADE_REQUEST_LEN][..n]), None, "{n} bytes");
+        }
+        assert!(parse_item_upgrade(&[0u8; ITEM_UPGRADE_REQUEST_LEN]).is_some());
     }
 }
