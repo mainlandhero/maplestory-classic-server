@@ -9764,3 +9764,45 @@ fn entering_the_shop_lists_the_lockers_stored_rows() {
     let out2 = s2.on_cash_shop_request(&[0u8; 5]);
     assert!(out2.iter().all(|r| r.opcode != net::cashshop::CASH_SHOP_RESULT), "{:?}", out2.iter().map(|r| r.opcode).collect::<Vec<_>>());
 }
+
+/// **`!hair` and `!face` change the record and re-enter the map**, which is the only way a
+/// look reaches the screen in this client. Built for the first hybrid-asset test: hair
+/// 42540 and face 22035 are the backported Frieren ids, present in the name table the
+/// hybrid data generates. The gates - id space, a name - are exercised as controls.
+#[test]
+fn hair_and_face_commands_persist_and_re_enter_the_map() {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account = store.create_account("maplecw", "correct horse battery").unwrap();
+    store.set_gm("maplecw", true).unwrap();
+    let chr = net::opcode::Character { name: "TestCharD".to_string(), map_id: 40, ..Default::default() };
+    let id = store.create_character(account, 0, &chr).unwrap().id;
+    store.set_character_map(id, 40).unwrap();
+    store.create_migration(account, id, 0, 0).unwrap();
+    let mut names = std::collections::HashMap::new();
+    names.insert(42540u32, "Frieren Hair".to_string());
+    names.insert(22035u32, "Frieren Face".to_string());
+    names.insert(1302000u32, "Sword".to_string());
+    let config = Config { item_names: names, set_field_probe: true, ..Config::default() };
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    assert!(s.claim_for_character(id).contains("claimed the migration"));
+    let before = store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
+
+    let out = s.handle(&gm_chat("!hair 42540"));
+    assert!(notice_text(&out[0]).contains("hair is now 42540 (Frieren Hair)"), "{}", notice_text(&out[0]));
+    assert!(out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "the re-entry SetField: {out:?}");
+    let out = s.handle(&gm_chat("!face 22035"));
+    assert!(notice_text(&out[0]).contains("face is now 22035"), "{}", notice_text(&out[0]));
+    let after = store.characters_for(account, 0).unwrap();
+    let me = after.iter().find(|c| c.id == id).unwrap();
+    assert_eq!((me.hair, me.face), (42540, 22035), "persisted");
+    assert_eq!(me.map_id, before.map_id, "re-entry is the SAME map");
+
+    // Controls: outside the id space, an id with no name, and a face id given to !hair.
+    for (cmd, why) in [("!hair 1302000", "outside the hair id space"), ("!face 42540", "outside the face id space"), ("!hair 42541", "no name")] {
+        let out = s.handle(&gm_chat(cmd));
+        assert!(notice_text(&out[0]).contains("REFUSED"), "{cmd} should refuse ({why}): {}", notice_text(&out[0]));
+        assert!(!out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "{cmd}: a refusal must not warp");
+    }
+    let me = store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
+    assert_eq!((me.hair, me.face), (42540, 22035), "the refusals changed nothing");
+}

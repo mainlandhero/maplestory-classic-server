@@ -298,6 +298,30 @@ impl Store {
         Ok(())
     }
 
+    /// Change a character's hair or face id. `Ok(false)` when no such character.
+    ///
+    /// **Nothing here checks that the id has art.** The client draws hair from
+    /// `Character/Hair/%08d.img` and face from `Character/Face/%08d.img` by the id alone
+    /// (`research/beauty-2026-09-09.md`), and an id with no image draws nothing - so the
+    /// caller gates on a table of ids that exist. Same account-less shape as
+    /// `set_character_map`, for the same reason: nothing on the channel authenticates.
+    pub fn set_character_look(
+        &self,
+        character_id: u32,
+        hair: Option<u32>,
+        face: Option<u32>,
+    ) -> Result<bool> {
+        let conn = self.conn();
+        let mut n = 0;
+        if let Some(h) = hair {
+            n += conn.execute("UPDATE characters SET hair = ?2 WHERE id = ?1", (character_id, h))?;
+        }
+        if let Some(f) = face {
+            n += conn.execute("UPDATE characters SET face = ?2 WHERE id = ?1", (character_id, f))?;
+        }
+        Ok(n > 0)
+    }
+
     /// Write back everything a character can *earn*: level, experience, job, the four base
     /// stats, the four HP/MP numbers and unspent AP.
     ///

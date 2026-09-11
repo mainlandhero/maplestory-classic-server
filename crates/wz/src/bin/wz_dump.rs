@@ -5,6 +5,9 @@
 //!   wz-dump cat  <archive.wz> <img/path> parse one image to JSON
 //!   wz-dump scan <Data dir>              open every tree, report health
 //!   wz-dump verify <Data dir>            parse every image in every tree
+//!   wz-dump build <out.wz> <version> <spec.tsv> [base.wz]
+//!                                        write an archive: the base's images verbatim, then
+//!                                        the spec's copies / merges / string patches
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -20,7 +23,9 @@ fn main() -> ExitCode {
              wz-dump tree <archive.wz> [depth]\n  \
              wz-dump cat  <archive.wz> <image/path>\n  \
              wz-dump canvas <archive.wz> <image> <out dir> [node filter]\n  \
-             wz-dump scan <Data dir>"
+             wz-dump scan <Data dir>\n  \
+             wz-dump verify <Data dir>\n  \
+             wz-dump build <out.wz> <version> <spec.tsv> [base.wz]"
         );
         return ExitCode::FAILURE;
     }
@@ -40,6 +45,12 @@ fn main() -> ExitCode {
         ),
         "scan" if args.len() >= 2 => cmd_scan(Path::new(&args[1])),
         "verify" if args.len() >= 2 => cmd_verify(Path::new(&args[1])),
+        "build" if args.len() >= 4 => cmd_build(
+            Path::new(&args[1]),
+            &args[2],
+            Path::new(&args[3]),
+            args.get(4).map(Path::new),
+        ),
         other => {
             eprintln!("unknown or incomplete command: {other}");
             return ExitCode::FAILURE;
@@ -190,6 +201,151 @@ fn collect_canvases(
 
 /// `WzError::Io` names the path it failed on, so io errors are attributed rather than
 /// converted blindly - "io error" with no filename is useless when writing thousands.
+/// `build`: assemble an archive from a base plus a spec. The spec is tab-separated, one
+/// instruction per line, `#` comments allowed:
+///
+/// ```text
+/// copy     <name>   <src.wz>   <src image>            the image, byte for byte
+/// merge    <name>   <src.wz>   <src image>   <k1,k2>  top-level keys k1.. of the source
+///                                                     image replace/append into the base's
+///                                                     image of that name (empty if absent)
+/// strings  <name>   <patch.tsv>                       lines `path<TAB>value` set string
+///                                                     leaves in the base's image of that name
+/// ```
+///
+/// Everything in the base not named by the spec is copied verbatim. The result is verified
+/// against the reader before it is written, and re-opened after.
+fn cmd_build(out: &Path, version: &str, spec: &Path, base: Option<&Path>) -> wz::Result<()> {
+    use wz::writer::{archive_images, merge_images, verify_archive, ImageEntry, Owned};
+
+    let version: u16 = version.parse().map_err(|_| wz::WzError::VersionNotFound { enc_ver: 0 })?;
+    let base_ar = match base {
+        Some(p) => Some(Archive::open(p)?),
+        None => None,
+    };
+    let base_images = match &base_ar {
+        Some(ar) => archive_images(ar)?,
+        None => Vec::new(),
+    };
+    let base_image = |name: &str| -> Option<&[u8]> {
+        base_images.iter().find(|i| i.name == name).map(|i| i.bytes.as_slice())
+    };
+
+    let text = io(spec, std::fs::read_to_string(spec))?;
+    let mut additions: Vec<ImageEntry> = Vec::new();
+    let mut opened: std::collections::HashMap<PathBuf, Archive> = std::collections::HashMap::new();
+    for (lineno, line) in text.lines().enumerate() {
+        let line = line.trim_end_matches('\r');
+        if line.trim().is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let f: Vec<&str> = line.split('\t').collect();
+        let bad = || wz::WzError::BadEntryType { kind: 0xEE, offset: lineno + 1 };
+        match f[0] {
+            "copy" | "merge" => {
+                if f.len() < 4 {
+                    return Err(bad());
+                }
+                let (name, src, src_img) = (f[1], PathBuf::from(f[2]), f[3]);
+                if !opened.contains_key(&src) {
+                    opened.insert(src.clone(), Archive::open(&src)?);
+                }
+                let ar = &opened[&src];
+                let Some(node) = ar.root.get(src_img) else {
+                    eprintln!("line {}: {} has no image {src_img}", lineno + 1, src.display());
+                    return Err(bad());
+                };
+                let src_bytes = ar.image_bytes(node)?;
+                if f[0] == "copy" {
+                    additions.push(ImageEntry { name: name.to_string(), bytes: src_bytes.to_vec() });
+                    println!("copy    {name:<16} <- {}/{src_img} ({} bytes)", src.display(), src_bytes.len());
+                } else {
+                    if f.len() < 5 {
+                        return Err(bad());
+                    }
+                    let keys: Vec<&str> = f[4].split(',').map(str::trim).filter(|k| !k.is_empty()).collect();
+                    let overlay = Owned::parse(src_bytes)?;
+                    let had_base = base_image(name).is_some();
+                    let mut target = match base_image(name) {
+                        Some(b) => Owned::parse(b)?,
+                        None => Owned::Object(Vec::new()),
+                    };
+                    let mut taken = 0;
+                    for k in &keys {
+                        let Some(v) = overlay.get(k) else {
+                            eprintln!("line {}: {src_img} has no top-level {k}", lineno + 1);
+                            return Err(bad());
+                        };
+                        target.set(k, v.clone());
+                        taken += 1;
+                    }
+                    let bytes = target.serialize_image();
+                    println!(
+                        "merge   {name:<16} <- {taken} key(s) of {}/{src_img} onto {} ({} bytes)",
+                        src.display(),
+                        if had_base { "the base image" } else { "an EMPTY image" },
+                        bytes.len()
+                    );
+                    additions.push(ImageEntry { name: name.to_string(), bytes });
+                }
+            }
+            "strings" => {
+                if f.len() < 3 {
+                    return Err(bad());
+                }
+                let (name, patch) = (f[1], Path::new(f[2]));
+                let Some(b) = base_image(name) else {
+                    eprintln!("line {}: the base has no image {name} to patch", lineno + 1);
+                    return Err(bad());
+                };
+                let mut target = Owned::parse(b)?;
+                let mut n = 0;
+                for pl in io(patch, std::fs::read_to_string(patch))?.lines() {
+                    let pl = pl.trim_end_matches('\r');
+                    if pl.trim().is_empty() || pl.starts_with('#') {
+                        continue;
+                    }
+                    let Some((path, value)) = pl.split_once('\t') else { return Err(bad()) };
+                    // The patch file is one line per leaf, so a literal backslash-n in it
+                    // stands for the newline the string tables carry.
+                    target.set_path(path, Owned::String(value.replace("\\n", "\n")));
+                    n += 1;
+                }
+                let bytes = target.serialize_image();
+                println!("strings {name:<16} <- {n} leaves from {} ({} bytes)", patch.display(), bytes.len());
+                additions.push(ImageEntry { name: name.to_string(), bytes });
+            }
+            other => {
+                eprintln!("line {}: unknown instruction {other:?}", lineno + 1);
+                return Err(bad());
+            }
+        }
+    }
+
+    let images = merge_images(base_images, additions);
+    let bytes = wz::write_archive(version, &images);
+    verify_archive(&bytes, version, &images)?;
+    if let Some(parent) = out.parent() {
+        io(parent, std::fs::create_dir_all(parent))?;
+    }
+    io(out, std::fs::write(out, &bytes))?;
+    // Re-open the file the way the client will, and count.
+    let again = Archive::open(out)?;
+    println!(
+        "wrote {} ({} bytes): v{} {} image(s), reopened as v{} with {} image(s)",
+        out.display(),
+        bytes.len(),
+        version,
+        images.len(),
+        again.version,
+        again.root.children.len()
+    );
+    if again.version != version || again.root.children.len() != images.len() {
+        return Err(wz::WzError::VersionNotFound { enc_ver: again.header.enc_ver });
+    }
+    Ok(())
+}
+
 fn io<T>(path: &Path, r: std::io::Result<T>) -> wz::Result<T> {
     r.map_err(|source| wz::WzError::Io { path: path.to_path_buf(), source })
 }

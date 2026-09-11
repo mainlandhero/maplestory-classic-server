@@ -112,3 +112,4 @@ crates/**/*.dmp
 # tools/backport_signature_style.py and weigh 60 MB. The manifests and strings are committed.
 /backport/*/wz/
 /backport/*/canvas/
+/backport/*/build/

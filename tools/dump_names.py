@@ -94,7 +94,13 @@ def main():
 
     mobs = {}
     walk(read_image(args.archive, "Mob.img"), ["name"], mobs)
-    write(os.path.join(args.out_dir, "mobs.txt"), mobs, "mobs")
+    # **Not `mobs.txt`.** That name belongs to tools/dump_portals.py's SPAWN table (map,
+    # template, x, cy, fh, ..., name), which the world server loads and which already carries
+    # the name in its last column. This tool wrote the same file first, as an id/name table,
+    # and on 2026-09-10 a re-run of it overwrote the spawn table with 3 KB of names - every
+    # map lost its mobs and four tests said so. Nothing reads the name-only table, so it goes
+    # under its own name.
+    write(os.path.join(args.out_dir, "mobnames.txt"), mobs, "mob names")
 
     items = {}
     for image in ITEM_IMAGES:
