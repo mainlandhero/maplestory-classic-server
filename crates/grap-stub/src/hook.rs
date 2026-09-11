@@ -536,6 +536,9 @@ pub unsafe fn install() {
     // Same window, same reason: Themida has unpacked .text by now. Gated on
     // `hitnumber=off` in the marker; see crates/grap-stub/src/hitnumber.rs.
     crate::hitnumber::install();
+    // The Beauty Coupon dialog's white-on-white item name: six bytes in the encrypted string
+    // table. ON by default; `beautytext=off` leaves it. crates/grap-stub/src/beautytext.rs.
+    crate::beautytext::install();
     // The session credential the client will carry itself. Gated on
     // `maplecw-hook.identity` holding a usable token; absent, it does not touch a byte.
     //
