@@ -312,22 +312,21 @@ impl Session {
                 }
             };
             for item in items {
-                // **Etc alone goes out quiet, and that is the experiment.** The collection
-                // tooltip the owner sees comes from the quest hook the ordinary ADD runs; mode 5
-                // performs the same store without it. No server has ever sent a mode 5, so
-                // Use, Set Up and Cash deliberately stay on mode 0 - they are the control
-                // inside the same run, and if the Etc tab comes up EMPTY while the other
-                // three are full, that names the cause with no second launch.
-                let replies = if inv == store::InventoryType::Etc {
-                    self.inventory_restored_replies(
-                        inv,
-                        &[item],
-                        "restored on field entry (mode 5, quiet)",
-                    )
-                } else {
-                    self.inventory_added_replies(inv, &[item], "restored on field entry")
-                };
-                out.extend(replies);
+                // **All four tabs go out quiet (mode 5).** Until 2026-09-10 Etc alone did,
+                // as the experiment, and Use / Set Up / Cash stayed on mode 0 as the control.
+                // The control reported first: the owner, on the Cash tab - *"whenever I enter and
+                // exit the cash shop, my Mystery Hair Coupon keeps highlighting itself as if
+                // I recently gained them when I had them for quite some time."* Mode 0 is the
+                // ADD, and the ADD is what marks a stack as newly gained; every SetField with
+                // characterData = 1 (a shop exit is one) replays it. Mode 5 performs the same
+                // store without the ADD's hooks (`inventory_restored_replies` has the read).
+                // The readout is unchanged: a tab that comes up EMPTY names mode 5 as the
+                // cause, and it goes back to mode 0 for that tab.
+                out.extend(self.inventory_restored_replies(
+                    inv,
+                    &[item],
+                    "restored on field entry (mode 5, quiet)",
+                ));
             }
         }
         match self.store.mesos(chr.id) {
