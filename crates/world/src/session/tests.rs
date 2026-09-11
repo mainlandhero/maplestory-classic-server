@@ -9611,3 +9611,41 @@ fn the_walked_door_and_the_script_portal_agree() {
     assert!(a.contains("map 10002090 portal 2"), "{a}");
     assert!(b.contains("map 10002090 portal 2"), "{b}");
 }
+
+/// **The gender gate, through a real move packet, for a normal slot AND a cash-equip slot.**
+///
+/// The owner, 2026-09-10: *"There needs to be a server side fix to prevent users from equipping
+/// the opposite gendered equipment. This needs to happen for both normal item equipments
+/// and cash equipments."* The gate has existed since 2026-09-09 but nothing drove it
+/// through `0x0107`; this does, and it drives the cash-slot form (`dst <= -101`) too, because
+/// the gate sits before any slot arithmetic and a regression that moved it below would
+/// let the cash form through unnoticed.
+#[test]
+fn a_female_top_is_refused_on_a_male_character_in_both_slot_forms() {
+    let (mut s, store, id) = gm_session();
+    // TestCharD is gender 0 (male) - `Character::default()`, and every character in
+    // maplecw.db. 1041001 is a FEMALE shirt in the client's own MakeCharInfo list.
+    store.add_item(id, store::InventoryType::Equip, &store::Item::equip(1041001), 1).unwrap();
+    for dst in [-5i16, -105] {
+        let out = s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, 1, dst, -1));
+        assert_eq!(out.len(), 1, "always answered, once: {out:?}");
+        assert_eq!(out[0].opcode, net::inventory::INVENTORY_OPERATION);
+        assert!(out[0].what.contains("REFUSING"), "dst {dst}: {}", out[0].what);
+        assert!(out[0].what.contains("not made for"), "dst {dst}: {}", out[0].what);
+        assert_eq!(out[0].body[0], 1, "the refusal still clears the exclusive-request latch");
+        assert!(store.equipped_items(id).unwrap().is_empty(), "nothing went on for dst {dst}");
+    }
+    // The control: the MALE top Cobalt wears is legal on a male, and goes on.
+    store.add_item(id, store::InventoryType::Equip, &store::Item::equip(1040021), 1).unwrap();
+    let slot = store
+        .bag(id)
+        .unwrap()
+        .items
+        .iter()
+        .find(|i| i.item.item_id == 1040021)
+        .map(|i| i.slot)
+        .expect("the Blue Sergeant is in the bag");
+    let out = s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, slot as i16, -5, -1));
+    assert!(!out[0].what.contains("REFUSING"), "{}", out[0].what);
+    assert!(store.equipped_items(id).unwrap().iter().any(|e| e.item_id == 1040021 && e.slot == 5));
+}

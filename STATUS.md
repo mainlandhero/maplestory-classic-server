@@ -62,7 +62,44 @@ answered; twelve captures across three runs, every one `in03`, and the client's 
 the portal table and left the request unhandled - "built is not wired", one file over.
 `0x014A` now resolves through the same named-portal path as a walk, which covers the Free
 Market too: all four of its doors are `pt 7` script portals and were sending the same
-packet. Step TK(a), then TF. `research/script-portal-request-2026-09-10.md`.
+packet. `research/script-portal-request-2026-09-10.md`. **CONFIRMED ON SCREEN the same
+evening** - the owner: *"I can indeed press up at the correct location and be teleported to Ellinia
+station."* Before that they asked why they could not SEE the portal: portal 38 is `pt 8`, and the
+client's `MapHelper.img/portal/game` has graphics for `pv`, `ph` and `psh` only, so a `pt 8`
+is invisible by the client's own data and the background arch is the door. TF is testable now.
+
+**2026-09-10: RETRACTION - Cobalt is MALE, so the "opposite-gender top" of 2026-09-09 was
+never one.** The owner sent a screenshot of Cobalt wearing *Blue Sergeant (M)* and asked for a
+server-side gender gate for normal and cash equips. The gate has existed since 2026-09-09 and
+it let this equip through **correctly**: `characters.gender` is `0` for Cobalt - and for all
+four characters - and the client's own `Etc.wz/MakeCharInfo.img` lists face `20002` and hair
+`30025` only under `male`. Yesterday's *"Cobalt is female"* was asserted without checking
+either, so the character-select "no top" is **open again** - the owner: *"if Cobalt is male, then
+that does not explain why at character selection, the top does not render."* Gender was not
+the difference. **The one difference the data does show [I]:** `Coat/01040021.img` and a
+starter top's image are structurally identical (same 34 stances, same `mail`/`mailArm` parts,
+`islot`/`vslot` `Ma`), but the Blue Sergeant's `info` requires **level 20, STR 30, DEX 10,
+warrior**, and Cobalt is level 20 with **STR 27, DEX 5** and INT 74 on a Swordsman - an AP
+reset into INT after the top went on. It is the only worn item with any requirement at all
+(hat, pants, shoes and suitcase are all zero), so "four draw, one does not" lines up with
+"four have no requirement, one is unmet". That is the same shape of coincidence that produced
+yesterday's wrong answer, so it is a hypothesis with a discriminator, not a finding: Cobalt has
+10 unspent AP; **3 into STR and 5 into DEX from the stat window** meets 30/10 with no server
+change. If the top then draws at select, the select screen honours requirements and the
+in-field renderer does not. It also means **this server does not enforce equip requirements on
+equip at all** - level, stats or job - which is a gate the owner may want next to the gender one;
+`EquipTemplate` already carries the numbers. What
+landed today: the gate is now driven by a test through a real `0x0107` for a normal slot and
+a cash-equip slot (`dst -105`), and **creation derives gender from the chosen face and hair**
+against the client's lists, overriding the create request's `u32` gender field when the two
+disagree - that field has only ever been seen carrying `0` and was never discriminated.
+`net::equipgender::gender_of_look`.
+
+**Cash-equip covers do NOT work yet**, and it is not the gate: the character record keeps
+equipped slots `1..=31` only (`EQUIP_SLOTS`; a cash slot is decoded and discarded, `[L]`), and
+`avatar_look`'s second map - where the covered base items would go - is sent empty. A cash top
+can be stored as worn but is never drawn and never listed. Building covers means the record's
+cash-equipped list and both look maps, decoded from the client, not a slot-range tweak.
 
 **2026-09-08: the client token is a SESSION credential now, and an account can only be logged
 in once.** Two changes, and they only work together.

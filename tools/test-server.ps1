@@ -676,7 +676,12 @@
 
      TK. THE STATION: THE DOOR, THEN THE CLOCK. Both 2026-09-10.
 
-         a) THE DOOR. In Ellinia, stand where you stood for the screenshot - top right,
+         a) THE DOOR - CONFIRMED 2026-09-10 evening: "I can indeed press up at the correct
+            location and be teleported to Ellinia station." STRUCK. (It has no picture on
+            purpose: pt 8 has no game graphic in MapHelper.img; the arch is the door.)
+            TF is testable now - the Free Market doors send the same packet.
+            Kept for the record:
+            In Ellinia, stand where you stood for the screenshot - top right,
             (819, -3072), the `in03` spot - and press UP.
             Yesterday's fix put the destination in the table and the door stayed dead,
             because a SCRIPT portal (pt 7/8) does not send the ordinary `0x00D1` at all.
@@ -702,6 +707,21 @@
                          which the decode says throws. Every map in clocks.txt is one
                          whose image declares the node, so this is the reading I do
                          not expect. Say which map.
+
+     TG. JOSIAH'S TOP AT CHARACTER SELECT - one discriminator, no server change.
+         Yesterday said "Cobalt is female". Wrong: the database says male and the client's
+         own MakeCharInfo lists their face and hair only under male. So the gender gate was
+         never what kept the top off the select screen. The ONE difference the data shows:
+         the Blue Sergeant needs STR 30 / DEX 10 and Cobalt has STR 27 / DEX 5 after the AP
+         reset into INT; every other worn item requires nothing. Hypothesis, not finding.
+         On Cobalt, open the stat window and put **3 AP into STR and 5 into DEX** (they have 10
+         unspent), then log out to the select screen.
+           the top now draws at select -> the select screen honours requirements and the
+                         field renderer does not. Then the server needs a REQUIREMENT gate
+                         on equip (level / stats / job), beside the gender one
+           still bare -> requirements are not it either; say so and I go to the client
+           the top ALSO vanishes in the field once you are back in -> same answer as the
+                         first line, with the field renderer re-checking on entry
 
      TF. THE FREE MARKET DOOR, which is the one that can strand somebody if it is wrong.
          From **Henesys Market** (10001040) walk into the `market00` portal, then walk back
@@ -2424,18 +2444,10 @@ function Show-TestPlan {
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
         Write-Host '  TK. THE STATION: THE DOOR, THEN THE CLOCK.' -ForegroundColor Magenta
-        Write-Host '      a) THE DOOR. In Ellinia, stand where the screenshot was -'
-        Write-Host '         top right, the in03 spot - and press UP.'
-        Write-Host '         Yesterday put the destination in the table and the door'
-        Write-Host '         stayed dead: a SCRIPT portal never sends 0x00D1. Your two'
-        Write-Host '         presses at 11:27:53 sent 0x014A, which was UNKNOWN and'
-        Write-Host '         unanswered. Handled now, through the same lookup as a walk,'
-        Write-Host '         so THE FREE MARKET DOORS ARE THE SAME PACKET - TF was' -ForegroundColor Yellow
-        Write-Host '         untestable until this.' -ForegroundColor Yellow
-        Write-Host '           you arrive in Ellinia Station -> done; then do TF'
-        Write-Host '           nothing -> grep world.log for 0x014A. There with no'
-        Write-Host '                      SetField after it = the lookup missed'
-        Write-Host '           somewhere else -> say where'
+        Write-Host '      a) THE DOOR - CONFIRMED: "I can indeed press up at the' -ForegroundColor Green
+        Write-Host '         correct location and be teleported." STRUCK. It has no' -ForegroundColor Green
+        Write-Host '         picture on purpose (pt 8 has no game graphic); the arch' -ForegroundColor Green
+        Write-Host '         is the door. TF is TESTABLE NOW - same packet.' -ForegroundColor Green
         Write-Host '      b) THE CLOCK, once in the station. It sat at 00:00 because'
         Write-Host '         nothing sent a time. 0x01BC type 1 (h, m, s) now carries'
         Write-Host '         UTC per your correction - the same time world.log stamps.'
@@ -2447,6 +2459,17 @@ function Show-TestPlan {
         Write-Host '           client DIES on entry -> the widget was missing when the' -ForegroundColor Yellow
         Write-Host '                       packet came, which the decode says throws.'
         Write-Host '                       Not expected on any map in clocks.txt.'
+        Write-Host ''
+        Write-Host '  TG. JOSIAH TOP AT CHARACTER SELECT - one discriminator.' -ForegroundColor Magenta
+        Write-Host '      "Cobalt is female" was WRONG: the database and the client'
+        Write-Host '      own MakeCharInfo both say male. The one difference left:'
+        Write-Host '      Blue Sergeant needs STR 30 / DEX 10; Cobalt has 27 / 5 after'
+        Write-Host '      the AP reset. Nothing else they wear requires anything.'
+        Write-Host '      On Cobalt: stat window, 3 AP into STR, 5 into DEX (they has' -ForegroundColor Yellow
+        Write-Host '      10 unspent), then log out to the select screen.' -ForegroundColor Yellow
+        Write-Host '        top draws at select -> select honours requirements; the'
+        Write-Host '                      server then needs a REQUIREMENT gate on equip'
+        Write-Host '        still bare -> not requirements either; say so'
         Write-Host ''
         Write-Host '  TF. THE FREE MARKET DOOR - can strand you if it is wrong.' -ForegroundColor Magenta
         Write-Host '      From HENESYS MARKET (10001040) walk into market00, then'
