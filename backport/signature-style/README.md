@@ -59,7 +59,68 @@ stub, which is byte-identical between a one-part and a two-part tree (modern `Co
 `Longcoat.wz`). Both clients use the zero string key. The only format difference is the
 archive version: **271 modern, 779 classic**, which changes the offset hash and nothing else.
 
-## The backport route, and what is NOT built yet
+## INSTALLED, 2026-09-10 evening - the hybrid build is in `client-patched/Data`
+
+`crates/wz/src/writer.rs` is the WZ writer; `wz-dump build` assembles an archive from a base
+plus a spec; `tools/backport_install.py` writes the specs for all 24 affected classic
+archives, builds them against the classic originals, verifies every image parses, and
+installs them with `.bak` siblings (`--revert` restores). Every pre-existing image is carried
+byte for byte and every new image is identical to its modern source - both checked by
+re-reading and diffing JSON.
+
+```bash
+python "C:\MapleCW\tools\backport_install.py" --install
+```
+
+```bash
+python "C:\MapleCW\tools\backport_install.py" --revert
+```
+
+Then regenerate the handbook (`dump_names`, `dump_equips`, `dump_itemdata`, `dump_commodity`,
+`gen_item_rules`) so the server knows the items - 206 names, 78 item rows, 9 sale rows.
+
+**The Cash Shop's Special tab now lists nine wares badged NEW**: the box at 7,900 LP and the
+eight set coupons (Frieren, Fern, Stark, Übel, Himmel, Aura, Lügner, Linie) at 3,900 LP.
+Read from the classic client: `CashShopCategory.img/2` had no sub-tab, which is why it was
+blank; Main lists wares by explicit `commoditySN`, so Special now does too; `Class 0` on a
+Commodity row is the NEW badge and `Class 2` is HOT - every one of the 15 rows on the Main
+tab agrees with the owner's screenshot. **The prices are a placeholder policy** (the modern
+client sells the box for 7,900 NX and never sells the coupons); change them in
+`backport_install.py` and rebuild.
+
+### The first client test, and what each outcome means
+
+Not in `tools/test-server.ps1` yet - another agent held that file when this was written.
+
+1. `!item 1054555 1` (Frieren's Clothes), equip it from the Equip tab.
+   - it draws on the character -> the hybrid archive loads and a modern Longcoat renders
+   - the slot fills but the body is bare -> the property image loaded and the pixels did not;
+     say so, the `_Canvas` half is the suspect
+   - the client dies on `!item` or on equip -> grab `client-exit.log`; the suspects in order are
+     the `info/level/EquipmentSkill` node on the STAFFS (not on clothes, so try `!item 1703722`
+     separately and last), then the archive itself
+2. `!hair 42540` then `!face 22035`. Each re-enters the map.
+   - Frieren's white hair and face draw -> the id space is open; the biggest unknown is closed
+   - the head is blank -> the client range-checks the id before the `%08d` lookup; revert with
+     `!hair 30025` / `!face 20002`
+3. Cash Shop, SPECIAL tab: nine entries with a NEW badge.
+   - buy the box (7,900 LP) -> it lands in the Cash Inventory
+   - the tab is still blank -> the client does not honour an explicit list on that tab;
+     the fallback is the scope form (`scope: 200`), one line in the installer
+4. Do NOT double-click the box yet: opening it is the next piece of server work (below).
+
+## Still to build - the server-side rules
+
+* Box (`5222221`) -> one of the eight set coupons at random; set coupon (`5681543`..) -> the
+  set's items plus its hair and face coupons; both are `0x0114` cash-item uses and today get
+  "no arm for this item, kept". `session::cashitem` is where the 5-slot coupons live.
+* Hair / face coupons (`2543137`.., `2897007`..): `spec/cosmetic` names the target; the
+  request opcode for a Consume-tab double-click is not yet captured. `!hair` / `!face` are
+  the same effect by hand.
+* The modern-only nodes are still in: `info/level/.../EquipmentSkill` on the six weapons and
+  `islot HrCp` on the three hats. Step 1 above measures whether they matter.
+
+## The backport route as first planned, and what was NOT built then
 
 The clean, reversible way in is the one the modern client uses itself: **add a `_001` part**
 to each affected tree (`Longcoat_001.wz`, `Longcoat/_Canvas/_Canvas_001.wz`, and so on) and

@@ -211,6 +211,9 @@ fn collect_canvases(
 ///                                                     image of that name (empty if absent)
 /// strings  <name>   <patch.tsv>                       lines `path<TAB>value` set string
 ///                                                     leaves in the base's image of that name
+/// patch    <name>   <patch.tsv>                       lines `path<TAB>kind<TAB>value`, kind
+///                                                     `str` or `int`; same base rule, and the
+///                                                     base image may be absent (starts empty)
 /// ```
 ///
 /// Everything in the base not named by the spec is copied verbatim. The result is verified
@@ -289,30 +292,54 @@ fn cmd_build(out: &Path, version: &str, spec: &Path, base: Option<&Path>) -> wz:
                     additions.push(ImageEntry { name: name.to_string(), bytes });
                 }
             }
-            "strings" => {
+            "strings" | "patch" => {
                 if f.len() < 3 {
                     return Err(bad());
                 }
+                let typed = f[0] == "patch";
                 let (name, patch) = (f[1], Path::new(f[2]));
-                let Some(b) = base_image(name) else {
-                    eprintln!("line {}: the base has no image {name} to patch", lineno + 1);
-                    return Err(bad());
+                let mut target = match base_image(name) {
+                    Some(b) => Owned::parse(b)?,
+                    None if typed => Owned::Object(Vec::new()),
+                    None => {
+                        eprintln!("line {}: the base has no image {name} to patch", lineno + 1);
+                        return Err(bad());
+                    }
                 };
-                let mut target = Owned::parse(b)?;
                 let mut n = 0;
                 for pl in io(patch, std::fs::read_to_string(patch))?.lines() {
                     let pl = pl.trim_end_matches('\r');
                     if pl.trim().is_empty() || pl.starts_with('#') {
                         continue;
                     }
-                    let Some((path, value)) = pl.split_once('\t') else { return Err(bad()) };
-                    // The patch file is one line per leaf, so a literal backslash-n in it
-                    // stands for the newline the string tables carry.
-                    target.set_path(path, Owned::String(value.replace("\\n", "\n")));
+                    let cols: Vec<&str> = pl.split('\t').collect();
+                    let (path, value) = if typed {
+                        if cols.len() < 3 {
+                            eprintln!("line {}: patch row needs path, kind, value: {pl:?}", lineno + 1);
+                            return Err(bad());
+                        }
+                        let v = match cols[1] {
+                            "int" => Owned::Int(cols[2].trim().parse().map_err(|_| bad())?),
+                            "str" => Owned::String(cols[2].replace("\\n", "\n")),
+                            other => {
+                                eprintln!("line {}: unknown leaf kind {other:?}", lineno + 1);
+                                return Err(bad());
+                            }
+                        };
+                        (cols[0], v)
+                    } else {
+                        if cols.len() < 2 {
+                            return Err(bad());
+                        }
+                        // The patch file is one line per leaf, so a literal backslash-n in it
+                        // stands for the newline the string tables carry.
+                        (cols[0], Owned::String(cols[1].replace("\\n", "\n")))
+                    };
+                    target.set_path(path, value);
                     n += 1;
                 }
                 let bytes = target.serialize_image();
-                println!("strings {name:<16} <- {n} leaves from {} ({} bytes)", patch.display(), bytes.len());
+                println!("{:<7} {name:<16} <- {n} leaves from {} ({} bytes)", f[0], patch.display(), bytes.len());
                 additions.push(ImageEntry { name: name.to_string(), bytes });
             }
             other => {

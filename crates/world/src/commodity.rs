@@ -343,20 +343,31 @@ mod tests {
             return;
         }
         let t = CommodityTable::load(path);
-        assert_eq!(t.len(), 159, "research/cash-shop-items.md counted 159 sale rows");
+        // 159 is what research/cash-shop-items.md counted in the classic client alone. The
+        // 9 more are the Signature Style Collection rows tools/backport_install.py writes
+        // into the Special tab (2026-09-10): the box and eight set coupons, SN 120000000..8.
+        assert_eq!(t.len(), 168, "159 classic sale rows + 9 backported Special-tab rows");
         assert_eq!(t.problems, 0, "every row parses");
+        let special = t.get(120_000_000).expect("the Signature Style Collection is on sale");
+        assert_eq!((special.item_id, special.price, special.on_sale), (5_222_221, 7_900, true));
 
         // The price column is NX and the observed set is tiny. If a price ever lands outside
         // it, the column has moved and the whole table is decoding shifted.
         for c in t.rows.values() {
+            // 3900 and 7900 are the two backported Special-tab prices; still a closed set,
+            // so a shifted column fails here rather than reading as a plausible number.
             assert!(
-                matches!(c.price, 0 | 100 | 700 | 1000),
+                matches!(c.price, 0 | 100 | 700 | 1000 | 3900 | 7900),
                 "{} ({}) priced {} - the price column has moved",
                 c.sn,
                 c.name,
                 c.price
             );
-            assert!((92_000_000..=160_300_005).contains(&c.sn), "SN {} out of range", c.sn);
+            assert!(
+                (92_000_000..=160_300_005).contains(&c.sn) || (120_000_000..=120_000_008).contains(&c.sn),
+                "SN {} out of range",
+                c.sn
+            );
         }
     }
 }
