@@ -178,6 +178,14 @@ client reads as "release, place at N, erase from my locker map". Shop entry now 
 and a coupon left in the Cash Inventory vanished from view on the next visit. **Both unseen on
 a screen**; step TC(b) and (c). `0x0B` (bag to locker) and `0x1C` (delete) are still refused.
 
+**2026-09-10, late: the AP and SP Reset Scrolls were on the wrong opcode.** The owner: *"it did not
+work and it did not take the item."* Both presses are in `world.log` as **`0x0116`** with the
+coupons' ten-byte body - the reset arms had been written against `0x0114` from the coupon
+capture and could never fire, and nothing answered `0x0116` at all. Now dispatched to the same
+arms, which run the `!resetap` / `!resetsp` refund, consume the scroll and clear the latch for
+the opcode that actually arrived. Both cash-item opcodes are named in `net::names` so the log
+stops calling a handled packet UNKNOWN. Step TR.
+
 **Cash-equip covers do NOT work yet**, and it is not the gate: the character record keeps
 equipped slots `1..=31` only (`EQUIP_SLOTS`; a cash slot is decoded and discarded, `[L]`), and
 `avatar_look`'s second map - where the covered base items would go - is sent empty. A cash top

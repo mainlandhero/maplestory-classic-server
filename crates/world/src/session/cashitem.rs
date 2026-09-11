@@ -77,13 +77,66 @@ impl Session {
             return self.open_outfit_set(set, req.slot);
         }
         match req.item_id {
-            AP_RESET_SCROLL => self.use_reset_scroll(req.item_id, req.slot, true),
-            SP_RESET_SCROLL => self.use_reset_scroll(req.item_id, req.slot, false),
+            // Still answered here in case a build ever routes them this way; the capture
+            // says the client uses 0x0116 - see `on_use_stat_reset_item`.
+            AP_RESET_SCROLL => self.use_reset_scroll(
+                net::cashitem::CLIENT_USE_CASH_ITEM, req.item_id, req.slot, true,
+            ),
+            SP_RESET_SCROLL => self.use_reset_scroll(
+                net::cashitem::CLIENT_USE_CASH_ITEM, req.item_id, req.slot, false,
+            ),
             _ => {
                 crate::server::log(&format!(
                     "   cash item: {} is a Cash item this server has no arm for. Unlock only, \
                      and the item is KEPT.",
                     req.item_id
+                ));
+                unlock()
+            }
+        }
+    }
+
+    /// `0x0116` - the player double-clicked an AP or SP Reset Scroll.
+    ///
+    /// The owner, 2026-09-10: *"it did not work and it did not take the item."* The two reset arms
+    /// below existed and were reachable only from `0x0114`, and the client sends these two
+    /// items through `0x0116` - `net::cashitem::CLIENT_USE_STAT_RESET_ITEM` has the capture.
+    /// Same body, same slot check, same arms; only the opcode in the unlock differs.
+    pub(super) fn on_use_stat_reset_item(&mut self, body: &[u8]) -> Vec<Reply> {
+        let opcode = net::cashitem::CLIENT_USE_STAT_RESET_ITEM;
+        let unlock = || crate::mesodrop::unlock_unhandled_latching_request(opcode);
+        let Some(req) = net::cashitem::parse_use_cash_item(body) else {
+            crate::server::log(&format!(
+                "   reset scroll: a {} byte 0x0116 body (expected {}); unlock only",
+                body.len(),
+                net::cashitem::USE_CASH_ITEM_BODY_LEN
+            ));
+            return unlock();
+        };
+        let Some(chr) = self.claimed_character() else { return unlock() };
+        let holding = self
+            .store
+            .bag_items(chr.id, store::InventoryType::Cash)
+            .ok()
+            .into_iter()
+            .flatten()
+            .find(|r| r.slot == req.slot)
+            .map(|r| r.item.item_id);
+        if holding != Some(req.item_id) {
+            crate::server::log(&format!(
+                "   reset scroll: character {} asked to use {} from Cash slot {}, which holds \
+                 {:?}. Refused; nothing was consumed.",
+                chr.id, req.item_id, req.slot, holding
+            ));
+            return unlock();
+        }
+        match req.item_id {
+            AP_RESET_SCROLL => self.use_reset_scroll(opcode, req.item_id, req.slot, true),
+            SP_RESET_SCROLL => self.use_reset_scroll(opcode, req.item_id, req.slot, false),
+            other => {
+                crate::server::log(&format!(
+                    "   reset scroll: {other} arrived on 0x0116, which this server only knows \
+                     for the two reset scrolls. Unlock only, and the item is KEPT."
                 ));
                 unlock()
             }
@@ -284,16 +337,21 @@ impl Session {
     /// already the reset this server does, they already send the right stat packets, and a
     /// second implementation here would be a second set of rules to keep in step. The owner's
     /// report is that the *items* do nothing, not that the reset is wrong.
-    fn use_reset_scroll(&mut self, item_id: u32, slot: u16, ap: bool) -> Vec<Reply> {
+    fn use_reset_scroll(&mut self, opcode: u16, item_id: u32, slot: u16, ap: bool) -> Vec<Reply> {
         let Some(chr) = self.claimed_character() else { return Vec::new() };
         let mut out = if ap { self.gm_reset_ap() } else { self.gm_reset_sp() };
         if out.is_empty() {
             // The reset refused - and it says so through its own replies normally, so an
             // empty answer here means it could not even start. Keep the scroll.
-            return self.cash_item_notice(
+            return self.cash_item_notice_for(
+                opcode,
                 "That could not be applied just now. Nothing was used up.".to_string(),
             );
         }
+        // **The latch, too.** The reset's own replies are stat packets and a chat line; none
+        // of them is the unlock this opcode's builder is waiting for, and without it the
+        // inventory stays frozen after a successful reset.
+        out.extend(crate::mesodrop::unlock_unhandled_latching_request(opcode));
         let _ = self.store.remove_item(chr.id, store::InventoryType::Cash, slot, Some(1));
         crate::server::log(&format!(
             "   cash item: character {} used {item_id} - {} reset",
@@ -307,9 +365,12 @@ impl Session {
     /// A notice plus the unlock. **Both**, because this opcode latches: a chat line alone
     /// would tell the player what happened and still freeze their inventory.
     fn cash_item_notice(&mut self, line: String) -> Vec<Reply> {
-        let mut out = crate::mesodrop::unlock_unhandled_latching_request(
-            net::cashitem::CLIENT_USE_CASH_ITEM,
-        );
+        self.cash_item_notice_for(net::cashitem::CLIENT_USE_CASH_ITEM, line)
+    }
+
+    /// The same, naming the opcode whose latch the unlock clears - `0x0114` or `0x0116`.
+    fn cash_item_notice_for(&mut self, opcode: u16, line: String) -> Vec<Reply> {
+        let mut out = crate::mesodrop::unlock_unhandled_latching_request(opcode);
         out.push(Reply {
             opcode: net::notice::CHAT_NOTICE,
             body: net::notice::chat_notice(&line),

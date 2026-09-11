@@ -32,6 +32,27 @@
 /// Client -> server: "I used this item in my Cash tab."
 pub const CLIENT_USE_CASH_ITEM: u16 = 0x0114;
 
+/// **`0x0116` - the AP and SP Reset Scrolls.** Same ten-byte body as `0x0114`, different
+/// opcode, and the difference cost the owner a launch.
+///
+/// The owner, 2026-09-10: *"I just tried using the AP Reset Scroll and the SP Reset Scroll, it did
+/// not work and it did not take the item."* `world.log` has both presses, and neither is a
+/// `0x0114`:
+///
+/// ```text
+/// 02:59:52.956 <- 0x0116 UNKNOWN, 10 byte body 998891060400f40e4d00
+///                                              tick     slot 4  0x4d0ef4 = 5050100 AP Reset
+/// 02:59:55.907 <- 0x0116 UNKNOWN, 10 byte body 15949106050079124d00
+///                                              tick     slot 5  0x4d1279 = 5051001 SP Reset
+/// ```
+///
+/// The reset arms were written against `0x0114` on 2026-09-09 from the coupon capture and
+/// never fired, because the client routes these two items through their own builder. Neither
+/// item has a `spec` in `Item/Cash/0505.img` (just `cash 1`, and `reqLevel 10` on the AP one),
+/// so the client sends the bare use and the server decides what a reset means - which here is
+/// the same full refund `!resetap` / `!resetsp` do. [`parse_use_cash_item`] reads it.
+pub const CLIENT_USE_STAT_RESET_ITEM: u16 = 0x0116;
+
 /// Body length. **Ten, like `0x0111`; not fourteen, like `0x010E`.**
 pub const USE_CASH_ITEM_BODY_LEN: usize = 10;
 

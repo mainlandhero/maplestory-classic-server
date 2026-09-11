@@ -744,6 +744,15 @@
                          present = the model is wrong; absent = the report came inside the
                          threshold and the race is somewhere else
 
+     TR. THE AP AND SP RESET SCROLLS - they were on the wrong opcode. Your two presses at
+         02:59:52 and 02:59:55 were `0x0116`, not the coupons' `0x0114`, and nothing answered
+         them: that is why nothing happened AND the item stayed. Handled now, through the
+         same full refund `!resetap` / `!resetsp` do.
+           the stat window refunds to base and shows the AP, the scroll is gone -> done
+           the stats reset but the scroll stays -> the consume failed; world.log names it
+           nothing, and the inventory is FROZEN -> the latch is not cleared; relog and tell me
+           a message but no change -> the reset itself refused; the chat line says why
+
      TF. THE FREE MARKET DOOR, which is the one that can strand somebody if it is wrong.
          From **Henesys Market** (10001040) walk into the `market00` portal, then walk back
          out of the Free Market Entrance's `out00`.
@@ -2529,6 +2538,14 @@ function Show-TestPlan {
         Write-Host '                      relaunch with -NoListResend and tell me' -ForegroundColor Yellow
         Write-Host '        still blank -> grep login.log for "re-sending the"'
         Write-Host '                      present = model wrong; absent = race elsewhere'
+        Write-Host ''
+        Write-Host '  TR. THE AP / SP RESET SCROLLS - wrong opcode until now.' -ForegroundColor Magenta
+        Write-Host '      Your two presses were 0x0116, not the coupons 0x0114, and'
+        Write-Host '      nothing answered them. Handled now: full refund, as !resetap.'
+        Write-Host '        stats back to base, AP shown, scroll gone -> done'
+        Write-Host '        stats reset, scroll stays -> consume failed; world.log'
+        Write-Host '        nothing and inventory FROZEN -> latch not cleared; tell me' -ForegroundColor Yellow
+        Write-Host '        a message, no change -> the reset refused; chat says why'
         Write-Host ''
         Write-Host '  TF. THE FREE MARKET DOOR - can strand you if it is wrong.' -ForegroundColor Magenta
         Write-Host '      From HENESYS MARKET (10001040) walk into market00, then'

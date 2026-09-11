@@ -109,6 +109,8 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         0x00F2 => "CLIENT_NPC_CLICK (u32 npcObjectId, i16 charX, i16 charY, u32; the NO-QUEST click path)",
         0x00F3 => "CLIENT_SCRIPT_REPLY (u32 handle, u8 msgType, u32 echo, str the box's own text, i8 action)",
         0x00F6 => "CLIENT_STORAGE (u8 mode: 4 take out, 5 put in, 6 sort, 7 mesos i64, 8 close)",
+        0x0114 => "CLIENT_USE_CASH_ITEM (u32 tick, u16 slot, u32 itemId) - coupons, the collection box, set coupons",
+        0x0116 => "CLIENT_USE_STAT_RESET_ITEM (u32 tick, u16 slot, u32 itemId) - the AP and SP Reset Scrolls",
         0x013C => "CLIENT_SKILL_USE (u32 skillId, u32 level, then a tail)",
         0x013F => "CLIENT_SKILL_CANCEL (u32 skillId, 5 bytes, raw[124] CTS mask; RETRIES every ~180ms)",
         0x00D5 => "CLIENT_CASH_SHOP_REQUEST (u32 tick, u8; an EXCLUSIVE REQUEST - it latches ctx+0x2330 and only fires once until answered)",
