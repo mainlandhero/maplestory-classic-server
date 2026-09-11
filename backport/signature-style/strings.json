@@ -1,0 +1,693 @@
+{
+ "ClassicWorld": {
+  "Hair": {
+   "42540": {
+    "name": "Frieren Hair"
+   },
+   "42541": {
+    "name": "Frieren Hair"
+   },
+   "42542": {
+    "name": "Frieren Hair"
+   },
+   "42543": {
+    "name": "Frieren Hair"
+   },
+   "42544": {
+    "name": "Frieren Hair"
+   },
+   "42545": {
+    "name": "Frieren Hair"
+   },
+   "42546": {
+    "name": "Frieren Hair"
+   },
+   "42547": {
+    "name": "Frieren Hair"
+   },
+   "42560": {
+    "name": "Frieren Hair (Ringlets)"
+   },
+   "42561": {
+    "name": "Frieren Hair (Ringlets)"
+   },
+   "42562": {
+    "name": "Frieren Hair (Ringlets)"
+   },
+   "42563": {
+    "name": "Frieren Hair (Ringlets)"
+   },
+   "42564": {
+    "name": "Frieren Hair (Ringlets)"
+   },
+   "42565": {
+    "name": "Frieren Hair (Ringlets)"
+   },
+   "42566": {
+    "name": "Frieren Hair (Ringlets)"
+   },
+   "42567": {
+    "name": "Frieren Hair (Ringlets)"
+   },
+   "42550": {
+    "name": "Frieren Hair (Sleep)"
+   },
+   "42551": {
+    "name": "Frieren Hair (Sleep)"
+   },
+   "42552": {
+    "name": "Frieren Hair (Sleep)"
+   },
+   "42553": {
+    "name": "Frieren Hair (Sleep)"
+   },
+   "42554": {
+    "name": "Frieren Hair (Sleep)"
+   },
+   "42555": {
+    "name": "Frieren Hair (Sleep)"
+   },
+   "42556": {
+    "name": "Frieren Hair (Sleep)"
+   },
+   "42557": {
+    "name": "Frieren Hair (Sleep)"
+   },
+   "42570": {
+    "name": "Fern Hair"
+   },
+   "42571": {
+    "name": "Fern Hair"
+   },
+   "42572": {
+    "name": "Fern Hair"
+   },
+   "42573": {
+    "name": "Fern Hair"
+   },
+   "42574": {
+    "name": "Fern Hair"
+   },
+   "42575": {
+    "name": "Fern Hair"
+   },
+   "42576": {
+    "name": "Fern Hair"
+   },
+   "42577": {
+    "name": "Fern Hair"
+   },
+   "42580": {
+    "name": "Stark Hair"
+   },
+   "42581": {
+    "name": "Stark Hair"
+   },
+   "42582": {
+    "name": "Stark Hair"
+   },
+   "42583": {
+    "name": "Stark Hair"
+   },
+   "42584": {
+    "name": "Stark Hair"
+   },
+   "42585": {
+    "name": "Stark Hair"
+   },
+   "42586": {
+    "name": "Stark Hair"
+   },
+   "42587": {
+    "name": "Stark Hair"
+   },
+   "42600": {
+    "name": "Übel Hair"
+   },
+   "42601": {
+    "name": "Übel Hair"
+   },
+   "42602": {
+    "name": "Übel Hair"
+   },
+   "42603": {
+    "name": "Übel Hair"
+   },
+   "42604": {
+    "name": "Übel Hair"
+   },
+   "42605": {
+    "name": "Übel Hair"
+   },
+   "42606": {
+    "name": "Übel Hair"
+   },
+   "42607": {
+    "name": "Übel Hair"
+   },
+   "42590": {
+    "name": "Himmel Hair"
+   },
+   "42591": {
+    "name": "Himmel Hair"
+   },
+   "42592": {
+    "name": "Himmel Hair"
+   },
+   "42593": {
+    "name": "Himmel Hair"
+   },
+   "42594": {
+    "name": "Himmel Hair"
+   },
+   "42595": {
+    "name": "Himmel Hair"
+   },
+   "42596": {
+    "name": "Himmel Hair"
+   },
+   "42597": {
+    "name": "Himmel Hair"
+   }
+  },
+  "Face": {
+   "22035": {
+    "name": "Frieren Face"
+   },
+   "22135": {
+    "name": "Frieren Face"
+   },
+   "22235": {
+    "name": "Frieren Face"
+   },
+   "22335": {
+    "name": "Frieren Face"
+   },
+   "22435": {
+    "name": "Frieren Face"
+   },
+   "22535": {
+    "name": "Frieren Face"
+   },
+   "22635": {
+    "name": "Frieren Face"
+   },
+   "22735": {
+    "name": "Frieren Face"
+   },
+   "22835": {
+    "name": "Frieren Face"
+   },
+   "22036": {
+    "name": "Fern Face"
+   },
+   "22136": {
+    "name": "Fern Face"
+   },
+   "22236": {
+    "name": "Fern Face"
+   },
+   "22336": {
+    "name": "Fern Face"
+   },
+   "22436": {
+    "name": "Fern Face"
+   },
+   "22536": {
+    "name": "Fern Face"
+   },
+   "22636": {
+    "name": "Fern Face"
+   },
+   "22736": {
+    "name": "Fern Face"
+   },
+   "22836": {
+    "name": "Fern Face"
+   },
+   "22037": {
+    "name": "Stark Face"
+   },
+   "22137": {
+    "name": "Stark Face"
+   },
+   "22237": {
+    "name": "Stark Face"
+   },
+   "22337": {
+    "name": "Stark Face"
+   },
+   "22437": {
+    "name": "Stark Face"
+   },
+   "22537": {
+    "name": "Stark Face"
+   },
+   "22637": {
+    "name": "Stark Face"
+   },
+   "22737": {
+    "name": "Stark Face"
+   },
+   "22837": {
+    "name": "Stark Face"
+   },
+   "22039": {
+    "name": "Übel Face"
+   },
+   "22139": {
+    "name": "Übel Face"
+   },
+   "22239": {
+    "name": "Übel Face"
+   },
+   "22339": {
+    "name": "Übel Face"
+   },
+   "22439": {
+    "name": "Übel Face"
+   },
+   "22539": {
+    "name": "Übel Face"
+   },
+   "22639": {
+    "name": "Übel Face"
+   },
+   "22739": {
+    "name": "Übel Face"
+   },
+   "22839": {
+    "name": "Übel Face"
+   },
+   "22038": {
+    "name": "Himmel Face"
+   },
+   "22138": {
+    "name": "Himmel Face"
+   },
+   "22238": {
+    "name": "Himmel Face"
+   },
+   "22338": {
+    "name": "Himmel Face"
+   },
+   "22438": {
+    "name": "Himmel Face"
+   },
+   "22538": {
+    "name": "Himmel Face"
+   },
+   "22638": {
+    "name": "Himmel Face"
+   },
+   "22738": {
+    "name": "Himmel Face"
+   },
+   "22838": {
+    "name": "Himmel Face"
+   },
+   "22040": {
+    "name": "Aura Face"
+   },
+   "22140": {
+    "name": "Aura Face"
+   },
+   "22240": {
+    "name": "Aura Face"
+   },
+   "22340": {
+    "name": "Aura Face"
+   },
+   "22440": {
+    "name": "Aura Face"
+   },
+   "22540": {
+    "name": "Aura Face"
+   },
+   "22640": {
+    "name": "Aura Face"
+   },
+   "22740": {
+    "name": "Aura Face"
+   },
+   "22840": {
+    "name": "Aura Face"
+   },
+   "22042": {
+    "name": "Lügner Face"
+   },
+   "22142": {
+    "name": "Lügner Face"
+   },
+   "22242": {
+    "name": "Lügner Face"
+   },
+   "22342": {
+    "name": "Lügner Face"
+   },
+   "22442": {
+    "name": "Lügner Face"
+   },
+   "22542": {
+    "name": "Lügner Face"
+   },
+   "22642": {
+    "name": "Lügner Face"
+   },
+   "22742": {
+    "name": "Lügner Face"
+   },
+   "22842": {
+    "name": "Lügner Face"
+   },
+   "22041": {
+    "name": "Linie Face"
+   },
+   "22141": {
+    "name": "Linie Face"
+   },
+   "22241": {
+    "name": "Linie Face"
+   },
+   "22341": {
+    "name": "Linie Face"
+   },
+   "22441": {
+    "name": "Linie Face"
+   },
+   "22541": {
+    "name": "Linie Face"
+   },
+   "22641": {
+    "name": "Linie Face"
+   },
+   "22741": {
+    "name": "Linie Face"
+   },
+   "22841": {
+    "name": "Linie Face"
+   }
+  },
+  "Longcoat": {
+   "1054555": {
+    "name": "Frieren's Clothes"
+   },
+   "1054556": {
+    "name": "Frieren's Winter Clothes"
+   },
+   "1054557": {
+    "name": "Frieren's Sleep Clothes"
+   },
+   "1054558": {
+    "name": "Fern's Clothes"
+   },
+   "1054559": {
+    "name": "Fern's Winter Clothes"
+   },
+   "1054560": {
+    "name": "Stark's Clothes"
+   },
+   "1054595": {
+    "name": "Stark's Winter Clothes"
+   },
+   "1054562": {
+    "name": "Übel's Clothes"
+   },
+   "1054561": {
+    "name": "Himmel's Clothes"
+   },
+   "1054563": {
+    "name": "Aura's Clothes"
+   },
+   "1054565": {
+    "name": "Lügner's Clothes"
+   },
+   "1054564": {
+    "name": "Linie's Clothes"
+   }
+  },
+  "Shoes": {
+   "1074234": {
+    "name": "Frieren's Shoes"
+   },
+   "1074235": {
+    "name": "Fern's Shoes"
+   },
+   "1074236": {
+    "name": "Stark's Shoes"
+   },
+   "1074263": {
+    "name": "Stark's Winter Shoes"
+   },
+   "1074238": {
+    "name": "Übel's Shoes"
+   },
+   "1074237": {
+    "name": "Himmel's Shoes"
+   },
+   "1074239": {
+    "name": "Aura's Shoes"
+   },
+   "1074241": {
+    "name": "Lügner's Shoes"
+   },
+   "1074240": {
+    "name": "Linie's Shoes"
+   }
+  },
+  "Accessory": {
+   "1032360": {
+    "name": "Frieren's Earrings"
+   }
+  },
+  "Weapon": {
+   "1703722": {
+    "name": "Frieren's Staff",
+    "desc": "Can be equipped over #cany weapon#.\\nGrants the #cOrdinary Offensive Magic (Zoltraak)# skill."
+   },
+   "1703723": {
+    "name": "Fern's Staff",
+    "desc": "Can be equipped over #cany weapon#.\\nGrants the #cDemon-Killing Magic (Zoltraak)# skill."
+   },
+   "1703724": {
+    "name": "Stark's Axe",
+    "desc": "Can be equipped over #call weapons#."
+   },
+   "1703726": {
+    "name": "Übel's Staff",
+    "desc": "Can be equipped over #call weapons#."
+   },
+   "1703725": {
+    "name": "Himmel's Sword",
+    "desc": "Can be equipped over #call weapons#."
+   },
+   "1703727": {
+    "name": "Aura's Scales of Obedience",
+    "desc": "Can be equipped over #call weapons#."
+   }
+  },
+  "Glove": {
+   "1082877": {
+    "name": "Stark's Gloves"
+   },
+   "1082882": {
+    "name": "Stark's Winter Gloves"
+   },
+   "1082878": {
+    "name": "Übel's Gloves"
+   },
+   "1082879": {
+    "name": "Aura's Gloves"
+   }
+  },
+  "Cape": {
+   "1103918": {
+    "name": "Himmel's Blessing",
+    "desc": "Some outfit items may appear behind this cape when equipped."
+   }
+  },
+  "Cap": {
+   "1006910": {
+    "name": "Aura Hair (Hat)"
+   },
+   "1006912": {
+    "name": "Lügner Hair (Hat)"
+   },
+   "1006911": {
+    "name": "Linie Hair (Hat)"
+   }
+  }
+ },
+ "Cash": {
+  "5222221": {
+   "name": "Signature Style Collection",
+   "desc": "A collection of special outfit items. #cDouble-click# to obtain #c1 item# according to set probability rates."
+  },
+  "5681543": {
+   "name": "Frieren Outfit Set Coupon",
+   "desc": "#cDouble-click# to receive a #cFrieren Outift Set Coupon#."
+  },
+  "5681544": {
+   "name": "Frieren Outfit Set (Ringlets) Coupon",
+   "desc": "#cDouble-click# to receive a #cFrieren Outfit Set (Ringlets) Coupon#."
+  },
+  "5681545": {
+   "name": "Frieren Outfit Set (Sleep) Coupon",
+   "desc": "#cDouble-click# to receive a #cFrieren Outfit Set (Sleep) Coupon#."
+  },
+  "5681547": {
+   "name": "Fern Outfit Set Coupon",
+   "desc": "#cDouble-click# to receive a #cFern Outfit Set Coupon#."
+  },
+  "5681549": {
+   "name": "Stark Outfit Set Coupon",
+   "desc": "#cDouble-click# to receive a #cStark Outfit Set Coupon#."
+  },
+  "5681548": {
+   "name": "Übel Outfit Set Coupon",
+   "desc": "#cDouble-click# to receive a #cÜbel Outfit Set Coupon#."
+  },
+  "5681546": {
+   "name": "Himmel Outfit Set Coupon",
+   "desc": "#cDouble-click# to receive a #cHimmel Outfit Set Coupon#."
+  },
+  "5681550": {
+   "name": "Aura Outfit Set Coupon",
+   "desc": "#cDouble-click# to receive an #cAura Outfit Set Coupon#."
+  },
+  "5681552": {
+   "name": "Lügner Outfit Set Coupon",
+   "desc": "#cDouble-click# to receive a #cLügner Outfit Set Coupon#."
+  },
+  "5681551": {
+   "name": "Linie Outfit Set Coupon",
+   "desc": "#cDouble-click# to receive a #cLinie Outfit Set Coupon#."
+  }
+ },
+ "Consume": {
+  "2830642": {
+   "name": "Frieren Outfit Set",
+   "desc": "#cDouble-click# to obtain the Frieren Outfit Set.\\nThe obtained item can be equipped regardless of the character's gender."
+  },
+  "2830644": {
+   "name": "Frieren Outfit Set (Ringlets)",
+   "desc": "#cDouble-click# to obtain the Frieren Outfit Set (Ringlets).\\nThe obtained item can be equipped regardless of the character's gender."
+  },
+  "2830645": {
+   "name": "Frieren Outfit Set (Sleep)",
+   "desc": "#cDouble-click# to obtain the Frieren Outfit Set (Sleep).\\nThe obtained item can be equipped regardless of the character's gender."
+  },
+  "2830646": {
+   "name": "Fern Outfit Set",
+   "desc": "#cDouble-click# to obtain the Fern Outfit Set.\\nThe obtained item can be equipped regardless of the character's gender."
+  },
+  "2830649": {
+   "name": "Stark Outfit Set",
+   "desc": "#cDouble-click# to obtain the Stark Outfit Set.\\nThe obtained item can be equipped regardless of the character's gender."
+  },
+  "2830655": {
+   "name": "Übel Outfit Set",
+   "desc": "#cDouble-click# to obtain the Übel Outfit Set.\\nThe obtained item can be equipped regardless of the character's gender."
+  },
+  "2830653": {
+   "name": "Himmel Outfit Set",
+   "desc": "#cDouble-click# to obtain the Himmel Outfit Set.\\nThe obtained item can be equipped regardless of the character's gender."
+  },
+  "2830656": {
+   "name": "Aura Outfit Set",
+   "desc": "#cDouble-click# to obtain the Aura Outfit Set.\\nThe obtained item can be equipped regardless of the character's gender."
+  },
+  "2830658": {
+   "name": "Lügner Outfit Set",
+   "desc": "#cDouble-click# to obtain the Lügner Outfit Set.\\nThe obtained item can be equipped regardless of the character's gender."
+  },
+  "2830657": {
+   "name": "Linie Outfit Set",
+   "desc": "#cDouble-click# to obtain the Linie Outfit Set.\\nThe obtained item can be equipped regardless of the character's gender."
+  },
+  "2830643": {
+   "name": "Frieren Clothes Selector Coupon",
+   "desc": "#cDouble-click# to choose either #cFrieren's Clothes# or #cFrieren's Winter Clothes#. "
+  },
+  "2830647": {
+   "name": "Fern's Clothes Selector Coupon",
+   "desc": "#cDouble-click# to choose either #cFern's Clothes# or #cFern's Winter Clothes#. "
+  },
+  "2830650": {
+   "name": "Stark's Clothes Selector Coupon",
+   "desc": "#cDouble-click# to choose either #cStark's Clothes# or #cStark's Winter Clothes#. "
+  },
+  "2830651": {
+   "name": "Stark's Shoes Selector Coupon",
+   "desc": "#cDouble-click# to choose either #cStark's Shoes# or #cStark's Winter Shoes#."
+  },
+  "2830652": {
+   "name": "Stark's Gloves Selector Coupon",
+   "desc": "#cDouble-click# to choose either #cStark's Gloves# or #cStark's Winter Gloves#."
+  },
+  "2830654": {
+   "name": "Himmel's Blessing Coupon",
+   "desc": "#cDouble-click# to obtain the #cHimmel's Blessing# cape. "
+  },
+  "2543137": {
+   "name": "Frieren Hair Coupon",
+   "desc": "#cDouble-click# to change your hairstyle to #cFrieren Hair#."
+  },
+  "2543138": {
+   "name": "Frieren Hair (Ringlets) Coupon",
+   "desc": "#cDouble-click# to change your hairstyle to #cFrieren Hair (Ringlets)#."
+  },
+  "2543139": {
+   "name": "Frieren Hair (Sleep) Coupon",
+   "desc": "#cDouble-click# to change your hairstyle to #cFrieren Hair (Sleep)#."
+  },
+  "2543140": {
+   "name": "Fern Hair Coupon",
+   "desc": "#cDouble-click# to change your hairstyle to #cFern Hair#."
+  },
+  "2543141": {
+   "name": "Stark Hair Coupon",
+   "desc": "#cDouble-click# to change your hairstyle to #cStark Hair#."
+  },
+  "2543142": {
+   "name": "Himmel Hair Coupon",
+   "desc": "#cDouble-click# to change your hairstyle to #cHimmel Hair#."
+  },
+  "2543143": {
+   "name": "Übel Hair Coupon",
+   "desc": "#cDouble-click# to change your hairstyle to #cÜbel Hair#."
+  },
+  "2897007": {
+   "name": "Frieren Face Coupon",
+   "desc": "#cDouble-click# to change your face to #cFrieren Face#."
+  },
+  "2897008": {
+   "name": "Fern Face Coupon",
+   "desc": "#cDouble-click# to change your face to #cFern Face#."
+  },
+  "2897009": {
+   "name": "Stark Face Coupon",
+   "desc": "#cDouble-click# to change your face to #cStark Face#."
+  },
+  "2897010": {
+   "name": "Himmel Face Coupon",
+   "desc": "#cDouble-click# to change your face to #cHimmel Face#."
+  },
+  "2897011": {
+   "name": "Übel Face Coupon",
+   "desc": "#cDouble-click# to change your face to #cÜbel Face#."
+  },
+  "2897012": {
+   "name": "Aura Face Coupon",
+   "desc": "#cDouble-click# to change your face to #cAura Face#."
+  },
+  "2897013": {
+   "name": "Linie Face Coupon",
+   "desc": "#cDouble-click# to change your face to #cLinie Face#."
+  },
+  "2897014": {
+   "name": "Lügner Face Coupon",
+   "desc": "#cDouble-click# to change your face to #cLügner Face#."
+  }
+ }
+}

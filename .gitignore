@@ -107,3 +107,8 @@ crates/**/*.dmp
 
 # damagescan output is derived and regenerable with tools/damagescan_all.py
 /research/damagescan/
+
+# Backported modern-client assets: the extracted trees and pixels are regenerable from
+# tools/backport_signature_style.py and weigh 60 MB. The manifests and strings are committed.
+/backport/*/wz/
+/backport/*/canvas/
