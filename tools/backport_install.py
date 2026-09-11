@@ -127,6 +127,17 @@ def main():
     os.makedirs(args.build_dir, exist_ok=True)
     for image, root in [("Eqp.img", strings["ClassicWorld"]), ("Cash.img", strings["Cash"]), ("Consume.img", strings["Consume"])]:
         tsv = os.path.join(args.build_dir, "strings-" + image + ".tsv")
+        if image == "Cash.img":
+            # The modern text says "obtain 1 item according to set probability rates". Ours
+            # gives every set (the owner, 2026-09-10), and the tooltip is the one place a player
+            # reads the rule.
+            root = dict(root)
+            root["5222221"] = {
+                "name": "Signature Style Collection",
+                "desc": "A collection of every Signature Style outfit. #cDouble-click# to receive "
+                        "all eight Outfit Set Coupons: Frieren, Fern, Stark, \u00dcbel, Himmel, "
+                        "Aura, L\u00fcgner and Linie.",
+            }
         with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
             if image == "Eqp.img":
                 for kind, ids in root.items():
@@ -151,13 +162,18 @@ def main():
     #     permanent (49 rows). SN prefix 12 (category 2 = Special under the derived
     #     arithmetic) is unused by every shipped row, so the new serials are 120000000..
     #
-    #     **Prices are a placeholder policy**: the modern client sells the box for 7,900 NX;
-    #     the set coupons are not sold there at all (they come out of the box). 7,900 LP for
-    #     the box and 3,900 LP per set coupon, until the owner says otherwise.
+    #     **Prices are the owner's, 2026-09-10**: *"each signature style set coupon should cost
+    #     2000 LP"* and the box *"give[s] them all of the sets for 8000 LP"* - so the box is
+    #     the eight coupons at half price. The modern client sells the box for 7,900 NX as a
+    #     one-at-random gacha and never sells the coupons; both rules are ours.
+    #
+    #     Seen on screen 2026-09-10 at the first prices (7,900 / 3,900): the tab, the nine
+    #     entries, the NEW badges, the icons and the tooltips all drew. The shape is proven;
+    #     only the numbers changed after.
     rows = json.load(open(os.path.join(EXTRACT, "manifest.json"), encoding="utf-8"))
     by_name = {it["name"]: it["id"] for it in manifest["cash"]}
-    wares = [("Signature Style Collection", 7900)] + [
-        (n + " Outfit Set Coupon", 3900)
+    wares = [("Signature Style Collection", 8000)] + [
+        (n + " Outfit Set Coupon", 2000)
         for n in ["Frieren", "Fern", "Stark", "Übel", "Himmel", "Aura", "Lügner", "Linie"]
     ]
     commodity_patch = os.path.join(args.build_dir, "patch-Commodity.img.tsv")
@@ -226,9 +242,27 @@ def main():
         bak = base + ".bak"
         if not os.path.exists(bak):
             shutil.copy2(base, bak)
-        shutil.copy2(out, base)
+        try:
+            shutil.copy2(out, base)
+        except PermissionError:
+            raise SystemExit(
+                "%s is held open - the client is running. Close MapleStory.exe and re-run "
+                "--install; nothing was left half-done (archives are replaced one file at a time "
+                "and each is complete or untouched)." % os.path.relpath(base, REPO))
         print("installed %s (%d -> %d bytes; original kept as %s)" % (
             os.path.relpath(base, REPO), os.path.getsize(bak), os.path.getsize(base), os.path.basename(bak)))
+
+    # **The server's tables must say what the client's data says.** Prices live in the
+    # client's Commodity.img AND in gm-handbook/commodity.txt, which the world server debits
+    # from; names in String.wz AND items.txt. Regenerating here, after the copy, is what keeps
+    # "the tab says 2,000" and "the server charged 3,900" from ever both being true.
+    for tool in ["dump_names.py", "dump_equips.py", "dump_itemdata.py", "dump_commodity.py", "gen_item_rules.py"]:
+        p = subprocess.run([sys.executable, os.path.join(REPO, "tools", tool)], capture_output=True,
+                           text=True, encoding="utf-8", errors="replace")
+        tail = (p.stdout.strip().splitlines() or [""])[-1]
+        print("   %-20s %s" % (tool, tail if p.returncode == 0 else "FAILED: " + p.stderr.strip()[-200:]))
+        if p.returncode != 0:
+            raise SystemExit("%s failed after install - the server tables are stale" % tool)
     return 0
 
 

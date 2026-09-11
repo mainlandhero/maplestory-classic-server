@@ -40,7 +40,7 @@ def read_image(archive, image):
     exe = WZ_DUMP + (".exe" if os.name == "nt" else "")
     if not os.path.exists(exe):
         raise SystemExit("%s is missing - run: cargo build --release -p wz" % exe)
-    r = subprocess.run([exe, "cat", archive, image], capture_output=True, text=True)
+    r = subprocess.run([exe, "cat", archive, image], capture_output=True, text=True, encoding="utf-8")
     if r.returncode != 0:
         raise SystemExit("wz-dump cat %s failed: %s" % (image, r.stderr.strip()))
     return json.loads(r.stdout)
