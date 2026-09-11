@@ -1,4 +1,5 @@
-//! `0x0114` - Cash-tab items: the five slot coupons and the two reset scrolls.
+//! `0x0114` - Cash-tab items: the five slot coupons, the two reset scrolls, and the
+//! Signature Style Collection (the box and the eight Outfit Set Coupons).
 //!
 //! The owner, 2026-09-09: *"I just tried using the Equip expansion coupon"*, and *"Using the AP and
 //! SP reset cash items also does not perform the function."* Both are this opcode, which was
@@ -68,6 +69,12 @@ impl Session {
 
         if let Some(coupon) = SlotCoupon::for_item(req.item_id) {
             return self.use_slot_coupon(coupon, req.item_id, req.slot);
+        }
+        if req.item_id == crate::signaturestyle::COLLECTION {
+            return self.open_collection(req.slot);
+        }
+        if let Some(set) = crate::signaturestyle::set_for_coupon(req.item_id) {
+            return self.open_outfit_set(set, req.slot);
         }
         match req.item_id {
             AP_RESET_SCROLL => self.use_reset_scroll(req.item_id, req.slot, true),
@@ -155,6 +162,119 @@ impl Session {
         };
         out.extend(self.cash_item_notice(line));
         out.extend(self.stack_change_replies(store::InventoryType::Cash, slot, 0));
+        out
+    }
+
+    /// **The Signature Style Collection box: all eight Outfit Set Coupons.** The owner,
+    /// 2026-09-10: *"instead of obtaining 1 at random rates, we give them all of the sets"*.
+    ///
+    /// The eight coupons go into the Cash tab - the same tab the box sits in - and the box's
+    /// own slot frees up as it is consumed, so seven free Cash slots are enough. That is
+    /// checked BEFORE anything is written: an all-or-nothing hand-out is the only reading in
+    /// which "the box did nothing" and "the box gave me half" cannot be confused.
+    fn open_collection(&mut self, slot: u16) -> Vec<Reply> {
+        let wares: Vec<(u32, store::InventoryType)> = crate::signaturestyle::SETS
+            .iter()
+            .map(|s| (s.coupon, store::InventoryType::Cash))
+            .collect();
+        self.hand_out(
+            crate::signaturestyle::COLLECTION,
+            slot,
+            &wares,
+            "Signature Style Collection",
+            "all eight Outfit Set Coupons",
+        )
+    }
+
+    /// **One Outfit Set Coupon: its hair coupons, its face coupon, and its equips.** The
+    /// contents are `crate::signaturestyle`, which is the owner's listing; the modern client keeps
+    /// this rule in a server script the WZ only names.
+    fn open_outfit_set(&mut self, set: &crate::signaturestyle::OutfitSet, slot: u16) -> Vec<Reply> {
+        let wares = crate::signaturestyle::set_contents(set);
+        self.hand_out(set.coupon, slot, &wares, &format!("{} Outfit Set", set.name), "its outfit, hair and face")
+    }
+
+    /// Consume one Cash-tab item at `slot` and hand out `wares`, all or nothing.
+    ///
+    /// Room is counted first, per tab, and the source item's own Cash slot counts as free
+    /// because it is removed in the same hand-out. A refusal names the tab and how many
+    /// slots it is short, and consumes nothing. A store error part-way is logged loudly - it
+    /// cannot be undone here, and the log line is how it would be found.
+    fn hand_out(
+        &mut self,
+        item_id: u32,
+        slot: u16,
+        wares: &[(u32, store::InventoryType)],
+        label: &str,
+        contents: &str,
+    ) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let Ok(bag) = self.store.bag(chr.id) else {
+            return self.cash_item_notice("That could not be applied just now. Nothing was used up.".to_string());
+        };
+        let (need_equip, need_use, need_cash) = crate::signaturestyle::slots_needed(wares);
+        let free = |t: store::InventoryType, reclaim: u16| -> u16 {
+            let used = bag.items_in(t).count() as u16;
+            bag.slots[t.index()].saturating_sub(used).saturating_add(reclaim)
+        };
+        for (tab, need, have) in [
+            (store::InventoryType::Equip, need_equip, free(store::InventoryType::Equip, 0)),
+            (store::InventoryType::Use, need_use, free(store::InventoryType::Use, 0)),
+            (store::InventoryType::Cash, need_cash, free(store::InventoryType::Cash, 1)),
+        ] {
+            if need > have {
+                return self.cash_item_notice(format!(
+                    "Your {} needs {} free slot(s) for the {label} and has {have}. Nothing was used up.",
+                    match tab {
+                        store::InventoryType::Equip => "Equip tab",
+                        store::InventoryType::Use => "Use tab",
+                        _ => "Cash tab",
+                    },
+                    need
+                ));
+            }
+        }
+
+        // Only now does the source leave the bag - first, so its Cash slot is free for what
+        // follows, and because a hand-out that fails after this point is a logged fault,
+        // not a player keeping the box.
+        if self.store.remove_item(chr.id, store::InventoryType::Cash, slot, Some(1)).is_err() {
+            return self.cash_item_notice("That could not be applied just now. Nothing was used up.".to_string());
+        }
+        let mut out = crate::mesodrop::unlock_unhandled_latching_request(net::cashitem::CLIENT_USE_CASH_ITEM);
+        out.extend(self.stack_change_replies(store::InventoryType::Cash, slot, 0));
+        let mut given = Vec::new();
+        for &(id, tab) in wares {
+            let item = if tab == store::InventoryType::Equip {
+                store::Item::equip(id)
+            } else {
+                store::Item::bundle(id, 1)
+            };
+            match self.store.add_item(chr.id, tab, &item, 1) {
+                Ok(rows) => {
+                    out.extend(self.inventory_added_replies(tab, &rows, label));
+                    given.push(id);
+                }
+                Err(e) => {
+                    // The room was counted; this is a store fault, and it must be loud.
+                    crate::server::log(&format!(
+                        "   cash item: {label}: FAILED to hand out {id} into {tab:?} after {} of {}                          ({e}) - the room was counted free before the source was consumed.                          Given so far: {given:?}",
+                        given.len(),
+                        wares.len()
+                    ));
+                }
+            }
+        }
+        crate::server::log(&format!(
+            "   cash item: character {} opened {item_id} ({label}) -> {} item(s): {given:?}",
+            chr.id,
+            given.len()
+        ));
+        out.push(Reply {
+            opcode: net::notice::CHAT_NOTICE,
+            body: net::notice::chat_notice(&format!("{label}: you received {contents} ({} items).", given.len())),
+            what: format!("ChatNotice: {label} opened, {} item(s) given", given.len()),
+        });
         out
     }
 

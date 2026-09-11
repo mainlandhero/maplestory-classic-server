@@ -79,14 +79,21 @@ python "C:\MapleCW\tools\backport_install.py" --revert
 Then regenerate the handbook (`dump_names`, `dump_equips`, `dump_itemdata`, `dump_commodity`,
 `gen_item_rules`) so the server knows the items - 206 names, 78 item rows, 9 sale rows.
 
-**The Cash Shop's Special tab now lists nine wares badged NEW**: the box at 7,900 LP and the
-eight set coupons (Frieren, Fern, Stark, Übel, Himmel, Aura, Lügner, Linie) at 3,900 LP.
+**SEEN ON SCREEN, 2026-09-10 night** - the owner: *"The items actually render fine in the cash
+shop"*, with a screenshot: the Special tab's "Signature Style" sub-tab, nine entries, NEW
+badges, icons, and an Übel tooltip. That is the first proof that the classic client loads
+the rebuilt archives at all, that an explicit `commoditySN` list works on that tab, that the
+merged `_Canvas` icons draw, and that `Class 0` is NEW. The equips, hair and faces are still
+unseen - steps 1 and 2 below.
+
+**The Cash Shop's Special tab lists nine wares badged NEW**: the box at 8,000 LP and the
+eight set coupons (Frieren, Fern, Stark, Übel, Himmel, Aura, Lügner, Linie) at 2,000 LP -
+The owner's prices, set after the screenshot (which shows the first draft's 7,900 / 3,900).
 Read from the classic client: `CashShopCategory.img/2` had no sub-tab, which is why it was
 blank; Main lists wares by explicit `commoditySN`, so Special now does too; `Class 0` on a
 Commodity row is the NEW badge and `Class 2` is HOT - every one of the 15 rows on the Main
-tab agrees with the owner's screenshot. **The prices are a placeholder policy** (the modern
-client sells the box for 7,900 NX and never sells the coupons); change them in
-`backport_install.py` and rebuild.
+tab agrees with the owner's screenshot. `--install` regenerates the server's tables in the same
+step, so the price the tab shows and the price the server debits cannot drift.
 
 ### The first client test, and what each outcome means
 
@@ -103,20 +110,27 @@ Not in `tools/test-server.ps1` yet - another agent held that file when this was 
    - Frieren's white hair and face draw -> the id space is open; the biggest unknown is closed
    - the head is blank -> the client range-checks the id before the `%08d` lookup; revert with
      `!hair 30025` / `!face 20002`
-3. Cash Shop, SPECIAL tab: nine entries with a NEW badge.
-   - buy the box (7,900 LP) -> it lands in the Cash Inventory
-   - the tab is still blank -> the client does not honour an explicit list on that tab;
-     the fallback is the scope form (`scope: 200`), one line in the installer
-4. Do NOT double-click the box yet: opening it is the next piece of server work (below).
+3. Cash Shop, SPECIAL tab: the tab is DONE (seen). Buy the box (8,000 LP): it lands in the
+   Cash Inventory. Then, back in the field, double-click it in the Cash tab.
+   - eight Outfit Set Coupons appear in the Cash tab and the box is gone -> the box rule works
+   - "needs N free slot(s)" -> the all-or-nothing gate; free the Cash tab and try again
+   - nothing -> grep `world.log` for `0x0114`: it either names a refusal or never arrived
+4. Double-click the Frieren Outfit Set Coupon: three hair coupons and a face coupon into the
+   Use tab, six equips into the Equip tab, the coupon consumed. Then equip the clothes.
+5. Double-click a hair coupon in the Use tab. **This is a capture**: the request opcode for
+   a Consume-tab use of one of these is not known. Whatever `world.log` shows as UNKNOWN
+   after the click is the answer; the server will refuse it politely until it is wired.
 
-## Still to build - the server-side rules
+## Server-side rules - built 2026-09-10 night
 
-* Box (`5222221`) -> one of the eight set coupons at random; set coupon (`5681543`..) -> the
-  set's items plus its hair and face coupons; both are `0x0114` cash-item uses and today get
-  "no arm for this item, kept". `session::cashitem` is where the 5-slot coupons live.
+* `world::signaturestyle` is the rule: the box gives **all eight** set coupons (the owner:
+  *"instead of obtaining 1 at random rates, we give them all of the sets for 8000 LP"*);
+  each set coupon gives its equips, its hair coupon(s) and its face coupon, per the owner's
+  listing. `session::cashitem` opens both on `0x0114`, all or nothing: room is counted per
+  tab before anything is written, and a refusal names the tab and the shortfall.
 * Hair / face coupons (`2543137`.., `2897007`..): `spec/cosmetic` names the target; the
-  request opcode for a Consume-tab double-click is not yet captured. `!hair` / `!face` are
-  the same effect by hand.
+  request opcode for a Consume-tab double-click is not yet captured (step 5). `!hair` /
+  `!face` are the same effect by hand.
 * The modern-only nodes are still in: `info/level/.../EquipmentSkill` on the six weapons and
   `islot HrCp` on the three hats. Step 1 above measures whether they matter.
 

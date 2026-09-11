@@ -349,15 +349,15 @@ mod tests {
         assert_eq!(t.len(), 168, "159 classic sale rows + 9 backported Special-tab rows");
         assert_eq!(t.problems, 0, "every row parses");
         let special = t.get(120_000_000).expect("the Signature Style Collection is on sale");
-        assert_eq!((special.item_id, special.price, special.on_sale), (5_222_221, 7_900, true));
+        assert_eq!((special.item_id, special.price, special.on_sale), (5_222_221, 8_000, true));
 
         // The price column is NX and the observed set is tiny. If a price ever lands outside
         // it, the column has moved and the whole table is decoding shifted.
         for c in t.rows.values() {
-            // 3900 and 7900 are the two backported Special-tab prices; still a closed set,
-            // so a shifted column fails here rather than reading as a plausible number.
+            // 2000 and 8000 are the two Special-tab prices the owner set on 2026-09-10; still a
+            // closed set, so a shifted column fails here rather than reading as plausible.
             assert!(
-                matches!(c.price, 0 | 100 | 700 | 1000 | 3900 | 7900),
+                matches!(c.price, 0 | 100 | 700 | 1000 | 2000 | 8000),
                 "{} ({}) priced {} - the price column has moved",
                 c.sn,
                 c.name,

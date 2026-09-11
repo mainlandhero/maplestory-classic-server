@@ -69,6 +69,7 @@ pub mod skillpoints;
 pub mod skilltable;
 pub mod slotcoupons;
 pub mod shops;
+pub mod signaturestyle;
 pub mod taxi;
 pub mod thirdjob;
 

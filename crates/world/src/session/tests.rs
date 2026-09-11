@@ -9806,3 +9806,78 @@ fn hair_and_face_commands_persist_and_re_enter_the_map() {
     let me = store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
     assert_eq!((me.hair, me.face), (42540, 22035), "the refusals changed nothing");
 }
+
+/// The `0x0114` body: u32 tick, u16 slot, u32 itemId - the capture of 2026-09-09.
+fn use_cash_item_body(slot: u16, item_id: u32) -> Vec<u8> {
+    let mut b = 0u32.to_le_bytes().to_vec();
+    b.extend_from_slice(&slot.to_le_bytes());
+    b.extend_from_slice(&item_id.to_le_bytes());
+    b
+}
+
+/// **The box hands out all eight Outfit Set Coupons, and a set coupon hands out its set.**
+/// The owner, 2026-09-10: *"instead of obtaining 1 at random rates, we give them all of the
+/// sets."* The box is consumed, the eight land in the Cash tab, and opening Frieren's puts
+/// three hair coupons and a face coupon in the Use tab and six equips in the Equip tab.
+#[test]
+fn the_collection_gives_every_set_and_a_set_coupon_gives_its_contents() {
+    let (mut s, store, id) = gm_session();
+    let slot = store
+        .add_item(id, store::InventoryType::Cash, &store::Item::bundle(crate::signaturestyle::COLLECTION, 1), 1)
+        .unwrap()[0]
+        .slot;
+
+    let out = s.on_use_cash_item(&use_cash_item_body(slot, crate::signaturestyle::COLLECTION));
+    assert!(out.iter().any(|r| r.what.contains("8 item(s) given")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    let cash: Vec<u32> = store.bag(id).unwrap().items_in(store::InventoryType::Cash).map(|i| i.item.item_id).collect();
+    assert_eq!(cash.len(), 8, "the box is gone and eight coupons are in: {cash:?}");
+    assert!(!cash.contains(&crate::signaturestyle::COLLECTION));
+    for set in &crate::signaturestyle::SETS {
+        assert!(cash.contains(&set.coupon), "{} coupon missing", set.name);
+    }
+
+    // Open Frieren's.
+    let frieren = crate::signaturestyle::set_for_coupon(5_681_543).unwrap();
+    let fslot = store.bag(id).unwrap().items_in(store::InventoryType::Cash).find(|i| i.item.item_id == 5_681_543).unwrap().slot;
+    let out = s.on_use_cash_item(&use_cash_item_body(fslot, 5_681_543));
+    assert!(out.iter().any(|r| r.what.contains("10 item(s) given")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    let bag = store.bag(id).unwrap();
+    let use_tab: Vec<u32> = bag.items_in(store::InventoryType::Use).map(|i| i.item.item_id).collect();
+    let equip_tab: Vec<u32> = bag.items_in(store::InventoryType::Equip).map(|i| i.item.item_id).collect();
+    assert_eq!(use_tab.len(), 4, "three hair coupons and a face coupon: {use_tab:?}");
+    for c in frieren.hair_coupons.iter().chain([&frieren.face_coupon]) {
+        assert!(use_tab.contains(c), "{c} missing");
+    }
+    assert_eq!(equip_tab.len(), 6, "{equip_tab:?}");
+    for e in frieren.equips {
+        assert!(equip_tab.contains(e), "{e} missing");
+    }
+    assert_eq!(bag.items_in(store::InventoryType::Cash).count(), 7, "the Frieren coupon is gone, seven remain");
+    // Every hand-out is told to the client: one InventoryOperation per row placed.
+    assert!(out.iter().filter(|r| r.opcode == net::inventory::INVENTORY_OPERATION).count() >= 10);
+}
+
+/// **All or nothing.** A set that needs more Equip slots than are free is refused before a
+/// single row is written, the coupon is kept, and the player is told which tab and by how
+/// much. A half-opened set is the failure this exists to prevent.
+#[test]
+fn a_set_that_does_not_fit_is_refused_whole_and_the_coupon_is_kept() {
+    let (mut s, store, id) = gm_session();
+    // Stark needs 7 Equip slots. Leave 3.
+    let slots = store.inventory_slots(id, store::InventoryType::Equip).unwrap();
+    for i in 0..(slots - 3) {
+        store.add_item(id, store::InventoryType::Equip, &store::Item::equip(1_302_000 + u32::from(i % 3)), 1).unwrap();
+    }
+    let slot = store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_681_549, 1), 1).unwrap()[0].slot;
+    let before = store.bag(id).unwrap().items.len();
+
+    let out = s.on_use_cash_item(&use_cash_item_body(slot, 5_681_549));
+    let notice = out.iter().find(|r| r.opcode == net::notice::CHAT_NOTICE).expect("a refusal notice");
+    let text = notice_text(notice);
+    assert!(text.contains("Equip tab needs 7 free slot(s)") && text.contains("has 3"), "{text}");
+    assert!(text.contains("Nothing was used up"), "{text}");
+    assert_eq!(store.bag(id).unwrap().items.len(), before, "nothing moved");
+    assert!(store.bag(id).unwrap().items_in(store::InventoryType::Cash).any(|i| i.item.item_id == 5_681_549), "the coupon is kept");
+    // And the latch is still cleared, so the Cash tab is not frozen by the refusal.
+    assert!(out.iter().any(|r| r.opcode == net::combat::STAT_CHANGED), "the unlock");
+}

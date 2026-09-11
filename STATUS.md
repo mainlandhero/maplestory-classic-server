@@ -39,7 +39,11 @@ game socket itself carries no credential and never has. Say so in every progress
 
 **2026-09-10, night: THE HYBRID BUILD IS INSTALLED - the modern client's Signature Style
 Collection (206 items) is in `client-patched/Data`, and the Cash Shop's Special tab sells it,
-badged NEW. NOT YET SEEN ON A SCREEN.** The owner: *"put all of these modern maple assets into the
+badged NEW. THE SHOP TAB IS SEEN ON SCREEN** - the owner, with a screenshot: *"The items actually
+render fine in the cash shop"* - nine entries, NEW badges, icons, tooltips: the classic client
+loads the rebuilt archives. The equips, hair and faces on a character are still unseen. Prices
+are the owner's (8,000 / 2,000 LP); the box now gives ALL eight set coupons and each coupon its set
+(`world::signaturestyle`, opened by `session::cashitem`, all or nothing). The owner: *"put all of these modern maple assets into the
 classic WZ data and have clients run off of a hybrid classic + selective modern asset build"*,
 then *"put the full package items for sale in the special tab of Cash Shop ... Label them with
 the 'NEW' icon."* `crates/wz/src/writer.rs` is a WZ writer (an image is self-contained, so a
@@ -50,9 +54,10 @@ Commodity row is the NEW badge, `Class 2` is HOT (15/15 against the owner's Main
 and Special was blank because it declared no sub-tab. Prices are a placeholder (7,900 / 3,900
 LP). `!hair` / `!face` exist for the id test. The test steps are in
 `backport/signature-style/README.md` because another agent held the launcher script; opening
-the box and the set coupons is the next server-side rule to write. Two pre-existing traps fixed
-on the way: `gen_item_rules.py` read 0 rows since `unitPrice` was added; `dump_names.py` wrote
-over the mob SPAWN table.
+the hair/face COUPONS is the one rule left, pending a capture of the Consume-tab use opcode.
+Three pre-existing traps fixed on the way: `gen_item_rules.py` read 0 rows since `unitPrice` was
+added; `dump_names.py` wrote over the mob SPAWN table; `dump_names.py` decoded the dumper's
+UTF-8 with the console code page, so "Übel" reached items.txt double-encoded.
 
 **2026-09-10: the station clock is decoded and wired - `0x01BC`, type 1, `u8 hour, u8 minute,
 u8 second` - and NOT YET SEEN ON SCREEN.** The owner's 2026-09-09 report was *"the server clock
