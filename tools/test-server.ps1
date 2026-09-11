@@ -674,28 +674,31 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
-     TL. MOVING A CASH ITEM OUT OF THE LOCKER LEAVES IT DRAWN THERE. -SetFieldProbe.
-         Run 4 (03:47) DONE: both panels draw - the Cash Inventory paints the ITEM behind
-         the record, and every record now carries one (fixture cash-locker-draws-with-
-         item-body-...). Then the owner dragged an Etc coupon to the Item Inventory: it
-         arrived there AND stayed in the Cash Inventory, and the second drag got "Due to
-         an unknown error" - the server had already emptied that locker slot (world.log
-         03:47:57, refusal 0x3D/2). The 0x19 reply's handler erases the serial it finds
-         in the ITEM's own +0x38 - not the one from the request - and +0x38 is set only
-         when the item body's hasCashSN byte is 1 and the u64 follows. Ours was 0, so
-         the client erased serial 0 and kept the row. The 0x19 body now carries flag 1 +
-         the locker serial (a bundle grows by 8 bytes for it; an equip does not).
-         Enter the Cash Shop, drag ONE Etc coupon to the Item Inventory:
-           it appears in Item Inventory and VANISHES from Cash Inventory -> fixed; exit
-                          the shop and check the Etc coupon is in the Cash tab, then
-                          re-enter and check the locker still lists the rest
-           it appears and STAYS in the locker -> the erase keys on something else; the
-                          next run watches 140d85c10 (the erase) for its argument
-           the client DIES on the drag -> the 8-byte-longer bundle body is being read
-                          by something other than the base decode; say so
-         (Dragging a coupon INTO the Cash Inventory - 0x0B - is not built yet. It is
-          answered with the queue refusal, so it shows "unknown error" and moves nothing;
-          that is expected, not a finding.)
+     TL. THE OTHER DIRECTION: BAG -> LOCKER (0x0B -> 0x1B). -SetFieldProbe.
+         Run 5 (03:54) DONE: locker -> bag works, the row vanishes. Then the owner double-
+         clicked the coupon they had just moved out, to put it back: 0x0B went out and the
+         server refused it (not built) - "Due to an unknown error". Built now. The 0x1B
+         reply is the zero form: a full locker record whose serial is THE ONE THE CLIENT
+         SENT (the handler finds the bag item to remove by scanning the tab for that
+         serial in item+0x38, and a miss resets bag slot 0 - so echoing is the only safe
+         choice), item body attached so the row draws; then a 0x04 reload so the new row
+         is keyed the way every later 0x0A expects.
+         ONE ITEM CAN DO THIS TODAY and it is the one that came OUT of the locker in the
+         same visit: the double-click builder refuses an item whose +0x38 is 0, and the
+         bag-restored coupons (the 3 Mystery Hair Coupons) have 0 - so double-clicking
+         THOSE sends nothing and shows nothing. That is the next step, not this run.
+         Enter the Cash Shop:
+           1. drag an Etc coupon locker -> Item Inventory (known to work)
+           2. double-click THAT coupon in the Item Inventory
+              it goes back to the Cash Inventory and leaves the Item Inventory -> fixed
+              it appears in the locker AND stays in the Item Inventory -> the bag
+                          lookup missed; say whether anything ELSE in the Cash tab
+                          vanished (that would be slot 0 being reset)
+              "unknown error" -> the server refused; world.log says why
+              client DIES -> say so
+           3. drag it out again (0x0A on the re-keyed row) -> it should move; if it
+              says "unknown error", the reload did not re-key the map
+           4. double-click a Mystery Hair Coupon: EXPECT NOTHING to happen (see above)
 
      TL2 (DONE 23:27). THE CASH SHOP'S TWO EMPTY PANELS - MEASURING RUN 2. (Run 1 is below, DONE.)
          Run 1 (23:20) measured: the 0x04 handler ran once, the locker-map INSERT ran
@@ -2583,20 +2586,23 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
-        Write-Host '  TL. A LOCKER ITEM MOVED OUT STAYS DRAWN IN THE LOCKER. -SetFieldProbe.' -ForegroundColor Magenta
-        Write-Host '      Run 4 (03:47) DONE: both panels draw. The drag to Item Inventory'
-        Write-Host '      arrived AND stayed in the Cash Inventory; the 2nd drag got'
-        Write-Host '      "unknown error" (the server had already emptied that slot).'
-        Write-Host '      The 0x19 handler erases the serial in the ITEM''s own +0x38,'
-        Write-Host '      which is set only when the body''s hasCashSN byte is 1. Ours'
-        Write-Host '      was 0 -> it erased serial 0 -> the row stayed. The 0x19 body'
-        Write-Host '      now carries the serial. Drag ONE Etc coupon to Item Inventory:'
-        Write-Host '        it VANISHES from the Cash Inventory -> fixed; exit, check the'
-        Write-Host '          Cash tab has it, re-enter, check the rest are still listed'
-        Write-Host '        it STAYS -> next run watches the erase 140d85c10'
-        Write-Host '        client DIES on the drag -> the longer bundle body; say so' -ForegroundColor Red
-        Write-Host '      Dragging INTO the Cash Inventory (0x0B) is not built: it is' -ForegroundColor Yellow
-        Write-Host '      refused with "unknown error" and moves nothing - expected.' -ForegroundColor Yellow
+        Write-Host '  TL. THE OTHER DIRECTION: BAG -> LOCKER (0x0B -> 0x1B). -SetFieldProbe.' -ForegroundColor Magenta
+        Write-Host '      Run 5 (03:54) DONE: locker -> bag works. Putting it BACK was'
+        Write-Host '      refused (not built). Built: 0x1B with a record keyed on the'
+        Write-Host '      serial the client sent + an item body, then a 0x04 reload.'
+        Write-Host '      ONLY an item that came OUT of the locker this visit can go back'
+        Write-Host '      today: bag-restored ones (the 3 Mystery Hair Coupons) have no'
+        Write-Host '      serial and the client sends NOTHING for them. Next step.' -ForegroundColor Yellow
+        Write-Host '        1. drag an Etc coupon locker -> Item Inventory'
+        Write-Host '        2. double-click THAT coupon in the Item Inventory:'
+        Write-Host '           back in the locker, gone from Item Inventory -> fixed'
+        Write-Host '           in the locker AND still in Item Inventory -> lookup missed;'
+        Write-Host '             say if anything ELSE in the Cash tab vanished (slot 0)'
+        Write-Host '           "unknown error" -> refused; world.log says why'
+        Write-Host '           client DIES -> say so' -ForegroundColor Red
+        Write-Host '        3. drag it out again -> should move; "unknown error" means'
+        Write-Host '           the reload did not re-key the row'
+        Write-Host '        4. double-click a Mystery Hair Coupon: EXPECT nothing'
         Write-Host '      (Run 2 and run 1 lines, for the record:)' -ForegroundColor DarkGray
         Write-Host '        -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,1410b6060,1417113f0:hits=200,14170fd10:hits=400,1410b6970"' -ForegroundColor DarkGray
         Write-Host '        -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,140d7e1f0,140d75850,1410b5540,14170fd10"' -ForegroundColor DarkGray

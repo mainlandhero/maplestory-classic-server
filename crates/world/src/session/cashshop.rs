@@ -264,6 +264,108 @@ impl Session {
         }]
     }
 
+    /// `0x03E1 0x0B` - the player double-clicked a cash item in the shop's Item Inventory.
+    ///
+    /// The owner, 2026-09-11: *"Moving items from Cash Inventory to Item Inventory works, but it
+    /// does not work in the reverse direction"* - this sub-op was the generic queue refusal.
+    ///
+    /// # The reply's serial is the request's, and a reload follows - both are load-bearing
+    ///
+    /// The `0x1B` handler finds the bag item to remove by scanning the tab for `item+0x38 ==
+    /// record.liSN` (`FUN_140230CB0`), and "not found" is 0, after which it resets bag slot
+    /// 0 anyway (`net::cashshop::RESULT_MOVED_TO_LOCKER`). The only serial the client knows
+    /// for this item is the one it sent, so the record echoes it. That serial then keys the
+    /// locker map, and it is NOT `(account << 32) | new slot` - the next `0x0A` would name a
+    /// slot this server cannot resolve. So the `0x04` reload follows, clearing the map and
+    /// re-keying every row canonically. The panel repaints twice; nobody will see it.
+    fn on_bag_to_locker(&mut self, rest: &[u8]) -> Vec<Reply> {
+        use net::cashshop::reason;
+        let no = |s: &Self, why: String| s.refuse_cash_shop_queue(u16::from(reason::UNKNOWN_ERROR), why);
+        let head = format!("0x03E1 0x0B bag -> locker, {} byte payload {:02x?}", rest.len(), rest);
+
+        let Some(req) = net::cashshop::parse_bag_to_locker(rest) else {
+            return no(self, format!("{head} - not the 17-byte shape; nothing moved"));
+        };
+        let Some(claimed) = self.claimed() else {
+            return no(self, format!("{head} - no claim on this connection; nothing moved"));
+        };
+        let account_id = claimed.account_id;
+        let Some(chr) = self.claimed_character() else {
+            return no(self, format!("{head} - no character; nothing moved"));
+        };
+        if req.serial == 0 || req.serial == u64::MAX {
+            return no(self, format!("{head} - serial {:#x}: the client keys the bag lookup on it and the locker map drops -1; nothing moved", req.serial));
+        }
+        let inv = store::InventoryType::Cash;
+        if req.inv_type != inv.as_u8() {
+            return no(
+                self,
+                format!("{head} - tab {} is not the Cash tab ({}); this server keeps cash items there only; nothing moved", req.inv_type, inv.as_u8()),
+            );
+        }
+        let Ok(slot) = u16::try_from(req.slot) else {
+            return no(self, format!("{head} - slot {} is not a bag slot; nothing moved", req.slot));
+        };
+        let item = match self.store.inventory_slot(chr.id, inv, slot) {
+            Ok(Some(item)) => item,
+            Ok(None) => return no(self, format!("{head} - {inv:?} slot {slot} is empty; nothing moved")),
+            Err(e) => return no(self, format!("{head} - could not read {inv:?} slot {slot}: {e}; nothing moved")),
+        };
+        if item.item_id != req.item_id {
+            return no(
+                self,
+                format!("{head} - {inv:?} slot {slot} holds {}, the packet says {}; nothing moved", item.item_id, req.item_id),
+            );
+        }
+        if net::inventory::is_pet(item.item_id) {
+            return no(self, format!("{head} - {} is a PET and no type-3 body exists to draw it in the locker; nothing moved", item.item_id));
+        }
+
+        // Out of the bag, into the locker; back into the bag if the locker refuses.
+        match self.store.clear_inventory_slot(chr.id, inv, slot) {
+            Ok(true) => {}
+            Ok(false) => return no(self, format!("{head} - {inv:?} slot {slot} emptied under us; nothing moved")),
+            Err(e) => return no(self, format!("{head} - could not clear {inv:?} slot {slot}: {e}; nothing moved")),
+        }
+        let placed = match self.store.put_cash_item(account_id, &item) {
+            Ok(l) => l,
+            Err(e) => {
+                let back = self.store.set_inventory_slot(chr.id, inv, slot, &item);
+                // The generic reason on purpose: whether 0x3D's u16 indexes the same message
+                // table as 0x1A's u8 is [I], so "locker full" is said in the log, not on screen.
+                return no(
+                    self,
+                    format!("{head} - the locker refused: {e}. Put BACK in {inv:?} slot {slot}: {back:?}"),
+                );
+            }
+        };
+
+        let quantity = match item.kind {
+            store::ItemKind::Bundle { quantity } => quantity,
+            store::ItemKind::Equip(_) => 1,
+        };
+        let sn = self.config.commodity.serial_for_item(item.item_id).unwrap_or(0);
+        let record = net::cashshop::cash_item_record_with_item(
+            req.serial, // the client's key for THIS item; see the doc block
+            item.item_id,
+            sn,
+            quantity.max(1),
+            0,
+            chr.id,
+            &self.item_blob_with_cash_sn(&item, std::num::NonZeroU64::new(req.serial)),
+        );
+        let mut out = vec![Reply {
+            opcode: net::cashshop::CASH_SHOP_RESULT,
+            body: net::cashshop::cash_shop_moved_to_locker(&record),
+            what: format!(
+                "CashShopResult 0x1B MOVED: {inv:?} tab slot {slot} -> locker slot {}, {quantity}x {} - record serial {:#x} (the request's; the client removes the bag item whose +0x38 equals it). The 0x04 reload that follows re-keys the row as {:#x}",
+                placed.slot, item.item_id, req.serial, locker_serial(account_id, placed.slot)
+            ),
+        }];
+        out.push(self.locker_reload_reply(account_id, "after the bag -> locker move, so the new row carries its canonical serial"));
+        out
+    }
+
     /// `0x03E0` - "what is my balance". Empty body, and the client throttles it to 60 s.
     pub(super) fn on_cash_shop_query(&mut self) -> Vec<Reply> {
         let Some(claimed) = self.claimed() else { return Vec::new() };
@@ -440,6 +542,11 @@ impl Session {
                 if action.sub_op == net::cashshop::ACTION_MOVE_LOCKER_TO_BAG =>
             {
                 return self.on_locker_to_bag(action.rest);
+            }
+            net::cashshop::ActionFamily::Queued
+                if action.sub_op == net::cashshop::ACTION_MOVE_BAG_TO_LOCKER =>
+            {
+                return self.on_bag_to_locker(action.rest);
             }
             net::cashshop::ActionFamily::Queued => {
                 return self.refuse_cash_shop_queue(

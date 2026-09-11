@@ -796,14 +796,59 @@ pub fn cash_shop_item_to_locker(record: &[u8]) -> Vec<u8> {
     w.into_vec()
 }
 
-/// **`0x05AE` sub-op `0x1B`, and it is a trap in BOTH of its forms.** Named so nobody uses it.
+/// **`0x05AE` sub-op `0x1B` - the reply to a bag-to-locker MOVE, and a trap for anything else.**
 ///
-/// Its first `u8` is a form selector, which neither earlier file had: **zero** carries the full
-/// record, non-zero carries SN, item id and a `u32` slot whose *sign* picks the verify path.
-/// Both forms end at `0x140D81125` calling `FUN_1401ABD80(tabArray + slot * 16)` with **no null
-/// check** - the out-of-range test above it only logs. **Never use it for a purchase**:
-/// `FUN_140230CB0` returns 0 and the tail then resets index 0 of a possibly-null array.
+/// Its first `u8` is a form selector: **zero** carries a full cash-item record, non-zero
+/// carries SN, item id and a `u32` slot whose *sign* picks a verify path. Both forms end at
+/// `0x140D81125` calling `FUN_1401ABD80(tabArray + slot * 16)` with **no null check** - the
+/// out-of-range test above it only logs. **Never use it for a purchase**: `FUN_140230CB0`
+/// returns 0 and the tail then resets index 0 of a possibly-null array.
+///
+/// # The zero form, read in full for the move (2026-09-11) - `FUN_140D80410` **[L]**
+///
+/// ```asm
+/// 140d80447  mov  byte [rsi+0x74], 0          ; the latch, cleared at the head
+/// 140d80461  READ u8                          ; 0 -> 140d8103c
+/// 140d8103c  call 140d833c0                   ; a fresh record object
+/// 140d81061  call 1402d0950(obj, pkt)         ; the RECORD - 70 bytes, flag, [item]
+/// 140d8107e  call 140d75850(stage, &obj)      ; into the locker map (drops liSN == -1)
+/// 140d81094  ecx = [obj+0x30] ; call 1403e8af0 ; tab = itemId / 1000000
+/// 140d810a2  r8  = [obj+0x20]                 ; the record's liSN
+/// 140d810ab  call 140230cb0(char, tab, liSN)  ; the BAG slot whose item+0x38 == liSN
+/// 140d810b3  test eax,eax ; jg 140d8111c      ; <= 0: an ELog report (0x22000008), then ON
+/// 140d81125  rdi = char + tab*8 ; rax = [rdi+0x5d0] ; count = [rax-8]
+/// 140d81147  cmp slot, count ; jb 140d8116a   ; out of range: report 0xbc, then ON
+/// 140d81174  call 1401abd80(rax + slot*16)    ; RESET that bag slot - the item leaves the bag
+/// 140d81185  call 1410b5540                   ; locker panel repaint
+/// 140d81196  call 1410d0fd0                   ; item inventory repaint
+/// 140d811bd  cmp [rsi+0x120], 5 ; je: zero it, call 140d74a70 (pump)  else 140d74c70
+/// ```
+///
+/// So the record's **`liSN` must equal the moved item's own `+0x38`** - that is the only key
+/// the bag lookup has - and the item's `+0x38` is whatever serial the client last read into
+/// it (the `0x19` body's, or a bag restore's). The request echoes it, so the reply echoes
+/// the request. That serial is then the locker map's key for the row, which is NOT this
+/// server's canonical `(account << 32) | slot` - hence [`cash_shop_moved_to_locker`]'s
+/// contract: **follow it with a [`RESULT_LOAD_LOCKER`]**, which clears the map and re-keys
+/// every row canonically before any later `0x0A` can name one.
+///
+/// And the reason a serial the client does not know is fatal here: `FUN_140230CB0` returns
+/// 0 for "not found", and the tail resets `tabArray[0]` regardless. The trap and the reply
+/// are the same code; what separates them is whether the item is really in the bag.
 pub const RESULT_MOVED_TO_LOCKER: u8 = 0x1B;
+
+/// Build a [`RESULT_MOVED_TO_LOCKER`], zero form: `u8 0x1B, u8 0, record`.
+///
+/// `record` is a [`cash_item_record_with_item`] whose serial is the one the request carried -
+/// see [`RESULT_MOVED_TO_LOCKER`] for why it cannot be anything else, and why a
+/// [`cash_shop_load_locker`] must follow.
+pub fn cash_shop_moved_to_locker(record: &[u8]) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(RESULT_MOVED_TO_LOCKER);
+    w.u8(0); // the form: a full record follows
+    w.bytes(record);
+    w.into_vec()
+}
 
 /// `0x05AE` sub-op **`0x04` - `Res_LoadLocker_Done`: the whole Cash Inventory, at once.**
 ///
@@ -981,9 +1026,86 @@ pub fn parse_locker_to_bag(rest: &[u8]) -> Option<LockerToBag> {
     Some(LockerToBag { serial, item_id, inv_type, slot })
 }
 
+/// **`0x03E1` sub-op `0x0B` - move a bag item into the locker.** The mirror of
+/// [`ACTION_MOVE_LOCKER_TO_BAG`]; builder `FUN_140D75080`, `research/cash-shop-actions.md`
+/// section 4, and captured 2026-09-11 03:54:41 (`0b 0100000001000000 30954e00 05 06000000`):
+///
+/// ```text
+/// u8      0x0B
+/// u8[8]   liCashItemSN      the item's own +0x38 - the serial the client last read into it
+/// u32     nItemID           from the bag item, not the request
+/// u8      nInventoryType    5 or 6 (140d750cd: `sub eax,5 ; cmp eax,1 ; ja fail`)
+/// u32     nSlotPosition     u32 here, u16 in 0x0A - read off both listings
+/// ```
+///
+/// **An item with `+0x38 == 0` never sends this.** The double-click builder `FUN_1410CFE70`
+/// tests `[item+0x38]` at `0x1410cff01` and builds no kind-5 entry when it is zero **[L]** -
+/// which is why, in the 03:54 run, the coupon that had come OUT of the locker (and so carried
+/// a serial from its `0x19` body) produced a request and the three bag-restored Mystery Hair
+/// Coupons could not. Giving bag-restored cash items a serial is the follow-up; this parser
+/// is for the request the client does build.
+pub const ACTION_MOVE_BAG_TO_LOCKER: u8 = 0x0B;
+
+/// Payload length of an [`ACTION_MOVE_BAG_TO_LOCKER`] after the sub-op byte.
+pub const BAG_TO_LOCKER_LEN: usize = 8 + 4 + 1 + 4;
+
+/// A parsed [`ACTION_MOVE_BAG_TO_LOCKER`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BagToLocker {
+    pub serial: u64,
+    pub item_id: u32,
+    pub inv_type: u8,
+    pub slot: u32,
+}
+
+/// Parse the payload after the `0x0B` sub-op. `None` unless it is exactly the builder's shape.
+pub fn parse_bag_to_locker(rest: &[u8]) -> Option<BagToLocker> {
+    if rest.len() != BAG_TO_LOCKER_LEN {
+        return None;
+    }
+    let mut r = PacketReader::new(rest);
+    let serial = r.u64().ok()?;
+    let item_id = r.u32().ok()?;
+    let inv_type = r.u8().ok()?;
+    let slot = r.u32().ok()?;
+    Some(BagToLocker { serial, item_id, inv_type, slot })
+}
+
 #[cfg(test)]
 mod action_tests {
     use super::*;
+
+    /// The bag-to-locker request, byte for byte the 03:54:41 capture, and the 0x0A shape
+    /// (one byte shorter) refused by it.
+    #[test]
+    fn the_bag_to_locker_request_parses_the_captured_bytes() {
+        let b = [
+            0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, // serial: account 1, locker slot 1
+            0x30, 0x95, 0x4e, 0x00, // 5150000 Mystery Hair Coupon
+            0x05, // the Cash tab
+            0x06, 0x00, 0x00, 0x00, // slot 6, u32
+        ];
+        assert_eq!(b.len(), BAG_TO_LOCKER_LEN);
+        assert_eq!(
+            parse_bag_to_locker(&b),
+            Some(BagToLocker { serial: 0x1_0000_0001, item_id: 5_150_000, inv_type: 5, slot: 6 })
+        );
+        assert_eq!(parse_bag_to_locker(&b[..15]), None, "the 0x0A shape is NOT this");
+        assert_eq!(parse_bag_to_locker(&[]), None);
+        assert!(ACTION_ON_SERIAL.contains(&ACTION_MOVE_BAG_TO_LOCKER), "it is one of the queue");
+    }
+
+    /// The zero-form 0x1B: sub-op, a zero, then the record verbatim - the record's serial is
+    /// the request's, since the client finds the bag item by it.
+    #[test]
+    fn the_moved_to_locker_reply_is_the_zero_form_with_the_record() {
+        let body = crate::bag::bundle_item(5_150_000, 1, 0, &[0u8; crate::bag::BUNDLE_OWNER_LEN]);
+        let r = cash_item_record_with_item(0x1_0000_0001, 5_150_000, 0, 1, 0, 200, &body);
+        let p = cash_shop_moved_to_locker(&r);
+        assert_eq!(&p[..2], &[RESULT_MOVED_TO_LOCKER, 0]);
+        assert_eq!(&p[2..], &r[..]);
+        assert_eq!(u64::from_le_bytes(p[2..10].try_into().unwrap()), 0x1_0000_0001);
+    }
 
     /// The locker-to-bag request, in the builder's shape, and every truncation refused.
     #[test]
@@ -1099,7 +1221,7 @@ mod action_tests {
         // 0x19 puts an item in the BAG and 0x0C puts it in the LOCKER. Confusing them is the
         // bug the owner reported, so they are pinned apart.
         assert_ne!(RESULT_ITEM_TO_LOCKER, RESULT_ITEM_GRANTED);
-        assert_ne!(RESULT_ITEM_TO_LOCKER, RESULT_MOVED_TO_LOCKER, "1B is a trap in both forms");
+        assert_ne!(RESULT_ITEM_TO_LOCKER, RESULT_MOVED_TO_LOCKER, "1B is the MOVE reply, a trap for a buy");
     }
 
     /// **With an item attached the flag is 1 and the body follows verbatim** - the shape

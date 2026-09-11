@@ -9706,6 +9706,79 @@ fn a_locker_item_moves_into_the_cash_tab_where_the_client_asked() {
     assert_eq!((bag[0].slot, bag[0].item.item_id), (3, 5680004));
 }
 
+/// The `0x03E1 0x0B` body the client builds: sub-op, `u64` serial, `u32` item, `u8` tab,
+/// **`u32`** slot - captured 2026-09-11 03:54:41.
+fn bag_to_locker(serial: u64, item_id: u32, tab: u8, slot: u32) -> Vec<u8> {
+    let mut b = net::cashshop::CLIENT_CASH_SHOP_ACTION.to_le_bytes().to_vec();
+    b.push(net::cashshop::ACTION_MOVE_BAG_TO_LOCKER);
+    b.extend_from_slice(&serial.to_le_bytes());
+    b.extend_from_slice(&item_id.to_le_bytes());
+    b.push(tab);
+    b.extend_from_slice(&slot.to_le_bytes());
+    b
+}
+
+/// **A bag item moves back into the locker: the `0x1B` zero form carries a record keyed on
+/// the serial the client sent, and a `0x04` reload re-keys it canonically.** The owner,
+/// 2026-09-11: *"it does not work in the reverse direction."* The round trip is the test:
+/// out through `0x0A` (the body gives the item a serial), back through `0x0B` echoing it.
+#[test]
+fn a_bag_item_moves_back_into_the_locker_and_the_reload_rekeys_it() {
+    let (mut s, store, id) = cash_shop_session();
+    let account = 1i64;
+    let cash = store::InventoryType::Cash;
+    let placed = store.put_cash_item(account, &store::Item::bundle(5150000, 1)).unwrap();
+    let serial = (account as u64) << 32 | u64::from(placed.slot);
+    let out = s.handle(&locker_to_bag(serial, 5150000, cash.as_u8(), 6));
+    assert_eq!(out[0].body[0], net::cashshop::RESULT_ITEM_GRANTED);
+    assert!(store.cash_locker(account).unwrap().is_empty());
+
+    // Back: the client names the item by the serial its +0x38 holds, and the Cash slot.
+    let out = s.handle(&bag_to_locker(serial, 5150000, cash.as_u8(), 6));
+    assert_eq!(out.len(), 2, "the 0x1B and the reload: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    let moved = &out[0];
+    assert_eq!(moved.opcode, net::cashshop::CASH_SHOP_RESULT);
+    assert_eq!(&moved.body[..2], &[net::cashshop::RESULT_MOVED_TO_LOCKER, 0], "0x1B, zero form: a record");
+    let rec = &moved.body[2..];
+    assert_eq!(u64::from_le_bytes(rec[..8].try_into().unwrap()), serial, "the REQUEST's serial - the bag lookup key");
+    assert_eq!(u32::from_le_bytes(rec[16..20].try_into().unwrap()), 5150000);
+    assert_eq!(rec[70], 1, "an item follows, so the row draws");
+    let body = net::bag::bundle_item_with_cash_sn(5150000, 1, 0, &[0u8; net::bag::BUNDLE_OWNER_LEN], std::num::NonZeroU64::new(serial));
+    assert_eq!(&rec[71..], &body[..], "the bundle body, serial in its +0x38");
+    assert!(moved.what.contains("0x1B MOVED"), "{}", moved.what);
+    let reload = &out[1];
+    assert_eq!(reload.body[0], net::cashshop::RESULT_LOAD_LOCKER, "then the reload");
+    assert_eq!(u16::from_le_bytes([reload.body[2], reload.body[3]]), 1, "one row");
+    let canonical = u64::from_le_bytes(reload.body[4..12].try_into().unwrap());
+    assert_eq!(canonical >> 32, account as u64);
+
+    // The database: out of the Cash tab, back in the locker.
+    assert!(store.inventory_slot(id, cash, 6).unwrap().is_none(), "the Cash slot is empty");
+    let locker = store.cash_locker(account).unwrap();
+    assert_eq!(locker.len(), 1);
+    assert_eq!(locker[0].item.item_id, 5150000);
+    assert_eq!(canonical & 0xFFFF_FFFF, u64::from(locker[0].slot), "the reload keys the row on its real slot");
+
+    // And every check that fails moves nothing: wrong slot, wrong item, wrong tab, serial 0.
+    let placed = store.put_cash_item(account, &store::Item::bundle(5680004, 1)).unwrap();
+    let serial2 = (account as u64) << 32 | u64::from(placed.slot);
+    s.handle(&locker_to_bag(serial2, 5680004, cash.as_u8(), 2));
+    for (what, req) in [
+        ("an empty slot", bag_to_locker(serial2, 5680004, cash.as_u8(), 3)),
+        ("the wrong item id", bag_to_locker(serial2, 5150000, cash.as_u8(), 2)),
+        ("the wrong tab", bag_to_locker(serial2, 5680004, store::InventoryType::Etc.as_u8(), 2)),
+        ("serial 0", bag_to_locker(0, 5680004, cash.as_u8(), 2)),
+        ("a slot beyond u16", bag_to_locker(serial2, 5680004, cash.as_u8(), 0x1_0002)),
+    ] {
+        let out = s.handle(&req);
+        assert_eq!(out.len(), 1, "{what}: one refusal");
+        assert_eq!(out[0].body[0], net::cashshop::RESULT_QUEUE_REFUSED, "{what}: 0x3D, not 0x1A");
+        assert!(out[0].what.contains("nothing moved"), "{what}: {}", out[0].what);
+        assert!(store.inventory_slot(id, cash, 2).unwrap().is_some(), "{what}: still in the bag");
+        assert_eq!(store.cash_locker(account).unwrap().len(), 1, "{what}: locker unchanged");
+    }
+}
+
 /// **Every check the client made is re-made here, and a failed one moves nothing.** Wrong
 /// account in the serial, a slot already occupied, an item id that does not match the locker
 /// row, the wrong tab, slot 0 - each is the queue refusal (`0x3D`, not `0x1A`, which would
