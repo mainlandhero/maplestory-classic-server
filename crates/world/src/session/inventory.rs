@@ -85,7 +85,7 @@ impl Session {
         changed
             .iter()
             .map(|row| {
-                let blob = self.item_blob(&row.item);
+                let blob = self.bag_item_blob(inv, row.slot, &row.item);
                 Reply {
                     opcode: net::inventory::INVENTORY_OPERATION,
                     body: net::inventory::inventory_added(
@@ -144,7 +144,7 @@ impl Session {
         changed
             .iter()
             .map(|row| {
-                let blob = self.item_blob(&row.item);
+                let blob = self.bag_item_blob(inv, row.slot, &row.item);
                 Reply {
                     opcode: net::inventory::INVENTORY_OPERATION,
                     body: net::inventory::inventory_set_quiet(

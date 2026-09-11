@@ -10066,6 +10066,24 @@ fn entering_the_shop_restores_the_bag_and_stamps_the_character_on_locker_rows() 
         .expect("the locker reload");
     assert!(restore < reload, "bag first, then the locker: {ops:?}");
     assert!(out[restore].what.contains("mode 5"), "{}", out[restore].what);
+    // **The Cash-tab body carries a serial** - hasCashSN 1 and a non-zero u64 keyed on the
+    // character and the slot - because the shop's double-click builder sends nothing for an
+    // item whose +0x38 is 0 (run 6, 2026-09-11: "nothing moves back"). An Etc-tab body does
+    // not: a serial lengthens a bundle and nothing outside the Cash tab needs one.
+    let cash_body = &out[restore].body;
+    let item_at = cash_body.len() - net::bag::BUNDLE_ITEM_LEN - 8;
+    assert_eq!(cash_body[item_at], net::bag::BUNDLE_ITEM_TYPE);
+    assert_eq!(&cash_body[item_at + 1..item_at + 5], &5_150_000u32.to_le_bytes());
+    assert_eq!(cash_body[item_at + 5], 1, "hasCashSN");
+    let bag_sn = u64::from_le_bytes(cash_body[item_at + 6..item_at + 14].try_into().unwrap());
+    assert_eq!(bag_sn, ((0x4000_0000 | u64::from(id)) << 32) | 1, "the bag serial: mark | character, then the slot (the stack landed in slot 1)");
+    assert_ne!(bag_sn >> 32, 1, "never an account id's high dword - a locker serial's space");
+    store.add_item(id, store::InventoryType::Etc, &store::Item::bundle(4_000_000, 5), 2).unwrap();
+    let out2 = s.on_cash_shop_request(&[0u8; 5]);
+    let etc = out2.iter().find(|r| r.opcode == net::inventory::INVENTORY_OPERATION && r.what.contains("4000000")).expect("Etc restored");
+    let etc_at = etc.body.len() - net::bag::BUNDLE_ITEM_LEN;
+    assert_eq!(etc.body[etc_at], net::bag::BUNDLE_ITEM_TYPE);
+    assert_eq!(etc.body[etc_at + 5], 0, "an Etc body has no serial and the plain length");
     // The locker record carries the character id at wire +12.
     let body = &out[reload].body;
     let rec = &body[4..4 + net::cashshop::CASH_ITEM_RECORD_LEN];

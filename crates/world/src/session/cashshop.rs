@@ -55,6 +55,36 @@ fn locker_serial(account_id: i64, slot: u16) -> u64 {
     ((account_id as u64) << 32) | u64::from(slot)
 }
 
+/// The high dword that marks a serial as a **bag** one rather than a locker one.
+const BAG_SERIAL_MARK: u64 = 0x4000_0000;
+
+/// The cash serial this server gives a cash item **in a character's Cash tab**.
+///
+/// # Why a bag item needs a serial at all (2026-09-11, run 6)
+///
+/// The owner, after the bag-to-locker move went in: *"while I no longer get the error, nothing
+/// moves back into the Cash Inventory."* `world.log` for that visit holds NO `0x03E1` after
+/// the entry reload - the client sent nothing. The double-click builder `FUN_1410CFE70`
+/// tests the item's own `+0x38` at `0x1410cff01` and builds no request when it is zero
+/// **[L]**, and every item the bag restore had sent carried `hasCashSN = 0`. The one item
+/// that ever went back (run 5) had come OUT of the locker in the same visit, so its `+0x38`
+/// still held the serial from its `0x19` body.
+///
+/// # What it has to be, and what it does not
+///
+/// Non-zero, never `-1`, and **distinct from every locker serial** - the `0x1B` record
+/// echoes it and it becomes a locker-map key until the reload re-keys the row. The high
+/// dword carries [`BAG_SERIAL_MARK`] plus the character id; a locker serial's high dword is
+/// an account id, which is never that large. The low dword is the slot.
+///
+/// It does **not** have to be decodable: the `0x0B` request names the item by tab and slot
+/// as well, and that is what the server moves. So a serial that goes stale when the item
+/// changes bag slot (mode-2 moves are client-side) costs nothing - the client only ever
+/// hands it back, and the server only ever echoes it.
+fn bag_serial(character_id: u32, slot: u16) -> u64 {
+    ((BAG_SERIAL_MARK | u64::from(character_id)) << 32) | u64::from(slot)
+}
+
 /// The locker slot a client-supplied serial names, **only if** it was minted for this account.
 fn locker_slot_of_serial(serial: u64, account_id: i64) -> Option<u16> {
     if (serial >> 32) != account_id as u64 {
@@ -364,6 +394,24 @@ impl Session {
         }];
         out.push(self.locker_reload_reply(account_id, "after the bag -> locker move, so the new row carries its canonical serial"));
         out
+    }
+
+    /// One bag item as the client's factory reads it, **with a serial when it is a cash item**.
+    ///
+    /// Every body that lands in the Cash tab goes through here - the field-entry restore,
+    /// the shop-entry restore and every Add - so a cash item in the bag always has a
+    /// non-zero `+0x38` and the shop's double-click builder always has something to send.
+    /// The other tabs are unchanged: a serial lengthens a bundle by eight bytes, and no
+    /// list with a fixed shape ever sees one (`item_blob_with_cash_sn`).
+    pub(super) fn bag_item_blob(&self, inv: store::InventoryType, slot: u16, item: &store::Item) -> Vec<u8> {
+        let sn = match inv {
+            store::InventoryType::Cash => {
+                let Some(chr) = self.claimed_character() else { return self.item_blob(item) };
+                std::num::NonZeroU64::new(bag_serial(chr.id, slot))
+            }
+            _ => None,
+        };
+        self.item_blob_with_cash_sn(item, sn)
     }
 
     /// `0x03E0` - "what is my balance". Empty body, and the client throttles it to 60 s.
