@@ -974,14 +974,46 @@ impl Session {
 
         // The id argument is discarded: the database assigns the real one, and it has to
         // be distinct per character or the client silently drops the second.
-        let wanted = request.character(0);
+        let mut wanted = request.character(0);
+        // **Gender comes from the look, not from the one field that claims to be gender.**
+        //
+        // The create request's `u32 gender` was measured off a single capture and has only
+        // ever been seen carrying `0` - every character on this server is male, so nothing
+        // has ever discriminated that field from a zero that means something else. The face
+        // and hair are different: the client offers them per gender from its own
+        // `MakeCharInfo.img` (faces `20xxx`/`21xxx`, hair `30xxx`/`31xxx`), and they are what
+        // it will draw. When the two disagree the look wins, loudly, because a wrong gender
+        // byte is what makes the equip gate (`net::equipgender`) refuse everything a player
+        // can see themselves wearing. The owner, 2026-09-10: *"There needs to be a server side
+        // fix to prevent users from equipping the opposite gendered equipment."* - and that
+        // fix is only as good as this byte.
+        let gender_note = match net::equipgender::gender_of_look(wanted.face, wanted.hair) {
+            Some(g) if g != wanted.gender => {
+                let note = format!(
+                    "; gender field said {} but face {} / hair {} are the client's {} lists - stored as {}",
+                    wanted.gender,
+                    wanted.face,
+                    wanted.hair,
+                    if g == net::equipgender::FEMALE { "FEMALE" } else { "MALE" },
+                    g
+                );
+                wanted.gender = g;
+                note
+            }
+            Some(_) => String::new(),
+            None => format!(
+                "; face {} / hair {} are in NEITHER gender list, gender field {} kept",
+                wanted.face, wanted.hair, wanted.gender
+            ),
+        };
         match self.store.create_character(account.id, world.id, &wanted) {
             Ok(stored) => {
                 let what = format!(
-                    "created {:?} as id {} with {} equipped item(s)",
+                    "created {:?} as id {} with {} equipped item(s), gender {}{gender_note}",
                     stored.name,
                     stored.id,
-                    stored.equips.len()
+                    stored.equips.len(),
+                    stored.gender
                 );
                 vec![Reply::new(
                     CREATE_CHARACTER_RESULT,
@@ -1776,6 +1808,12 @@ mod tests {
 
     /// A create request, in the layout measured off the wire.
     fn create_request(name: &str, hair: u32, items: &[(u32, u32)]) -> Vec<u8> {
+        create_request_gendered(name, 1, hair, items)
+    }
+
+    /// The same, with the `gender` field chosen - so the look-versus-field rule can be
+    /// driven both ways.
+    fn create_request_gendered(name: &str, gender: u32, hair: u32, items: &[(u32, u32)]) -> Vec<u8> {
         let mut p = Vec::new();
         p.extend_from_slice(&(name.len() as u16).to_le_bytes());
         p.extend_from_slice(name.as_bytes());
@@ -1786,7 +1824,7 @@ mod tests {
         for stat in [12u32, 5, 4, 4] {
             p.extend_from_slice(&stat.to_le_bytes());
         }
-        p.extend_from_slice(&1u32.to_le_bytes()); // gender
+        p.extend_from_slice(&gender.to_le_bytes()); // gender
         p.extend_from_slice(&2u32.to_le_bytes()); // skin
         p.extend_from_slice(&hair.to_le_bytes());
         p.extend_from_slice(&(items.len() as u32).to_le_bytes());
@@ -1931,6 +1969,42 @@ mod tests {
         let mut second = Session::new(store, config, account);
         let replies = second.handle(&request(CLIENT_LOGIN_REQUEST, &[]));
         assert!(replies.last().unwrap().what.contains("Hello"));
+    }
+
+    /// **Gender is derived from the look, and the field is overridden when it disagrees.**
+    ///
+    /// Every character on this server was created with the field at `0` and a male face and
+    /// hair, so the field has never been discriminated from a zero that means something
+    /// else. The face and hair come from the client's own per-gender lists and are what it
+    /// draws, so they win - and the `what` line says so, because a silent override is a
+    /// bug nobody can find later.
+    #[test]
+    fn creation_takes_gender_from_the_face_and_hair_not_the_field() {
+        let female_look: [(u32, u32); 6] =
+            [(1, 21000), (2, 31000), (3, 1041001), (4, 1061001), (5, 1072000), (6, 1302000)];
+        // The field says male; the look is female.
+        let mut s = session();
+        let replies = s.handle(&create_request_gendered("Mismatch", 0, 31000, &female_look));
+        assert_eq!(replies[0].opcode, CREATE_CHARACTER_RESULT);
+        assert!(replies[0].what.contains("gender field said 0"), "{}", replies[0].what);
+        assert!(replies[0].what.contains("FEMALE"), "{}", replies[0].what);
+        let stored = s.store.characters_for(s.account_id(), 0).unwrap();
+        assert_eq!(stored[0].gender, 1, "the look decided");
+
+        // The field says female; the look is male (Cobalt's own face and hair).
+        let male_look: [(u32, u32); 6] =
+            [(1, 20002), (2, 30027), (3, 1040002), (4, 1060002), (5, 1072000), (6, 1302000)];
+        let mut s = session();
+        let replies = s.handle(&create_request_gendered("Cobalt2", 1, 30025, &male_look));
+        assert!(replies[0].what.contains("MALE"), "{}", replies[0].what);
+        let stored = s.store.characters_for(s.account_id(), 0).unwrap();
+        assert_eq!(stored[0].gender, 0);
+
+        // Agreement leaves no note at all.
+        let mut s = session();
+        let replies = s.handle(&create_request_gendered("Agreed", 1, 31000, &female_look));
+        assert!(!replies[0].what.contains("gender field said"), "{}", replies[0].what);
+        assert!(replies[0].what.contains("gender 1"), "{}", replies[0].what);
     }
 
     #[test]

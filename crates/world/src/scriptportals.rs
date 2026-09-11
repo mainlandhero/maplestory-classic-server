@@ -41,6 +41,16 @@
 //! the same lookup a walk uses. The Free Market's four doors are `pt 7` and send the same
 //! packet, so they were equally dead. "Built is not wired", one file over from the wiring.
 //!
+//! # It is invisible by the client's own data, and that is not a bug
+//!
+//! The owner, 2026-09-10, standing in front of the Sixtopia arch: *"I still do not see the Ellinia
+//! Station portal at the location where I expect it."* Nothing will ever be drawn there.
+//! Portal 38 is `pt 8`, and `Map.wz/MapHelper.img/portal/game` holds graphics for exactly
+//! three kinds - `pv`, `ph`, `psh` - so a `pt 8` (`psi`, script invisible, 2 in the whole
+//! client) has no picture, the arch in the background IS the door, and pressing up in front
+//! of it is the whole interaction. Confirmed on screen the same evening: *"I can indeed
+//! press up at the correct location and be teleported to Ellinia station."*
+//!
 //! # Only the two that are DERIVED are implemented
 //!
 //! A script portal's destination is not in its own row, so it has to come from somewhere. For

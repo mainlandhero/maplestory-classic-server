@@ -37,7 +37,30 @@
 //! discriminator rather than a coincidence: had the top been unisex and still missing, or had
 //! a unisex item also been missing, this reading would be dead.
 //!
-//! # So the bug is the server's, one step earlier
+//! # RETRACTED 2026-09-10: Cobalt is MALE, and the rule above is still right
+//!
+//! The paragraph below - *"a female character put on a male top"* - was written without
+//! checking either the database or the client's own creation lists. Both say male:
+//! `characters.gender` is `0` for Cobalt (and for every character on this server), and
+//! `Etc.wz/MakeCharInfo.img` lists face `20002` and hair `30025` **only** under `male`.
+//! So the Blue Sergeant (M) on Cobalt is a legal equip, [`may_wear`] correctly allows it,
+//! and the character-select "no top" of 2026-09-09 is **unexplained again** - the in-field
+//! renderer draws the top (the owner's screenshots of 2026-09-10 show it), the select screen did
+//! not, and gender was never the difference. The gate stays because the rule is the
+//! client's; what was wrong was the diagnosis it was hung on.
+//!
+//! The same file gives the look partition, and it is the same digit rule as the equips:
+//!
+//! ```text
+//!   male   face 20000 20001 20002     hair 30000..30037 (24 ids, all 30xxx)
+//!   female face 21000 21001 21002     hair 31000..31057 (24 ids, all 31xxx)
+//! ```
+//!
+//! [`gender_of_look`] reads it, so creation can derive gender from what the client will
+//! draw instead of trusting the one `u32` in the create request that this project has only
+//! ever seen carry `0` - see `login::Session::create_character`.
+//!
+//! # So the bug is the server's, one step earlier (2026-09-09 text, kept for the record)
 //!
 //! The client is behaving correctly. What should not have happened is the **equip**: nothing
 //! checked, so a female character put on a male top and the two ends have disagreed about them
@@ -75,6 +98,26 @@ pub fn equip_gender(item_id: u32) -> EquipGender {
     }
 }
 
+/// Which gender a **look** belongs to, from the face and hair ids the client offers per
+/// gender in `MakeCharInfo.img`: faces `20xxx` / `21xxx`, hair `30xxx` / `31xxx`.
+///
+/// `None` when the two disagree or either is outside both lists - which a genuine client
+/// create never produces, so `None` is worth logging. Read off the client's data on
+/// 2026-09-10 (`tools/wz-dump cat Etc_000.wz MakeCharInfo.img`), not remembered.
+pub fn gender_of_look(face: u32, hair: u32) -> Option<u8> {
+    let of = |id: u32, base: u32| -> Option<u8> {
+        match id / 1_000 {
+            k if k == base => Some(MALE),
+            k if k == base + 1 => Some(FEMALE),
+            _ => None,
+        }
+    };
+    match (of(face, 20), of(hair, 30)) {
+        (Some(f), Some(h)) if f == h => Some(f),
+        _ => None,
+    }
+}
+
 /// May a character of `gender` wear `item_id`?
 ///
 /// `gender` is the character record's own byte - [`MALE`] or [`FEMALE`].
@@ -95,7 +138,7 @@ mod tests {
     fn the_reported_character_is_explained_item_by_item() {
         let cobalt = FEMALE;
         assert!(may_wear(1_002_997, cobalt), "Nemi Hat is unisex");
-        assert!(!may_wear(1_040_021, cobalt), "Blue Sergeant is a MALE top - the report");
+        assert!(!may_wear(1_040_021, cobalt), "Blue Sergeant is a MALE top, refused for a WOMAN - Cobalt themself is male, see the module docs");
         assert!(may_wear(1_062_999, cobalt), "Wizet Plain Suit Pants are unisex");
         assert!(may_wear(1_072_999, cobalt), "Wizet Plain Shoes are unisex");
         assert!(may_wear(1_322_999, cobalt), "the suitcase is unisex");
@@ -135,5 +178,24 @@ mod tests {
             assert_eq!(equip_gender(not_an_equip), EquipGender::Either, "{not_an_equip}");
             assert!(may_wear(not_an_equip, MALE) && may_wear(not_an_equip, FEMALE));
         }
+    }
+
+    /// **The look partition, against the ids the client actually lists.** Every one of this
+    /// server's four characters is male by it - which is the fact the 2026-09-09 diagnosis
+    /// never checked.
+    #[test]
+    fn the_look_names_the_gender_the_client_created() {
+        // Cobalt, Tester, Idiot, Tester2 - all four rows in maplecw.db.
+        for (face, hair) in [(20002, 30025), (20001, 30037), (20000, 30007), (20001, 30032)] {
+            assert_eq!(gender_of_look(face, hair), Some(MALE), "{face}/{hair}");
+        }
+        // The female lists, first and last ids.
+        assert_eq!(gender_of_look(21000, 31000), Some(FEMALE));
+        assert_eq!(gender_of_look(21002, 31057), Some(FEMALE));
+        // A mixed look is nobody's, and so is anything outside both lists.
+        assert_eq!(gender_of_look(20000, 31000), None);
+        assert_eq!(gender_of_look(21000, 30000), None);
+        assert_eq!(gender_of_look(22000, 30000), None);
+        assert_eq!(gender_of_look(0, 0), None);
     }
 }
