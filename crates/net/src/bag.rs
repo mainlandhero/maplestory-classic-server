@@ -272,7 +272,25 @@ pub fn bundle_item_len(item_id: u32) -> usize {
 /// those bytes also open blocks that have never been decoded (`research/bag-lists.md` §6).
 /// This function exists so goals F and G start from a decoded body rather than a blank page.
 pub fn bundle_item(item_id: u32, quantity: u16, attribute: u16, owner: &[u8; BUNDLE_OWNER_LEN]) -> Vec<u8> {
-    let mut b = Vec::with_capacity(bundle_item_len(item_id));
+    bundle_item_with_cash_sn(item_id, quantity, attribute, owner, None)
+}
+
+/// [`bundle_item`] carrying a **cash serial** in the item's `+0x38` - and it is **eight bytes
+/// longer** for it, which is the whole reason [`bundle_item`] keeps the flag at zero.
+///
+/// Where it is safe: a body the client reads on its own, with nothing after it that depends
+/// on its length - the cash shop's `0x19` locker-to-bag reply, whose handler erases the
+/// item's `+0x38` from the locker map (see `crate::opcode::equipped_item_with_cash_sn` for
+/// the listing and the run that found it). Where it is not: the character record and the
+/// bag lists, which have no resync point.
+pub fn bundle_item_with_cash_sn(
+    item_id: u32,
+    quantity: u16,
+    attribute: u16,
+    owner: &[u8; BUNDLE_OWNER_LEN],
+    cash_sn: Option<std::num::NonZeroU64>,
+) -> Vec<u8> {
+    let mut b = Vec::with_capacity(bundle_item_len(item_id) + 8);
     b.push(BUNDLE_ITEM_TYPE); //                              1403095fb  u8   item type
 
     // FUN_1403035a0, the base decode. Enumerated rather than filtered: the only read
@@ -280,7 +298,13 @@ pub fn bundle_item(item_id: u32, quantity: u16, attribute: u16, owner: &[u8; BUN
     // 2x 0x1406e8ae0 and 2x 0x1406e9170. It does NOT call FUN_140303b40 - the two equip
     // bitmasks belong to FUN_140304100, which is why a bundle is 41 bytes and not 49.
     b.extend_from_slice(&item_id.to_le_bytes()); //            1403035c5  u32  itemId
-    b.push(0); //                                              140303787  u8   hasCashSN
+    match cash_sn {
+        Some(sn) => {
+            b.push(1); //                                      140303787  u8   hasCashSN
+            b.extend_from_slice(&sn.get().to_le_bytes()); //   14030379d  raw[8] -> +0x38
+        }
+        None => b.push(0), //                                  140303787  u8   hasCashSN
+    }
     b.extend_from_slice(&ITEM_NEVER_EXPIRES.to_le_bytes()); // 1403037b9  raw[8] dateExpire
     b.extend_from_slice(&0u32.to_le_bytes()); //               1403037c1  u32  -> +0x48
     b.push(0); //                                              1403037cc  u8   -> +0x4c
@@ -295,7 +319,7 @@ pub fn bundle_item(item_id: u32, quantity: u16, attribute: u16, owner: &[u8; BUN
     }
     b.extend_from_slice(&0u32.to_le_bytes()); //               140304526  u32  -> +0x7a
 
-    debug_assert_eq!(b.len(), bundle_item_len(item_id));
+    debug_assert_eq!(b.len(), bundle_item_len(item_id) + if cash_sn.is_some() { 8 } else { 0 });
     b
 }
 
@@ -442,6 +466,14 @@ mod tests {
         assert_eq!(b[0], 2, "1403095fb  the factory's type byte");
         assert_eq!(&b[1..5], &2_000_000u32.to_le_bytes(), "1403035c5  itemId");
         assert_eq!(b[5], 0, "140303787  hasCashSN - a 1 here would lengthen the body by 8");
+        // And with the serial it IS eight longer: flag 1, raw[8] serial, then the same bytes.
+        let sn = std::num::NonZeroU64::new(0x1_0000_0003).unwrap();
+        let c = bundle_item_with_cash_sn(2000000, 50, 0, &[0u8; BUNDLE_OWNER_LEN], Some(sn));
+        assert_eq!(c.len(), BUNDLE_ITEM_LEN + 8);
+        assert_eq!(&c[..5], &b[..5]);
+        assert_eq!(c[5], 1, "140303787  hasCashSN");
+        assert_eq!(&c[6..14], &sn.get().to_le_bytes(), "14030379d  raw[8] -> +0x38");
+        assert_eq!(&c[14..], &b[6..], "everything after the flag is unchanged");
         assert_eq!(&b[6..14], &ITEM_NEVER_EXPIRES.to_le_bytes(), "1403037b9  dateExpire");
         assert_eq!(&b[14..18], &0u32.to_le_bytes(), "1403037c1  -> +0x48");
         assert_eq!(b[18], 0, "1403037cc  -> +0x4c");
