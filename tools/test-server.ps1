@@ -744,7 +744,8 @@
                          present = the model is wrong; absent = the report came inside the
                          threshold and the race is somewhere else
 
-     TR. THE AP AND SP RESET SCROLLS - they were on the wrong opcode. Your two presses at
+     TR. THE AP AND SP RESET SCROLLS - CONFIRMED 2026-09-10: "both AP and SP scrolls now
+         work." STRUCK. Kept for the record: they were on the wrong opcode. Your two presses at
          02:59:52 and 02:59:55 were `0x0116`, not the coupons' `0x0114`, and nothing answered
          them: that is why nothing happened AND the item stayed. Handled now, through the
          same full refund `!resetap` / `!resetsp` do.
@@ -2539,7 +2540,7 @@ function Show-TestPlan {
         Write-Host '        still blank -> grep login.log for "re-sending the"'
         Write-Host '                      present = model wrong; absent = race elsewhere'
         Write-Host ''
-        Write-Host '  TR. THE AP / SP RESET SCROLLS - wrong opcode until now.' -ForegroundColor Magenta
+        Write-Host '  TR. AP / SP RESET SCROLLS - CONFIRMED: "both now work." STRUCK.' -ForegroundColor Green
         Write-Host '      Your two presses were 0x0116, not the coupons 0x0114, and'
         Write-Host '      nothing answered them. Handled now: full refund, as !resetap.'
         Write-Host '        stats back to base, AP shown, scroll gone -> done'

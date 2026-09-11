@@ -184,7 +184,7 @@ coupons' ten-byte body - the reset arms had been written against `0x0114` from t
 capture and could never fire, and nothing answered `0x0116` at all. Now dispatched to the same
 arms, which run the `!resetap` / `!resetsp` refund, consume the scroll and clear the latch for
 the opcode that actually arrived. Both cash-item opcodes are named in `net::names` so the log
-stops calling a handled packet UNKNOWN. Step TR.
+stops calling a handled packet UNKNOWN. **Confirmed on screen the same night** - the owner: *"both AP and SP scrolls now work."*
 
 **Cash-equip covers do NOT work yet**, and it is not the gate: the character record keeps
 equipped slots `1..=31` only (`EQUIP_SLOTS`; a cash slot is decoded and discarded, `[L]`), and
