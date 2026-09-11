@@ -19,11 +19,13 @@ pub mod archive;
 pub mod error;
 pub mod prop;
 pub mod reader;
+pub mod writer;
 
 pub use archive::{Archive, Header, Node, NodeKind};
 pub use error::{Result, WzError};
 pub use prop::{parse_image, to_json, Property, Value};
 pub use reader::{enc_version, version_hash, WzReader};
+pub use writer::{write_archive, ImageEntry, Owned, WzWriter};
 
 /// The version used by this client.
 pub const CLIENT_VERSION: u16 = 779;

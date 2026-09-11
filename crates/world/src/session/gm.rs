@@ -140,6 +140,8 @@ impl Session {
         match name {
             "map" => self.gm_map(arg),
             "item" => self.gm_item(arg),
+            "hair" => self.gm_look("hair", arg),
+            "face" => self.gm_look("face", arg),
             "exp" => self.gm_exp(arg),
             "heal" => self.gm_heal(),
             "setrates" => self.gm_set_rates(arg),
@@ -382,6 +384,64 @@ impl Session {
         out
     }
 
+
+    /// `!hair <id>` / `!face <id>` - change the character's look, and re-enter the map so
+    /// the client draws it.
+    ///
+    /// Built 2026-09-10 as the instrument for the first hybrid-asset client test: the
+    /// backported Frieren hair is `42540` and face `22035`, and until this there was no way
+    /// to put either id on a character at all. The set coupons will use the same path once
+    /// their request packet is captured (`backport/signature-style/README.md`).
+    ///
+    /// **Re-entry, not an avatar packet.** `0x0138 UserAvatarModified` applies nothing in
+    /// this client - its apply sits behind a guard that always fails (`docs/opcodes.md`) - so
+    /// the only way a new look reaches the screen is the record inside a `SetField`. The
+    /// character lands on the map's spawn point, which a test can live with.
+    ///
+    /// **The gate is the name table, and it says so.** The client draws an id straight from
+    /// `Character/Hair/%08d.img`; an id with no image draws nothing and there is no packet
+    /// that reports it. `gm-handbook/items.txt` is generated from the same `String.wz` the
+    /// art was installed beside, so "has a name" is the closest cheap proxy for "has art".
+    pub(super) fn gm_look(&mut self, kind: &str, arg: &str) -> Vec<Reply> {
+        let Ok(id) = arg.parse::<u32>() else {
+            return self.gm_ack(format!("!{kind}: {arg:?} is not an id. Try !{kind} {}.", if kind == "hair" { 30000 } else { 20000 }));
+        };
+        let legal = if kind == "hair" { (30_000..100_000).contains(&id) } else { (20_000..30_000).contains(&id) };
+        if !legal {
+            return self.gm_ack(format!("!{kind} REFUSED: {id} is outside the {kind} id space."));
+        }
+        if self.config.item_names.is_empty() {
+            return self.gm_ack(format!(
+                "!{kind} REFUSED: the name table is empty, so {id} could not be checked and an id                  with no art draws NOTHING with no error. Regenerate gm-handbook/items.txt with                  tools/dump_names.py, or restart the server so it loads."
+            ));
+        }
+        let Some(name) = self.config.item_names.get(&id).cloned() else {
+            return self.gm_ack(format!(
+                "!{kind} REFUSED: {id} has no name in this client's String.wz, so it almost                  certainly has no art either, and an id with no art draws nothing."
+            ));
+        };
+        let Some(mut chr) = self.claimed_character() else {
+            return self.gm_ack(format!("!{kind} REFUSED: no character is claimed on this connection."));
+        };
+        let (hair, face) = if kind == "hair" { (Some(id), None) } else { (None, Some(id)) };
+        match self.store.set_character_look(chr.id, hair, face) {
+            Ok(true) => {}
+            Ok(false) => return self.gm_ack(format!("!{kind} REFUSED: character {} is not in the store.", chr.id)),
+            Err(e) => return self.gm_ack(format!("!{kind} REFUSED: {e}")),
+        }
+        if kind == "hair" {
+            chr.hair = id;
+        } else {
+            chr.face = id;
+        }
+        let map = chr.map_id;
+        let mut out = self.gm_ack(format!(
+            "{}'s {kind} is now {id} ({name}). Re-entering map {map} so the client draws it -              0x0138 applies nothing in this client.",
+            chr.name
+        ));
+        out.extend(self.go_to_map(&mut chr, map, 0, format!("GM !{kind} {id}: re-entry so the look is rebuilt")));
+        out
+    }
 
     /// `!exp <amount>` - award experience, and level up if it pays for a level.
     ///
