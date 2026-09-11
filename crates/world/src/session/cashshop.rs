@@ -282,24 +282,10 @@ impl Session {
     /// Each record carries the lowest on-sale commodity serial for its item, since a stored
     /// row does not remember which serial it was bought under; 0 when nothing sells it.
     fn locker_reload_reply(&self, account_id: i64, why: &str) -> Reply {
-        let character_id = self.claimed_character().map(|c| c.id).unwrap_or(0);
         let locker = self.store.cash_locker(account_id).unwrap_or_default();
         let records: Vec<Vec<u8>> = locker
             .iter()
-            .map(|entry| {
-                let quantity = match entry.item.kind {
-                    store::ItemKind::Bundle { quantity } => quantity,
-                    store::ItemKind::Equip(_) => 1,
-                };
-                net::cashshop::cash_item_record_owned(
-                    locker_serial(account_id, entry.slot),
-                    entry.item.item_id,
-                    self.config.commodity.serial_for_item(entry.item.item_id).unwrap_or(0),
-                    quantity.max(1),
-                    0,
-                    character_id,
-                )
-            })
+            .map(|entry| self.locker_record(account_id, entry.slot, &entry.item, None))
             .collect();
         Reply {
             opcode: net::cashshop::CASH_SHOP_RESULT,
@@ -315,6 +301,47 @@ impl Session {
                     .join(", ")
             ),
         }
+    }
+
+    /// One locker record **with the item attached**, which is the form the panel draws.
+    ///
+    /// Two runs on 2026-09-10 measured the flag-0 record all the way to six placed, shown,
+    /// blank row widgets; the widget's draw wants the item object the trailing flag gates
+    /// (`net::cashshop::cash_item_record_with_item`). The body is [`Session::item_blob`] -
+    /// the one item encoding this server has, the same bytes the bag and storage send.
+    ///
+    /// A pet cannot be encoded (no type-3 body yet) and a wrong type byte kills the client
+    /// in the factory, so a pet row goes out flag 0: on the panel as before - blank - rather
+    /// than fatal. The purchase path already refuses pets, so this is a guard, not a path.
+    /// `sn` is the commodity serial the item was bought under when that is known (the
+    /// purchase reply); a stored row does not remember it and gets the lowest on-sale one.
+    fn locker_record(&self, account_id: i64, slot: u16, item: &store::Item, sn: Option<u32>) -> Vec<u8> {
+        let character_id = self.claimed_character().map(|c| c.id).unwrap_or(0);
+        let quantity = match item.kind {
+            store::ItemKind::Bundle { quantity } => quantity,
+            store::ItemKind::Equip(_) => 1,
+        };
+        let serial = locker_serial(account_id, slot);
+        let sn = sn.unwrap_or_else(|| self.config.commodity.serial_for_item(item.item_id).unwrap_or(0));
+        if net::inventory::is_pet(item.item_id) {
+            return net::cashshop::cash_item_record_owned(
+                serial,
+                item.item_id,
+                sn,
+                quantity.max(1),
+                0,
+                character_id,
+            );
+        }
+        net::cashshop::cash_item_record_with_item(
+            serial,
+            item.item_id,
+            sn,
+            quantity.max(1),
+            0,
+            character_id,
+            &self.item_blob(item),
+        )
     }
 
     fn cash_wallet_reply(&self, account_id: i64, why: &str) -> Vec<Reply> {
@@ -611,14 +638,7 @@ impl Session {
         // it changes if the item ever changes slot, so the moment `0x0A`/`0x0B` are built this
         // wants a real column on `cash_locker` instead.
         let serial = locker_serial(account_id, placed.slot);
-        let record = net::cashshop::cash_item_record_owned(
-            serial,
-            row.item_id,
-            row.sn,
-            row.count.max(1),
-            0,
-            self.claimed_character().map(|c| c.id).unwrap_or(0),
-        );
+        let record = self.locker_record(account_id, placed.slot, &item, Some(row.sn));
 
         let mut out = vec![Reply {
             opcode: net::cashshop::CASH_SHOP_RESULT,

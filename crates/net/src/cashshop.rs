@@ -637,7 +637,11 @@ pub fn cash_shop_item_granted(slot: u16, item_blob: &[u8]) -> Vec<u8> {
 /// run must watch for a balance that keeps dropping.
 pub const RESULT_ITEM_TO_LOCKER: u8 = 0x0C;
 
-/// The cash-item record `FUN_1402D0950` reads: **71 bytes**, trailing flag zero.
+/// The cash-item record `FUN_1402D0950` reads: **71 bytes** when the trailing flag is zero.
+///
+/// With the flag set - [`cash_item_record_with_item`] - a whole item body follows and the
+/// record is this plus that body's length. Nothing on the wire says which; the reader
+/// streams.
 pub const CASH_ITEM_RECORD_LEN: usize = 71;
 
 /// Build one cash-item record.
@@ -720,6 +724,66 @@ pub fn cash_item_record_owned(
     w.u8(0); // +69
     w.u8(0); // +70  trailing flag - 0 ENDS the record
     w.into_vec()
+}
+
+/// [`cash_item_record_owned`] with the trailing flag **set** and `item` - a whole
+/// `GW_ItemSlot`, type byte first - after it.
+///
+/// # This is what the locker panel draws, and a flag-0 record is a row it cannot draw
+///
+/// Found 2026-09-10 night, after two measuring runs had proved everything *else*: the 0x04
+/// handler ran, the six inserts ran, seven repaints ran, six row widgets were placed on the
+/// grid at x 15..205 and shown - and nothing was painted in them. The widget's own draw,
+/// `FUN_1410B3DF0`, calls `FUN_1410B45A0(widget, &out)`, which finds the record by serial
+/// (`FUN_140D757B0` on the map at `stage+0x150`) and then does **[L]**
+///
+/// ```asm
+/// mov  rsi, [rdi+0x6e]     ; the record OBJECT's +0x6e: a shared_ptr's object pointer
+/// mov  [out+8], rsi
+/// test rsi, rsi
+/// je   <nothing to draw>
+/// ```
+///
+/// and `[obj+0x6e]` is written by exactly one thing - the record reader's tail **[L]**:
+///
+/// ```asm
+/// 1402d0a25  call 1406e8ae0            ; READ u8, wire +70
+/// 1402d0a2d  test al, al
+/// 1402d0a2f  je   1402d0aa6            ; 0 -> the record ends, +0x66 stays null
+/// ...        call 140303530(&tmp, pkt) ; u8 type, then the type's own vt+0x358 decode
+/// ...        lea  rcx, [rdi+0x66]
+///            call 1401e8780            ; shared_ptr assign -> object pointer lands at +0x6e
+/// ```
+///
+/// So a record that ends at +70 is a map entry with an item id, a commodity serial and no
+/// item - which is precisely a widget that is placed, shown and blank. `research/
+/// cash-shop-buy-done.md` section 5.1 had the flag's meaning written down for two weeks;
+/// what nobody had read until the runs forced it was that the *draw* keys on the object the
+/// flag gates.
+///
+/// `item` is the same body the bag, storage and `0x19` already carry: `equipped_item` for a
+/// type 1, `bundle_item` for a type 2 - `FUN_140303530` is the one factory
+/// (`research/cash-shop-buy-done.md` section 3.2), and **a type byte outside 1..3 crashes
+/// the client** there, so a pet must not come through here until a type-3 body exists.
+/// `hasCashSN` stays 0 in both bodies: one variable per run, and the draw is the variable.
+pub fn cash_item_record_with_item(
+    serial: u64,
+    item_id: u32,
+    commodity_sn: u32,
+    quantity: u16,
+    account_id: u32,
+    character_id: u32,
+    item: &[u8],
+) -> Vec<u8> {
+    debug_assert!(
+        matches!(item.first(), Some(1..=3)),
+        "FUN_1402CC180 returns null for a type byte outside 1..3 and the client dereferences it"
+    );
+    let mut r = cash_item_record_owned(serial, item_id, commodity_sn, quantity, account_id, character_id);
+    let flag = r.len() - 1;
+    r[flag] = 1; // +70  trailing flag - non-zero: a GW_ItemSlot follows
+    r.extend_from_slice(item);
+    r
 }
 
 /// Build a [`RESULT_ITEM_TO_LOCKER`]. Send [`cash_shop_wallet`] straight after it.
@@ -1036,6 +1100,21 @@ mod action_tests {
         // bug the owner reported, so they are pinned apart.
         assert_ne!(RESULT_ITEM_TO_LOCKER, RESULT_ITEM_GRANTED);
         assert_ne!(RESULT_ITEM_TO_LOCKER, RESULT_MOVED_TO_LOCKER, "1B is a trap in both forms");
+    }
+
+    /// **With an item attached the flag is 1 and the body follows verbatim** - the shape
+    /// the record reader's tail and the row widget's draw both key on. The bundle body is
+    /// the bag's own, type byte included, so `FUN_140303530` reads it as it reads a bag slot.
+    #[test]
+    fn a_record_with_an_item_sets_the_flag_and_appends_the_slot_body() {
+        let body = crate::bag::bundle_item(5_681_548, 1, 0, &[0u8; crate::bag::BUNDLE_OWNER_LEN]);
+        let bare = cash_item_record_owned(7, 5_681_548, 120_000_003, 1, 0, 200);
+        let r = cash_item_record_with_item(7, 5_681_548, 120_000_003, 1, 0, 200, &body);
+        assert_eq!(&r[..CASH_ITEM_RECORD_LEN - 1], &bare[..CASH_ITEM_RECORD_LEN - 1], "the 70 bytes before the flag are unchanged");
+        assert_eq!(r[70], 1, "the trailing flag: non-zero reads a GW_ItemSlot next");
+        assert_eq!(&r[CASH_ITEM_RECORD_LEN..], &body[..], "the slot body, verbatim, type byte first");
+        assert_eq!(r[CASH_ITEM_RECORD_LEN], crate::bag::BUNDLE_ITEM_TYPE);
+        assert_eq!(r.len(), CASH_ITEM_RECORD_LEN + body.len());
     }
 
     /// **The locker reload carries every record, flag 0, and the four trailing u16s** - the
