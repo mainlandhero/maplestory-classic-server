@@ -674,6 +674,34 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
+     TL. THE CASH SHOP'S TWO EMPTY PANELS - A MEASURING RUN, and it needs ONE flag.
+         The owner, 2026-09-10 night: the Cash Inventory shows nothing after six purchases,
+         and the shop's Item Inventory shows nothing although the character holds three
+         Mystery Hair Coupons in its Cash tab. The purchases are in the database (LP was
+         debited, cash_locker has the rows). The server now lists the locker with 0x04
+         (Res_LoadLocker_Done) at entry AND after every buy, and that drew nothing either.
+
+         I have read the whole client pipeline - 0x04's handler, the locker-map insert
+         (rejects only serial -1), the repaint (one 35x35 row widget per map entry, no
+         filter), the layout - and it says the rows should draw. So this run MEASURES it.
+         Add this to the launch line, exactly, and nothing else new:
+
+           -Probe "watch@140d7e1f0,140d75850,1410b5540,1410b5a40,14170fd10"
+
+         Then enter the Cash Shop once and exit. client-patched\maplecw-hook.log gets a
+         WATCH line per call, with arguments. The five, in pipeline order:
+           140d7e1f0  the 0x04 handler     expect 1 hit at entry
+           140d75850  locker-map insert    expect one hit PER ROW (6 today)
+           1410b5540  panel repaint        expect >= 1
+           1410b5a40  panel layout         expect >= 1
+           14170fd10  row-widget ctor      expect one hit PER ROW
+           all five as expected -> the rows exist and are invisible; the draw is next
+           insert hits, no repaint -> [stage+0xc8] is null at that moment; a late repaint
+           no insert hits at all  -> the 0x04 body is not reaching the handler as read
+           the client DIES -> say so; five watches once coincided with a close (T17) and
+                              this is the one variable this run changes
+         Nothing else is on this run: no purchase, no coupon use.
+
      TK. THE STATION: THE DOOR, THEN THE CLOCK. Both 2026-09-10.
 
          a) THE DOOR - CONFIRMED 2026-09-10 evening: "I can indeed press up at the correct
@@ -2495,6 +2523,26 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
+        Write-Host '  TL. THE CASH SHOP PANELS - A MEASURING RUN. Needs ONE flag.' -ForegroundColor Magenta
+        Write-Host '      Both panels draw empty although the rows are in the database'
+        Write-Host '      and 0x04 (the locker reload) now goes out at entry and after'
+        Write-Host '      every buy. The client pipeline reads as "should draw", so'
+        Write-Host '      this run measures it. ADD TO THE LAUNCH LINE, EXACTLY:' -ForegroundColor Yellow
+        Write-Host '        -Probe "watch@140d7e1f0,140d75850,1410b5540,1410b5a40,14170fd10"' -ForegroundColor Yellow
+        Write-Host '      Enter the Cash Shop once, exit. Then read the hook log:'
+        Write-Host '        140d7e1f0 0x04 handler   -> 1 hit'
+        Write-Host '        140d75850 map insert     -> one per row (6)'
+        Write-Host '        1410b5540 repaint        -> >= 1'
+        Write-Host '        1410b5a40 layout         -> >= 1'
+        Write-Host '        14170fd10 row widget     -> one per row (6)'
+        Write-Host '        all as expected -> rows exist, invisible; the draw is next'
+        Write-Host '        insert but no repaint -> the panel pointer was null then'
+        Write-Host '        no insert at all -> the 0x04 body is not what the handler reads'
+        Write-Host '        client DIES -> say so; this is the ONE variable' -ForegroundColor Red
+        Write-Host '      NOTHING ELSE on this run. Also: the Cash tab glow on every'
+        Write-Host '      shop exit is fixed - all tabs restore quietly now (mode 5).'
+        Write-Host '      A tab that comes up EMPTY names that change; say which.' -ForegroundColor Yellow
+        Write-Host ''
         Write-Host '  TK. THE STATION: THE DOOR, THEN THE CLOCK.' -ForegroundColor Magenta
         Write-Host '      a) THE DOOR - CONFIRMED: "I can indeed press up at the' -ForegroundColor Green
         Write-Host '         correct location and be teleported." STRUCK. It has no' -ForegroundColor Green
