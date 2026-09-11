@@ -674,31 +674,30 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
-     TL. THE OTHER DIRECTION: BAG -> LOCKER (0x0B -> 0x1B). -SetFieldProbe.
-         Run 5 (03:54) DONE: locker -> bag works, the row vanishes. Then the owner double-
-         clicked the coupon they had just moved out, to put it back: 0x0B went out and the
-         server refused it (not built) - "Due to an unknown error". Built now. The 0x1B
-         reply is the zero form: a full locker record whose serial is THE ONE THE CLIENT
-         SENT (the handler finds the bag item to remove by scanning the tab for that
-         serial in item+0x38, and a miss resets bag slot 0 - so echoing is the only safe
-         choice), item body attached so the row draws; then a 0x04 reload so the new row
-         is keyed the way every later 0x0A expects.
-         ONE ITEM CAN DO THIS TODAY and it is the one that came OUT of the locker in the
-         same visit: the double-click builder refuses an item whose +0x38 is 0, and the
-         bag-restored coupons (the 3 Mystery Hair Coupons) have 0 - so double-clicking
-         THOSE sends nothing and shows nothing. That is the next step, not this run.
-         Enter the Cash Shop:
-           1. drag an Etc coupon locker -> Item Inventory (known to work)
-           2. double-click THAT coupon in the Item Inventory
-              it goes back to the Cash Inventory and leaves the Item Inventory -> fixed
-              it appears in the locker AND stays in the Item Inventory -> the bag
-                          lookup missed; say whether anything ELSE in the Cash tab
-                          vanished (that would be slot 0 being reset)
-              "unknown error" -> the server refused; world.log says why
-              client DIES -> say so
-           3. drag it out again (0x0A on the re-keyed row) -> it should move; if it
-              says "unknown error", the reload did not re-key the map
-           4. double-click a Mystery Hair Coupon: EXPECT NOTHING to happen (see above)
+     TL. BAG -> LOCKER, WITH EVERY CASH ITEM CARRYING A SERIAL. -SetFieldProbe.
+         Run 6 (04:03) measured the prediction: "nothing moves back" and NO 0x03E1 in
+         world.log after the entry reload - the client sent nothing, because every item
+         in the Cash tab had come from the bag restore with +0x38 = 0, and the double-
+         click builder (1410cff01) builds no request for those. So now EVERY body that
+         lands in the Cash tab - the field-entry restore, the shop-entry restore, every
+         Add - carries hasCashSN = 1 and a serial: 0x40000000|character in the high
+         dword, the slot in the low. The server never decodes it (0x0B names tab+slot);
+         the client only hands it back and the 0x1B record echoes it, then the 0x04
+         reload re-keys the row. Other tabs are unchanged. A Cash-tab BUNDLE body is
+         8 bytes longer than before on this run - the one variable.
+         Enter the Cash Shop. The Item Inventory should show the Cash tab as before
+         (if it is EMPTY, the longer body is the reason - say so at once). Then:
+           1. double-click a Mystery Hair Coupon (a bag-restored item, never moved):
+              it goes to the Cash Inventory and leaves the Item Inventory -> fixed
+              nothing happens at all -> the builder still saw +0x38 = 0; the restore
+                          body is not reaching the item; world.log has the body
+              in the locker AND still in the Item Inventory -> the lookup missed; say
+                          whether anything ELSE in the Cash tab vanished (slot 0)
+              "unknown error" -> refused; world.log says why
+              client DIES -> say so; the longer Cash-tab body is the suspect
+           2. drag it out again -> should move (0x0A on the re-keyed row)
+           3. exit the shop, open the inventory Cash tab: the coupons are where they
+              should be; re-enter, both panels agree with the database
 
      TL2 (DONE 23:27). THE CASH SHOP'S TWO EMPTY PANELS - MEASURING RUN 2. (Run 1 is below, DONE.)
          Run 1 (23:20) measured: the 0x04 handler ran once, the locker-map INSERT ran
@@ -2586,23 +2585,23 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
-        Write-Host '  TL. THE OTHER DIRECTION: BAG -> LOCKER (0x0B -> 0x1B). -SetFieldProbe.' -ForegroundColor Magenta
-        Write-Host '      Run 5 (03:54) DONE: locker -> bag works. Putting it BACK was'
-        Write-Host '      refused (not built). Built: 0x1B with a record keyed on the'
-        Write-Host '      serial the client sent + an item body, then a 0x04 reload.'
-        Write-Host '      ONLY an item that came OUT of the locker this visit can go back'
-        Write-Host '      today: bag-restored ones (the 3 Mystery Hair Coupons) have no'
-        Write-Host '      serial and the client sends NOTHING for them. Next step.' -ForegroundColor Yellow
-        Write-Host '        1. drag an Etc coupon locker -> Item Inventory'
-        Write-Host '        2. double-click THAT coupon in the Item Inventory:'
-        Write-Host '           back in the locker, gone from Item Inventory -> fixed'
+        Write-Host '  TL. BAG -> LOCKER, EVERY CASH ITEM NOW CARRIES A SERIAL. -SetFieldProbe.' -ForegroundColor Magenta
+        Write-Host '      Run 6 (04:03): "nothing moves back" and NO 0x03E1 in world.log -'
+        Write-Host '      the client sent nothing: bag-restored items had +0x38 = 0 and'
+        Write-Host '      the double-click builder skips those. Now every Cash-tab body'
+        Write-Host '      (field entry, shop entry, every Add) carries a serial. A Cash'
+        Write-Host '      BUNDLE body is 8 bytes longer - the one variable.' -ForegroundColor Yellow
+        Write-Host '      Enter the shop. Item Inventory EMPTY -> the longer body; say so.' -ForegroundColor Red
+        Write-Host '        1. double-click a Mystery Hair Coupon (never moved before):'
+        Write-Host '           in the locker, gone from Item Inventory -> fixed'
+        Write-Host '           nothing at all -> the builder still saw 0; world.log has the body'
         Write-Host '           in the locker AND still in Item Inventory -> lookup missed;'
         Write-Host '             say if anything ELSE in the Cash tab vanished (slot 0)'
         Write-Host '           "unknown error" -> refused; world.log says why'
-        Write-Host '           client DIES -> say so' -ForegroundColor Red
-        Write-Host '        3. drag it out again -> should move; "unknown error" means'
-        Write-Host '           the reload did not re-key the row'
-        Write-Host '        4. double-click a Mystery Hair Coupon: EXPECT nothing'
+        Write-Host '           client DIES -> say so; the longer body is the suspect' -ForegroundColor Red
+        Write-Host '        2. drag it out again -> should move'
+        Write-Host '        3. exit, check the inventory Cash tab; re-enter, both panels'
+        Write-Host '           agree with what you moved'
         Write-Host '      (Run 2 and run 1 lines, for the record:)' -ForegroundColor DarkGray
         Write-Host '        -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,1410b6060,1417113f0:hits=200,14170fd10:hits=400,1410b6970"' -ForegroundColor DarkGray
         Write-Host '        -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,140d7e1f0,140d75850,1410b5540,14170fd10"' -ForegroundColor DarkGray
