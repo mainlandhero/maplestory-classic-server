@@ -674,24 +674,28 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
-     TL. THE CASH INVENTORY DRAWS THE ITEM, NOT THE RECORD. -SetFieldProbe, no -Probe.
-         Run 3 (23:5x) settled the Item Inventory: the 3 Mystery Hair Coupons show inside
-         the shop (the bag restore after SetCashShop). The Cash Inventory stayed empty,
-         so the character id was NOT it. Read since, in the widget's own draw: it looks
-         the row up by serial and paints the ITEM OBJECT hanging off the record - and
-         that object exists only when the record's trailing byte is 1 and a whole item
-         body (the same bytes the bag sends) follows it. Every record we ever sent ended
-         with 0. A flag-0 record is a placed, shown, BLANK widget - exactly runs 1-3.
-         Every locker record now carries flag 1 + the item, at entry and after a buy.
-         Enter the Cash Shop:
-           Cash Inventory shows the Ubel coupon and the five Etc coupons -> the panel is
-                          fixed; try dragging one into the Item Inventory (a move
-                          request goes out; the reply may or may not exist yet - say
-                          what happens on screen)
-           still empty -> the item body is not what the draw keys on either; the next
-                          run watches 1410b45a0 (the lookup) with the record attached
-           the client DIES on entry -> the item factory rejected a body; say so, the
-                          hook log's last line names the packet
+     TL. MOVING A CASH ITEM OUT OF THE LOCKER LEAVES IT DRAWN THERE. -SetFieldProbe.
+         Run 4 (03:47) DONE: both panels draw - the Cash Inventory paints the ITEM behind
+         the record, and every record now carries one (fixture cash-locker-draws-with-
+         item-body-...). Then the owner dragged an Etc coupon to the Item Inventory: it
+         arrived there AND stayed in the Cash Inventory, and the second drag got "Due to
+         an unknown error" - the server had already emptied that locker slot (world.log
+         03:47:57, refusal 0x3D/2). The 0x19 reply's handler erases the serial it finds
+         in the ITEM's own +0x38 - not the one from the request - and +0x38 is set only
+         when the item body's hasCashSN byte is 1 and the u64 follows. Ours was 0, so
+         the client erased serial 0 and kept the row. The 0x19 body now carries flag 1 +
+         the locker serial (a bundle grows by 8 bytes for it; an equip does not).
+         Enter the Cash Shop, drag ONE Etc coupon to the Item Inventory:
+           it appears in Item Inventory and VANISHES from Cash Inventory -> fixed; exit
+                          the shop and check the Etc coupon is in the Cash tab, then
+                          re-enter and check the locker still lists the rest
+           it appears and STAYS in the locker -> the erase keys on something else; the
+                          next run watches 140d85c10 (the erase) for its argument
+           the client DIES on the drag -> the 8-byte-longer bundle body is being read
+                          by something other than the base decode; say so
+         (Dragging a coupon INTO the Cash Inventory - 0x0B - is not built yet. It is
+          answered with the queue refusal, so it shows "unknown error" and moves nothing;
+          that is expected, not a finding.)
 
      TL2 (DONE 23:27). THE CASH SHOP'S TWO EMPTY PANELS - MEASURING RUN 2. (Run 1 is below, DONE.)
          Run 1 (23:20) measured: the 0x04 handler ran once, the locker-map INSERT ran
@@ -2579,18 +2583,20 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
-        Write-Host '  TL. THE CASH INVENTORY DRAWS THE ITEM, NOT THE RECORD. -SetFieldProbe only.' -ForegroundColor Magenta
-        Write-Host '      Run 3 DONE: Item Inventory shows the 3 Mystery Hair Coupons.'
-        Write-Host '      Cash Inventory stayed empty - the character id was NOT it.'
-        Write-Host '      The row widget''s draw paints the ITEM OBJECT behind the record,'
-        Write-Host '      which exists only when the record''s last byte is 1 and an item'
-        Write-Host '      body (the bag''s own bytes) follows. Ours always ended with 0:'
-        Write-Host '      a placed, shown, blank widget - runs 1-3 exactly. Every locker'
-        Write-Host '      record now carries flag 1 + the item. Enter the Cash Shop:'
-        Write-Host '        Cash Inventory shows Ubel + 5 Etc coupons -> fixed; then try'
-        Write-Host '          dragging one into Item Inventory and say what happens'
-        Write-Host '        still empty -> next run watches the lookup 1410b45a0'
-        Write-Host '        client DIES on entry -> the item factory rejected a body' -ForegroundColor Red
+        Write-Host '  TL. A LOCKER ITEM MOVED OUT STAYS DRAWN IN THE LOCKER. -SetFieldProbe.' -ForegroundColor Magenta
+        Write-Host '      Run 4 (03:47) DONE: both panels draw. The drag to Item Inventory'
+        Write-Host '      arrived AND stayed in the Cash Inventory; the 2nd drag got'
+        Write-Host '      "unknown error" (the server had already emptied that slot).'
+        Write-Host '      The 0x19 handler erases the serial in the ITEM''s own +0x38,'
+        Write-Host '      which is set only when the body''s hasCashSN byte is 1. Ours'
+        Write-Host '      was 0 -> it erased serial 0 -> the row stayed. The 0x19 body'
+        Write-Host '      now carries the serial. Drag ONE Etc coupon to Item Inventory:'
+        Write-Host '        it VANISHES from the Cash Inventory -> fixed; exit, check the'
+        Write-Host '          Cash tab has it, re-enter, check the rest are still listed'
+        Write-Host '        it STAYS -> next run watches the erase 140d85c10'
+        Write-Host '        client DIES on the drag -> the longer bundle body; say so' -ForegroundColor Red
+        Write-Host '      Dragging INTO the Cash Inventory (0x0B) is not built: it is' -ForegroundColor Yellow
+        Write-Host '      refused with "unknown error" and moves nothing - expected.' -ForegroundColor Yellow
         Write-Host '      (Run 2 and run 1 lines, for the record:)' -ForegroundColor DarkGray
         Write-Host '        -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,1410b6060,1417113f0:hits=200,14170fd10:hits=400,1410b6970"' -ForegroundColor DarkGray
         Write-Host '        -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,140d7e1f0,140d75850,1410b5540,14170fd10"' -ForegroundColor DarkGray

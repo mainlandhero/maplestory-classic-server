@@ -2841,6 +2841,33 @@ impl EquipStats {
 /// switches on. `+0x330`, which that document called the decode, is `FUN_1402fbb30` =
 /// `return this + 0x242`, an accessor.
 pub fn equipped_item(item_id: u32, stats: &EquipStats) -> Vec<u8> {
+    equipped_item_with_cash_sn(item_id, stats, None)
+}
+
+/// [`equipped_item`] carrying a **cash serial** in the item's own `+0x38`.
+///
+/// # Why the serial, and why it is the same length
+///
+/// The cash shop's locker-to-bag reply (`0x05AE` sub-op `0x19`, `FUN_140D7F8A0`) reads the
+/// item it carries and then erases **the item's `+0x38`** from the locker map - `cmp qword
+/// [item+0x38], -1 ; je` then `FUN_140D85C10(stage+0x150, &sn)`
+/// (`research/cash-shop-buy-done.md` section 3.1, **[L]**). The owner, 2026-09-11 03:47: the
+/// coupon *"showed up in my item inventory but did not disappear from Cash Inventory"* - the
+/// body had `hasCashSN = 0`, so `+0x38` was the constructor's zero, the erase looked for
+/// serial 0, and the panel kept the row. The next drag named a locker slot the server had
+/// already emptied, which is the *"unknown error"* that followed.
+///
+/// With the flag set the base decode reads `raw[8]` into `+0x38` at `0x14030379d` instead of
+/// zeroing it (`0x1403037a4`), and the equip decode then **skips** the `raw[8]` at
+/// `0x14030429e` because `0x14030428a` tests `[this+0x38] != 0` first. **[L]**, both
+/// listings. So the body is the same 125 bytes plus mask extras either way - and that test
+/// is on the *value*, not the flag, which is why `cash_sn` is a `NonZeroU64`: a flag with a
+/// zero serial would read both `raw[8]`s and be eight bytes off.
+pub fn equipped_item_with_cash_sn(
+    item_id: u32,
+    stats: &EquipStats,
+    cash_sn: Option<std::num::NonZeroU64>,
+) -> Vec<u8> {
     debug_assert_ne!(item_id / 10000, 166, "a 166xxxx item reads FUN_1402cb4f0 as well");
     let mut b = Vec::with_capacity(EQUIPPED_ITEM_LEN + stats.extra_len());
     b.push(EQUIPPED_ITEM_TYPE); // 1403095fb  u8   the factory's type byte
@@ -2851,9 +2878,15 @@ pub fn equipped_item(item_id: u32, stats: &EquipStats) -> Vec<u8> {
     // 2x 0x1406e8ae0, 2x 0x1406e9170 and three non-readers. Nothing else reads the packet
     // here, which is what fixes the offset the three mask u32s land on.
     b.extend_from_slice(&item_id.to_le_bytes()); //           1403035c5  u32  itemId
-    b.push(0); //                                             140303787  u8   hasCashSN
     // A non-zero hasCashSN pulls in a u64 cash serial at 14030379d and drops the raw[8] at
-    // 14030429e - same total, different layout. Zero, so neither moves.
+    // 14030429e - same total, different layout.
+    match cash_sn {
+        Some(sn) => {
+            b.push(1); //                                     140303787  u8   hasCashSN
+            b.extend_from_slice(&sn.get().to_le_bytes()); //  14030379d  raw[8] -> +0x38
+        }
+        None => b.push(0), //                                 140303787  u8   hasCashSN
+    }
     b.extend_from_slice(&ITEM_NEVER_EXPIRES.to_le_bytes()); //1403037b9  u64  dateExpire
     b.extend_from_slice(&0u32.to_le_bytes()); //              1403037c1  u32  -> +0x48
     b.push(0); //                                             1403037cc  u8   -> +0x4c (bool)
@@ -2869,7 +2902,9 @@ pub fn equipped_item(item_id: u32, stats: &EquipStats) -> Vec<u8> {
     b.push(0); //                                             140304183  u8   -> blob +0x3b7
     // 1403041c2 / 1df / 1fc / 219 / 236 / 253 / 270: seven u16, into +0x3bf .. +0x3ef.
     b.extend_from_slice(&[0u8; 14]);
-    b.extend_from_slice(&[0u8; 8]); //                        14030429e  raw[8], hasCashSN == 0
+    if cash_sn.is_none() {
+        b.extend_from_slice(&[0u8; 8]); //                    14030429e  raw[8], [+0x38] == 0
+    }
     // 1403042b7  FUN_1402cce00: raw[8], raw[8], u32, u32, u32, u32.
     b.extend_from_slice(&[0u8; 32]);
     b.extend_from_slice(&[0u8; 12]); //                       1403042c6  FUN_1402cd090: raw[8], u32
@@ -3997,6 +4032,16 @@ mod tests {
 
         // 140303787: hasCashSN. Non-zero moves an 8-byte field from +0x4d to +0x38.
         assert_eq!(hat[5], 0);
+        // And with a serial it is STILL 125 bytes: the raw[8] moves from 14030429e (+0x4d)
+        // to 14030379d (+0x38), flag 1 and the serial right after the item id, and every
+        // byte from dateExpire onward is the same as the plain body until the dropped raw[8].
+        let sn = std::num::NonZeroU64::new(0x1_0000_0003).unwrap();
+        let cash_hat = equipped_item_with_cash_sn(1002357, &EquipStats::default(), Some(sn));
+        assert_eq!(cash_hat.len(), EQUIPPED_ITEM_LEN, "same length either way");
+        assert_eq!(cash_hat[5], 1);
+        assert_eq!(&cash_hat[6..14], &sn.get().to_le_bytes(), "14030379d  raw[8] -> +0x38");
+        assert_eq!(&cash_hat[14..14 + 65], &hat[6..6 + 65], "dateExpire .. the seven u16 - shifted by 8");
+        assert_eq!(&cash_hat[14 + 65..], &hat[6 + 65 + 8..], "after the dropped raw[8] at 14030429e");
 
         // 1403037b9: dateExpire, and it must NOT be zero - see ITEM_NEVER_EXPIRES.
         let expires = u64::from_le_bytes(hat[6..14].try_into().unwrap());

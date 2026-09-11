@@ -246,12 +246,19 @@ impl Session {
             store::ItemKind::Bundle { quantity } => quantity,
             store::ItemKind::Equip(_) => 1,
         };
-        let blob = self.item_blob(&item);
+        // **The body carries the serial the client will erase from its locker map.** The
+        // 0x19 handler erases `[item+0x38]`, not the serial from the request - and +0x38 is
+        // only set when the body's hasCashSN is 1 (`research/cash-shop-buy-done.md` 3.1).
+        // The owner, 2026-09-11: the coupon reached the Item Inventory and stayed drawn in the
+        // Cash Inventory; the next drag named an emptied slot and got "unknown error".
+        // `req.serial` is non-zero here: the locker row was found, so it is
+        // `(account << 32) | slot` with slot >= 1.
+        let blob = self.item_blob_with_cash_sn(&item, std::num::NonZeroU64::new(req.serial));
         vec![Reply {
             opcode: net::cashshop::CASH_SHOP_RESULT,
             body: net::cashshop::cash_shop_item_granted(req.slot, &blob),
             what: format!(
-                "CashShopResult 0x19 MOVED: locker slot {locker_slot} -> {inv:?} tab slot {}, {quantity}x {} (serial {:#x}). The client erases the serial from its locker map, clears the latch and pumps its queue itself - no second packet",
+                "CashShopResult 0x19 MOVED: locker slot {locker_slot} -> {inv:?} tab slot {}, {quantity}x {} (serial {:#x}, carried in the item's own +0x38 with hasCashSN = 1). The client erases THAT serial from its locker map, clears the latch and pumps its queue itself - no second packet",
                 req.slot, item.item_id, req.serial
             ),
         }]

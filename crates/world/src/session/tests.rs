@@ -9689,6 +9689,15 @@ fn a_locker_item_moves_into_the_cash_tab_where_the_client_asked() {
     assert!(out[0].body.len() > 4 + 10, "an item body follows, then the trailing flag");
     assert_eq!(*out[0].body.last().unwrap(), 0, "bEffect");
     assert!(out[0].what.contains("MOVED"), "{}", out[0].what);
+    // **The item body carries the serial in its own +0x38** - hasCashSN 1, then the u64.
+    // The 0x19 handler erases `[item+0x38]` from the locker map, not the request's serial;
+    // with the flag at 0 the coupon stayed drawn in the Cash Inventory (2026-09-11 03:47).
+    let item = &out[0].body[4..out[0].body.len() - 1];
+    assert_eq!(item[0], net::bag::BUNDLE_ITEM_TYPE);
+    assert_eq!(&item[1..5], &5680004u32.to_le_bytes());
+    assert_eq!(item[5], 1, "140303787  hasCashSN");
+    assert_eq!(&item[6..14], &serial.to_le_bytes(), "14030379d  raw[8] -> +0x38: the locker serial");
+    assert_eq!(item.len(), net::bag::BUNDLE_ITEM_LEN + 8, "a bundle grows by eight with the serial");
 
     // The database moved it: out of the locker, into the Cash tab at slot 3.
     assert!(store.cash_locker(account).unwrap().is_empty(), "the locker row is gone");

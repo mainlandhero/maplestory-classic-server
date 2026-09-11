@@ -21,16 +21,31 @@ impl Session {
     /// is the single place that resolves it, so a worn item and a bagged one cannot disagree
     /// about what the same item id is worth.
     pub(super) fn item_blob(&self, item: &store::Item) -> Vec<u8> {
+        self.item_blob_with_cash_sn(item, None)
+    }
+
+    /// [`Session::item_blob`] with the item's own cash serial set - **only** for a body the
+    /// client reads by itself. The cash shop's `0x19` erases that serial from its locker
+    /// map; without it the moved item stays drawn in the Cash Inventory (2026-09-11 03:47).
+    /// A bundle grows by eight bytes with it, so it must never reach the character record
+    /// or a bag list.
+    pub(super) fn item_blob_with_cash_sn(
+        &self,
+        item: &store::Item,
+        cash_sn: Option<std::num::NonZeroU64>,
+    ) -> Vec<u8> {
         match item.kind {
-            store::ItemKind::Equip(stored) => net::opcode::equipped_item(
+            store::ItemKind::Equip(stored) => net::opcode::equipped_item_with_cash_sn(
                 item.item_id,
                 &stored.unwrap_or_else(|| self.template_stats(item.item_id)),
+                cash_sn,
             ),
-            store::ItemKind::Bundle { quantity } => net::bag::bundle_item(
+            store::ItemKind::Bundle { quantity } => net::bag::bundle_item_with_cash_sn(
                 item.item_id,
                 quantity,
                 0,
                 &[0u8; net::bag::BUNDLE_OWNER_LEN],
+                cash_sn,
             ),
         }
     }
