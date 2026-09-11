@@ -6295,7 +6295,12 @@ fn a_buy_is_priced_against_the_real_sale_row_and_then_completes() {
         net::cashshop::RESULT_ITEM_TO_LOCKER,
         "0x0C, the CASH INVENTORY. 0x19 is the reply to a locker->bag MOVE, and using it here          is what made the owner's coupon land in the Item Inventory"
     );
-    assert_eq!(grant.body.len(), 1 + net::cashshop::CASH_ITEM_RECORD_LEN + 4 + 1);
+    // The record carries the item itself after its trailing flag - the form the locker panel
+    // draws. 5070000 is a bundle, so the bag's own type-2 body follows, verbatim.
+    let item_body = net::bag::bundle_item(5070000, 1, 0, &[0u8; net::bag::BUNDLE_OWNER_LEN]);
+    assert_eq!(grant.body[1 + 70], 1, "trailing flag 1: a GW_ItemSlot follows");
+    assert_eq!(&grant.body[1 + 71..1 + 71 + item_body.len()], &item_body[..], "the bundle body");
+    assert_eq!(grant.body.len(), 1 + net::cashshop::CASH_ITEM_RECORD_LEN + item_body.len() + 4 + 1);
 
     assert_eq!(store.cash_wallet(1).unwrap().maple_points, 49_900, "100 LP came out");
     let locker = store.cash_locker(1).unwrap();
@@ -9767,12 +9772,21 @@ fn entering_the_shop_lists_the_lockers_stored_rows() {
     let r = reloads[0];
     assert_eq!(r.body[1], 0, "flag 0: no over-limit warning, no dialog");
     assert_eq!(u16::from_le_bytes([r.body[2], r.body[3]]), 2, "both rows");
-    // Each record carries the serial the move request will echo: (account << 32) | slot.
-    for (i, slot) in [1u64, 2].iter().enumerate() {
-        let at = 4 + i * net::cashshop::CASH_ITEM_RECORD_LEN;
+    // Each record carries the serial the move request will echo, (account << 32) | slot, and
+    // - after its trailing flag - the item itself, the bag's own type-2 body, which is what
+    // the panel's row widget draws. Walk them by that body's length.
+    let mut at = 4;
+    for (slot, item_id) in [(1u64, 5680004u32), (2, 5680002)] {
         let serial = u64::from_le_bytes(r.body[at..at + 8].try_into().unwrap());
         assert_eq!(serial, (account as u64) << 32 | slot, "{}", r.what);
+        assert_eq!(u32::from_le_bytes(r.body[at + 16..at + 20].try_into().unwrap()), item_id);
+        assert_eq!(r.body[at + 70], 1, "trailing flag 1: a GW_ItemSlot follows");
+        let body = net::bag::bundle_item(item_id, 1, 0, &[0u8; net::bag::BUNDLE_OWNER_LEN]);
+        at += net::cashshop::CASH_ITEM_RECORD_LEN;
+        assert_eq!(&r.body[at..at + body.len()], &body[..], "slot {slot}: the bundle body");
+        at += body.len();
     }
+    assert_eq!(r.body.len(), at + 8, "then the four trailing u16s and nothing else");
     assert!(r.what.contains("LOCKER RELOAD"), "{}", r.what);
     // An empty locker still reloads - count 0 - so a stale panel is cleared, and still no 0x0C.
     let (mut s2, _store2, _) = cash_shop_session();

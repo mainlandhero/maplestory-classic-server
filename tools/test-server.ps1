@@ -674,23 +674,24 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
-     TL. THE CASH SHOP'S TWO EMPTY PANELS - the two fixes the two runs pointed at. PLAIN
-         LAUNCH, no -Probe. Run 2 (23:27) measured: six row widgets PLACED on the locker
-         grid (x 15..205 step 38, y 62) and shown - and nothing drawn in them. So the draw
-         is at fault, not the packets, the insert, the repaint or the layout. Two changes,
-         separable by panel:
-           ITEM INVENTORY (the character's Cash tab inside the shop): the shop-entry record
-           cannot carry the Cash tab and nothing restored it after 0x01A3, unlike field
-           entry after SetField. The same quiet bag restore now follows SetCashShop.
-           CASH INVENTORY (the account's locker): every record now carries the character's
-           id at wire +12 (was 0) - the one field the draw could still be keying on.
+     TL. THE CASH INVENTORY DRAWS THE ITEM, NOT THE RECORD. Plain launch, no -Probe.
+         Run 3 (23:5x) settled the Item Inventory: the 3 Mystery Hair Coupons show inside
+         the shop (the bag restore after SetCashShop). The Cash Inventory stayed empty,
+         so the character id was NOT it. Read since, in the widget's own draw: it looks
+         the row up by serial and paints the ITEM OBJECT hanging off the record - and
+         that object exists only when the record's trailing byte is 1 and a whole item
+         body (the same bytes the bag sends) follows it. Every record we ever sent ended
+         with 0. A flag-0 record is a placed, shown, BLANK widget - exactly runs 1-3.
+         Every locker record now carries flag 1 + the item, at entry and after a buy.
          Enter the Cash Shop:
-           Item Inventory shows your 3 Mystery Hair Coupons -> that panel is fixed
-           Cash Inventory shows the Ubel coupon and the Etc coupons -> the id was it
-           Item Inventory full, Cash Inventory still empty -> the record field was NOT it;
-                          the locker draw needs something else and the next run watches
-                          the widget draw itself
-           both still empty -> the shop stage is not applying the 0x0070 restore; say so
+           Cash Inventory shows the Ubel coupon and the five Etc coupons -> the panel is
+                          fixed; try dragging one into the Item Inventory (a move
+                          request goes out; the reply may or may not exist yet - say
+                          what happens on screen)
+           still empty -> the item body is not what the draw keys on either; the next
+                          run watches 1410b45a0 (the lookup) with the record attached
+           the client DIES on entry -> the item factory rejected a body; say so, the
+                          hook log's last line names the packet
 
      TL2 (DONE 23:27). THE CASH SHOP'S TWO EMPTY PANELS - MEASURING RUN 2. (Run 1 is below, DONE.)
          Run 1 (23:20) measured: the 0x04 handler ran once, the locker-map INSERT ran
@@ -2578,20 +2579,18 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
-        Write-Host '  TL. THE CASH SHOP PANELS - two fixes, PLAIN launch, no -Probe.' -ForegroundColor Magenta
-        Write-Host '      Run 2 (23:27) DONE: six row widgets were PLACED on the grid'
-        Write-Host '      (x 15..205, y 62) and shown, and drew nothing. The draw is the'
-        Write-Host '      fault. Two changes, one per panel:'
-        Write-Host '        Item Inventory: the bag is now restored after SetCashShop'
-        Write-Host '          (the record cannot carry the Cash tab; field entry does'
-        Write-Host '          the same after SetField, the shop never did)'
-        Write-Host '        Cash Inventory: locker records now carry the character id'
-        Write-Host '      Enter the Cash Shop:'
-        Write-Host '        Item Inventory shows the 3 Mystery Hair Coupons -> fixed'
-        Write-Host '        Cash Inventory shows Ubel + Etc coupons -> the id was it'
-        Write-Host '        Item full, Cash still empty -> not the id; next run watches'
-        Write-Host '                      the widget draw itself'
-        Write-Host '        both empty -> the restore is not applied in the shop; say so'
+        Write-Host '  TL. THE CASH INVENTORY DRAWS THE ITEM, NOT THE RECORD. Plain launch.' -ForegroundColor Magenta
+        Write-Host '      Run 3 DONE: Item Inventory shows the 3 Mystery Hair Coupons.'
+        Write-Host '      Cash Inventory stayed empty - the character id was NOT it.'
+        Write-Host '      The row widget''s draw paints the ITEM OBJECT behind the record,'
+        Write-Host '      which exists only when the record''s last byte is 1 and an item'
+        Write-Host '      body (the bag''s own bytes) follows. Ours always ended with 0:'
+        Write-Host '      a placed, shown, blank widget - runs 1-3 exactly. Every locker'
+        Write-Host '      record now carries flag 1 + the item. Enter the Cash Shop:'
+        Write-Host '        Cash Inventory shows Ubel + 5 Etc coupons -> fixed; then try'
+        Write-Host '          dragging one into Item Inventory and say what happens'
+        Write-Host '        still empty -> next run watches the lookup 1410b45a0'
+        Write-Host '        client DIES on entry -> the item factory rejected a body' -ForegroundColor Red
         Write-Host '      (Run 2 and run 1 lines, for the record:)' -ForegroundColor DarkGray
         Write-Host '        -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,1410b6060,1417113f0:hits=200,14170fd10:hits=400,1410b6970"' -ForegroundColor DarkGray
         Write-Host '        -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,140d7e1f0,140d75850,1410b5540,14170fd10"' -ForegroundColor DarkGray
