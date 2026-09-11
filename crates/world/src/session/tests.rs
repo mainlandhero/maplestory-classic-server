@@ -9733,9 +9733,15 @@ fn a_locker_move_that_fails_a_check_is_refused_and_moves_nothing() {
     }
 }
 
-/// **Entering the shop lists what the locker holds**, one `0x0C` per row between the stage
-/// packet and the wallet - so an item bought and left in the Cash Inventory is still there
-/// on the next visit. New 2026-09-10; before it only the current visit's purchase appeared.
+/// **Entering the shop lists what the locker holds as ONE `0x04` reload**, between the
+/// stage packet and the wallet - so an item bought and left in the Cash Inventory is still
+/// there on the next visit. New 2026-09-10; before it only the current visit's purchase
+/// appeared.
+///
+/// **And never as `0x0C`.** That was the first version, one per row, and the owner saw the shop
+/// open onto "You have successfully made the purchase" two runs in a row: `0x0C` is the buy
+/// reply and carries that dialog. This pins the sub-op, the flag byte, and the absence of
+/// any `0x0C` on entry.
 #[test]
 fn entering_the_shop_lists_the_lockers_stored_rows() {
     let (mut s, store, _id) = cash_shop_session();
@@ -9747,22 +9753,33 @@ fn entering_the_shop_lists_the_lockers_stored_rows() {
     let ops: Vec<u16> = out.iter().map(|r| r.opcode).collect();
     assert_eq!(ops[0], net::cashshop::SET_CASH_SHOP, "the stage first");
     assert_eq!(*ops.last().unwrap(), net::cashshop::CASH_SHOP_WALLET, "the wallet last");
-    let listed: Vec<&Reply> = out
+    assert!(
+        !out.iter().any(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT
+            && r.body[0] == net::cashshop::RESULT_ITEM_TO_LOCKER),
+        "0x0C on entry is the 'purchase successful' dialog the owner saw: {ops:?}"
+    );
+    let reloads: Vec<&Reply> = out
         .iter()
         .filter(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT
-            && r.body[0] == net::cashshop::RESULT_ITEM_TO_LOCKER)
+            && r.body[0] == net::cashshop::RESULT_LOAD_LOCKER)
         .collect();
-    assert_eq!(listed.len(), 2, "one 0x0C per locker row: {ops:?}");
-    // Each carries the serial the move request will echo: (account << 32) | slot.
-    for (r, slot) in listed.iter().zip([1u64, 2]) {
-        let serial = u64::from_le_bytes(r.body[1..9].try_into().unwrap());
+    assert_eq!(reloads.len(), 1, "exactly one reload: {ops:?}");
+    let r = reloads[0];
+    assert_eq!(r.body[1], 0, "flag 0: no over-limit warning, no dialog");
+    assert_eq!(u16::from_le_bytes([r.body[2], r.body[3]]), 2, "both rows");
+    // Each record carries the serial the move request will echo: (account << 32) | slot.
+    for (i, slot) in [1u64, 2].iter().enumerate() {
+        let at = 4 + i * net::cashshop::CASH_ITEM_RECORD_LEN;
+        let serial = u64::from_le_bytes(r.body[at..at + 8].try_into().unwrap());
         assert_eq!(serial, (account as u64) << 32 | slot, "{}", r.what);
-        assert!(r.what.contains("LOCKER LISTING"), "{}", r.what);
     }
-    // And an empty locker lists nothing extra.
+    assert!(r.what.contains("LOCKER RELOAD"), "{}", r.what);
+    // An empty locker still reloads - count 0 - so a stale panel is cleared, and still no 0x0C.
     let (mut s2, _store2, _) = cash_shop_session();
     let out2 = s2.on_cash_shop_request(&[0u8; 5]);
-    assert!(out2.iter().all(|r| r.opcode != net::cashshop::CASH_SHOP_RESULT), "{:?}", out2.iter().map(|r| r.opcode).collect::<Vec<_>>());
+    let empty: Vec<&Reply> = out2.iter().filter(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT).collect();
+    assert_eq!(empty.len(), 1);
+    assert_eq!(&empty[0].body[..4], &[net::cashshop::RESULT_LOAD_LOCKER, 0, 0, 0]);
 }
 
 /// **`!hair` and `!face` change the record and re-enter the map**, which is the only way a

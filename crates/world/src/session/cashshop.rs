@@ -124,33 +124,24 @@ impl Session {
                  which is why no 0x0070 goes with it"
             ),
         }];
-        // **The locker's stored contents, one `0x0C` each, so the Cash Inventory panel shows
-        // what the account owns rather than only what it bought this visit.** `set_cash_shop`'s
-        // three list counts are the commodity delta, the notices and the specials - none is
-        // the locker - and until 2026-09-10 nothing else listed it, so a coupon bought and
-        // left in the Cash Inventory vanished from view on the next visit while its row sat in
-        // `cash_locker`. `0x0C` is read out of the client as "decode one record, insert it into
-        // the locker map, repaint the panel" [L]; sending it at entry rather than after a buy
-        // is **[I]** and step TC watches for it. The commodity serial in the record is 0: the
-        // only reader gates a meso message on an 80-90 M band that no value here is in.
-        let locker = self.store.cash_locker(account_id).unwrap_or_default();
-        for entry in &locker {
-            let serial = locker_serial(account_id, entry.slot);
-            let quantity = match entry.item.kind {
-                store::ItemKind::Bundle { quantity } => quantity,
-                store::ItemKind::Equip(_) => 1,
-            };
-            let record =
-                net::cashshop::cash_item_record(serial, entry.item.item_id, 0, quantity.max(1));
-            out.push(Reply {
-                opcode: net::cashshop::CASH_SHOP_RESULT,
-                body: net::cashshop::cash_shop_item_to_locker(&record),
-                what: format!(
-                    "CashShopResult 0x0C LOCKER LISTING at entry: slot {} holds {}x {}, serial {serial:#x} - the same record a purchase sends, so the panel shows what the database holds",
-                    entry.slot, quantity, entry.item.item_id
-                ),
-            });
-        }
+        // **The locker's stored contents, as ONE `0x04` locker reload, so the Cash Inventory
+        // panel shows what the account owns rather than only what it bought this visit.**
+        // `set_cash_shop`'s three list counts are the commodity delta, the notices and the
+        // specials - none is the locker - and until 2026-09-10 nothing listed it, so a coupon
+        // bought and left in the Cash Inventory vanished from view on the next visit while
+        // its row sat in `cash_locker`.
+        //
+        // **It was one `0x0C` per row for a day, and the owner saw why that is wrong**: *"The
+        // moment I enter cash shop, I receive this dialogue"* - "You have successfully made
+        // the purchase", `0x0C`'s own success message, once per stored row. `0x0C` is the
+        // reply to a BUY. `0x04` (`Res_LoadLocker_Done`, `FUN_140D7E1F0` [L]) clears the
+        // client's locker map, inserts every record, repaints, and with its flag at 0 shows
+        // nothing. The commodity serial in each record is 0: the only reader gates a meso
+        // message on an 80-90 M band no value here is in.
+        //
+        // Sent even when the locker is empty: count 0 is a legal reload and it clears a
+        // panel that might still be drawing a previous visit's rows.
+        out.push(self.locker_reload_reply(account_id, "at entry"));
         out.extend(self.cash_wallet_reply(account_id, "sent unprompted with SetCashShop"));
         out
     }
@@ -264,6 +255,55 @@ impl Session {
 
     /// One `0x05AD`. **The only packet that carries a balance** - no `CWvsContext` opcode does,
     /// so without this the shop has nothing to spend whatever the database says.
+    /// One `0x04` locker reload carrying every row the account's locker holds.
+    ///
+    /// **Sent at entry and after every purchase, and the second one is a measurement.** The owner,
+    /// 2026-09-10, after buying the Übel coupon and five Etc coupons: *"it does not show up in
+    /// my cash inventory"* - the LP was debited, the rows are in `cash_locker`, the `0x0C`
+    /// reply was sent and its success dialog drew, and the panel stayed empty. `0x0C`'s
+    /// handler inserts into the locker map and repaints (`FUN_140D7E5E0` -> `FUN_140D75850`
+    /// -> `FUN_1410B5540`, all read), and the repaint appends a row widget per map entry
+    /// with no filter on the record - so what the panel is missing is not in that path as
+    /// read. `0x04` (`FUN_140D7E1F0`) is a DIFFERENT path: clear the map, read `count`
+    /// records, repaint - the one a real server sends at entry. If the panel fills through
+    /// it, the difference is in `0x0C`'s path; if it stays empty, the panel wants something
+    /// no record here carries, and the next step is a watch in the client.
+    ///
+    /// Each record carries the lowest on-sale commodity serial for its item, since a stored
+    /// row does not remember which serial it was bought under; 0 when nothing sells it.
+    fn locker_reload_reply(&self, account_id: i64, why: &str) -> Reply {
+        let locker = self.store.cash_locker(account_id).unwrap_or_default();
+        let records: Vec<Vec<u8>> = locker
+            .iter()
+            .map(|entry| {
+                let quantity = match entry.item.kind {
+                    store::ItemKind::Bundle { quantity } => quantity,
+                    store::ItemKind::Equip(_) => 1,
+                };
+                net::cashshop::cash_item_record(
+                    locker_serial(account_id, entry.slot),
+                    entry.item.item_id,
+                    self.config.commodity.serial_for_item(entry.item.item_id).unwrap_or(0),
+                    quantity.max(1),
+                )
+            })
+            .collect();
+        Reply {
+            opcode: net::cashshop::CASH_SHOP_RESULT,
+            body: net::cashshop::cash_shop_load_locker(&records),
+            what: format!(
+                "CashShopResult 0x04 LOCKER RELOAD {why}: {} row(s) - {} - flag 0, so no dialog. \
+                 Replaces the panel wholesale; 0x0C per row popped 'purchase successful' on every visit",
+                records.len(),
+                locker
+                    .iter()
+                    .map(|e| format!("slot {} = {}", e.slot, e.item.item_id))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
+
     fn cash_wallet_reply(&self, account_id: i64, why: &str) -> Vec<Reply> {
         let w = self.store.cash_wallet(account_id).unwrap_or_default();
         vec![Reply {
@@ -576,6 +616,11 @@ impl Session {
         // missing is the client's own, and it was missing because 0x19 had already cleared
         // [stage+0x120] and the re-entry never happened.
         out.extend(self.cash_wallet_reply(account_id, "the debited balance, AFTER the 0x0C"));
+        // Third: the whole locker again through the OTHER path. See `locker_reload_reply` -
+        // the 0x0C insert did not put the owner's purchases on the panel, and this is the
+        // measurement of whether 0x04's does. After the wallet, which is what clears the
+        // latches; 0x04 touches none of them.
+        out.push(self.locker_reload_reply(account_id, "after the purchase"));
         out
     }
 
