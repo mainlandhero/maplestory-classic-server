@@ -265,25 +265,23 @@ impl Session {
         let Ok(bag) = self.store.bag(chr.id) else {
             return self.cash_item_notice("That could not be applied just now. Nothing was used up.".to_string());
         };
-        let (need_equip, need_use, need_cash) = crate::signaturestyle::slots_needed(wares);
-        let free = |t: store::InventoryType, reclaim: u16| -> u16 {
-            let used = bag.items_in(t).count() as u16;
-            bag.slots[t.index()].saturating_sub(used).saturating_add(reclaim)
-        };
-        for (tab, need, have) in [
-            (store::InventoryType::Equip, need_equip, free(store::InventoryType::Equip, 0)),
-            (store::InventoryType::Use, need_use, free(store::InventoryType::Use, 0)),
-            (store::InventoryType::Cash, need_cash, free(store::InventoryType::Cash, 1)),
-        ] {
+        // **The tab is the config's, not the listing's.** A cash equip goes to the Deco tab
+        // (`Config::tab_for`); the Übel set's four went into the Equip tab on 2026-09-11 and
+        // the Deco tab the owner opened was empty.
+        let wares: Vec<(u32, store::InventoryType)> =
+            wares.iter().map(|&(id, tab)| (id, self.config.tab_for(id).unwrap_or(tab))).collect();
+        let wares = &wares[..];
+        let need = crate::signaturestyle::slots_needed(wares);
+        for tab in store::InventoryType::ALL {
+            let used = bag.items_in(tab).count() as u16;
+            // The source item's own Cash slot counts as free: it is removed in this hand-out.
+            let reclaim = u16::from(tab == store::InventoryType::Cash);
+            let have = bag.slots[tab.index()].saturating_sub(used).saturating_add(reclaim);
+            let need = need[tab.index()];
             if need > have {
                 return self.cash_item_notice(format!(
-                    "Your {} needs {} free slot(s) for the {label} and has {have}. Nothing was used up.",
-                    match tab {
-                        store::InventoryType::Equip => "Equip tab",
-                        store::InventoryType::Use => "Use tab",
-                        _ => "Cash tab",
-                    },
-                    need
+                    "Your {} tab needs {need} free slot(s) for the {label} and has {have}. Nothing was used up.",
+                    net::bag::BAG_TAB_NAMES[tab.index()],
                 ));
             }
         }
@@ -298,7 +296,7 @@ impl Session {
         out.extend(self.stack_change_replies(store::InventoryType::Cash, slot, 0));
         let mut given = Vec::new();
         for &(id, tab) in wares {
-            let item = if tab == store::InventoryType::Equip {
+            let item = if matches!(tab, store::InventoryType::Equip | store::InventoryType::Deco) {
                 store::Item::equip(id)
             } else {
                 store::Item::bundle(id, 1)

@@ -1192,7 +1192,7 @@ impl Session {
                  net::inventory::is_pet has the mechanism."
             ));
         }
-        let Some(inv) = store::InventoryType::for_item(item_id) else {
+        let Some(inv) = self.config.tab_for(item_id) else {
             return Err(format!(
                 "REFUSED: {item_id} is not in any inventory tab - ids start 1..5."
             ));
