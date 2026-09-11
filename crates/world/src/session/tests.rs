@@ -9947,3 +9947,32 @@ fn the_reset_scrolls_on_0x0116_reset_and_are_consumed() {
     assert_eq!(out.len(), 1, "unlock only: {out:?}");
     assert_eq!(out[0].opcode, net::combat::STAT_CHANGED);
 }
+
+/// **Entering the shop refills the character's bag and stamps the character id on each
+/// locker record.** Both came out of the two measuring runs of 2026-09-10: the shop's Item
+/// Inventory showed none of the character's Cash-tab items because nothing restored the
+/// bag after SetCashShop the way field entry does after SetField; and the locker rows were
+/// placed on the grid and drew nothing, so the one record field the draw could still key
+/// on is filled.
+#[test]
+fn entering_the_shop_restores_the_bag_and_stamps_the_character_on_locker_rows() {
+    let (mut s, store, id) = cash_shop_session();
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_150_000, 3), 3).unwrap();
+    store.put_cash_item(1, &store::Item::bundle(5_681_548, 1)).unwrap();
+
+    let out = s.on_cash_shop_request(&[0u8; 5]);
+    let ops: Vec<u16> = out.iter().map(|r| r.opcode).collect();
+    assert_eq!(ops[0], net::cashshop::SET_CASH_SHOP);
+    // The Cash-tab stack goes out again, quietly, between the stage and the locker reload.
+    let restore = out.iter().position(|r| r.opcode == net::inventory::INVENTORY_OPERATION && r.what.contains("5150000"))
+        .expect("the Cash tab is restored inside the shop");
+    let reload = out.iter().position(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT && r.what.contains("LOCKER RELOAD"))
+        .expect("the locker reload");
+    assert!(restore < reload, "bag first, then the locker: {ops:?}");
+    assert!(out[restore].what.contains("mode 5"), "{}", out[restore].what);
+    // The locker record carries the character id at wire +12.
+    let body = &out[reload].body;
+    let rec = &body[4..4 + net::cashshop::CASH_ITEM_RECORD_LEN];
+    assert_eq!(u32::from_le_bytes(rec[12..16].try_into().unwrap()), id, "dwCharacterID");
+    assert_eq!(u32::from_le_bytes(rec[16..20].try_into().unwrap()), 5_681_548, "nItemID");
+}

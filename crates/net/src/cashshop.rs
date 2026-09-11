@@ -664,10 +664,32 @@ pub const CASH_ITEM_RECORD_LEN: usize = 71;
 ///   the branch, **[I]** for the name.
 /// * `refundable` - `+67`, read by the delete builder's refundable gate (string 651). Zero.
 pub fn cash_item_record(serial: u64, item_id: u32, commodity_sn: u32, quantity: u16) -> Vec<u8> {
+    cash_item_record_owned(serial, item_id, commodity_sn, quantity, 0, 0)
+}
+
+/// [`cash_item_record`] with the two owner ids filled.
+///
+/// **Why the ids stopped being zero, 2026-09-10 night.** Two measuring runs showed the
+/// client receiving all six locker rows, inserting them, repainting, and placing six row
+/// widgets on the panel's grid (x 15..205 step 38, y 62 - the hook log has the calls) -
+/// and drawing nothing in them. Everything read says the rows should draw; the two fields
+/// no reader was found for are the last thing in the record that could decide "is this
+/// mine", and a scan that found no reader has been wrong in this file before (section 6 of
+/// the research re-ran one). The account id the client holds is the 0 from ACCOUNT_INFO;
+/// the character id is the record's own. Filling them costs nothing and is one of the two
+/// variables on the run that follows, separable by panel.
+pub fn cash_item_record_owned(
+    serial: u64,
+    item_id: u32,
+    commodity_sn: u32,
+    quantity: u16,
+    account_id: u32,
+    character_id: u32,
+) -> Vec<u8> {
     let mut w = PacketWriter::new();
     w.bytes(&serial.to_le_bytes()); // +0   liSN            [L] read
-    w.u32(0); // +8   dwAccountID     [I], no reader
-    w.u32(0); // +12  dwCharacterID   [I], no reader
+    w.u32(account_id); // +8   dwAccountID     [I], no reader found; the client's own is 0
+    w.u32(character_id); // +12  dwCharacterID   [I], no reader found
     w.u32(item_id); // +16  nItemID         [L] read
     w.u32(commodity_sn); // +20  nCommodityID    [L] read
     w.u16(quantity); // +24  nNumber         [I], NO READER

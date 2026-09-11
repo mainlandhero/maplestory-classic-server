@@ -674,7 +674,25 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
-     TL. THE CASH SHOP'S TWO EMPTY PANELS - MEASURING RUN 2. (Run 1 is below, DONE.)
+     TL. THE CASH SHOP'S TWO EMPTY PANELS - the two fixes the two runs pointed at. PLAIN
+         LAUNCH, no -Probe. Run 2 (23:27) measured: six row widgets PLACED on the locker
+         grid (x 15..205 step 38, y 62) and shown - and nothing drawn in them. So the draw
+         is at fault, not the packets, the insert, the repaint or the layout. Two changes,
+         separable by panel:
+           ITEM INVENTORY (the character's Cash tab inside the shop): the shop-entry record
+           cannot carry the Cash tab and nothing restored it after 0x01A3, unlike field
+           entry after SetField. The same quiet bag restore now follows SetCashShop.
+           CASH INVENTORY (the account's locker): every record now carries the character's
+           id at wire +12 (was 0) - the one field the draw could still be keying on.
+         Enter the Cash Shop:
+           Item Inventory shows your 3 Mystery Hair Coupons -> that panel is fixed
+           Cash Inventory shows the Ubel coupon and the Etc coupons -> the id was it
+           Item Inventory full, Cash Inventory still empty -> the record field was NOT it;
+                          the locker draw needs something else and the next run watches
+                          the widget draw itself
+           both still empty -> the shop stage is not applying the 0x0070 restore; say so
+
+     TL2 (DONE 23:27). THE CASH SHOP'S TWO EMPTY PANELS - MEASURING RUN 2. (Run 1 is below, DONE.)
          Run 1 (23:20) measured: the 0x04 handler ran once, the locker-map INSERT ran
          SIX times (one per row), the panel REPAINT ran seven times. So the client HAS the
          six records and repainted - the rows exist and are invisible. The widget-ctor
@@ -2560,17 +2578,22 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
-        Write-Host '  TL. THE CASH SHOP PANELS - MEASURING RUN 2.' -ForegroundColor Magenta
-        Write-Host '      Run 1 (23:20) DONE: the client received all 6 locker rows and'
-        Write-Host '      repainted 7 times. The rows exist and are INVISIBLE. Run 2 reads'
-        Write-Host '      the x,y the layout hands each row widget. Launch with:'
-        Write-Host '        -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,1410b6060,1417113f0:hits=200,14170fd10:hits=400,1410b6970"' -ForegroundColor Yellow
-        Write-Host '      Enter the shop once, exit, close. In the hook log, 1417113f0'
-        Write-Host '      lines: rdx=x r8=y per widget.'
-        Write-Host '        x in 191..381 step 38, y 462 or 500 -> placed; the ICON draw'
-        Write-Host '        x or y 0 / wild -> anchor lookup failed; placement'
-        Write-Host '        no 1417113f0 hits after the shop -> layout filtered all'
-        Write-Host '      (Run 1 line, for the record:)' -ForegroundColor DarkGray
+        Write-Host '  TL. THE CASH SHOP PANELS - two fixes, PLAIN launch, no -Probe.' -ForegroundColor Magenta
+        Write-Host '      Run 2 (23:27) DONE: six row widgets were PLACED on the grid'
+        Write-Host '      (x 15..205, y 62) and shown, and drew nothing. The draw is the'
+        Write-Host '      fault. Two changes, one per panel:'
+        Write-Host '        Item Inventory: the bag is now restored after SetCashShop'
+        Write-Host '          (the record cannot carry the Cash tab; field entry does'
+        Write-Host '          the same after SetField, the shop never did)'
+        Write-Host '        Cash Inventory: locker records now carry the character id'
+        Write-Host '      Enter the Cash Shop:'
+        Write-Host '        Item Inventory shows the 3 Mystery Hair Coupons -> fixed'
+        Write-Host '        Cash Inventory shows Ubel + Etc coupons -> the id was it'
+        Write-Host '        Item full, Cash still empty -> not the id; next run watches'
+        Write-Host '                      the widget draw itself'
+        Write-Host '        both empty -> the restore is not applied in the shop; say so'
+        Write-Host '      (Run 2 and run 1 lines, for the record:)' -ForegroundColor DarkGray
+        Write-Host '        -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,1410b6060,1417113f0:hits=200,14170fd10:hits=400,1410b6970"' -ForegroundColor DarkGray
         Write-Host '        -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,140d7e1f0,140d75850,1410b5540,14170fd10"' -ForegroundColor DarkGray
         Write-Host '      -PinPatches IS NOT OPTIONAL: the launcher overwrites the probe' -ForegroundColor Red
         Write-Host '      marker on every launch; a pin is the only way in. The 23:18' -ForegroundColor Red
