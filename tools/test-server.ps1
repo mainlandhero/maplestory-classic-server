@@ -686,7 +686,15 @@
          filter), the layout - and it says the rows should draw. So this run MEASURES it.
          Add this to the launch line, exactly, and nothing else new:
 
-           -Probe "watch@1415db360:ret,141b2a280:rdx=0,140d7e1f0,140d75850,1410b5540,14170fd10"
+           -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,140d7e1f0,140d75850,1410b5540,14170fd10"
+
+         **-PinPatches is not optional, and leaving it out cost the 23:18 launch.** The
+         LAUNCHER overwrites maplecw-hook.probe with its own defaults on every launch, so a
+         -Probe given here reaches the client only as a pin the launcher consumes once. The
+         hook log of that run armed the four defaults and none of the four wanted watches.
+         Proof the pin was taken: the launcher's log pane prints OVERRIDES before the launch,
+         and client-patched\maplecw-hook.log has "probe: watching 0x140d7e1f0". If neither
+         is there, the run was NOT instrumented - say so rather than reading it as zero hits.
 
          The first two are the MANDATORY client patches from the default -Probe (the
          reachability skip and the login-dialog suppress); giving -Probe replaces the
@@ -2533,9 +2541,13 @@ function Show-TestPlan {
         Write-Host '      and 0x04 (the locker reload) now goes out at entry and after'
         Write-Host '      every buy. The client pipeline reads as "should draw", so'
         Write-Host '      this run measures it. ADD TO THE LAUNCH LINE, EXACTLY:' -ForegroundColor Yellow
-        Write-Host '        -Probe "watch@1415db360:ret,141b2a280:rdx=0,140d7e1f0,140d75850,1410b5540,14170fd10"' -ForegroundColor Yellow
-        Write-Host '      (the first two are the mandatory client patches; -Probe'
-        Write-Host '      replaces the default, so they must be repeated. 6 slots.)'
+        Write-Host '        -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,140d7e1f0,140d75850,1410b5540,14170fd10"' -ForegroundColor Yellow
+        Write-Host '      -PinPatches IS NOT OPTIONAL: the launcher overwrites the probe' -ForegroundColor Red
+        Write-Host '      marker on every launch; a pin is the only way in. The 23:18' -ForegroundColor Red
+        Write-Host '      run without it armed the defaults and measured nothing.' -ForegroundColor Red
+        Write-Host '      PROOF it took: the launcher pane prints OVERRIDES, and the'
+        Write-Host '      hook log has "probe: watching 0x140d7e1f0". Neither = not'
+        Write-Host '      instrumented; say so. (First two = mandatory patches; 6 slots.)'
         Write-Host '      Enter the Cash Shop once, exit. Then read the hook log:'
         Write-Host '        140d7e1f0 0x04 handler   -> 1 hit'
         Write-Host '        140d75850 map insert     -> one per row (6)'
