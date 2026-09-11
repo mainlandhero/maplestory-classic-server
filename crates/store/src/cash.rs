@@ -98,6 +98,13 @@ pub(crate) fn create_tables(conn: &Connection) -> Result<()> {
         // generator rather than re-typing the column list is what stops that recurring.
         stats = crate::inventory::equip_stat_declarations(),
     ))?;
+    // **`cash_locker` already exists in the owner's database, so the CREATE above does nothing to
+    // it** - and on 2026-09-10 that cost a purchase: `item_columns()` had gained `failed_slots`,
+    // `inventory` and `equipment` had been ALTERed to match, and this table had not. Every
+    // locker read failed with "no such column: failed_slots", the handler mapped the error to
+    // "You don't have enough Leaf Points", and the owner, holding 105,500 LP, asked why. Same idiom
+    // and the same `PRAGMA table_info` guard as the other two tables.
+    crate::inventory::add_equip_stat_columns(conn, "cash_locker")?;
     Ok(())
 }
 

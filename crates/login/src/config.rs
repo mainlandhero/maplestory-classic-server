@@ -144,6 +144,16 @@ pub struct Config {
     pub bind_migrations: MigrationBinding,
 
     pub world: World,
+
+    /// **Equip templates, for the character-select sheet's equipment totals.**
+    ///
+    /// The field client adds worn items' stat blocks from the record itself; the select
+    /// screen is handed a look, which carries ids only, so the sum has to be in the stat
+    /// block this server writes. Stored blocks need no template; unscrolled items are
+    /// resolved from here the way the world fills the record. `login::selectstats`. Loaded
+    /// from `gm-handbook/equips.txt` by the binary; empty in tests and when the file is
+    /// missing, which leaves unscrolled items' base stats off the sheet - the log says so.
+    pub equips: std::collections::HashMap<u32, world::config::EquipTemplate>,
 }
 
 /// When a freshly minted migration is bound to the login claim's token. See
@@ -184,6 +194,7 @@ impl Default for Config {
             // elsewhere. See the field.
             bind_migrations: MigrationBinding::Auto,
             world: World::default(),
+            equips: std::collections::HashMap::new(),
         }
     }
 }

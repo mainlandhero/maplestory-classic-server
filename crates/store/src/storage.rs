@@ -176,6 +176,10 @@ pub(crate) fn create_tables(conn: &Connection) -> Result<()> {
         default_slots = DEFAULT_STORAGE_SLOTS,
         stats = inventory::equip_stat_declarations()
     ))?;
+    // The same gap `cash_locker` had on 2026-09-10: the table pre-exists in the owner's database,
+    // the shared column list gained `failed_slots`, and a CREATE IF NOT EXISTS cannot add it.
+    // Without this every storage read on their file fails with "no such column".
+    inventory::add_equip_stat_columns(conn, "storage_item")?;
     Ok(())
 }
 

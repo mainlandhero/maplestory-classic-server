@@ -367,12 +367,32 @@ impl Session {
         } else {
             store::Item::bundle(row.item_id, row.count.max(1))
         };
+        // **The reason has to be the store's reason, not a default.** Until 2026-09-10 every
+        // store error came back as NOT_ENOUGH_CASH, and the one that actually fired was a
+        // schema gap ("no such column: failed_slots" on `cash_locker`) - so the owner, holding
+        // 105,500 LP, was told they could not afford a 100 LP coupon. A wrong reason is worse
+        // than the generic one: it sends the player to check the one thing that is fine.
         let placed = match self.store.buy_cash_item(account_id, &item, row.price) {
             Ok(l) => l,
-            Err(e) => {
+            Err(e @ store::StoreError::NotEnoughMesos { .. }) => {
                 return self.refuse_cash_shop(
                     reason::NOT_ENOUGH_CASH,
                     format!("{what} - the purchase was refused and NOTHING changed: {e}"),
+                )
+            }
+            Err(e @ store::StoreError::StorageFull { .. }) => {
+                return self.refuse_cash_shop(
+                    reason::TOO_MANY_CASH_ITEMS,
+                    format!("{what} - the LOCKER is full; NOTHING changed: {e}"),
+                )
+            }
+            Err(e) => {
+                return self.refuse_cash_shop(
+                    reason::UNKNOWN_ERROR,
+                    format!(
+                        "{what} - a SERVER error, not the wallet; NOTHING changed: {e}. The \
+                         client will say 'unknown error', which is the truth here"
+                    ),
                 )
             }
         };

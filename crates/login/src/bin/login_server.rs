@@ -112,6 +112,19 @@ fn main() -> ExitCode {
     // is one, else the server's. Every account with an email shows its own masked address.
     config.display_name = display_name
         .unwrap_or_else(|| config.fallback_account.clone().unwrap_or_else(|| "MapleCW".into()));
+    // The equip templates behind the select sheet's equipment totals - `login::selectstats`.
+    // A missing file is not fatal: stored (scrolled) bonuses still show, unscrolled items'
+    // base stats do not, and the banner says which state we are in on every start.
+    let equips_path = PathBuf::from("gm-handbook/equips.txt");
+    config.equips = world::config::Config::load_equips(&equips_path);
+    if config.equips.is_empty() {
+        eprintln!(
+            "maplecw-login: no equip templates from {} - the select sheet will carry STORED bonuses only; unscrolled items' base stats will be missing. Regenerate with: python tools/dump_equips.py",
+            equips_path.display()
+        );
+    } else {
+        println!("maplecw-login: {} equip templates for the select sheet", config.equips.len());
+    }
     let World { id, ref channels, channel_id, .. } = config.world;
     if channels.is_empty() {
         eprintln!("--channels: at least one channel address is required
