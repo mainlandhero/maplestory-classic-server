@@ -141,6 +141,16 @@ impl Session {
         //
         // Sent even when the locker is empty: count 0 is a legal reload and it clears a
         // panel that might still be drawing a previous visit's rows.
+        // **The character's own bag, again, for the shop's Item Inventory panel.** The owner,
+        // 2026-09-10: *"I also have 3 Mystery Hair Coupon in my normal Cash Tab, I also do
+        // not see those in the Cash Shop in my player inventory."* The record inside 0x01A3
+        // cannot carry the Cash tab (it carries Equip, Use, Set Up and Etc - `crates/net/src/
+        // bag.rs`), which is why field entry refills the tabs with a bag restore AFTER its
+        // SetField. Nothing did that after SetCashShop, so the stage's character data had
+        // an empty Cash tab and the Item Inventory panel drew it faithfully. Same restore,
+        // same quiet mode; the 0x0070 handler is in the world dispatcher, which does not
+        // check the stage.
+        out.extend(self.restore_bag_and_mesos());
         out.push(self.locker_reload_reply(account_id, "at entry"));
         out.extend(self.cash_wallet_reply(account_id, "sent unprompted with SetCashShop"));
         out
@@ -272,6 +282,7 @@ impl Session {
     /// Each record carries the lowest on-sale commodity serial for its item, since a stored
     /// row does not remember which serial it was bought under; 0 when nothing sells it.
     fn locker_reload_reply(&self, account_id: i64, why: &str) -> Reply {
+        let character_id = self.claimed_character().map(|c| c.id).unwrap_or(0);
         let locker = self.store.cash_locker(account_id).unwrap_or_default();
         let records: Vec<Vec<u8>> = locker
             .iter()
@@ -280,11 +291,13 @@ impl Session {
                     store::ItemKind::Bundle { quantity } => quantity,
                     store::ItemKind::Equip(_) => 1,
                 };
-                net::cashshop::cash_item_record(
+                net::cashshop::cash_item_record_owned(
                     locker_serial(account_id, entry.slot),
                     entry.item.item_id,
                     self.config.commodity.serial_for_item(entry.item.item_id).unwrap_or(0),
                     quantity.max(1),
+                    0,
+                    character_id,
                 )
             })
             .collect();
@@ -598,8 +611,14 @@ impl Session {
         // it changes if the item ever changes slot, so the moment `0x0A`/`0x0B` are built this
         // wants a real column on `cash_locker` instead.
         let serial = locker_serial(account_id, placed.slot);
-        let record =
-            net::cashshop::cash_item_record(serial, row.item_id, row.sn, row.count.max(1));
+        let record = net::cashshop::cash_item_record_owned(
+            serial,
+            row.item_id,
+            row.sn,
+            row.count.max(1),
+            0,
+            self.claimed_character().map(|c| c.id).unwrap_or(0),
+        );
 
         let mut out = vec![Reply {
             opcode: net::cashshop::CASH_SHOP_RESULT,

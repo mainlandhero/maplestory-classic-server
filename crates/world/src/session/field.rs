@@ -295,7 +295,7 @@ impl Session {
     ///
     /// **Equips are deliberately skipped.** They come through the record, and sending them
     /// twice would put a second copy of every item in the tab.
-    fn restore_bag_and_mesos(&mut self) -> Vec<Reply> {
+    pub(super) fn restore_bag_and_mesos(&mut self) -> Vec<Reply> {
         let Some(chr) = self.claimed_character() else { return Vec::new() };
         let mut out = Vec::new();
         for inv in [
