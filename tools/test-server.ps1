@@ -686,16 +686,21 @@
          filter), the layout - and it says the rows should draw. So this run MEASURES it.
          Add this to the launch line, exactly, and nothing else new:
 
-           -Probe "watch@140d7e1f0,140d75850,1410b5540,1410b5a40,14170fd10"
+           -Probe "watch@1415db360:ret,141b2a280:rdx=0,140d7e1f0,140d75850,1410b5540,14170fd10"
+
+         The first two are the MANDATORY client patches from the default -Probe (the
+         reachability skip and the login-dialog suppress); giving -Probe replaces the
+         default, so they have to be repeated. The default's two observers (141b36f60,
+         142ef3e44) are dropped for this run: six slots, and four are needed here. The
+         layout (1410b5a40) is not watched because the repaint calls it unconditionally.
 
          Then enter the Cash Shop once and exit. client-patched\maplecw-hook.log gets a
-         WATCH line per call, with arguments. The five, in pipeline order:
+         WATCH line per call, with arguments. The four, in pipeline order:
            140d7e1f0  the 0x04 handler     expect 1 hit at entry
            140d75850  locker-map insert    expect one hit PER ROW (6 today)
            1410b5540  panel repaint        expect >= 1
-           1410b5a40  panel layout         expect >= 1
            14170fd10  row-widget ctor      expect one hit PER ROW
-           all five as expected -> the rows exist and are invisible; the draw is next
+           all four as expected -> the rows exist and are invisible; the draw is next
            insert hits, no repaint -> [stage+0xc8] is null at that moment; a late repaint
            no insert hits at all  -> the 0x04 body is not reaching the handler as read
            the client DIES -> say so; five watches once coincided with a close (T17) and
@@ -2528,12 +2533,13 @@ function Show-TestPlan {
         Write-Host '      and 0x04 (the locker reload) now goes out at entry and after'
         Write-Host '      every buy. The client pipeline reads as "should draw", so'
         Write-Host '      this run measures it. ADD TO THE LAUNCH LINE, EXACTLY:' -ForegroundColor Yellow
-        Write-Host '        -Probe "watch@140d7e1f0,140d75850,1410b5540,1410b5a40,14170fd10"' -ForegroundColor Yellow
+        Write-Host '        -Probe "watch@1415db360:ret,141b2a280:rdx=0,140d7e1f0,140d75850,1410b5540,14170fd10"' -ForegroundColor Yellow
+        Write-Host '      (the first two are the mandatory client patches; -Probe'
+        Write-Host '      replaces the default, so they must be repeated. 6 slots.)'
         Write-Host '      Enter the Cash Shop once, exit. Then read the hook log:'
         Write-Host '        140d7e1f0 0x04 handler   -> 1 hit'
         Write-Host '        140d75850 map insert     -> one per row (6)'
         Write-Host '        1410b5540 repaint        -> >= 1'
-        Write-Host '        1410b5a40 layout         -> >= 1'
         Write-Host '        14170fd10 row widget     -> one per row (6)'
         Write-Host '        all as expected -> rows exist, invisible; the draw is next'
         Write-Host '        insert but no repaint -> the panel pointer was null then'
