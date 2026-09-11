@@ -674,7 +674,7 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
-     TL. THE CASH INVENTORY DRAWS THE ITEM, NOT THE RECORD. Plain launch, no -Probe.
+     TL. THE CASH INVENTORY DRAWS THE ITEM, NOT THE RECORD. -SetFieldProbe, no -Probe.
          Run 3 (23:5x) settled the Item Inventory: the 3 Mystery Hair Coupons show inside
          the shop (the bag restore after SetCashShop). The Cash Inventory stayed empty,
          so the character id was NOT it. Read since, in the widget's own draw: it looks
@@ -2579,7 +2579,7 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
-        Write-Host '  TL. THE CASH INVENTORY DRAWS THE ITEM, NOT THE RECORD. Plain launch.' -ForegroundColor Magenta
+        Write-Host '  TL. THE CASH INVENTORY DRAWS THE ITEM, NOT THE RECORD. -SetFieldProbe only.' -ForegroundColor Magenta
         Write-Host '      Run 3 DONE: Item Inventory shows the 3 Mystery Hair Coupons.'
         Write-Host '      Cash Inventory stayed empty - the character id was NOT it.'
         Write-Host '      The row widget''s draw paints the ITEM OBJECT behind the record,'
