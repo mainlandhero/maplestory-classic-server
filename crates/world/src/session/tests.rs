@@ -9649,3 +9649,118 @@ fn a_female_top_is_refused_on_a_male_character_in_both_slot_forms() {
     assert!(!out[0].what.contains("REFUSING"), "{}", out[0].what);
     assert!(store.equipped_items(id).unwrap().iter().any(|e| e.item_id == 1040021 && e.slot == 5));
 }
+
+/// The `0x03E1 0x0A` body the client builds: sub-op, `u64` serial, `u32` item, `u8` tab,
+/// `u16` destination slot - `research/cash-shop-actions.md` §3.2.
+fn locker_to_bag(serial: u64, item_id: u32, tab: u8, slot: u16) -> Vec<u8> {
+    let mut b = net::cashshop::CLIENT_CASH_SHOP_ACTION.to_le_bytes().to_vec();
+    b.push(net::cashshop::ACTION_MOVE_LOCKER_TO_BAG);
+    b.extend_from_slice(&serial.to_le_bytes());
+    b.extend_from_slice(&item_id.to_le_bytes());
+    b.push(tab);
+    b.extend_from_slice(&slot.to_le_bytes());
+    b
+}
+
+/// **A locker item moves into the Cash tab at the slot the client chose, and the reply is
+/// the `0x19` the client reads as "place at N and forget the serial".** The owner, 2026-09-10:
+/// *"The player can choose to move the coupon out of the Cash Inventory into the regular
+/// inventory in the Cash Tab."* Refused by this server until today; never attempted in any
+/// archived run.
+#[test]
+fn a_locker_item_moves_into_the_cash_tab_where_the_client_asked() {
+    let (mut s, store, id) = cash_shop_session();
+    let account = 1i64;
+    let placed = store.put_cash_item(account, &store::Item::bundle(5680004, 1)).unwrap();
+    let serial = (account as u64) << 32 | u64::from(placed.slot);
+    let cash = store::InventoryType::Cash;
+
+    let out = s.handle(&locker_to_bag(serial, 5680004, cash.as_u8(), 3));
+    assert_eq!(out.len(), 1, "one reply and no wallet: {out:?}");
+    assert_eq!(out[0].opcode, net::cashshop::CASH_SHOP_RESULT);
+    assert_eq!(out[0].body[0], net::cashshop::RESULT_ITEM_GRANTED, "0x19, the MOVE reply");
+    assert_eq!(out[0].body[1], 1, "bRelease must be non-zero or the shop stays blocked");
+    assert_eq!(&out[0].body[2..4], &3u16.to_le_bytes(), "the slot the client picked, echoed");
+    assert!(out[0].body.len() > 4 + 10, "an item body follows, then the trailing flag");
+    assert_eq!(*out[0].body.last().unwrap(), 0, "bEffect");
+    assert!(out[0].what.contains("MOVED"), "{}", out[0].what);
+
+    // The database moved it: out of the locker, into the Cash tab at slot 3.
+    assert!(store.cash_locker(account).unwrap().is_empty(), "the locker row is gone");
+    let bag = store.bag_items(id, cash).unwrap();
+    assert_eq!(bag.len(), 1);
+    assert_eq!((bag[0].slot, bag[0].item.item_id), (3, 5680004));
+}
+
+/// **Every check the client made is re-made here, and a failed one moves nothing.** Wrong
+/// account in the serial, a slot already occupied, an item id that does not match the locker
+/// row, the wrong tab, slot 0 - each is the queue refusal (`0x3D`, not `0x1A`, which would
+/// empty the client's queue), and afterwards the locker still holds the item and the tab is
+/// still empty.
+#[test]
+fn a_locker_move_that_fails_a_check_is_refused_and_moves_nothing() {
+    let (mut s, store, id) = cash_shop_session();
+    let account = 1i64;
+    let placed = store.put_cash_item(account, &store::Item::bundle(5680004, 1)).unwrap();
+    let serial = (account as u64) << 32 | u64::from(placed.slot);
+    let cash = store::InventoryType::Cash;
+    // Occupy slot 4 so the "destination must be empty" check has something to refuse.
+    store.set_inventory_slot(id, cash, 4, &store::Item::bundle(5070000, 1)).unwrap();
+
+    let bad = [
+        ("another account's serial", locker_to_bag((2u64 << 32) | 1, 5680004, cash.as_u8(), 3)),
+        ("an empty locker slot", locker_to_bag((account as u64) << 32 | 9, 5680004, cash.as_u8(), 3)),
+        ("the wrong item id", locker_to_bag(serial, 5070000, cash.as_u8(), 3)),
+        ("the wrong tab", locker_to_bag(serial, 5680004, store::InventoryType::Etc.as_u8(), 3)),
+        ("slot 0", locker_to_bag(serial, 5680004, cash.as_u8(), 0)),
+        ("an occupied slot", locker_to_bag(serial, 5680004, cash.as_u8(), 4)),
+        ("a short body", {
+            let mut b = net::cashshop::CLIENT_CASH_SHOP_ACTION.to_le_bytes().to_vec();
+            b.push(net::cashshop::ACTION_MOVE_LOCKER_TO_BAG);
+            b.extend_from_slice(&[0u8; 8]);
+            b
+        }),
+    ];
+    for (why, body) in bad {
+        let out = s.handle(&body);
+        assert_eq!(out.len(), 1, "{why}: answered once: {out:?}");
+        assert_eq!(out[0].opcode, net::cashshop::CASH_SHOP_RESULT, "{why}");
+        assert_eq!(out[0].body[0], net::cashshop::RESULT_QUEUE_REFUSED, "{why}: 0x3D keeps the queue");
+        assert_eq!(out[0].body.len(), net::cashshop::CASH_SHOP_QUEUE_REFUSAL_LEN, "{why}");
+        assert!(out[0].what.contains("nothing moved"), "{why}: {}", out[0].what);
+        assert_eq!(store.cash_locker(account).unwrap().len(), 1, "{why}: the locker still has it");
+        assert_eq!(store.bag_items(id, cash).unwrap().len(), 1, "{why}: only the pre-placed item");
+    }
+}
+
+/// **Entering the shop lists what the locker holds**, one `0x0C` per row between the stage
+/// packet and the wallet - so an item bought and left in the Cash Inventory is still there
+/// on the next visit. New 2026-09-10; before it only the current visit's purchase appeared.
+#[test]
+fn entering_the_shop_lists_the_lockers_stored_rows() {
+    let (mut s, store, _id) = cash_shop_session();
+    let account = 1i64;
+    store.put_cash_item(account, &store::Item::bundle(5680004, 1)).unwrap();
+    store.put_cash_item(account, &store::Item::bundle(5680002, 1)).unwrap();
+
+    let out = s.on_cash_shop_request(&[0u8; 5]);
+    let ops: Vec<u16> = out.iter().map(|r| r.opcode).collect();
+    assert_eq!(ops[0], net::cashshop::SET_CASH_SHOP, "the stage first");
+    assert_eq!(*ops.last().unwrap(), net::cashshop::CASH_SHOP_WALLET, "the wallet last");
+    let listed: Vec<&Reply> = out
+        .iter()
+        .filter(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT
+            && r.body[0] == net::cashshop::RESULT_ITEM_TO_LOCKER)
+        .collect();
+    assert_eq!(listed.len(), 2, "one 0x0C per locker row: {ops:?}");
+    // Each carries the serial the move request will echo: (account << 32) | slot.
+    for (r, slot) in listed.iter().zip([1u64, 2]) {
+        let serial = u64::from_le_bytes(r.body[1..9].try_into().unwrap());
+        assert_eq!(serial, (account as u64) << 32 | slot, "{}", r.what);
+        assert!(r.what.contains("LOCKER LISTING"), "{}", r.what);
+    }
+    // And an empty locker lists nothing extra.
+    let (mut s2, _store2, _) = cash_shop_session();
+    let out2 = s2.on_cash_shop_request(&[0u8; 5]);
+    assert!(out2.iter().all(|r| r.opcode != net::cashshop::CASH_SHOP_RESULT), "{:?}", out2.iter().map(|r| r.opcode).collect::<Vec<_>>());
+}
