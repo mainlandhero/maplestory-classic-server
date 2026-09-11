@@ -295,14 +295,50 @@ impl Session {
     ///
     /// **Equips are deliberately skipped.** They come through the record, and sending them
     /// twice would put a second copy of every item in the tab.
+    /// Move every cash equip out of the Equip tab into the Deco tab. See the call site.
+    fn relocate_cash_equips(&mut self, character_id: u32) -> Vec<Reply> {
+        let strays: Vec<store::InvItem> = self
+            .store
+            .bag_items(character_id, store::InventoryType::Equip)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|row| self.config.tab_for(row.item.item_id) == Some(store::InventoryType::Deco))
+            .collect();
+        let mut out = Vec::new();
+        for row in strays {
+            let Ok(Some(free)) = self.store.free_slot(character_id, store::InventoryType::Deco) else {
+                out.extend(self.notice(format!(
+                    "{} is a cash equip and belongs in your Deco tab, which is full; it stays in the Equip tab for now.",
+                    row.item.item_id
+                )));
+                continue;
+            };
+            if self.store.set_inventory_slot(character_id, store::InventoryType::Deco, free, &row.item).is_err() {
+                continue;
+            }
+            let _ = self.store.clear_inventory_slot(character_id, store::InventoryType::Equip, row.slot);
+            crate::server::log(&format!(
+                "   inventory: character {character_id}: cash equip {} moved from Equip slot {} to Deco slot {free} (it was placed by leading digit before 2026-09-11)",
+                row.item.item_id, row.slot
+            ));
+        }
+        out
+    }
+
     pub(super) fn restore_bag_and_mesos(&mut self) -> Vec<Reply> {
         let Some(chr) = self.claimed_character() else { return Vec::new() };
         let mut out = Vec::new();
+        // **A cash equip in the Equip tab is moved to the Deco tab first.** Until 2026-09-11
+        // every 1xxxxxx id went to the Equip tab, and the Übel set's four are sitting there
+        // in the owner's database; the client keeps cash equips in tab 6 and every request it
+        // builds about one names that tab. Idempotent, one query when there is nothing to do.
+        out.extend(self.relocate_cash_equips(chr.id));
         for inv in [
             store::InventoryType::Use,
             store::InventoryType::Setup,
             store::InventoryType::Etc,
             store::InventoryType::Cash,
+            store::InventoryType::Deco,
         ] {
             let items = match self.store.bag_items(chr.id, inv) {
                 Ok(items) => items,

@@ -61,7 +61,14 @@ STAT_KEYS = ["incSTR", "incDEX", "incINT", "incLUK", "incMHP", "incMMP",
 # **16 never appears**, which independently reproduces "this client has no pirates".
 REQ_KEYS = ["reqLevel", "reqSTR", "reqDEX", "reqINT", "reqLUK", "reqJob"]
 
-COLUMNS = ["tuc"] + STAT_KEYS + ["tradeBlock"] + REQ_KEYS
+# `cash` decides the TAB. The client's `FUN_1403E8AF0` sends a 1xxxxxx item to inventory 6
+# (Deco) when its ItemInfo `+0x18` is non-zero and to the Equip tab otherwise, and the
+# backported Signature Style equips all carry `info/cash = 1` - the Ubel set opened into the
+# Equip tab on 2026-09-11 and the owner found the Deco tab empty. Last numeric column, before the
+# name, so every reader that stops at column 19 or 25 still parses.
+CASH_KEY = ["cash"]
+
+COLUMNS = ["tuc"] + STAT_KEYS + ["tradeBlock"] + REQ_KEYS + CASH_KEY
 
 
 def run(*args):
@@ -191,6 +198,8 @@ def main():
         fh.write("# Column set is enumerated from the data, not assumed: this client has\n")
         fh.write("# incWAT and NO incPAD. reqJob is a BITMASK: 1 warrior, 2 magician,\n")
         fh.write("# 4 bowman, 8 thief. 0 means anyone, and 16 never appears.\n")
+        fh.write("# cash is 1 for a cash equip, which the client keeps in the Deco tab (6),\n")
+        fh.write("# not the Equip tab.\n")
         for item_id, values, name in rows:
             fh.write("%d, %s, %s\n" % (item_id, ", ".join(str(v) for v in values), name))
 

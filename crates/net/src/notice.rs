@@ -28,11 +28,72 @@ use crate::PacketWriter;
 pub const CHAT_NOTICE: u16 = 0x00BB;
 
 /// Build a [`CHAT_NOTICE`].
+///
+/// **The text is folded to ASCII first.** The owner, 2026-09-11, with *"Übel Outfit Set: you
+/// received..."* drawn as a box and the rest of the line: *"The chat does not handle the
+/// accented character well, you'll need to use the regular U."* `PacketWriter::str` sends
+/// each `char` as one byte, so `Ü` went out as `0xDC`, and whatever the chat font indexes
+/// at `0xDC` is not a glyph. Measured on screen; the fold is the fix that needs no run.
 pub fn chat_notice(text: &str) -> Vec<u8> {
     let mut w = PacketWriter::new();
     w.u8(1); // force - see CHAT_NOTICE; 0 shows only the first line per field entry
-    w.str(text);
+    w.str(&ascii_fold(text));
     w.into_vec()
+}
+
+/// Latin letters with diacritics to their base letters; anything else non-ASCII to `?`.
+///
+/// Every backported Signature Style name that is not plain ASCII is covered by the first
+/// two rows (`Übel`), and the rest of Latin-1 is here so the next accented name does not
+/// come back as a box either. A `?` for anything outside that is deliberate: it is visible,
+/// where a dropped character or a wrong byte is not.
+pub fn ascii_fold(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            'À'..='Å' => out.push('A'),
+            'à'..='å' => out.push('a'),
+            'Æ' => out.push_str("AE"),
+            'æ' => out.push_str("ae"),
+            'Ç' => out.push('C'),
+            'ç' => out.push('c'),
+            'È'..='Ë' => out.push('E'),
+            'è'..='ë' => out.push('e'),
+            'Ì'..='Ï' => out.push('I'),
+            'ì'..='ï' => out.push('i'),
+            'Ñ' => out.push('N'),
+            'ñ' => out.push('n'),
+            'Ò'..='Ö' | 'Ø' => out.push('O'),
+            'ò'..='ö' | 'ø' => out.push('o'),
+            'Ù'..='Ü' => out.push('U'),
+            'ù'..='ü' => out.push('u'),
+            'Ý' => out.push('Y'),
+            'ý' | 'ÿ' => out.push('y'),
+            'ß' => out.push_str("ss"),
+            c if c.is_ascii() => out.push(c),
+            _ => out.push('?'),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod fold_tests {
+    use super::*;
+
+    /// `Übel` is what was on screen as a box; the rest is the table's coverage, and the one
+    /// character outside it becomes a visible `?` rather than a byte the font has no glyph for.
+    #[test]
+    fn a_chat_notice_goes_out_as_ascii() {
+        assert_eq!(ascii_fold("Übel Outfit Set"), "Ubel Outfit Set");
+        assert_eq!(ascii_fold("Frieren, Fern, Stark, Übel, Lügner, Linie, Aura, Himmel"), "Frieren, Fern, Stark, Ubel, Lugner, Linie, Aura, Himmel");
+        assert_eq!(ascii_fold("straße café ñ ø"), "strasse cafe n o");
+        assert_eq!(ascii_fold("plain ASCII stays"), "plain ASCII stays");
+        assert_eq!(ascii_fold("日本"), "??");
+        let p = chat_notice("Übel");
+        assert_eq!(&p[1..], &[4, 0, b'U', b'b', b'e', b'l'], "u16 length, then bytes, all < 0x80");
+        assert!(p.iter().all(|b| *b < 0x80));
+    }
 }
 
 /// The answer to the client's Log Out request, `0x01BE`.

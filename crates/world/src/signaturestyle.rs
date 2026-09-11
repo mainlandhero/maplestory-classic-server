@@ -133,10 +133,13 @@ pub fn set_contents(set: &OutfitSet) -> Vec<(u32, store::InventoryType)> {
     out
 }
 
-/// How many slots of each tab a hand-out needs: `(Equip, Use, Cash)`.
-pub fn slots_needed(items: &[(u32, store::InventoryType)]) -> (u16, u16, u16) {
-    let count = |t: store::InventoryType| items.iter().filter(|(_, i)| *i == t).count() as u16;
-    (count(store::InventoryType::Equip), count(store::InventoryType::Use), count(store::InventoryType::Cash))
+/// How many slots of each tab a hand-out needs, indexed by `InventoryType::index()`.
+pub fn slots_needed(items: &[(u32, store::InventoryType)]) -> [u16; net::opcode::INVENTORY_COUNT] {
+    let mut out = [0u16; net::opcode::INVENTORY_COUNT];
+    for (_, t) in items {
+        out[t.index()] += 1;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -208,8 +211,8 @@ mod tests {
     #[test]
     fn slot_accounting_counts_per_tab() {
         let frieren = set_for_coupon(5_681_543).unwrap();
-        assert_eq!(slots_needed(&set_contents(frieren)), (6, 4, 0));
+        assert_eq!(slots_needed(&set_contents(frieren)), [6, 4, 0, 0, 0, 0], "Equip, Use, Set Up, Etc, Cash, Deco - the listing's tabs; the hand-out re-tabs cash equips to Deco");
         let aura = set_for_coupon(5_681_550).unwrap();
-        assert_eq!(slots_needed(&set_contents(aura)), (5, 1, 0));
+        assert_eq!(slots_needed(&set_contents(aura)), [5, 1, 0, 0, 0, 0]);
     }
 }

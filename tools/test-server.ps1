@@ -865,6 +865,17 @@
            nothing, and the inventory is FROZEN -> the latch is not cleared; relog and tell me
            a message but no change -> the reset itself refused; the chat line says why
 
+     TB. THE BEAUTY COUPON DIALOG'S WHITE NAME. Frieren's was white too, so it is the client:
+         its own string 0x0464 is "Would you like to use #fc0xffffffff#%s?" - opaque WHITE,
+         meant for the modern dark panel. The hook now patches six bytes of that encrypted
+         string at load so the colour is black. Kill switch: -NoBeautyTextPatch.
+         Double-click any hair or face coupon.
+           the name is black and readable -> done
+           still white, and maplecw-hook.log has "BEAUTYTEXT: patched" -> the client
+                         decrypted the table before the hook ran; I move the six bytes into
+                         the exe file instead
+           still white, and the log says "refusing" or "not readable" -> paste that line
+
      TF. THE FREE MARKET DOOR, which is the one that can strand somebody if it is wrong.
          From **Henesys Market** (10001040) walk into the `market00` portal, then walk back
          out of the Free Market Entrance's `out00`.
@@ -1870,6 +1881,10 @@ param(
     # bails before the gate is ever reached, because it is gated on a WZ node no mob has.
     # Kept because it may matter for a mob ATTACK-SKILL hit, which has never been observed.
     [switch]$ClientHitNumberPatch,
+    # Leave the Beauty Coupon dialog's item name WHITE (the client's own string 0x0464 colours
+    # it 0xffffffff, invisible on this client's white panel). The hook patches six bytes of
+    # that encrypted string to black by default; this is the off switch. beautytext.rs.
+    [switch]$NoBeautyTextPatch,
     # Monsters are ON by default since 2026-08-19. -NoMobs turns them off.
     #
     # -Mobs used to be the opt-in, and it cost a launch: the owner stood on map 40, which has
@@ -1881,10 +1896,6 @@ param(
     # -MobLimit 1 tells "the body is wrong" apart from "thirty objects at once".
     [switch]$Mobs,
     [switch]$NoMobs,
-    # Leave the Beauty Coupon dialog's item name WHITE (the client's own string 0x0464 colours
-    # it 0xffffffff, invisible on this client's white panel). The hook patches six bytes of
-    # that encrypted string to black by default; this is the off switch. beautytext.rs.
-    [switch]$NoBeautyTextPatch,
     [int]$MobLimit = 0,
     # Give every inventory this many slots instead of the character's own count.
     #
@@ -2610,17 +2621,6 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
-        Write-Host '  TL. BAG -> LOCKER, EVERY CASH ITEM NOW CARRIES A SERIAL. -SetFieldProbe.' -ForegroundColor Magenta
-        Write-Host '      Run 6 (04:03): "nothing moves back" and NO 0x03E1 in world.log -'
-        Write-Host '      the client sent nothing: bag-restored items had +0x38 = 0 and'
-        Write-Host '      the double-click builder skips those. Now every Cash-tab body'
-        Write-Host '      (field entry, shop entry, every Add) carries a serial. A Cash'
-        Write-Host '      BUNDLE body is 8 bytes longer - the one variable.' -ForegroundColor Yellow
-        Write-Host '      Enter the shop. Item Inventory EMPTY -> the longer body; say so.' -ForegroundColor Red
-        Write-Host '        1. double-click a Mystery Hair Coupon (never moved before):'
-        Write-Host '           in the locker, gone from Item Inventory -> fixed'
-        Write-Host '           nothing at all -> the builder still saw 0; world.log has the body'
-        Write-Host '           in the locker AND still in Item Inventory -> lookup missed;'
         Write-Host '  TM. THE OUTFIT IS IN THE DECO TAB; THE CHAT SAYS "UBEL". -SetFieldProbe.' -ForegroundColor Magenta
         Write-Host '      04:12: the Ubel set went to the EQUIP tab by leading digit; the'
         Write-Host '      client keeps cash equips (info/cash = 1) in tab 6, Deco. The'
@@ -2633,6 +2633,17 @@ function Show-TestPlan {
         Write-Host '      Then in the shop, double-click Ubel''s Clothes (Deco tab):'
         Write-Host '        goes to the Cash Inventory -> 0x0B with tab 6 works'
         Write-Host ''
+        Write-Host '  TL. BAG -> LOCKER, EVERY CASH ITEM NOW CARRIES A SERIAL. -SetFieldProbe.' -ForegroundColor Magenta
+        Write-Host '      Run 6 (04:03): "nothing moves back" and NO 0x03E1 in world.log -'
+        Write-Host '      the client sent nothing: bag-restored items had +0x38 = 0 and'
+        Write-Host '      the double-click builder skips those. Now every Cash-tab body'
+        Write-Host '      (field entry, shop entry, every Add) carries a serial. A Cash'
+        Write-Host '      BUNDLE body is 8 bytes longer - the one variable.' -ForegroundColor Yellow
+        Write-Host '      Enter the shop. Item Inventory EMPTY -> the longer body; say so.' -ForegroundColor Red
+        Write-Host '        1. double-click a Mystery Hair Coupon (never moved before):'
+        Write-Host '           in the locker, gone from Item Inventory -> fixed'
+        Write-Host '           nothing at all -> the builder still saw 0; world.log has the body'
+        Write-Host '           in the locker AND still in Item Inventory -> lookup missed;'
         Write-Host '             say if anything ELSE in the Cash tab vanished (slot 0)'
         Write-Host '           "unknown error" -> refused; world.log says why'
         Write-Host '           client DIES -> say so; the longer body is the suspect' -ForegroundColor Red
@@ -2713,6 +2724,16 @@ function Show-TestPlan {
         Write-Host '        stats reset, scroll stays -> consume failed; world.log'
         Write-Host '        nothing and inventory FROZEN -> latch not cleared; tell me' -ForegroundColor Yellow
         Write-Host '        a message, no change -> the reset refused; chat says why'
+        Write-Host ''
+        Write-Host '  TB. BEAUTY COUPON DIALOG - the white item name.' -ForegroundColor Magenta
+        Write-Host '      Frieren was white too, so it is the client: its own string'
+        Write-Host '      0x0464 colours the name 0xffffffff. The hook now patches six'
+        Write-Host '      bytes of it to black at load. Off switch: -NoBeautyTextPatch.'
+        Write-Host '      Double-click any hair or face coupon.'
+        Write-Host '        name black -> done'
+        Write-Host '        still white + hook.log "BEAUTYTEXT: patched" -> table was'
+        Write-Host '                      decrypted before the hook; exe-file patch next'
+        Write-Host '        still white + "refusing"/"not readable" -> paste the line'
         Write-Host ''
         Write-Host '  TF. THE FREE MARKET DOOR - can strand you if it is wrong.' -ForegroundColor Magenta
         Write-Host '      From HENESYS MARKET (10001040) walk into market00, then'
@@ -3602,6 +3623,7 @@ if ($PoolSentry) {
 # return (the test plan was the first, the sentry marker the second), and it is the same fix.
 if ($HeapFix) { $Session = "$Session,heapfix=on" }
 if ($ClientHitNumberPatch) { $Session = "$Session,hitnumber=off" }
+if ($NoBeautyTextPatch) { $Session = "$Session,beautytext=off" }
 if ($FreeGuard) { $Session = "$Session,freeguard=on" }
 elseif ($FreeGuardObserve) { $Session = "$Session,freeguard=observe" }
 if ($GuardPage) {
@@ -3623,7 +3645,6 @@ if ($GuardPage) {
     }
     Write-Host "GUARD PAGE: quarantining size class(es) $GuardBucket." -ForegroundColor Cyan
     Write-Host '  Each allocation of those classes gets its OWN page; its free DECOMMITS the' -ForegroundColor Cyan
-if ($NoBeautyTextPatch) { $Session = "$Session,beautytext=off" }
     Write-Host '  page and holds the address back 600s. A stale write/read into a freed slot' -ForegroundColor Cyan
     Write-Host '  FAULTS at the instruction that makes it - on any clock, not just the 180s' -ForegroundColor Cyan
     Write-Host '  window. Sized from the 12:01 run: 0x20 bursts to 627172 allocations in its' -ForegroundColor Cyan

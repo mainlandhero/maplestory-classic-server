@@ -81,8 +81,8 @@ const BAG_SERIAL_MARK: u64 = 0x4000_0000;
 /// as well, and that is what the server moves. So a serial that goes stale when the item
 /// changes bag slot (mode-2 moves are client-side) costs nothing - the client only ever
 /// hands it back, and the server only ever echoes it.
-fn bag_serial(character_id: u32, slot: u16) -> u64 {
-    ((BAG_SERIAL_MARK | u64::from(character_id)) << 32) | u64::from(slot)
+fn bag_serial(character_id: u32, tab: store::InventoryType, slot: u16) -> u64 {
+    ((BAG_SERIAL_MARK | u64::from(character_id)) << 32) | (u64::from(tab.as_u8()) << 16) | u64::from(slot)
 }
 
 /// The locker slot a client-supplied serial names, **only if** it was minted for this account.
@@ -237,7 +237,7 @@ impl Session {
                 ),
             );
         }
-        let Some(inv) = store::InventoryType::for_item(req.item_id) else {
+        let Some(inv) = self.config.tab_for(req.item_id) else {
             return no(self, format!("{head} - item {} belongs in no bag tab; nothing moved", req.item_id));
         };
         if inv.as_u8() != req.inv_type {
@@ -326,11 +326,15 @@ impl Session {
         if req.serial == 0 || req.serial == u64::MAX {
             return no(self, format!("{head} - serial {:#x}: the client keys the bag lookup on it and the locker map drops -1; nothing moved", req.serial));
         }
-        let inv = store::InventoryType::Cash;
-        if req.inv_type != inv.as_u8() {
+        // Cash (5) for a cash consumable, Deco (6) for a cash equip - the two tabs the
+        // client's builder allows (140d750cd) and the two `FUN_140230CB0` will scan.
+        let Some(inv) = self.config.tab_for(req.item_id) else {
+            return no(self, format!("{head} - item {} belongs in no bag tab; nothing moved", req.item_id));
+        };
+        if !matches!(inv, store::InventoryType::Cash | store::InventoryType::Deco) || req.inv_type != inv.as_u8() {
             return no(
                 self,
-                format!("{head} - tab {} is not the Cash tab ({}); this server keeps cash items there only; nothing moved", req.inv_type, inv.as_u8()),
+                format!("{head} - the client named tab {} and {} belongs in {inv:?} ({}); nothing moved", req.inv_type, req.item_id, inv.as_u8()),
             );
         }
         let Ok(slot) = u16::try_from(req.slot) else {
@@ -405,9 +409,10 @@ impl Session {
     /// list with a fixed shape ever sees one (`item_blob_with_cash_sn`).
     pub(super) fn bag_item_blob(&self, inv: store::InventoryType, slot: u16, item: &store::Item) -> Vec<u8> {
         let sn = match inv {
-            store::InventoryType::Cash => {
+            // The two cash tabs - the ones `FUN_140230CB0` scans by serial.
+            store::InventoryType::Cash | store::InventoryType::Deco => {
                 let Some(chr) = self.claimed_character() else { return self.item_blob(item) };
-                std::num::NonZeroU64::new(bag_serial(chr.id, slot))
+                std::num::NonZeroU64::new(bag_serial(chr.id, inv, slot))
             }
             _ => None,
         };
@@ -751,13 +756,13 @@ impl Session {
         // `store::buy_cash_item` checks the balance, debits Leaf Points and places the item in
         // one transaction, which is what it was written to do before the wrong packet sent the
         // purchase down the bag path.
-        let Some(inv) = store::InventoryType::for_item(row.item_id) else {
+        let Some(inv) = self.config.tab_for(row.item_id) else {
             return self.refuse_cash_shop(
                 reason::UNKNOWN_ERROR,
                 format!("{what} - REFUSED: item {} is in no inventory tab", row.item_id),
             );
         };
-        let item = if inv == store::InventoryType::Equip {
+        let item = if matches!(inv, store::InventoryType::Equip | store::InventoryType::Deco) {
             store::Item::equip(row.item_id)
         } else {
             store::Item::bundle(row.item_id, row.count.max(1))

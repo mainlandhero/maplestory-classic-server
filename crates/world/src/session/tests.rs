@@ -9970,6 +9970,57 @@ fn the_collection_gives_every_set_and_a_set_coupon_gives_its_contents() {
     assert!(out.iter().filter(|r| r.opcode == net::inventory::INVENTORY_OPERATION).count() >= 10);
 }
 
+/// **A cash equip goes to the Deco tab, the chat says "Ubel", and a stray one in the Equip
+/// tab is moved on field entry.** The owner, 2026-09-11: *"The chat does not handle the accented
+/// character well ... It says I also got the outfit, but I see nothing in my decoration
+/// inventory."* The four went to the Equip tab by leading digit; the client keeps cash
+/// equips (ItemInfo `cash`) in tab 6.
+#[test]
+fn a_cash_equip_lands_in_the_deco_tab_and_the_notice_is_ascii() {
+    let (mut s, store, id) = gm_session();
+    let uebel = crate::signaturestyle::set_for_coupon(5_681_548).unwrap();
+    // The config flags the set's equips as cash, as the regenerated equips.txt does.
+    let mut equips = std::collections::HashMap::new();
+    for &e in uebel.equips {
+        equips.insert(e, crate::config::EquipTemplate { cash: true, ..Default::default() });
+    }
+    let mut cfg = (*s.config).clone();
+    cfg.equips = equips;
+    s.config = Arc::new(cfg);
+
+    let slot = store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_681_548, 1), 1).unwrap()[0].slot;
+    let out = s.on_use_cash_item(&use_cash_item_body(slot, 5_681_548));
+    let bag = store.bag(id).unwrap();
+    let deco: Vec<u32> = bag.items_in(store::InventoryType::Deco).map(|i| i.item.item_id).collect();
+    assert_eq!(deco.len(), uebel.equips.len(), "every equip of the set is in Deco: {deco:?}");
+    assert_eq!(bag.items_in(store::InventoryType::Equip).count(), 0, "and none in Equip");
+    // The Add packets name tab 6, and carry a serial (Deco is a cash tab the shop scans).
+    let adds: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::inventory::INVENTORY_OPERATION && r.what.contains("Deco")).collect();
+    assert_eq!(adds.len(), uebel.equips.len(), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    for r in &adds {
+        assert_eq!(r.body[8], 6, "invType 6, the Deco tab (after u8,u8,u32,u8,mode): {}", r.what);
+        let item_at = 11; // u8, u8, u32, u8, mode, invType, i16 pos
+        assert_eq!(r.body[item_at], net::opcode::EQUIPPED_ITEM_TYPE);
+        assert_eq!(r.body[item_at + 5], 1, "hasCashSN");
+        let sn = u64::from_le_bytes(r.body[item_at + 6..item_at + 14].try_into().unwrap());
+        assert_eq!((sn >> 16) & 0xFF, 6, "the tab is in the serial: {sn:#x}");
+    }
+    let notice = out.iter().rev().find(|r| r.opcode == net::notice::CHAT_NOTICE).unwrap();
+    let text = notice_text(notice);
+    assert!(text.starts_with("Ubel Outfit Set: you received"), "{text}");
+    assert!(text.is_ascii());
+
+    // A stray: the same equip placed in the Equip tab (as every one was before today) is
+    // moved to Deco on the next field entry, and the restore then sends it as Deco.
+    store.set_inventory_slot(id, store::InventoryType::Equip, 5, &store::Item::equip(uebel.equips[0])).unwrap();
+    let out = s.restore_bag_and_mesos();
+    let bag = store.bag(id).unwrap();
+    assert_eq!(bag.items_in(store::InventoryType::Equip).count(), 0, "moved out of Equip");
+    assert_eq!(bag.items_in(store::InventoryType::Deco).count(), uebel.equips.len() + 1, "and into Deco");
+    let restored = out.iter().filter(|r| r.opcode == net::inventory::INVENTORY_OPERATION && r.what.contains("Deco")).count();
+    assert_eq!(restored, uebel.equips.len() + 1, "the Deco tab is restored on field entry");
+}
+
 /// **All or nothing.** A set that needs more Equip slots than are free is refused before a
 /// single row is written, the coupon is kept, and the player is told which tab and by how
 /// much. A half-opened set is the failure this exists to prevent.
@@ -10076,7 +10127,7 @@ fn entering_the_shop_restores_the_bag_and_stamps_the_character_on_locker_rows() 
     assert_eq!(&cash_body[item_at + 1..item_at + 5], &5_150_000u32.to_le_bytes());
     assert_eq!(cash_body[item_at + 5], 1, "hasCashSN");
     let bag_sn = u64::from_le_bytes(cash_body[item_at + 6..item_at + 14].try_into().unwrap());
-    assert_eq!(bag_sn, ((0x4000_0000 | u64::from(id)) << 32) | 1, "the bag serial: mark | character, then the slot (the stack landed in slot 1)");
+    assert_eq!(bag_sn, ((0x4000_0000 | u64::from(id)) << 32) | (5 << 16) | 1, "the bag serial: mark | character, then the tab and the slot (the stack landed in Cash slot 1)");
     assert_ne!(bag_sn >> 32, 1, "never an account id's high dword - a locker serial's space");
     store.add_item(id, store::InventoryType::Etc, &store::Item::bundle(4_000_000, 5), 2).unwrap();
     let out2 = s.on_cash_shop_request(&[0u8; 5]);

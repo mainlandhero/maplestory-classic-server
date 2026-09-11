@@ -650,6 +650,9 @@ impl Config {
             }
             let v: Vec<u32> = n.into_iter().map(Option::unwrap).collect();
             let u = |i: usize| u16::try_from(v[i]).unwrap_or(u16::MAX);
+            // Column 25, `cash`, added 2026-09-11 after the six requirement columns. A file
+            // from before then has the name there, which does not parse, and means "not cash".
+            let cash = f.get(25).and_then(|x| x.parse::<u32>().ok()).unwrap_or(0) != 0;
             out.insert(
                 v[0],
                 EquipTemplate {
@@ -671,10 +674,25 @@ impl Config {
                     inc_crt: u(16),
                     inc_crd: u(17),
                     trade_block: v[18] != 0,
+                    cash,
                 },
             );
         }
         out
+    }
+
+    /// Which bag an item goes in - `store::InventoryType::for_item`, except that a **cash
+    /// equip goes to the Deco tab**, which is where the client will look for it.
+    ///
+    /// The owner, 2026-09-11, after opening the Übel set: *"It says I also got the outfit, but I
+    /// see nothing in my decoration inventory."* The four equips had gone into the Equip tab
+    /// by their leading digit. See [`EquipTemplate::cash`].
+    pub fn tab_for(&self, item_id: u32) -> Option<store::InventoryType> {
+        let tab = store::InventoryType::for_item(item_id)?;
+        if tab == store::InventoryType::Equip && self.equips.get(&item_id).is_some_and(|t| t.cash) {
+            return Some(store::InventoryType::Deco);
+        }
+        Some(tab)
     }
 
     /// Every real scroll, from `tools/dump_scrolls.py`'s `scrolls.txt`.
@@ -1189,6 +1207,14 @@ pub struct EquipTemplate {
     /// **Only 7 of 1760 equips carry this**, which is the measured form of the owner's "that
     /// should only apply to some items, and not the starter items".
     pub trade_block: bool,
+    /// `info/cash`: a cash equip, which lives in the **Deco** tab (6), not the Equip tab.
+    ///
+    /// The client decides the tab itself: `FUN_1403E8AF0` returns 6 for a `1xxxxxx` id whose
+    /// ItemInfo `+0x18` is non-zero (`research/cash-shop-buy-done.md` 5.2.1, **[L]** for the
+    /// branch; **[I]** that `+0x18` is `cash`, on the strength of every backported cash equip
+    /// carrying `cash = 1` and no other candidate). Every request the client builds about
+    /// the item names that tab, so the server has to agree or every later move misses.
+    pub cash: bool,
 }
 
 impl EquipTemplate {
@@ -2646,8 +2672,19 @@ mod spawn_tests {
             .find(|l| l.starts_with("1302000,"))
             .expect("the starter sword is in the file");
         let fields: Vec<&str> = row.split(',').map(str::trim).collect();
-        assert_eq!(fields.len(), 26, "19 numeric + 6 requirement + name: {row}");
-        assert_eq!(fields[25], "Sword", "the name is the last column: {row}");
+        assert_eq!(fields.len(), 27, "19 numeric + 6 requirement + cash + name: {row}");
+        assert_eq!(fields[25], "0", "the Sword is not a cash equip: {row}");
+        assert_eq!(fields[26], "Sword", "the name is the last column: {row}");
+        // The cash column, and what it decides: a backported Signature Style equip is a cash
+        // equip and belongs in the Deco tab; the starter sword in the Equip tab.
+        let uebel = text.lines().find(|l| l.starts_with("1054562,")).expect("Ubel's Clothes is in the hybrid file");
+        let f: Vec<&str> = uebel.split(',').map(str::trim).collect();
+        assert_eq!(f[25], "1", "cash: {uebel}");
+        let cfg = Config { equips: Config::load_equips(path), ..Config::default() };
+        assert_eq!(cfg.tab_for(1054562), Some(store::InventoryType::Deco));
+        assert_eq!(cfg.tab_for(1302000), Some(store::InventoryType::Equip));
+        assert_eq!(cfg.tab_for(5150000), Some(store::InventoryType::Cash));
+        assert_eq!(cfg.tab_for(9999999), None);
         // reqLevel is field 19 and the starter sword needs nothing at all - it is the one
         // weapon in this client with a completely free entry, which is why `!kit` uses it.
         assert_eq!(fields[19], "0", "the Sword has no level requirement: {row}");
