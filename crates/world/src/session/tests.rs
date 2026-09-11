@@ -9881,3 +9881,52 @@ fn a_set_that_does_not_fit_is_refused_whole_and_the_coupon_is_kept() {
     // And the latch is still cleared, so the Cash tab is not frozen by the refusal.
     assert!(out.iter().any(|r| r.opcode == net::combat::STAT_CHANGED), "the unlock");
 }
+
+/// **The reset scrolls arrive on `0x0116`, are applied, and are consumed - with the latch
+/// cleared.** The owner, 2026-09-10: *"I just tried using the AP Reset Scroll and the SP Reset
+/// Scroll, it did not work and it did not take the item."* Both presses were `0x0116`, an
+/// opcode nothing answered; the arms had been written against `0x0114`.
+#[test]
+fn the_reset_scrolls_on_0x0116_reset_and_are_consumed() {
+    let (mut s, store, id) = gm_session();
+    let cash = store::InventoryType::Cash;
+    let ap_slot = store
+        .add_item(id, cash, &store::Item::bundle(crate::session::cashitem::AP_RESET_SCROLL, 1), 1)
+        .unwrap()[0]
+        .slot;
+    let sp_slot = store
+        .add_item(id, cash, &store::Item::bundle(crate::session::cashitem::SP_RESET_SCROLL, 1), 1)
+        .unwrap()[0]
+        .slot;
+
+    for (slot, item) in [
+        (ap_slot, crate::session::cashitem::AP_RESET_SCROLL),
+        (sp_slot, crate::session::cashitem::SP_RESET_SCROLL),
+    ] {
+        let out = s.on_use_stat_reset_item(&use_cash_item_body(slot, item));
+        assert!(!out.is_empty(), "{item}: answered");
+        // The unlock for THIS opcode is in the answer, or the inventory stays frozen.
+        assert!(
+            out.iter().any(|r| r.opcode == net::combat::STAT_CHANGED && r.what.contains("0x0116")),
+            "{item}: the 0x0116 latch must be cleared: {:?}",
+            out.iter().map(|r| &r.what).collect::<Vec<_>>()
+        );
+        // The reset ran: its own ack is in the replies.
+        assert!(
+            out.iter().any(|r| r.what.contains("reset") || r.what.contains("!reset")),
+            "{item}: {:?}",
+            out.iter().map(|r| &r.what).collect::<Vec<_>>()
+        );
+        // And the scroll is gone.
+        assert!(
+            store.bag(id).unwrap().items_in(cash).all(|i| i.item.item_id != item),
+            "{item}: the scroll was not consumed"
+        );
+    }
+
+    // The control: a slot that does not hold what the packet names is refused, kept, and
+    // still answered with the unlock.
+    let out = s.on_use_stat_reset_item(&use_cash_item_body(ap_slot, crate::session::cashitem::AP_RESET_SCROLL));
+    assert_eq!(out.len(), 1, "unlock only: {out:?}");
+    assert_eq!(out[0].opcode, net::combat::STAT_CHANGED);
+}

@@ -982,6 +982,11 @@ impl Session {
             net::cashitem::CLIENT_USE_CASH_ITEM => {
                 return self.on_use_cash_item(body.get(2..).unwrap_or(&[]));
             }
+            // The AP and SP Reset Scrolls come through their own opcode, same body. The owner's
+            // two presses on 2026-09-10 were both 0x0116 and both went unanswered.
+            net::cashitem::CLIENT_USE_STAT_RESET_ITEM => {
+                return self.on_use_stat_reset_item(body.get(2..).unwrap_or(&[]));
+            }
             // Anything else whose CLIENT-SIDE builder sets that same exclusive-request latch.
             // Not implemented, but silence here freezes the UI, so it gets the nine-byte
             // unlock and nothing else - an empty mask says nothing about any subsystem.
