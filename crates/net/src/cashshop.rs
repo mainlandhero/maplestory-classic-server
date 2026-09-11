@@ -808,9 +808,78 @@ pub fn u32_candidates(rest: &[u8]) -> Vec<(usize, u32)> {
         .collect()
 }
 
+/// **`0x03E1` sub-op `0x0A` - move a locker item into the character's bag.**
+///
+/// The owner, 2026-09-10: *"The player can choose to move the coupon out of the Cash Inventory
+/// into the regular inventory in the Cash Tab."* Until this was built the server refused every
+/// one of these with `0x3D`; no archived run contains a single attempt, so it had never been
+/// exercised. `research/cash-shop-actions.md` §3 has the builder, `FUN_140D74E10`, read in
+/// full:
+///
+/// ```text
+/// u8      0x0A
+/// u8[8]   liCashItemSN      the serial this server put in the 0x0C record
+/// u32     nItemID
+/// u8      nInventoryType    1..5, derived by the CLIENT from the item id
+/// u16     nSlotPosition     the destination slot, which the client requires to be EMPTY
+/// ```
+///
+/// The client checks the destination slot is empty and the item is in its locker map before
+/// it sends, so a well-formed request is one the client already believes is legal. The server
+/// checks all of it again anyway - nothing on this socket is authenticated.
+pub const ACTION_MOVE_LOCKER_TO_BAG: u8 = 0x0A;
+
+/// Payload length of an [`ACTION_MOVE_LOCKER_TO_BAG`] after the sub-op byte.
+pub const LOCKER_TO_BAG_LEN: usize = 8 + 4 + 1 + 2;
+
+/// A parsed [`ACTION_MOVE_LOCKER_TO_BAG`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LockerToBag {
+    pub serial: u64,
+    pub item_id: u32,
+    pub inv_type: u8,
+    pub slot: u16,
+}
+
+/// Parse the payload after the `0x0A` sub-op. `None` unless it is exactly the measured shape.
+pub fn parse_locker_to_bag(rest: &[u8]) -> Option<LockerToBag> {
+    if rest.len() != LOCKER_TO_BAG_LEN {
+        return None;
+    }
+    let mut r = PacketReader::new(rest);
+    let serial = r.u64().ok()?;
+    let item_id = r.u32().ok()?;
+    let inv_type = r.u8().ok()?;
+    let slot = r.u16().ok()?;
+    Some(LockerToBag { serial, item_id, inv_type, slot })
+}
+
 #[cfg(test)]
 mod action_tests {
     use super::*;
+
+    /// The locker-to-bag request, in the builder's shape, and every truncation refused.
+    #[test]
+    fn the_locker_to_bag_request_parses_in_the_builders_shape() {
+        let mut b = Vec::new();
+        b.extend_from_slice(&0x0000_0001_0000_0003u64.to_le_bytes()); // account 1, locker slot 3
+        b.extend_from_slice(&5_680_004u32.to_le_bytes()); // Etc Tab 5-slot Coupon
+        b.push(5); // the Cash tab
+        b.extend_from_slice(&7u16.to_le_bytes()); // into slot 7
+        assert_eq!(b.len(), LOCKER_TO_BAG_LEN);
+        let r = parse_locker_to_bag(&b).unwrap();
+        assert_eq!(r.serial, 0x0000_0001_0000_0003);
+        assert_eq!(r.item_id, 5_680_004);
+        assert_eq!(r.inv_type, 5);
+        assert_eq!(r.slot, 7);
+        for n in 0..b.len() {
+            assert_eq!(parse_locker_to_bag(&b[..n]), None, "{n} bytes parsed");
+        }
+        let mut long = b.clone();
+        long.push(0);
+        assert_eq!(parse_locker_to_bag(&long), None, "the 0x0B shape is one byte wider and is NOT this");
+        assert!(ACTION_ON_SERIAL.contains(&ACTION_MOVE_LOCKER_TO_BAG), "it is one of the queue");
+    }
 
     /// The refusal is two bytes and both of them are the ones the listing needs.
     #[test]

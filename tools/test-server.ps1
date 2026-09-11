@@ -772,11 +772,25 @@
          and the handler reported ANY store error as "not enough cash". Both fixed: the
          column is added on open, and a server error now says "unknown error" instead of
          blaming your wallet. Storage had the same missing column and is fixed alongside.
-         Buy ONE Etc Tab 5-Slot Coupon (100 LP), then open the STORAGE keeper too.
-           the coupon lands in Cash Inventory and LP drops by 100 -> fixed
+         The coupon goes into the CASH INVENTORY (the shop's own panel), never storage;
+         the storage line below is a separate check of the second repaired table.
+         a) Buy ONE Etc Tab 5-Slot Coupon (100 LP).
+           it lands in Cash Inventory and LP drops by 100 -> fixed
            "unknown error" -> a different server error; the world.log line names it
            "not enough leaf points" again -> the wallet read is wrong; say your LP
-           storage opens and shows its slots -> the second table is fixed as well
+         b) MOVE it from Cash Inventory into your bag's Cash tab (the move button or a
+            double-click in the panel). NEW 2026-09-10: this was refused by the server
+            until now - no archived run ever had one - so it is unseen on a screen.
+           it appears in the Cash tab at the slot you picked -> 0x0A/0x19 work
+           "unknown error" and it stays put -> world.log names which check refused it
+           it vanishes from the panel but is NOT in the Cash tab -> the 0x19 body is
+                         wrong; say which tab you were looking at
+         c) LEAVE the shop and come back with something still in Cash Inventory.
+           it is still listed -> the entry listing works (new today; unmeasured)
+           the panel is empty -> the client ignores 0x0C at entry; the row is in the DB
+         d) Double-click the coupon in the Cash tab -> the Etc tab widens by 5 on screen.
+         e) Separately: open the STORAGE keeper. It opens with its slots -> the second
+            table is fixed as well.
 
      TD. THE FOUR THINGS FIXED AFTER THE LAST RUN. All four came out of that run, and
          none has been seen working. Quick, and they need no setup beyond a bag.
@@ -2536,11 +2550,21 @@ function Show-TestPlan {
         Write-Host '      failed_slots column, every locker read failed, and ANY store'
         Write-Host '      error was reported as "not enough cash". Both fixed; storage'
         Write-Host '      had the same missing column and is fixed too.'
-        Write-Host '      Buy ONE Etc Tab 5-Slot Coupon (100 LP). Then open STORAGE.' -ForegroundColor Yellow
-        Write-Host '        coupon in Cash Inventory, LP down by 100 -> fixed'
-        Write-Host '        "unknown error" -> a different server error; world.log names it'
-        Write-Host '        "not enough leaf points" again -> wallet read wrong; say your LP'
-        Write-Host '        storage opens with its slots -> the second table is fixed'
+        Write-Host '      The coupon goes to the CASH INVENTORY panel, never storage.'
+        Write-Host '      a) Buy ONE Etc Tab 5-Slot Coupon (100 LP).' -ForegroundColor Yellow
+        Write-Host '          in Cash Inventory, LP down 100 -> fixed'
+        Write-Host '          "unknown error" -> other server error; world.log names it'
+        Write-Host '          "not enough leaf points" again -> wallet read wrong'
+        Write-Host '      b) MOVE it from Cash Inventory to your Cash tab. NEW: the' -ForegroundColor Yellow
+        Write-Host '         server refused this until today; never seen on a screen.' -ForegroundColor Yellow
+        Write-Host '          appears in the Cash tab at your slot -> 0x0A/0x19 work'
+        Write-Host '          "unknown error", stays put -> world.log names the check'
+        Write-Host '          gone from panel, NOT in Cash tab -> 0x19 body wrong; say tab'
+        Write-Host '      c) LEAVE the shop and return with an item still in the panel.'
+        Write-Host '          still listed -> entry listing works (new, unmeasured)'
+        Write-Host '          panel empty -> client ignores 0x0C at entry; row is in DB'
+        Write-Host '      d) Double-click the coupon in the Cash tab -> Etc tab +5.'
+        Write-Host '      e) Separately: open STORAGE; opens with slots -> 2nd table OK.'
         Write-Host ''
         Write-Host '  TD. THE FOUR THINGS FIXED AFTER THE LAST RUN.' -ForegroundColor Magenta
         Write-Host '      All four came out of that run. None has been seen working.'

@@ -141,6 +141,21 @@ second time. **[I]**: a second `0x0010` inside the select stage is unmeasured; `
 is the kill switch and step TL says what each outcome means. The four durations are now parsed
 into `login.log`. `research/select-screen-race-2026-09-10.md`.
 
+**2026-09-10, night: the locker-to-bag move is built, and the Cash Inventory is listed at
+entry.** The owner: *"Coupon when bought goes into the Cash Inventory, not the storage. The player
+can choose to move the coupon out of the Cash Inventory into the regular inventory in the Cash
+Tab"* - and, of the retired `!locker`, *"we don't need it now that moving items in and out of
+Cash Shop Inventory works."* It did not: `0x03E1` sub-op `0x0A` was refused with `0x3D` since
+2026-08-26 and **no archived run contains a single attempt**, so it had never been exercised.
+Built from `research/cash-shop-actions.md` §3 (the builder read in full): request `u8[8]
+serial, u32 itemId, u8 tab, u16 slot`; every client-side check re-made server-side (serial
+minted for this account, locker slot holds that item, tab matches the item, slot in range and
+empty); take-then-place with a put-back on failure; reply `0x19` with the item body, which the
+client reads as "release, place at N, erase from my locker map". Shop entry now also sends one
+`0x0C` per stored locker row, because `set_cash_shop`'s three list counts are not the locker
+and a coupon left in the Cash Inventory vanished from view on the next visit. **Both unseen on
+a screen**; step TC(b) and (c). `0x0B` (bag to locker) and `0x1C` (delete) are still refused.
+
 **Cash-equip covers do NOT work yet**, and it is not the gate: the character record keeps
 equipped slots `1..=31` only (`EQUIP_SLOTS`; a cash slot is decoded and discarded, `[L]`), and
 `avatar_look`'s second map - where the covered base items would go - is sent empty. A cash top

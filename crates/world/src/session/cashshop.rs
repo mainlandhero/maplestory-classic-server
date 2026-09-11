@@ -43,6 +43,26 @@
 
 use super::*;
 
+/// The cash serial this server mints for a locker row: `(account, slot)`.
+///
+/// **Derived, not stored.** It must be non-zero, never `-1` (`FUN_140D75850` drops that), and
+/// unique within the stage's locker map; `(account << 32) | slot` is all three and survives a
+/// relog. Its one weakness is that it changes if the item changes locker slot, which
+/// `take_cash_item` / `put_cash_item` can do on a failed move - and the client is told the new
+/// serial on its next shop entry, when the whole locker is re-listed. The purchase reply, the
+/// entry listing and the move request all go through these two functions so they cannot drift.
+fn locker_serial(account_id: i64, slot: u16) -> u64 {
+    ((account_id as u64) << 32) | u64::from(slot)
+}
+
+/// The locker slot a client-supplied serial names, **only if** it was minted for this account.
+fn locker_slot_of_serial(serial: u64, account_id: i64) -> Option<u16> {
+    if (serial >> 32) != account_id as u64 {
+        return None;
+    }
+    u16::try_from(serial & 0xFFFF_FFFF).ok()
+}
+
 impl Session {
     /// `0x00D5` - the player clicked Cash Shop. Send them in.
     ///
@@ -104,8 +124,136 @@ impl Session {
                  which is why no 0x0070 goes with it"
             ),
         }];
+        // **The locker's stored contents, one `0x0C` each, so the Cash Inventory panel shows
+        // what the account owns rather than only what it bought this visit.** `set_cash_shop`'s
+        // three list counts are the commodity delta, the notices and the specials - none is
+        // the locker - and until 2026-09-10 nothing else listed it, so a coupon bought and
+        // left in the Cash Inventory vanished from view on the next visit while its row sat in
+        // `cash_locker`. `0x0C` is read out of the client as "decode one record, insert it into
+        // the locker map, repaint the panel" [L]; sending it at entry rather than after a buy
+        // is **[I]** and step TC watches for it. The commodity serial in the record is 0: the
+        // only reader gates a meso message on an 80-90 M band that no value here is in.
+        let locker = self.store.cash_locker(account_id).unwrap_or_default();
+        for entry in &locker {
+            let serial = locker_serial(account_id, entry.slot);
+            let quantity = match entry.item.kind {
+                store::ItemKind::Bundle { quantity } => quantity,
+                store::ItemKind::Equip(_) => 1,
+            };
+            let record =
+                net::cashshop::cash_item_record(serial, entry.item.item_id, 0, quantity.max(1));
+            out.push(Reply {
+                opcode: net::cashshop::CASH_SHOP_RESULT,
+                body: net::cashshop::cash_shop_item_to_locker(&record),
+                what: format!(
+                    "CashShopResult 0x0C LOCKER LISTING at entry: slot {} holds {}x {}, serial {serial:#x} - the same record a purchase sends, so the panel shows what the database holds",
+                    entry.slot, quantity, entry.item.item_id
+                ),
+            });
+        }
         out.extend(self.cash_wallet_reply(account_id, "sent unprompted with SetCashShop"));
         out
+    }
+
+    /// `0x03E1` sub-op `0x0A` - move one locker item into the character's bag.
+    ///
+    /// The owner, 2026-09-10: *"The player can choose to move the coupon out of the Cash Inventory
+    /// into the regular inventory in the Cash Tab."* `net::cashshop::ACTION_MOVE_LOCKER_TO_BAG`
+    /// has the request; the reply is `0x19` (`cash_shop_item_granted`), which the client reads
+    /// as "release the latch, put THIS item at slot N, erase the serial from my locker map".
+    ///
+    /// **Every check the client already made is made again here**, because nothing on this
+    /// socket is authenticated: the serial must be this account's and name an occupied locker
+    /// slot holding the item id the packet claims, the tab must be the one the item belongs
+    /// in, and the destination slot must exist and be empty. A refusal is `0x3D` with the
+    /// generic reason - the client shows a message, clears its latch and keeps the queue.
+    ///
+    /// **Take, then place, and put back on failure.** The locker row is deleted before the
+    /// bag row is written; if the write fails the item goes back into the locker (lowest free
+    /// slot, which is what `put_cash_item` promises) and the move is refused. The one outcome
+    /// this must never produce is an item in neither place.
+    fn on_locker_to_bag(&mut self, rest: &[u8]) -> Vec<Reply> {
+        use net::cashshop::reason;
+        let no = |s: &Self, why: String| s.refuse_cash_shop_queue(u16::from(reason::UNKNOWN_ERROR), why);
+        let head = format!("0x03E1 0x0A locker -> bag, {} byte payload {:02x?}", rest.len(), rest);
+
+        let Some(req) = net::cashshop::parse_locker_to_bag(rest) else {
+            return no(self, format!("{head} - not the 15-byte shape; nothing moved"));
+        };
+        let Some(claimed) = self.claimed() else {
+            return no(self, format!("{head} - no claim on this connection; nothing moved"));
+        };
+        let account_id = claimed.account_id;
+        let Some(chr) = self.claimed_character() else {
+            return no(self, format!("{head} - no character; nothing moved"));
+        };
+        let Some(locker_slot) = locker_slot_of_serial(req.serial, account_id) else {
+            return no(
+                self,
+                format!("{head} - serial {:#x} is not one this server minted for account {account_id}; nothing moved", req.serial),
+            );
+        };
+        let locker = self.store.cash_locker(account_id).unwrap_or_default();
+        let Some(entry) = locker.iter().find(|l| l.slot == locker_slot) else {
+            return no(self, format!("{head} - locker slot {locker_slot} is empty; nothing moved"));
+        };
+        if entry.item.item_id != req.item_id {
+            return no(
+                self,
+                format!(
+                    "{head} - locker slot {locker_slot} holds {}, the packet says {}; nothing moved",
+                    entry.item.item_id, req.item_id
+                ),
+            );
+        }
+        let Some(inv) = store::InventoryType::for_item(req.item_id) else {
+            return no(self, format!("{head} - item {} belongs in no bag tab; nothing moved", req.item_id));
+        };
+        if inv.as_u8() != req.inv_type {
+            return no(
+                self,
+                format!(
+                    "{head} - the client named tab {} and {} belongs in {:?} ({}); nothing moved",
+                    req.inv_type, req.item_id, inv, inv.as_u8()
+                ),
+            );
+        }
+        let slots = self.store.inventory_slots(chr.id, inv).unwrap_or(0);
+        if req.slot == 0 || req.slot > slots {
+            return no(self, format!("{head} - slot {} is outside the {slots}-slot {inv:?} tab; nothing moved", req.slot));
+        }
+        if self.store.bag_items(chr.id, inv).unwrap_or_default().iter().any(|i| i.slot == req.slot) {
+            return no(self, format!("{head} - {inv:?} slot {} is occupied; nothing moved", req.slot));
+        }
+
+        let item = match self.store.take_cash_item(account_id, locker_slot) {
+            Ok(item) => item,
+            Err(e) => return no(self, format!("{head} - could not take locker slot {locker_slot}: {e}; nothing moved")),
+        };
+        if let Err(e) = self.store.set_inventory_slot(chr.id, inv, req.slot, &item) {
+            let back = self.store.put_cash_item(account_id, &item);
+            return no(
+                self,
+                format!(
+                    "{head} - could not place into {inv:?} slot {}: {e}. Put BACK in the locker: {:?}",
+                    req.slot,
+                    back.map(|l| l.slot)
+                ),
+            );
+        }
+        let quantity = match item.kind {
+            store::ItemKind::Bundle { quantity } => quantity,
+            store::ItemKind::Equip(_) => 1,
+        };
+        let blob = self.item_blob(&item);
+        vec![Reply {
+            opcode: net::cashshop::CASH_SHOP_RESULT,
+            body: net::cashshop::cash_shop_item_granted(req.slot, &blob),
+            what: format!(
+                "CashShopResult 0x19 MOVED: locker slot {locker_slot} -> {inv:?} tab slot {}, {quantity}x {} (serial {:#x}). The client erases the serial from its locker map, clears the latch and pumps its queue itself - no second packet",
+                req.slot, item.item_id, req.serial
+            ),
+        }]
     }
 
     /// `0x03E0` - "what is my balance". Empty body, and the client throttles it to 60 s.
@@ -201,6 +349,11 @@ impl Session {
         // deletes with it would silently drop the other four.
         match net::cashshop::action_family(action.sub_op) {
             net::cashshop::ActionFamily::Buy => {}
+            net::cashshop::ActionFamily::Queued
+                if action.sub_op == net::cashshop::ACTION_MOVE_LOCKER_TO_BAG =>
+            {
+                return self.on_locker_to_bag(action.rest);
+            }
             net::cashshop::ActionFamily::Queued => {
                 return self.refuse_cash_shop_queue(
                     reason::UNKNOWN_ERROR as u16,
@@ -404,7 +557,7 @@ impl Session {
         // stage's locker map. `(account, slot)` satisfies all three and survives a relog - but
         // it changes if the item ever changes slot, so the moment `0x0A`/`0x0B` are built this
         // wants a real column on `cash_locker` instead.
-        let serial = (account_id as u64) << 32 | u64::from(placed.slot);
+        let serial = locker_serial(account_id, placed.slot);
         let record =
             net::cashshop::cash_item_record(serial, row.item_id, row.sn, row.count.max(1));
 
