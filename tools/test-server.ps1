@@ -714,14 +714,18 @@
          never what kept the top off the select screen. The ONE difference the data shows:
          the Blue Sergeant needs STR 30 / DEX 10 and Cobalt has STR 27 / DEX 5 after the AP
          reset into INT; every other worn item requires nothing. Hypothesis, not finding.
-         On Cobalt, open the stat window and put **3 AP into STR and 5 into DEX** (they have 10
-         unspent), then log out to the select screen.
-           the top now draws at select -> the select screen honours requirements and the
-                         field renderer does not. Then the server needs a REQUIREMENT gate
-                         on equip (level / stats / job), beside the gender one
-           still bare -> requirements are not it either; say so and I go to the client
-           the top ALSO vanishes in the field once you are back in -> same answer as the
-                         first line, with the field renderer re-checking on entry
+         **Superseded by your next request, and the same launch answers both.** You asked
+         for the select sheet to show equipment totals like the in-game window (STR 1026,
+         not 27). The login server now sums worn items the way the field client does -
+         stored block first, template second - into the sheet it sends. So just log out to
+         the select screen and look at TWO things:
+           the sheet reads STR 1026 / DEX 1006 / INT 1073 / LUK 1003, HP 517 -> the
+                         totals match the in-game window. If any number differs, say which
+           AND the top now draws with no AP spent -> the select renderer checks item
+                         requirements against the sheet it is handed (base 27 < 30 failed,
+                         1026 passes). Then the server needs a REQUIREMENT gate on equip
+           sheet right, top still bare -> requirements are not it; say so and I go to
+                         the client with the two screens' difference narrowed to the look
 
      TF. THE FREE MARKET DOOR, which is the one that can strand somebody if it is wrong.
          From **Henesys Market** (10001040) walk into the `market00` portal, then walk back
@@ -741,19 +745,21 @@
            back to your town -> it survives a relog
            back to Henesys from El Nath -> the row is not persisting
 
-     TC. ONE CAPTURE I NEED, AND IT COSTS NOTHING. **Use a `5680002` Use Tab 5-slot
-         Coupon** (`!item 5680002 1`, then double-click it in the CASH tab).
-         The +5 rule is written and tested; what is NOT established is which packet the
-         client sends. These are Cash items whose own data is
-         `{"script": "cash_5680002", "npc": 9010000}` with `notConsume 1` - so the client
-         applies nothing itself and asks the SERVER to run a script. `0x010E`'s ten id
-         ranges do not include `568xxxx`, so it is not that one, and no archived run has
-         a confirmed cash-item use in it.
-           an UNKNOWN opcode appears in world.log -> that is the answer. Send me the line
-           nothing appears at all -> the client refused it locally, and the coupon needs
-                         a different route entirely
-         Guessing the opcode is the one thing I will not do here, so this one grep is
-         what unblocks it.
+     TC. THE COUPON PURCHASE - and the capture it used to ask for is DONE.
+         (The old TC asked for one 0x0114 capture. You made it on 2026-09-09 and the
+         cash-item opcode has been handled since. Struck.)
+         The owner, 2026-09-10: "I just tried purchasing 5x Etc Tab 5-Slot Coupon, but I was
+         met with I did not have enough leaf points. I absolutely do." You did: 105,500.
+         The log has the real reason - the locker table on your file was missing the
+         `failed_slots` column the shared item reader had gained, every locker read failed,
+         and the handler reported ANY store error as "not enough cash". Both fixed: the
+         column is added on open, and a server error now says "unknown error" instead of
+         blaming your wallet. Storage had the same missing column and is fixed alongside.
+         Buy ONE Etc Tab 5-Slot Coupon (100 LP), then open the STORAGE keeper too.
+           the coupon lands in Cash Inventory and LP drops by 100 -> fixed
+           "unknown error" -> a different server error; the world.log line names it
+           "not enough leaf points" again -> the wallet read is wrong; say your LP
+           storage opens and shows its slots -> the second table is fixed as well
 
      TD. THE FOUR THINGS FIXED AFTER THE LAST RUN. All four came out of that run, and
          none has been seen working. Quick, and they need no setup beyond a bag.
@@ -2465,11 +2471,14 @@ function Show-TestPlan {
         Write-Host '      own MakeCharInfo both say male. The one difference left:'
         Write-Host '      Blue Sergeant needs STR 30 / DEX 10; Cobalt has 27 / 5 after'
         Write-Host '      the AP reset. Nothing else they wear requires anything.'
-        Write-Host '      On Cobalt: stat window, 3 AP into STR, 5 into DEX (they has' -ForegroundColor Yellow
-        Write-Host '      10 unspent), then log out to the select screen.' -ForegroundColor Yellow
-        Write-Host '        top draws at select -> select honours requirements; the'
-        Write-Host '                      server then needs a REQUIREMENT gate on equip'
-        Write-Host '        still bare -> not requirements either; say so'
+        Write-Host '      SUPERSEDED by your next ask: the select SHEET now shows' -ForegroundColor Yellow
+        Write-Host '      equipment totals like the in-game window. Log out to the' -ForegroundColor Yellow
+        Write-Host '      select screen and look at TWO things:' -ForegroundColor Yellow
+        Write-Host '        sheet reads STR 1026 / DEX 1006 / INT 1073 / LUK 1003,'
+        Write-Host '          HP 517 -> totals match. Any number off -> say which'
+        Write-Host '        AND the top now draws, no AP spent -> select checks item'
+        Write-Host '          requirements against the sheet; server needs a REQ gate'
+        Write-Host '        sheet right, top still bare -> not requirements; say so'
         Write-Host ''
         Write-Host '  TF. THE FREE MARKET DOOR - can strand you if it is wrong.' -ForegroundColor Magenta
         Write-Host '      From HENESYS MARKET (10001040) walk into market00, then'
@@ -2485,17 +2494,17 @@ function Show-TestPlan {
         Write-Host '      AND: enter, LOG OUT and back in, then leave. The memory is'
         Write-Host '      in the database and should survive.'
         Write-Host ''
-        Write-Host '  TC. ONE CAPTURE, AND IT COSTS NOTHING.' -ForegroundColor Magenta
-        Write-Host '      !item 5680002 1, then double-click it in the CASH tab.'
-        Write-Host '      The +5 rule is written and tested. What is NOT known is'
-        Write-Host '      which packet the client sends: these are Cash items whose'
-        Write-Host '      own data is script cash_5680002 / npc 9010000 with'
-        Write-Host '      notConsume 1, so the client asks the SERVER to run a'
-        Write-Host '      script. 0x010E does not cover 568xxxx and no archived run'
-        Write-Host '      has a cash-item use in it.'
-        Write-Host '        an UNKNOWN opcode in world.log -> that IS the answer'
-        Write-Host '        nothing at all -> refused locally; different route'
-        Write-Host '      I will not guess the opcode, so this grep unblocks it.' -ForegroundColor Yellow
+        Write-Host '  TC. THE COUPON PURCHASE. (The old capture is DONE - struck.)' -ForegroundColor Magenta
+        Write-Host '      "Not enough leaf points" with 105,500 LP: the log shows the'
+        Write-Host '      real cause - the locker table on your file lacked the new'
+        Write-Host '      failed_slots column, every locker read failed, and ANY store'
+        Write-Host '      error was reported as "not enough cash". Both fixed; storage'
+        Write-Host '      had the same missing column and is fixed too.'
+        Write-Host '      Buy ONE Etc Tab 5-Slot Coupon (100 LP). Then open STORAGE.' -ForegroundColor Yellow
+        Write-Host '        coupon in Cash Inventory, LP down by 100 -> fixed'
+        Write-Host '        "unknown error" -> a different server error; world.log names it'
+        Write-Host '        "not enough leaf points" again -> wallet read wrong; say your LP'
+        Write-Host '        storage opens with its slots -> the second table is fixed'
         Write-Host ''
         Write-Host '  TD. THE FOUR THINGS FIXED AFTER THE LAST RUN.' -ForegroundColor Magenta
         Write-Host '      All four came out of that run. None has been seen working.'

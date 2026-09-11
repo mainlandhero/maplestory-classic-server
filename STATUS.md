@@ -95,6 +95,32 @@ against the client's lists, overriding the create request's `u32` gender field w
 disagree - that field has only ever been seen carrying `0` and was never discriminated.
 `net::equipgender::gender_of_look`.
 
+**2026-09-10, evening: "not enough Leaf Points" with 105,500 LP was a schema gap, and the
+reason code lied about it.** The owner: *"I just tried purchasing 5x Etc Tab 5-Slot Coupon, but I
+was met with I did not have enough leaf points. I absolutely do."* `world.log` has it: the
+buy parsed, SN 130500004, 100 LP against 105,500 - and the store failed with *"no such column:
+failed_slots"* reading `cash_locker`. `item_columns()` had gained `failed_slots`, `inventory`
+and `equipment` had been ALTERed, and `cash_locker` and `storage_item` - which share the list -
+had not, so on the owner's file every locker and storage read failed. The handler then reported
+every store error as NOT_ENOUGH_CASH. Fixed: both tables get the same `PRAGMA`-guarded ALTER
+on open; the reason is now the store's own (`NotEnoughMesos` -> 601, `StorageFull` -> 614,
+anything else -> the honest "unknown error"); `wisps_real_database_upgrades_in_place` now reads
+the locker and storage for every account, and the wind-back test buys on a locker that predates
+the column. **The upgrade test read two of the four item tables and was called a schema test.**
+Step TC is the retest.
+
+**2026-09-10, evening: the character-select sheet shows equipment totals.** The owner: *"the stat
+screen on character select should reflect all equipment bonuses like our current character stat
+window"* - 1026/1006/1073/1003 in the field, 27/5/74/4 at select. In the field the client adds
+the worn items' stat blocks from the record itself; at select it has a look, which carries ids
+only. So the login server now sums worn items the way the world fills the record - stored block
+first, `EquipTemplate::fresh_stats` second - into the sheet it sends (`login::selectstats`;
+login depends on `world` for the templates, loaded from `gm-handbook/equips.txt` at start with
+a banner). Display only: the world's `SetField` still carries the bare row, which the client
+adds to itself. **Side observation carried in step TG:** if the select renderer checks the Blue
+Sergeant's STR 30 / DEX 10 against the sheet, it now passes, and the top should draw with no AP
+spent - one launch, two readings.
+
 **Cash-equip covers do NOT work yet**, and it is not the gate: the character record keeps
 equipped slots `1..=31` only (`EQUIP_SLOTS`; a cash slot is decoded and discarded, `[L]`), and
 `avatar_look`'s second map - where the covered base items would go - is sent empty. A cash top

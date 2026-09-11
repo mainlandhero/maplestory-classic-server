@@ -31,6 +31,7 @@
 
 pub mod config;
 pub mod server;
+pub mod selectstats;
 pub mod session;
 
 pub use config::{Config, World};

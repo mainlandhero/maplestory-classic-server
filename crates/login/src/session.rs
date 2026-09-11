@@ -716,11 +716,41 @@ impl Session {
             }
         };
 
-        let names: Vec<&str> = characters.iter().map(|c| c.name.as_str()).collect();
+        // **The sheet shows equipment totals**, summed here the way the field client sums the
+        // record - `crate::selectstats` says why the login server is the only place that can.
+        // The bare rows are never written back; this is a copy for the wire.
+        let mut shown = Vec::with_capacity(characters.len());
+        let mut names = Vec::with_capacity(characters.len());
+        for c in &characters {
+            let worn = self.store.equipped_items(c.id).unwrap_or_default();
+            let b = crate::selectstats::bonus(&worn, &self.config.equips);
+            let sheet = crate::selectstats::for_select(c, b);
+            names.push(format!(
+                "{} [sheet STR {} DEX {} INT {} LUK {} HP {} = base {}/{}/{}/{}/{} + {} worn item(s){}]",
+                c.name,
+                sheet.strength,
+                sheet.dexterity,
+                sheet.intelligence,
+                sheet.luck,
+                sheet.max_hp,
+                c.strength,
+                c.dexterity,
+                c.intelligence,
+                c.luck,
+                c.max_hp,
+                worn.len(),
+                if b.unresolved > 0 {
+                    format!(", {} of them with NO template - their base is missing", b.unresolved)
+                } else {
+                    String::new()
+                }
+            ));
+            shown.push(sheet);
+        }
         out.push(
             Reply::new(
                 LOGIN_RESULT,
-                login_result(world.id, channel, &characters),
+                login_result(world.id, channel, &shown),
                 format!(
                     "{cause}: login result, {} character(s): {}; {channel_note}",
                     characters.len(),
@@ -2005,6 +2035,55 @@ mod tests {
         let replies = s.handle(&create_request_gendered("Agreed", 1, 31000, &female_look));
         assert!(!replies[0].what.contains("gender field said"), "{}", replies[0].what);
         assert!(replies[0].what.contains("gender 1"), "{}", replies[0].what);
+    }
+
+    /// **The select sheet carries equipment totals**, summed the way the field client sums the
+    /// record. The owner, 2026-09-10: *"the stat screen on character select should reflect all
+    /// equipment bonuses like our current character stat window."* A scrolled top (stored
+    /// block) and an unscrolled bottom (template) both count, the bare row is untouched, and
+    /// the log line shows the arithmetic so a mismatch on screen can be read against it.
+    #[test]
+    fn the_select_sheet_adds_worn_equipment_like_the_field_client_does() {
+        use net::opcode::{EquipStatSet, EquipStats};
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store.create_account("maplecw", "correct horse battery").unwrap();
+        let account = store.get_account("maplecw").unwrap().unwrap();
+        // One template, for the unscrolled bottom the style equips: +7 INT.
+        let mut equips = std::collections::HashMap::new();
+        equips.insert(
+            1060002u32,
+            world::config::EquipTemplate { inc_int: 7, tuc: 7, ..Default::default() },
+        );
+        let mut s = Session::new(store.clone(), Arc::new(Config { equips, ..Config::default() }), account);
+        s.handle(&create_request("Dressed", 30030, &STYLE)); // STR 12 DEX 5 INT 4 LUK 4
+        let id = store.characters_for(s.account_id(), 0).unwrap()[0].id;
+        // Scroll the top: +999 STR, +1001 DEX, +103 max HP, stored on the worn row.
+        let scrolled = EquipStats {
+            stats: EquipStatSet { inc_str: 999, inc_dex: 1001, inc_mhp: 103, ..EquipStatSet::default() },
+            ..EquipStats::default()
+        };
+        assert!(store.set_worn_equip(id, 5, &scrolled, 0).unwrap());
+        let base_hp = store.characters_for(s.account_id(), 0).unwrap()[0].max_hp;
+
+        let what = character_list(&mut s);
+        let want = format!(
+            "sheet STR 1011 DEX 1006 INT 11 LUK 4 HP {} = base 12/5/4/4/{base_hp} + 4 worn item(s)",
+            base_hp + 103
+        );
+        assert!(what.contains(&want), "wanted {want:?} in {what:?}");
+        // Shoes and weapon have neither a stored block nor a template here, and the line
+        // says so rather than letting them read as "+0".
+        assert!(what.contains("2 of them with NO template"), "{what}");
+        // The database still holds the bare row - the sheet is a copy for the wire.
+        let stored = store.characters_for(s.account_id(), 0).unwrap();
+        assert_eq!((stored[0].strength, stored[0].dexterity, stored[0].intelligence), (12, 5, 4));
+
+        // And without templates, the unscrolled items are counted as unresolved rather than
+        // silently contributing zero - which is what a missing equips.txt looks like.
+        let mut bare = Session::new(store.clone(), Arc::new(Config::default()), s.store.get_account("maplecw").unwrap().unwrap());
+        let what = character_list(&mut bare);
+        assert!(what.contains("sheet STR 1011 DEX 1006 INT 4 LUK 4"), "{what}");
+        assert!(what.contains("3 of them with NO template"), "{what}");
     }
 
     #[test]

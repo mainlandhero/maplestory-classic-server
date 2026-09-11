@@ -1061,6 +1061,20 @@ mod tests {
         }
         assert!(characters > 0, "the live database has a real character in it");
 
+        // **The account-level containers read too.** Added 2026-09-10, the day this test
+        // would have caught a real bug and did not: `cash_locker` and `storage_item` had
+        // been left off the `failed_slots` ALTER, every read of either failed with "no such
+        // column" on the owner's file, and nothing here touched them. A schema test that reads
+        // two of four item tables is a test of two tables.
+        for account in &accounts {
+            store.cash_locker(account.id).unwrap_or_else(|e| {
+                panic!("the locker must read on the upgraded live file: {e}")
+            });
+            store.storage(account.id).unwrap_or_else(|e| {
+                panic!("storage must read on the upgraded live file: {e}")
+            });
+        }
+
         // And it survives a second open - the schema runs on EVERY open and ALTER TABLE ADD
         // COLUMN is not idempotent.
         drop(store);
@@ -1107,6 +1121,9 @@ mod tests {
             conn.execute("DROP TABLE inventory", []).unwrap();
             conn.execute("DROP TABLE storage_item", []).unwrap();
             conn.execute("DROP TABLE storage", []).unwrap();
+            // And a locker that predates `failed_slots` - the exact state of the owner's file on
+            // 2026-09-10, when a 100 LP coupon was refused as unaffordable.
+            conn.execute("ALTER TABLE cash_locker DROP COLUMN failed_slots", []).unwrap();
         }
 
         // The upgrade. This is the statement that has to work on a file it did not create.
@@ -1134,6 +1151,15 @@ mod tests {
             .unwrap();
         assert_eq!(store.bag(chr.id).unwrap().items.len(), 1);
         assert!(store.storage(account).unwrap().is_empty());
+        // The locker reads AND takes a purchase on the upgraded file - the whole transaction,
+        // because that is what failed for the owner, not a bare SELECT.
+        assert!(store.cash_locker(account).unwrap().is_empty());
+        store.add_maple_points(account, 100).unwrap();
+        let bought = store
+            .buy_cash_item(account, &crate::inventory::Item::bundle(5680004, 1), 100)
+            .expect("a purchase must work on a locker that predates failed_slots");
+        assert_eq!(bought.item.item_id, 5680004);
+        assert_eq!(store.cash_wallet(account).unwrap().maple_points, 0, "and it was charged");
 
         // Third open: every ALTER in the schema runs again and must be a no-op.
         drop(store);

@@ -8,6 +8,7 @@ description = "The MapleCW login server: the real thing, replacing the canned-bo
 [dependencies]
 net = { path = "../net" }
 store = { path = "../store" }
+world = { path = "../world" }
 thiserror.workspace = true
 
 [[bin]]
