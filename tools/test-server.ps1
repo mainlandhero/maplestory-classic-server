@@ -674,6 +674,27 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
+     TM. THE OUTFIT IS IN THE DECO TAB, AND THE CHAT SAYS "UBEL". -SetFieldProbe.
+         The owner, 2026-09-11 04:12: the Ubel set opened, the chat drew the U-umlaut as a box,
+         and the Deco tab was empty. The four equips had gone to the EQUIP tab by their
+         leading digit; the client keeps a cash equip (WZ info/cash = 1 - every backported
+         Signature Style equip) in tab 6, Deco, and every request it builds about one
+         names that tab. equips.txt now carries a `cash` column (596 of 1795 equips), the
+         server places by it, restores the Deco tab on every field entry, and moves any
+         cash equip found in the Equip tab into Deco first - your four included, on the
+         next field entry, with a line in world.log each. Chat notices are folded to
+         ASCII before they go out (Ubel, not a box).
+         Log in and change map once (the relocation runs on field entry):
+           the Deco tab shows Ubel's Clothes, Shoes, Gloves and Weapon -> fixed
+           Deco still empty, Equip tab still has them -> world.log has no "moved from
+                          Equip slot" line: the config did not flag them; say so
+           Deco empty AND Equip tab lost them -> the Deco Add is not drawn; the rows
+                          are in the database (world.log lists the moves)
+           double-click one in the Deco tab -> equips? (not built for Deco - report)
+         Then open the Cash Shop, double-click Ubel's Clothes in the Item Inventory's
+         Deco tab: it should go to the Cash Inventory like a Cash-tab item does (0x0B
+         with tab 6). Say what happens.
+
      TL. BAG -> LOCKER, WITH EVERY CASH ITEM CARRYING A SERIAL. -SetFieldProbe.
          Run 6 (04:03) measured the prediction: "nothing moves back" and NO 0x03E1 in
          world.log after the entry reload - the client sent nothing, because every item
@@ -1860,6 +1881,10 @@ param(
     # -MobLimit 1 tells "the body is wrong" apart from "thirty objects at once".
     [switch]$Mobs,
     [switch]$NoMobs,
+    # Leave the Beauty Coupon dialog's item name WHITE (the client's own string 0x0464 colours
+    # it 0xffffffff, invisible on this client's white panel). The hook patches six bytes of
+    # that encrypted string to black by default; this is the off switch. beautytext.rs.
+    [switch]$NoBeautyTextPatch,
     [int]$MobLimit = 0,
     # Give every inventory this many slots instead of the character's own count.
     #
@@ -2596,6 +2621,18 @@ function Show-TestPlan {
         Write-Host '           in the locker, gone from Item Inventory -> fixed'
         Write-Host '           nothing at all -> the builder still saw 0; world.log has the body'
         Write-Host '           in the locker AND still in Item Inventory -> lookup missed;'
+        Write-Host '  TM. THE OUTFIT IS IN THE DECO TAB; THE CHAT SAYS "UBEL". -SetFieldProbe.' -ForegroundColor Magenta
+        Write-Host '      04:12: the Ubel set went to the EQUIP tab by leading digit; the'
+        Write-Host '      client keeps cash equips (info/cash = 1) in tab 6, Deco. The'
+        Write-Host '      server now places by the WZ flag, restores Deco on field entry,'
+        Write-Host '      and moves strays out of Equip first. Chat is folded to ASCII.'
+        Write-Host '      Log in, change map once:'
+        Write-Host '        Deco shows Clothes, Shoes, Gloves, Weapon -> fixed'
+        Write-Host '        Deco empty, Equip still has them -> not flagged; say so'
+        Write-Host '        Deco empty AND Equip lost them -> Deco Add not drawn' -ForegroundColor Red
+        Write-Host '      Then in the shop, double-click Ubel''s Clothes (Deco tab):'
+        Write-Host '        goes to the Cash Inventory -> 0x0B with tab 6 works'
+        Write-Host ''
         Write-Host '             say if anything ELSE in the Cash tab vanished (slot 0)'
         Write-Host '           "unknown error" -> refused; world.log says why'
         Write-Host '           client DIES -> say so; the longer body is the suspect' -ForegroundColor Red
@@ -3586,6 +3623,7 @@ if ($GuardPage) {
     }
     Write-Host "GUARD PAGE: quarantining size class(es) $GuardBucket." -ForegroundColor Cyan
     Write-Host '  Each allocation of those classes gets its OWN page; its free DECOMMITS the' -ForegroundColor Cyan
+if ($NoBeautyTextPatch) { $Session = "$Session,beautytext=off" }
     Write-Host '  page and holds the address back 600s. A stale write/read into a freed slot' -ForegroundColor Cyan
     Write-Host '  FAULTS at the instruction that makes it - on any clock, not just the 180s' -ForegroundColor Cyan
     Write-Host '  window. Sized from the 12:01 run: 0x20 bursts to 627172 allocations in its' -ForegroundColor Cyan

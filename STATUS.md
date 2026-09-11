@@ -186,6 +186,18 @@ arms, which run the `!resetap` / `!resetsp` refund, consume the scroll and clear
 the opcode that actually arrived. Both cash-item opcodes are named in `net::names` so the log
 stops calling a handled packet UNKNOWN. **Confirmed on screen the same night** - the owner: *"both AP and SP scrolls now work."*
 
+**2026-09-11: the Beauty Coupon dialog's white-on-white item name is the client's own string.**
+The owner: *"I do not seem to be able to see Übel Hair Coupon because it's completely white"*, then
+on the ASCII control, *"Frieren's hair also show up as white."* Not the backport's encoding:
+`tools/dump_stringids.py` decrypts id `0x0464` as `Would you like to use #fc0xffffffff#%s?` -
+opaque white, for the modern dark panel; this client's `UtilDlgEx_Beauty` panel is white. The
+id is fetched at exactly two sites, both in `FUN_142dc8100` [L]. `grap-stub::beautytext` now
+patches the six encrypted hex digits to `000000` (black) at hook install - the bytes were
+derived with the dump tool's key schedule and pinned by a key-free test (`new ^ old == 'f' ^
+'0'` per byte). **[I]** that the table is not decrypted eagerly before the hook; step TB's
+second outcome names the fallback (the same six bytes in the exe file). Kill switch
+`-NoBeautyTextPatch` / `beautytext=off`.
+
 **Cash-equip covers do NOT work yet**, and it is not the gate: the character record keeps
 equipped slots `1..=31` only (`EQUIP_SLOTS`; a cash slot is decoded and discarded, `[L]`), and
 `avatar_look`'s second map - where the covered base items would go - is sent empty. A cash top
