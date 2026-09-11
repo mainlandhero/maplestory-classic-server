@@ -719,6 +719,47 @@ pub fn cash_shop_item_to_locker(record: &[u8]) -> Vec<u8> {
 /// `FUN_140230CB0` returns 0 and the tail then resets index 0 of a possibly-null array.
 pub const RESULT_MOVED_TO_LOCKER: u8 = 0x1B;
 
+/// `0x05AE` sub-op **`0x04` - `Res_LoadLocker_Done`: the whole Cash Inventory, at once.**
+///
+/// `FUN_140D7E1F0` [L], `research/cash-shop-cash-inventory.md` section 3.4:
+///
+/// ```text
+/// u8   0x04
+/// u8   bShowMessage
+/// [u32 nOverLimitCount]      only if bShowMessage != 0
+/// u16  count
+/// count x the 71-byte record   the locker map is CLEARED first
+/// u16 u16 u16 u16             read and discarded
+/// -> repaint; if bShowMessage: string 4186, the "items over the limit" WARNING
+/// ```
+///
+/// **This is the packet for shop entry, and `0x0C` is not.** The owner, 2026-09-10, with a
+/// screenshot of the shop opening onto a dialog: *"The moment I enter cash shop, I receive
+/// this dialogue. This should not happen."* The dialog was *"You have successfully made the
+/// purchase."* - `0x0C`'s own success message, which the entry listing of that morning sent
+/// once per stored row. `0x0C` is the reply to a BUY and says so on screen; `0x04` inserts
+/// the same records and says nothing when its flag is 0.
+pub const RESULT_LOAD_LOCKER: u8 = 0x04;
+
+/// Build a [`RESULT_LOAD_LOCKER`]: every record the locker holds, message flag 0.
+///
+/// Replaces the client's locker map wholesale, so it must carry ALL of the account's rows -
+/// a partial list would make the rest vanish from the panel while their rows sit in the
+/// database, which is the bug the entry listing was written to fix.
+pub fn cash_shop_load_locker(records: &[Vec<u8>]) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(RESULT_LOAD_LOCKER);
+    w.u8(0); // bShowMessage: 0, so no nOverLimitCount and no dialog
+    w.u16(records.len() as u16);
+    for r in records {
+        w.bytes(r);
+    }
+    for _ in 0..4 {
+        w.u16(0); // read and discarded
+    }
+    w.into_vec()
+}
+
 /// Body length of a [`cash_shop_refusal`]: the sub-op and the reason.
 pub const CASH_SHOP_REFUSAL_LEN: usize = 2;
 
@@ -973,6 +1014,27 @@ mod action_tests {
         // bug the owner reported, so they are pinned apart.
         assert_ne!(RESULT_ITEM_TO_LOCKER, RESULT_ITEM_GRANTED);
         assert_ne!(RESULT_ITEM_TO_LOCKER, RESULT_MOVED_TO_LOCKER, "1B is a trap in both forms");
+    }
+
+    /// **The locker reload carries every record, flag 0, and the four trailing u16s** - the
+    /// exact shape FUN_140D7E1F0 reads. Flag 0 is the whole point: with it set the client
+    /// reads an extra u32 and shows the over-limit warning; with 0x0C instead it thanks the
+    /// player for a purchase they did not make.
+    #[test]
+    fn the_locker_reload_is_flag_zero_count_records_and_four_trailing_words() {
+        let a = cash_item_record(0x1_0000_0001, 5680004, 0, 1);
+        let b2 = cash_item_record(0x1_0000_0002, 5680002, 0, 1);
+        let p = cash_shop_load_locker(&[a.clone(), b2.clone()]);
+        assert_eq!(p[0], RESULT_LOAD_LOCKER);
+        assert_ne!(p[0], RESULT_ITEM_TO_LOCKER, "0x0C is the purchase reply and pops a dialog");
+        assert_eq!(p[1], 0, "bShowMessage 0: no nOverLimitCount, no dialog");
+        assert_eq!(u16::from_le_bytes([p[2], p[3]]), 2);
+        assert_eq!(&p[4..4 + CASH_ITEM_RECORD_LEN], &a[..]);
+        assert_eq!(&p[4 + CASH_ITEM_RECORD_LEN..4 + 2 * CASH_ITEM_RECORD_LEN], &b2[..]);
+        assert_eq!(p.len(), 4 + 2 * CASH_ITEM_RECORD_LEN + 8, "four trailing u16s");
+        // An empty locker is a legal reload: count 0 clears the panel.
+        let e = cash_shop_load_locker(&[]);
+        assert_eq!(e, vec![RESULT_LOAD_LOCKER, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     }
 
     /// The sub-op splits off and the rest is handed on whole.

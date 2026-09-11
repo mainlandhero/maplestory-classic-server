@@ -141,6 +141,13 @@ impl CommodityTable {
     }
 
     /// One sale row by its serial.
+    /// The lowest on-sale serial that sells `item_id`, if any. For the locker listing: a
+    /// stored row remembers its item and not the serial it was bought under, and the record
+    /// the client reads has a commodity-serial field. `None` for an item nothing sells.
+    pub fn serial_for_item(&self, item_id: u32) -> Option<u32> {
+        self.rows.values().filter(|c| c.item_id == item_id && c.on_sale).map(|c| c.sn).min()
+    }
+
     pub fn get(&self, sn: u32) -> Option<&Commodity> {
         self.rows.get(&sn)
     }
