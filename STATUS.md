@@ -121,6 +121,26 @@ adds to itself. **Side observation carried in step TG:** if the select renderer 
 Sergeant's STR 30 / DEX 10 against the sheet, it now passes, and the top should draw with no AP
 spent - one launch, two readings.
 
+**2026-09-10, night: both confirmed on screen, and the select-screen top with them.** The owner:
+*"The armor render works now and the stats are accurate with the current equipment buffs."*
+The top drew the moment the sheet carried totals, with no AP spent - so the select renderer
+checks an item's requirements against the stat block it is handed [L, one screen], and the
+2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
+server still enforces no equip requirements at all**; that is now a known, open gate.
+
+**2026-09-10, night: the blank select screen is the 400 ms pause being too short since
+09-08, and the client's own report says so.** The owner: *"Sometimes when the login happens too fast
+through transitions, the characters on character select do not render at all... it happens
+more for clients that are further away."* `0x007A` is the client's "all four background tasks
+done" report. Across every archived login it arrived ~0.35 s after the login request before the
+pause existed (avatars blank), 5-46 ms behind the list during the pause era (avatars drew), and
+200-400 ms **after** the list since 2026-09-08 - the race is back, and a slower client loses it
+more. Waiting for the report would deadlock (one task ends on the list), so the list goes out at
+400 ms as before and, when the report then lands more than 100 ms after it, the list is sent a
+second time. **[I]**: a second `0x0010` inside the select stage is unmeasured; `--no-list-resend`
+is the kill switch and step TL says what each outcome means. The four durations are now parsed
+into `login.log`. `research/select-screen-race-2026-09-10.md`.
+
 **Cash-equip covers do NOT work yet**, and it is not the gate: the character record keeps
 equipped slots `1..=31` only (`EQUIP_SLOTS`; a cash slot is decoded and discarded, `[L]`), and
 `avatar_look`'s second map - where the covered base items would go - is sent empty. A cash top

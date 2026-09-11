@@ -727,6 +727,23 @@
            sheet right, top still bare -> requirements are not it; say so and I go to
                          the client with the two screens' difference narrowed to the look
 
+     TL. THE BLANK CHARACTER-SELECT SCREEN - the 400 ms pause stopped being enough on
+         2026-09-08, and the client says so itself. Its 0x007A report ("all four background
+         tasks done") used to land 5-10 ms behind the character list; since 09-08 it lands
+         200-400 ms AFTER it, so the list is arriving before the client is ready again -
+         the same race the pause was built for. research/select-screen-race-2026-09-10.md.
+         The list still goes out at 400 ms; when the report then arrives LATE, the server
+         sends the list a SECOND time, now that the client is done. Kill switch:
+         `--no-list-resend` on the login server. Watch the select screen on a fresh launch:
+           avatars draw, no flicker or duplication -> the re-send works; keep it
+           avatars draw but the screen visibly rebuilds once -> works, cosmetic; say so
+           characters DUPLICATED or the screen stuck -> a second 0x0010 is not accepted in
+                         this stage. Relaunch with -NoListResend and tell me; the fallback
+                         is a longer fixed pause, which is worse but known
+           still blank sometimes -> grep login.log for "re-sending the character list":
+                         present = the model is wrong; absent = the report came inside the
+                         threshold and the race is somewhere else
+
      TF. THE FREE MARKET DOOR, which is the one that can strand somebody if it is wrong.
          From **Henesys Market** (10001040) walk into the `market00` portal, then walk back
          out of the Free Market Entrance's `out00`.
@@ -1590,6 +1607,10 @@ param(
     # A running client has the real table. The dump rides the 140304100 positive control,
     # which fires at world entry - late enough that the table is populated - and fires ONCE,
     # so it is one log line and no extra watch slot. Decode it with tools/decode_dump.py.
+    # Do NOT send the character list a second time when the client's 0x007A report shows
+    # it arrived before the client was ready - the kill switch for the blank-select-screen
+    # experiment (login::session::LIST_RESEND_THRESHOLD_MS, plan step TL).
+    [switch]$NoListResend,
     [switch]$SetFieldProbe,
     # OFF by default, and it is an EXPERIMENT rather than a fix.
     #
@@ -2341,6 +2362,7 @@ $loginArgs = @(
 # fallback until 2026-09-05, and a default run should never be able to reach a character
 # list without somebody having signed in through the launcher.
 if ($FallbackAccount) { $loginArgs += @('--fallback-account', $FallbackAccount) }
+if ($NoListResend) { $loginArgs += '--no-list-resend' }
 $server = Start-Process -FilePath $loginExe -WorkingDirectory $root -PassThru @spawn `
     -ArgumentList $loginArgs `
     -RedirectStandardOutput $serverLog -RedirectStandardError "$serverLog.err"
@@ -2479,6 +2501,20 @@ function Show-TestPlan {
         Write-Host '        AND the top now draws, no AP spent -> select checks item'
         Write-Host '          requirements against the sheet; server needs a REQ gate'
         Write-Host '        sheet right, top still bare -> not requirements; say so'
+        Write-Host ''
+        Write-Host '  TL. THE BLANK CHARACTER-SELECT SCREEN.' -ForegroundColor Magenta
+        Write-Host '      The 400 ms pause stopped being enough on 09-08: the client'
+        Write-Host '      own "tasks done" report (0x007A) now lands 200-400 ms AFTER'
+        Write-Host '      the list instead of 5 ms behind it. Same race, back again.'
+        Write-Host '      Now: list at 400 ms as before; if the report then comes'
+        Write-Host '      LATE, the list is sent a SECOND time. Kill switch:'
+        Write-Host '      --no-list-resend. On a fresh launch watch the select screen:'
+        Write-Host '        avatars draw, no flicker -> keep it'
+        Write-Host '        screen visibly rebuilds once -> works, cosmetic; say so'
+        Write-Host '        DUPLICATED characters or stuck -> second 0x0010 refused;' -ForegroundColor Yellow
+        Write-Host '                      relaunch with -NoListResend and tell me' -ForegroundColor Yellow
+        Write-Host '        still blank -> grep login.log for "re-sending the"'
+        Write-Host '                      present = model wrong; absent = race elsewhere'
         Write-Host ''
         Write-Host '  TF. THE FREE MARKET DOOR - can strand you if it is wrong.' -ForegroundColor Magenta
         Write-Host '      From HENESYS MARKET (10001040) walk into market00, then'

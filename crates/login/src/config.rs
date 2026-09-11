@@ -154,6 +154,12 @@ pub struct Config {
     /// from `gm-handbook/equips.txt` by the binary; empty in tests and when the file is
     /// missing, which leaves unscrolled items' base stats off the sheet - the log says so.
     pub equips: std::collections::HashMap<u32, world::config::EquipTemplate>,
+
+    /// **Send the character list a second time when the client's `0x007A` says it was not
+    /// ready for the first.** `--no-list-resend` turns it off. See
+    /// `session::LIST_RESEND_THRESHOLD_MS`; on by default because the alternative is a blank
+    /// select screen on slower and more distant clients.
+    pub resend_list_on_late_report: bool,
 }
 
 /// When a freshly minted migration is bound to the login claim's token. See
@@ -195,6 +201,7 @@ impl Default for Config {
             bind_migrations: MigrationBinding::Auto,
             world: World::default(),
             equips: std::collections::HashMap::new(),
+            resend_list_on_late_report: true,
         }
     }
 }
