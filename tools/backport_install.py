@@ -139,6 +139,49 @@ def main():
                         fh.write("%s/%s\t%s\n" % (item_id, leaf, value.replace("\n", "\\n")))
         add("String", "strings\t%s\t%s" % (image, tsv))
 
+    # 4b. The Cash Shop: sale rows for the box and the eight set coupons, in the SPECIAL tab,
+    #     badged NEW. The owner, 2026-09-10: *"put the full package items for sale in the special
+    #     tab of Cash Shop, which is currently blank. Label them with the 'NEW' icon."*
+    #
+    #     Read out of the classic client [L]: the Special tab is `CashShopCategory.img/2` and
+    #     declares no sub-tab, which is why it draws "No results found"; Main lists its wares
+    #     as an explicit `commoditySN` list, and that form is on screen. `Class 0` on a
+    #     Commodity row is the NEW badge and `Class 2` is HOT - all 15 badged/unbadged rows of
+    #     the Main tab in the owner's screenshot agree with the table, no exceptions. `Period 0` is
+    #     permanent (49 rows). SN prefix 12 (category 2 = Special under the derived
+    #     arithmetic) is unused by every shipped row, so the new serials are 120000000..
+    #
+    #     **Prices are a placeholder policy**: the modern client sells the box for 7,900 NX;
+    #     the set coupons are not sold there at all (they come out of the box). 7,900 LP for
+    #     the box and 3,900 LP per set coupon, until the owner says otherwise.
+    rows = json.load(open(os.path.join(EXTRACT, "manifest.json"), encoding="utf-8"))
+    by_name = {it["name"]: it["id"] for it in manifest["cash"]}
+    wares = [("Signature Style Collection", 7900)] + [
+        (n + " Outfit Set Coupon", 3900)
+        for n in ["Frieren", "Fern", "Stark", "Übel", "Himmel", "Aura", "Lügner", "Linie"]
+    ]
+    commodity_patch = os.path.join(args.build_dir, "patch-Commodity.img.tsv")
+    category_patch = os.path.join(args.build_dir, "patch-CashShopCategory.img.tsv")
+    classic_rows = 159  # Commodity.img rows 0..158 in the classic client; ours append after
+    with open(commodity_patch, "w", encoding="utf-8", newline="\n") as fh, \
+            open(category_patch, "w", encoding="utf-8", newline="\n") as ch:
+        ch.write("2/0/name\tstr\tSignature Style\n")
+        for i, (name, price) in enumerate(wares):
+            item_id = by_name[name]
+            sn = 120_000_000 + i
+            row = classic_rows + i
+            for field, value in [
+                ("SN", sn), ("ItemId", item_id), ("Count", 1), ("Price", price), ("Bonus", 0),
+                ("Period", 0), ("Priority", 100), ("ReqPOP", 0), ("ReqLEV", 0), ("Gender", 2),
+                ("OnSale", 1), ("Class", 0), ("originalPrice", price), ("PbCash", 0),
+                ("PbPoint", 0), ("PbGift", 0), ("Refundable", 0), ("WebShop", 0), ("IsGift", 0),
+            ]:
+                fh.write("%d/%s\tint\t%d\n" % (row, field, value))
+            ch.write("2/0/commoditySN/%d\tint\t%d\n" % (i, sn))
+    add("Etc", "patch\tCommodity.img\t%s" % commodity_patch)
+    add("Etc", "patch\tCashShopCategory.img\t%s" % category_patch)
+    del rows
+
     # 5. Build every archive against its classic base.
     built = []
     for tree_rel, lines in sorted(specs.items()):
