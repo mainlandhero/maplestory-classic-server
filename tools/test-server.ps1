@@ -674,7 +674,31 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
-     TL. THE CASH SHOP'S TWO EMPTY PANELS - A MEASURING RUN, and it needs ONE flag.
+     TL. THE CASH SHOP'S TWO EMPTY PANELS - MEASURING RUN 2. (Run 1 is below, DONE.)
+         Run 1 (23:20) measured: the 0x04 handler ran once, the locker-map INSERT ran
+         SIX times (one per row), the panel REPAINT ran seven times. So the client HAS the
+         six records and repainted - the rows exist and are invisible. The widget-ctor
+         watch was blind: that constructor is a generic UI slot and hit its 32-call limit
+         during login, before the shop. Read since: the repaint builds one 35x35 widget per
+         row at (0,0) and the LAYOUT places the visible ones on a 6x2 grid, 38 px apart,
+         offset from a resource anchor "list_lt" (present in CashShopUI.img at 191,462),
+         through one call per widget whose 2nd and 3rd arguments are x and y. Run 2 reads
+         those arguments. Same launch shape as run 1, -PinPatches included:
+
+           -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,1410b6060,1417113f0:hits=200,14170fd10:hits=400,1410b6970"
+
+         Enter the Cash Shop once, exit, close. In client-patched\maplecw-hook.log:
+           1410b6060  grid placement        expect >= 1 per repaint
+           1417113f0  place-and-show, PER WIDGET: rdx = x, r8 = y
+                        x in {191, 229, 267, 305, 343, 381} and y in {462, 500}
+                                     -> placed on the grid; the ICON DRAW is the fault
+                        x or y = 0, or wild -> the anchor lookup failed; placement is the fault
+                        no hits at all  -> the visible list was empty; the layout filtered
+           14170fd10  widget ctor           count the hits AFTER the 0x05AE dispatch line
+           1410b6970  post-placement refresh
+           client DIES -> say so; the watch set is the one variable
+
+     TL1 (DONE 23:20). THE CASH SHOP'S TWO EMPTY PANELS - A MEASURING RUN, and it needs ONE flag.
          The owner, 2026-09-10 night: the Cash Inventory shows nothing after six purchases,
          and the shop's Item Inventory shows nothing although the character holds three
          Mystery Hair Coupons in its Cash tab. The purchases are in the database (LP was
@@ -2536,12 +2560,18 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
-        Write-Host '  TL. THE CASH SHOP PANELS - A MEASURING RUN. Needs ONE flag.' -ForegroundColor Magenta
-        Write-Host '      Both panels draw empty although the rows are in the database'
-        Write-Host '      and 0x04 (the locker reload) now goes out at entry and after'
-        Write-Host '      every buy. The client pipeline reads as "should draw", so'
-        Write-Host '      this run measures it. ADD TO THE LAUNCH LINE, EXACTLY:' -ForegroundColor Yellow
-        Write-Host '        -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,140d7e1f0,140d75850,1410b5540,14170fd10"' -ForegroundColor Yellow
+        Write-Host '  TL. THE CASH SHOP PANELS - MEASURING RUN 2.' -ForegroundColor Magenta
+        Write-Host '      Run 1 (23:20) DONE: the client received all 6 locker rows and'
+        Write-Host '      repainted 7 times. The rows exist and are INVISIBLE. Run 2 reads'
+        Write-Host '      the x,y the layout hands each row widget. Launch with:'
+        Write-Host '        -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,1410b6060,1417113f0:hits=200,14170fd10:hits=400,1410b6970"' -ForegroundColor Yellow
+        Write-Host '      Enter the shop once, exit, close. In the hook log, 1417113f0'
+        Write-Host '      lines: rdx=x r8=y per widget.'
+        Write-Host '        x in 191..381 step 38, y 462 or 500 -> placed; the ICON draw'
+        Write-Host '        x or y 0 / wild -> anchor lookup failed; placement'
+        Write-Host '        no 1417113f0 hits after the shop -> layout filtered all'
+        Write-Host '      (Run 1 line, for the record:)' -ForegroundColor DarkGray
+        Write-Host '        -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,140d7e1f0,140d75850,1410b5540,14170fd10"' -ForegroundColor DarkGray
         Write-Host '      -PinPatches IS NOT OPTIONAL: the launcher overwrites the probe' -ForegroundColor Red
         Write-Host '      marker on every launch; a pin is the only way in. The 23:18' -ForegroundColor Red
         Write-Host '      run without it armed the defaults and measured nothing.' -ForegroundColor Red
