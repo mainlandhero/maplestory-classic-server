@@ -130,6 +130,42 @@ pub struct Reply {
 /// any refresh rate and far less than a player would notice.
 pub const CHARACTER_LIST_PAUSE_MS: u64 = 400;
 
+/// **The client's own "all four background tasks finished" report, `0x007A`.**
+///
+/// Sent once per process by the client's background worker (`research/msexe-client-opcodes.md`).
+/// It is the timestamp this server uses to tell whether the character list landed before or
+/// after the client was ready - see [`LIST_RESEND_THRESHOLD_MS`].
+pub const CLIENT_TASK_TIMING_REPORT: u16 = 0x007A;
+
+/// **How late the tasks report may be, after the list, before the list is sent again.**
+///
+/// 2026-09-10. The 400 ms pause above stopped being enough on 2026-09-08 and the client's own
+/// report says so. Every archived login, paired with its `0x007A`:
+///
+/// ```text
+///                                list sent at     0x007A arrives at
+///   2026-08-19 .. 09-02           +0.000 s         +0.27 .. +0.46 s    avatars NOT drawn
+///   2026-09-03 .. 09-07           +0.401 s         +0.401 .. +0.447 s  drawn (the pause era)
+///   2026-09-08 .. 09-10           +0.401 s         +0.60 .. +0.81 s    intermittently blank
+/// ```
+///
+/// One reading fits all three [I]: one of the four tasks ends when the list arrives (the
+/// report trails the list by 5-46 ms in the middle regime, and would have led it otherwise),
+/// the other tasks take a machine-dependent time, and the avatars draw only when the list
+/// lands after those tasks. Since 09-08 they take longer than the pause, so the race is back
+/// - and a slower or more distant client loses it more often, which is the owner's report.
+///
+/// The report cannot be waited for before the first send - if a task ends on the list, that
+/// never returns. So the list goes out at the pause as before, and when the report then
+/// arrives **later than this** after the list, the tasks finished after the list landed and
+/// the list is sent once more, now that the client is done. 100 ms is above the middle
+/// regime's worst lag (46 ms) and far below the failing regime's best (200 ms).
+///
+/// **[I]:** what a second `0x0010` does inside the select stage has not been read out of the
+/// client. `Config::resend_list_on_late_report` is the kill switch; the test plan's step TL
+/// says what each screen outcome means. `research/select-screen-race-2026-09-10.md`.
+pub const LIST_RESEND_THRESHOLD_MS: u64 = 100;
+
 impl Reply {
     fn new(opcode: u16, body: Vec<u8>, what: impl Into<String>) -> Self {
         Reply { opcode, body, what: what.into(), pause_ms: 0 }
@@ -151,6 +187,29 @@ impl Reply {
 }
 
 /// One client connection's worth of state.
+/// A parsed `0x007A`: two flag bytes, the four task durations in ms, and their sum.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskTimingReport {
+    pub flag_a: u8,
+    pub flag_b: u8,
+    pub tasks: [u32; 4],
+    pub sum: u32,
+}
+
+/// Parse a `0x007A` body. `None` unless it is exactly the 22-byte shape every capture has.
+pub fn parse_task_timing_report(body: &[u8]) -> Option<TaskTimingReport> {
+    if body.len() != 22 {
+        return None;
+    }
+    let u32_at = |i: usize| u32::from_le_bytes([body[i], body[i + 1], body[i + 2], body[i + 3]]);
+    Some(TaskTimingReport {
+        flag_a: body[0],
+        flag_b: body[1],
+        tasks: [u32_at(2), u32_at(6), u32_at(10), u32_at(14)],
+        sum: u32_at(18),
+    })
+}
+
 pub struct Session {
     store: Arc<Store>,
     config: Arc<Config>,
@@ -167,6 +226,12 @@ pub struct Session {
     /// Has the client asked to log in yet? Only used to decide whether the startup gate
     /// needs repeating - see [`Session::on_quiet`].
     seen_login_request: bool,
+    /// When the last character list was (or will be) put on the wire - the reply's creation
+    /// time plus its pause. Compared against the client's `0x007A` to decide a re-send.
+    list_sent_at: Option<std::time::Instant>,
+    /// The list is re-sent at most once per list; a client that reports late twice is not
+    /// helped by a third copy.
+    list_resent: bool,
     /// The source address this connection arrived from, if the socket could report one.
     ///
     /// Recorded on the migration for the audit trail and for `store::PeerPolicy::Require`.
@@ -255,6 +320,8 @@ impl Session {
             config,
             account,
             seen_login_request: false,
+            list_sent_at: None,
+            list_resent: false,
             peer: None,
             peer_ip: None,
             local_ip: None,
@@ -613,6 +680,9 @@ impl Session {
             CLIENT_CREATE_CHARACTER_REQUEST => self.create_character(payload),
             CLIENT_DELETE_CHARACTER_REQUEST => self.delete_character(payload),
             CLIENT_SELECT_CHARACTER_REQUEST => self.select_character(payload),
+            // The client's "tasks done" report. Usually nothing; a list re-send when it
+            // proves the list arrived too early. See LIST_RESEND_THRESHOLD_MS.
+            CLIENT_TASK_TIMING_REPORT => self.on_task_timing_report(payload),
             _ => Vec::new(),
         }
     }
@@ -700,19 +770,34 @@ impl Session {
             Reply::new(WORLD_LIST, world_list_end(), format!("{cause}: end of worlds")),
         ];
 
-        let (channel, channel_note) = advertised_channel(world);
+        let list = self.character_list_reply(&account, cause);
+        // The list is the paused reply. See `CHARACTER_LIST_PAUSE_MS` for why it waits, and
+        // `LIST_RESEND_THRESHOLD_MS` for what happens when the wait turns out to be short:
+        // the send time is remembered so the client's own `0x007A` can be measured against it.
+        self.list_sent_at = Some(
+            std::time::Instant::now() + std::time::Duration::from_millis(CHARACTER_LIST_PAUSE_MS),
+        );
+        self.list_resent = false;
+        out.push(list.after(CHARACTER_LIST_PAUSE_MS));
+        out
+    }
 
+    /// The `0x0010` character list for `account`, with the select sheet's equipment totals.
+    ///
+    /// One builder for the first send and the re-send, so the two cannot drift. Never fails:
+    /// a store error becomes an empty list, because a character-select screen with no
+    /// characters is recoverable and a client blocked on a reply is not.
+    fn character_list_reply(&self, account: &Account, cause: &str) -> Reply {
+        let world = &self.config.world;
+        let (channel, channel_note) = advertised_channel(world);
         let characters = match self.store.characters_for(account.id, world.id) {
             Ok(c) => c,
             Err(e) => {
-                // Send an empty list rather than nothing. A character select screen with
-                // no characters is recoverable; a client blocked on a reply is not.
-                out.push(Reply::new(
+                return Reply::new(
                     LOGIN_RESULT,
                     login_result(world.id, channel, &[]),
                     format!("{cause}: EMPTY LIST - could not read characters: {e}"),
-                ));
-                return out;
+                )
             }
         };
 
@@ -747,23 +832,63 @@ impl Session {
             ));
             shown.push(sheet);
         }
-        out.push(
-            Reply::new(
-                LOGIN_RESULT,
-                login_result(world.id, channel, &shown),
-                format!(
-                    "{cause}: login result, {} character(s): {}; {channel_note}",
-                    characters.len(),
-                    names.join(", ")
-                ),
-            )
-            // The only paused reply in this server. See `CHARACTER_LIST_PAUSE_MS`: the
-            // avatars are not drawn on a client's first visit to character select, the bytes
-            // are identical to a visit that DOES draw them, and this is the one thing this
-            // server does that no real one could - answer four packets in one millisecond.
-            .after(CHARACTER_LIST_PAUSE_MS),
+        Reply::new(
+            LOGIN_RESULT,
+            login_result(world.id, channel, &shown),
+            format!(
+                "{cause}: login result, {} character(s): {}; {channel_note}",
+                characters.len(),
+                names.join(", ")
+            ),
+        )
+    }
+
+    /// `0x007A` - the client's four background tasks are done. See [`LIST_RESEND_THRESHOLD_MS`].
+    fn on_task_timing_report(&mut self, payload: &[u8]) -> Vec<Reply> {
+        match parse_task_timing_report(payload) {
+            Some(r) => self.notes.push(format!(
+                "0x007A tasks done: flags {}/{}, durations {} + {} + {} + {} = {} ms",
+                r.flag_a, r.flag_b, r.tasks[0], r.tasks[1], r.tasks[2], r.tasks[3], r.sum
+            )),
+            None => self.notes.push(format!(
+                "0x007A tasks done: {} byte body, not the 22-byte shape; durations unread",
+                payload.len()
+            )),
+        }
+        let Some(sent_at) = self.list_sent_at else {
+            return Vec::new(); // no list has gone out on this connection; nothing to re-send
+        };
+        let lag_ms = std::time::Instant::now().saturating_duration_since(sent_at).as_millis() as u64;
+        if lag_ms <= LIST_RESEND_THRESHOLD_MS {
+            self.notes.push(format!(
+                "   the report landed {lag_ms} ms after the list - inside the {LIST_RESEND_THRESHOLD_MS} ms threshold, so the client was ready when the list arrived; nothing re-sent"
+            ));
+            return Vec::new();
+        }
+        if !self.config.resend_list_on_late_report {
+            self.notes.push(format!(
+                "   the report landed {lag_ms} ms after the list - LATE, but --no-list-resend is set; nothing re-sent"
+            ));
+            return Vec::new();
+        }
+        if self.list_resent {
+            self.notes.push(format!(
+                "   the report landed {lag_ms} ms after the list, and the list was already re-sent once"
+            ));
+            return Vec::new();
+        }
+        let Some(account) = self.account.clone() else { return Vec::new() };
+        self.list_resent = true;
+        let cause = format!(
+            "re-sending the character list: the client's tasks finished {lag_ms} ms AFTER the list went out, so the select screen was built before it was ready (threshold {LIST_RESEND_THRESHOLD_MS} ms)"
         );
-        out
+        vec![self.character_list_reply(&account, &cause)]
+    }
+
+    /// Test seam: pretend the last list went out `ms` ago.
+    #[cfg(test)]
+    fn pretend_list_sent_ms_ago(&mut self, ms: u64) {
+        self.list_sent_at = Some(std::time::Instant::now() - std::time::Duration::from_millis(ms));
     }
 
     /// **The client's session identity, `0x0073` - the credential the client carries itself.**
@@ -2084,6 +2209,77 @@ mod tests {
         let what = character_list(&mut bare);
         assert!(what.contains("sheet STR 1011 DEX 1006 INT 4 LUK 4"), "{what}");
         assert!(what.contains("3 of them with NO template"), "{what}");
+    }
+
+    /// Today's report, byte for byte: `787 + 151 + 128 + 162 = 1228`.
+    #[test]
+    fn the_task_timing_report_parses_and_its_sum_checks() {
+        let body = hex_body("0101130300009700000080000000a2000000cc040000");
+        let r = parse_task_timing_report(&body).expect("22 bytes");
+        assert_eq!((r.flag_a, r.flag_b), (1, 1));
+        assert_eq!(r.tasks, [787, 151, 128, 162]);
+        assert_eq!(r.sum, 1228);
+        assert_eq!(r.tasks.iter().sum::<u32>(), r.sum, "the last field is the sum of the four");
+        assert_eq!(parse_task_timing_report(&body[..21]), None);
+        assert_eq!(parse_task_timing_report(&[0; 8]), None);
+    }
+
+    /// **A late tasks report re-sends the list, once; an early one does not.** The re-send
+    /// goes through the same builder as the first send, so it carries the select sheet too.
+    #[test]
+    fn a_late_task_report_resends_the_character_list_once() {
+        let mut s = session();
+        s.handle(&create_request("Late", 30030, &STYLE));
+        assert!(character_list(&mut s).contains("Late"));
+        let report = request(
+            CLIENT_TASK_TIMING_REPORT,
+            &hex_body("0101130300009700000080000000a2000000cc040000"),
+        );
+
+        // Inside the threshold: the client was ready; nothing goes out.
+        s.pretend_list_sent_ms_ago(10);
+        assert!(s.handle(&report).is_empty(), "10 ms after the list is the pause-era shape");
+        assert!(s.take_notes().iter().any(|n| n.contains("inside the")), "and the log says why");
+
+        // Late: the tasks finished after the list landed. One more list, same sheet.
+        s.pretend_list_sent_ms_ago(400);
+        let out = s.handle(&report);
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert_eq!(out[0].opcode, LOGIN_RESULT);
+        assert_eq!(out[0].pause_ms, 0, "the re-send is not paused - the client is ready NOW");
+        assert!(out[0].what.contains("re-sending the character list"), "{}", out[0].what);
+        assert!(out[0].what.contains("Late [sheet STR"), "the same builder: {}", out[0].what);
+
+        // Once only.
+        s.pretend_list_sent_ms_ago(900);
+        assert!(s.handle(&report).is_empty(), "a third copy helps nobody");
+
+        // A fresh login resets the once-only latch - it is per list, not per connection.
+        assert!(character_list(&mut s).contains("Late"));
+        s.pretend_list_sent_ms_ago(400);
+        assert_eq!(s.handle(&report).len(), 1);
+    }
+
+    /// The kill switch, and the no-list case: a report before any list re-sends nothing.
+    #[test]
+    fn the_resend_is_off_with_the_switch_and_before_any_list() {
+        let report = request(
+            CLIENT_TASK_TIMING_REPORT,
+            &hex_body("0101130300009700000080000000a2000000cc040000"),
+        );
+        let mut s = session();
+        assert!(s.handle(&report).is_empty(), "no list has gone out yet");
+
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store.create_account("maplecw", "correct horse battery").unwrap();
+        let account = store.get_account("maplecw").unwrap().unwrap();
+        let config = Config { resend_list_on_late_report: false, ..Config::default() };
+        let mut s = Session::new(store, Arc::new(config), account);
+        s.handle(&create_request("Switched", 30030, &STYLE));
+        character_list(&mut s);
+        s.pretend_list_sent_ms_ago(400);
+        assert!(s.handle(&report).is_empty(), "--no-list-resend");
+        assert!(s.take_notes().iter().any(|n| n.contains("--no-list-resend is set")));
     }
 
     #[test]

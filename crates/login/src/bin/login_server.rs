@@ -18,6 +18,9 @@ maplecw-login - the MapleCW login server
 
   --bind ADDR           what to listen on           (default 127.0.0.1:8484)
   --db PATH             the SQLite file             (default maplecw.db)
+  --no-list-resend      do NOT send the character list a second time when the client's
+                        0x007A report shows it arrived before the client was ready (the
+                        kill switch for login::session::LIST_RESEND_THRESHOLD_MS)
   --fallback-account NAME  serve a connection this server CANNOT attribute to a launcher
                         sign-in as NAME instead of refusing it. OFF by default: without
                         it, such a connection gets a login failure (notRegisteredID) and
@@ -83,6 +86,10 @@ fn main() -> ExitCode {
             }),
             "--delete" => value().map(|v| delete_name = Some(v)),
             "--db" => value().map(|v| config.db_path = PathBuf::from(v)),
+            "--no-list-resend" => {
+                config.resend_list_on_late_report = false;
+                Ok(())
+            }
             "--account" => value().map(|v| config.account = Some(v)),
             "--fallback-account" => value().map(|v| config.fallback_account = Some(v)),
             "--display-name" => value().map(|v| display_name = Some(v)),
