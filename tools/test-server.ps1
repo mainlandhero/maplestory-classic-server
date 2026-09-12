@@ -2778,9 +2778,12 @@ function Show-TestPlan {
         Write-Host '      b) Weapon: CLIENT data. Covers list weapon TYPES they dress;'
         Write-Host '         the staff lists 30 and 49, your suitcase is type 32.'
         Write-Host '         Try it holding a one-handed SWORD (type 30).' -ForegroundColor Yellow
-        Write-Host '      c) Hair coupon: Confirm is 0x0165, now handled - hair applied,'
-        Write-Host '         coupon spent, map re-entered to redraw.'
-        Write-Host '           hair changes, coupon gone -> done'
+        Write-Host '      c) Hair/face coupon: 0x0165 handled - coupon spent, change'
+        Write-Host '         broadcast to others, NO reload (client self-applies).'
+        Write-Host '           your hair changes, no reload, coupon gone -> done'
+        Write-Host '           a 2nd client on the map sees it in ~0.1s -> broadcast OK'
+        Write-Host '           others do NOT see it -> re-enter ignored; leave+enter next'
+        Write-Host '           yours did NOT change sans reload -> client not self-applying'
         Write-Host '  TH. FACE COUPON: no dialog, no preview. Images are fine; the'
         Write-Host '      ID is the one difference (22039; classic faces end at 21825).'
         Write-Host '      One chat line settles it: !face 22039' -ForegroundColor Yellow

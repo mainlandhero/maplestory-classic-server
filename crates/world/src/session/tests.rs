@@ -8325,6 +8325,41 @@ fn walking_into_a_field_does_not_re_send_another_players_drops() {
     assert_eq!(back[0].body[1], net::drops::ENTER_INSTANT, "already lying there, no second arc");
 }
 
+/// **A hair change reaches the other clients on the map, with no field reload for anyone.**
+///
+/// The owner, 2026-09-12: *"The moment any hair or face change happens, it should also show up on
+/// other clients."* One player uses an Übel Hair Coupon; the other, standing on the same map,
+/// gets a fresh `USER_ENTER_FIELD` carrying the new look, and the user who changed gets no
+/// `SetField`.
+#[test]
+fn a_hair_change_is_broadcast_to_the_other_clients_without_a_reload() {
+    let (store, config, fields, account) = shared_channel(0, 30);
+    let (mut me, my_id) = join_channel(&store, &config, &fields, account, "Stylist");
+    me.on_field_entered();
+    let (mut them, _) = join_channel(&store, &config, &fields, account, "Bystander");
+    them.on_field_entered();
+    me.collect_mail(); // drain the bystander's own entry
+
+    let slot = store
+        .add_item(my_id, store::InventoryType::Use, &store::Item::bundle(2_543_143, 1), 1)
+        .unwrap()[0]
+        .slot;
+    let mut body = slot.to_le_bytes().to_vec();
+    body.extend_from_slice(&2_543_143u32.to_le_bytes());
+    let out = me.on_beauty_coupon_confirm(&body);
+    assert!(!out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "no reload for the changer");
+
+    let seen = them.collect_mail();
+    let enters: Vec<&Reply> =
+        seen.iter().filter(|r| r.opcode == net::userpool::USER_ENTER_FIELD).collect();
+    assert_eq!(enters.len(), 1, "the other client re-adds the changed character: {seen:?}");
+    // The new hair is somewhere in that body - the avatar look carries it.
+    assert!(
+        enters[0].body.windows(4).any(|w| u32::from_le_bytes(w.try_into().unwrap()) == 42_600),
+        "the broadcast carries the new hair id"
+    );
+}
+
 /// **A late joiner is told where people ARE, not where they were when they arrived.**
 ///
 /// The owner, 2026-09-03: *"the positioning is off if someone joins the map later since they don't
@@ -10181,7 +10216,12 @@ fn a_beauty_coupon_confirm_changes_the_hair_and_spends_the_coupon() {
     body.extend_from_slice(&2_543_143u32.to_le_bytes());
     body.extend_from_slice(&[0, 0]);
     let out = s.on_beauty_coupon_confirm(&body);
-    assert!(out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "re-entry redraws: {:?}", out.iter().map(|r| r.opcode).collect::<Vec<_>>());
+    assert!(
+        !out.iter().any(|r| r.opcode == net::opcode::SET_FIELD),
+        "no reload: the client applied the look itself; {:?}",
+        out.iter().map(|r| r.opcode).collect::<Vec<_>>()
+    );
+    assert!(out.iter().any(|r| r.opcode == net::combat::STAT_CHANGED), "the exclusive-request unlock");
     assert_eq!(s.claimed_character().unwrap().hair, 42_600, "Übel Hair");
     assert!(store.bag(id).unwrap().items_in(use_tab).all(|i| i.item.item_id != 2_543_143), "the coupon is spent");
 
