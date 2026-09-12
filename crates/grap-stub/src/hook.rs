@@ -288,6 +288,9 @@ unsafe extern "system" fn hooked_dispatch(conn: *mut c_void, view: *mut c_void) 
     // both are true.
     crate::session::patch_mode_after_dispatch(opcode);
     crate::session::enable_character_creation_after_dispatch(opcode);
+    // After the list is decoded: refill the select slots if the screen was built before it
+    // arrived (the blank-avatar ordering). See the function's doc block.
+    crate::session::refresh_select_after_dispatch(opcode);
 
     let mut end = 0i64;
     QueryPerformanceCounter(&mut end);
