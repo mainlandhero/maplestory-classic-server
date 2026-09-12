@@ -158,6 +158,57 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         0x00E0 => "CLIENT_SHOOT_ATTACK (same body as 0x00DF)",
         0x00E1 => "CLIENT_MAGIC_ATTACK (same body as 0x00DF)",
 
+        // **Handled for weeks, never named.** Each of these has a dispatcher arm in
+        // crates/world/src/session/mod.rs and a module in this crate whose doc block is the
+        // evidence; they logged as UNKNOWN because nobody added the row here. Found
+        // 2026-09-12 by resolving every constant the dispatcher matches and diffing against
+        // this table - `every_opcode_the_world_dispatcher_matches_has_a_name` keeps it so.
+        0x00D2 => "CLIENT_CHANGE_CHANNEL (a Change Channel row; LATCHES until answered)",
+        0x00DA => "CLIENT_CHAIR_CANCEL (u16 chairId, 0xFFFF for none) - stand up",
+        0x00DB => "CLIENT_CHAIR_SIT (the Set Up chair's item id and slot)",
+        0x00E5 => "CLIENT_USER_HIT (the player took damage; 147 bytes; answered with STAT_CHANGED)",
+        0x00F5 => "CLIENT_CLASSIC_SHOP_REQUEST (the classic shop window; research/classic-shop-rows.md)",
+        0x0104 => "CLIENT_SHOP_REQUEST (the Shop2 window; a different body from 0x00F5)",
+        0x010E => "CLIENT_USE_ITEM (u32 tick, u16 slot, u32 itemId; the Use tab)",
+        0x0111 => "CLIENT_SUMMON_SACK (the summoning sack in this slot)",
+        0x0125 => "CLIENT_ITEM_UPGRADE (u32 tick, u16 scroll slot, u16 dst slot, ...) - a scroll",
+        0x0138 => "CLIENT_ABILITY_UP (inbound; the OUTBOUND 0x0138 is USER_AVATAR_MODIFIED)",
+        0x0139 => "CLIENT_ABILITY_MASS_UP (inbound)",
+        0x013B => "CLIENT_USER_SKILL_UP_REQUEST (u32 tick, u32 skillId)",
+        0x0143 => "CLIENT_DROP_MONEY (8 bytes; the 'how many will you drop' prompt)",
+        0x017E => "CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch)",
+        0x0199 => "CLIENT_KEYMAP_CHANGE (u8 subtype; 0 = a delta of key bindings) - CONFIRM in KEY BINDINGS",
+        0x01E7 => "CLIENT_REVIVE_ON_SPOT (the tombstone's revive-here button)",
+        0x0453 => "NPC_CHAT (outbound; one NPC's chat balloon)",
+
+        // **Client reports: sent without waiting, and answered with nothing on purpose.**
+        // Every one of these arrived unanswered in the archive while the client played on,
+        // which is the measurement that they do not latch; the shapes and provenance are
+        // from the client's builders (research/msexe-send-opcodes.txt) and the notes cited.
+        // `is_client_report()` lists them so the servers' logs say "a report; nothing is
+        // expected back" instead of "not answered yet", and `grep UNKNOWN` over a run is
+        // left meaning what it should: a packet nobody has seen before.
+        0x013D => "CLIENT_SEND_COUNTER_CENSUS (every 30 s; counts of packets sent; MUST NOT be answered - research/buffs.md sec 2)",
+        0x02F4 => "CLIENT_REPORT_02F4 (u32, u32, i32; a few per session; builder FUN_142937ba0; meaning undecoded)",
+        0x01ED => "CLIENT_LOG_CHANNEL (u32 kind, then a kind-specific record; 104 builder sites - research/cash-shop.md sec 3.5)",
+        0x01A5 => "CLIENT_SKILL_CHECKSUMS (n1 x {skillId, checksum}, n2 x {skillId, level, checksum}; after every skill-up)",
+        0x02DE => "CLIENT_FIELD_ENTRY_FLAG (u8; once per field entry, alongside 0x00DC)",
+        0x0184 => "CLIENT_FIELD_ENTRY_REPORT (body from FUN_142df2760; once per field entry)",
+        0x0194 => "CLIENT_FIELD_ENTRY_REPORT_2 (u8; once per field entry; builder FUN_142defc50)",
+        0x00B8 => "CLIENT_TOGGLE_B8 (u8 0/1; a few per session; builder FUN_142e40530)",
+        0x0420 => "CLIENT_LEAVE_FIELD_RECORD (str timestamp, u32 charId, str name, ...; the leaving burst)",
+        0x0421 => "CLIENT_LEAVE_FIELD_RECORD_2 (same head as 0x0420, ~1.3 KB; the leaving burst)",
+        0x0422 => "CLIENT_LEAVE_FIELD_REASON (u32 reason, str) - 'I am leaving the field, reason N' [L]",
+        0x0423 => "CLIENT_LEAVE_FIELD_RECORD_3 (same head as 0x0420; the leaving burst)",
+        0x0425 => "CLIENT_RESOURCE_CENSUS (u32 count, then {u32, str path, u32 x3} records; Sound/Map paths)",
+        0x0426 => "CLIENT_LEAVE_FIELD_TAIL (20 bytes: i32 -1, i32 -1, u32, ...; closes the leaving burst)",
+        // Undecoded but not unknown: seen repeatedly, never froze anything, no reply builder
+        // found. Named so a run's UNKNOWN list is only the genuinely new; still logged in
+        // full (never_truncate) because their bytes are the only evidence there is.
+        0x01C1 => "CLIENT_UNDECODED_01C1 (u32 charId, str name; ~7 per day; builder FUN_142927ac0)",
+        0x01B9 => "CLIENT_UNDECODED_01B9 (empty; ~27 per day; builder FUN_142db77a0)",
+        0x0226 => "CLIENT_UNDECODED_0226 (10 bytes; rare; builder FUN_1428f4eb0)",
+
         // Outbound, so that a run's log does not read as if the server were guessing.
         0x007C => "STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order)",
         0x01A0 => "SET_FIELD",
@@ -186,7 +237,7 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
 /// it is named, it is 500-2600 bytes, and every byte of it is evidence. Naming it without
 /// this exemption would have quietly re-broken the instrument that found
 /// `INVALID_CLIENT_VERSION` - the truncation is what hid it for weeks in the first place.
-fn never_truncate(opcode: u16) -> bool {
+pub fn never_truncate(opcode: u16) -> bool {
     // 0x0151's trailer is shape-dependent - tag plus remaining length is all there is to go
     // on, because the client sends no marker for it - so its bytes are still evidence even
     // though its head is settled. 0x01A0 is the character record, which has no length prefix
@@ -205,9 +256,37 @@ fn never_truncate(opcode: u16) -> bool {
     // the exact part `tools/encodes.py` was found to be blind to, because it is written by a
     // loop rather than by a named primitive. Naming it without this would have re-hidden the
     // bytes that caught that bug.
+    // The three CLIENT_UNDECODED_* reports and 0x02F4: named so they stop reading as new,
+    // kept whole because nothing about them is settled.
     matches!(
         opcode,
         0x008F | 0x0090 | 0x0091 | 0x00D9 | 0x00DF | 0x00E0 | 0x00E1 | 0x0151 | 0x01A0 | 0x02FF
+            | 0x01C1 | 0x01B9 | 0x0226 | 0x02F4
+    )
+}
+
+/// The client's one-way reports: packets it sends without waiting for anything back.
+///
+/// Answering nothing is the **correct** handling of every opcode here - `0x013D` in
+/// particular must not be answered (`research/buffs.md` §2). The list exists so that the
+/// servers' "is not answered" log line can say so, and so that a reviewer reading a run does
+/// not mistake a report for a request the server dropped. Membership is a measurement:
+/// every one of these has arrived unanswered in the archive, many hundreds of times, with
+/// the client playing on - and none is in `dropmoney::LATCHING_REQUESTS`.
+///
+/// Not here, deliberately: anything the dispatcher answers, and anything that latches.
+pub fn is_client_report(opcode: u16) -> bool {
+    matches!(
+        opcode,
+        // Login connection: environment, timings, status codes, the client's own error log,
+        // the session identity it announces, and the undecoded 0x00BC.
+        0x0070 | 0x0071 | 0x0073 | 0x0079 | 0x007A | 0x008F | 0x0090 | 0x0091 | 0x00A6
+            | 0x00BC | 0x00BF | 0x00C0
+        // Channel connection.
+            | 0x013D | 0x02F4 | 0x01ED | 0x01A5 | 0x02DE | 0x0184 | 0x0194 | 0x00B8
+            | 0x00DC | 0x0238 | 0x024D
+            | 0x0420 | 0x0421 | 0x0422 | 0x0423 | 0x0424 | 0x0425 | 0x0426
+            | 0x01C1 | 0x01B9 | 0x0226
     )
 }
 
@@ -242,6 +321,45 @@ pub fn label(opcode: u16) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every constant the world dispatcher matches, resolved to its value. On 2026-09-12
+    /// seventeen of these had arms and modules and no row here, so they logged as UNKNOWN
+    /// for weeks. The values are spelled here rather than imported so that renaming a
+    /// constant cannot silently drop one from the check.
+    #[test]
+    fn every_opcode_the_world_dispatcher_matches_has_a_name() {
+        for op in [
+            0x00BB, 0x00D2, 0x00D5, 0x00D9, 0x00DA, 0x00DB, 0x00E5, 0x00E7, 0x00F2, 0x00F3,
+            0x00F5, 0x00F6, 0x0104, 0x0107, 0x010E, 0x0111, 0x0114, 0x0116, 0x0125, 0x0138,
+            0x0139, 0x013B, 0x013C, 0x013F, 0x0143, 0x014A, 0x0151, 0x0165, 0x017E, 0x0182,
+            0x0183, 0x0199, 0x01A0, 0x01BE, 0x01E7, 0x02FF, 0x03E0, 0x03E1, 0x0453,
+        ] {
+            assert!(opcode_name(op).is_some(), "0x{op:04X} is dispatched but has no name");
+        }
+    }
+
+    /// A report is named (so it stops reading as new) - except 0x00BC, whose namelessness
+    /// is a deliberate decision recorded above - and a report never latches, because a
+    /// latching request that is answered with nothing freezes the client.
+    #[test]
+    fn every_client_report_is_named_and_none_of_them_latches() {
+        let reports: Vec<u16> = (0u16..=0x5FF).filter(|&op| is_client_report(op)).collect();
+        assert!(reports.len() > 20, "{reports:04X?}");
+        for op in &reports {
+            if *op == 0x00BC || *op == 0x0424 {
+                continue; // 0x00BC: deliberately unnamed. 0x0424: reserved in the burst, never seen.
+            }
+            assert!(opcode_name(*op).is_some(), "report 0x{op:04X} has no name");
+            assert!(
+                !crate::dropmoney::latches_the_exclusive_request(*op),
+                "0x{op:04X} latches, so it is a request, not a report"
+            );
+        }
+        // Things that are answered are not reports.
+        for op in [0x00E5u16, 0x0107, 0x0199, 0x02FF, 0x00D9] {
+            assert!(!is_client_report(op), "0x{op:04X} is answered by the world server");
+        }
+    }
 
     #[test]
     fn every_opcode_the_servers_build_has_a_name() {

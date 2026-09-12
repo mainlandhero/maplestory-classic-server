@@ -150,6 +150,18 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-12, afternoon: every inbound opcode has a disposition** (the owner: *"handle all of the
+opcodes"*). Enumerating the archive, deduplicated: everything still logging `UNKNOWN ... not
+answered yet` is a one-way client report - `0x013D` (30 s census, **must not be answered**),
+`0x01ED` (log channel), `0x01A5`, `0x02DE`/`0x0184`/`0x0194` (field entry), `0x00B8`, the
+`0x0420..0x0426` leaving burst, `0x0425` (resource census), and three undecoded (`0x01C1`,
+`0x01B9`, `0x0226`). All named in `net::names`, listed in `is_client_report()`, routed through
+`world::session::reports` (nothing back; `0x0422` logs its leave reason), and both servers now log
+`is a client report; nothing is expected back` for them. The same sweep found **seventeen
+handled opcodes with no name** (`0x00E5`, `0x0199`, `0x0107`... all with arms and modules) - a
+test now pins that every dispatched opcode is named. `grep -c UNKNOWN` on a run should be 0.
+`research/opcode-dispositions-2026-09-12.md`.
+
 **2026-09-12: the blank select screen is MEASURED - the slots are placed EMPTY, and both
 earlier theories are dead.** The 0x007A/400 ms-pause theory (2026-09-10) and the null-gate
 theory (2026-09-12 morning) are both refuted. An instrumented blank login (01:54) shows the

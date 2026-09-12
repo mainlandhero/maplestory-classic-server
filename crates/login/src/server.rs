@@ -545,15 +545,26 @@ fn connection(
                 log(&format!("   {note}"));
             }
             if replies.is_empty() {
-                log(&format!(
-                    "   {} is not answered by this server{}",
-                    label(opcode),
-                    if net::names::opcode_name(opcode).is_none() {
-                        " - and it is UNKNOWN, so the full body is above"
-                    } else {
-                        ""
-                    }
-                ));
+                // A report (environment, timings, status codes, the identity announcement,
+                // the client's own error log) is answered with nothing because that is
+                // correct; the line says so, so that a reviewer does not read the login
+                // log as a server ignoring twelve requests per login.
+                if net::names::is_client_report(opcode) {
+                    log(&format!(
+                        "   {} is a client report; nothing is expected back",
+                        label(opcode)
+                    ));
+                } else {
+                    log(&format!(
+                        "   {} is not answered by this server{}",
+                        label(opcode),
+                        if net::names::opcode_name(opcode).is_none() {
+                            " - and it is UNKNOWN, so the full body is above"
+                        } else {
+                            ""
+                        }
+                    ));
+                }
             }
             for reply in replies {
                 // **A reply that asks to be late is late.** Only the character list does, and

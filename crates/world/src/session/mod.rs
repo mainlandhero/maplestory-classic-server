@@ -514,6 +514,7 @@ mod pools;
 mod rates;
 mod recovery;
 mod regen;
+mod reports;
 mod realscroll;
 mod scroll;
 mod summonsack;
@@ -1011,6 +1012,15 @@ impl Session {
             // `0x01FD` and `0x02F6` - and this arm would have caught all three.
             op if net::dropmoney::latches_the_exclusive_request(op) => {
                 return crate::mesodrop::unlock_unhandled_latching_request(op)
+            }
+            // The client's one-way reports (0x013D census, 0x01ED log channel, the
+            // 0x0420..0x0426 leaving burst, and the rest of net::names::is_client_report).
+            // Answered with nothing ON PURPOSE - 0x013D must not be answered - and routed
+            // through session/reports.rs so the choice is a decision, not a fall-through,
+            // and so the two that carry something readable get a log line. Placed after
+            // the latch whitelist, which none of them is in (tests pin both facts).
+            op if net::names::is_client_report(op) => {
+                return self.on_client_report(op, body.get(2..).unwrap_or(&[]))
             }
             _ => return Vec::new(),
         }

@@ -883,6 +883,21 @@
                          the step was removed or switched off; "refusing" = a guard tripped
                          (paste it); "called" and still blank = new problem, keep the log
 
+     TU. EVERY INBOUND OPCODE HAS A DISPOSITION - 2026-09-12, a LOG check, no screen step.
+         Everything that still logged "UNKNOWN ... is not answered yet" is a one-way client
+         report (0x013D 30 s census - MUST NOT be answered - 0x01ED log channel, 0x01A5,
+         the 0x0420..0x0426 leaving burst, 0x0425 resource census, and three undecoded:
+         0x01C1 0x01B9 0x0226). Named, routed through session/reports.rs, answered with
+         nothing on purpose, and both servers now say so. Seventeen HANDLED opcodes had no
+         name either (0x00E5, 0x0199, ...) - fixed and pinned by a test.
+         research/opcode-dispositions-2026-09-12.md. After any launch:
+           grep -c UNKNOWN login.log world.log world-ch1.log  -> 0 is the expectation.
+                         Any hit is a packet this project has never seen: paste the line
+           grep "is a client report" world.log -> the correct silences; 0x0422 lines now
+                         say "leaving the field: reason N" - a reason other than 2 or 4
+                         is new information, say which
+           anything "is not answered yet" that is NOT a report -> a real gap; paste it
+
      TR. THE AP AND SP RESET SCROLLS - CONFIRMED 2026-09-10: "both AP and SP scrolls now
          work." STRUCK. Kept for the record: they were on the wrong opcode. Your two presses at
          02:59:52 and 02:59:55 were `0x0116`, not the coupons' `0x0114`, and nothing answered
@@ -2804,6 +2819,18 @@ function Show-TestPlan {
         Write-Host '      keeps it in hook.rs. Never watch 141177e40 in -Probe.'
         Write-Host '        blank ever again -> grep maplecw-hook.log SELECTFILL first:'
         Write-Host '          absent = step removed/off; "refusing" = paste it'
+        Write-Host ''
+        Write-Host '  TU. EVERY INBOUND OPCODE HAS A DISPOSITION - a LOG check.' -ForegroundColor Cyan
+        Write-Host '      All remaining UNKNOWN/unanswered opcodes were one-way client'
+        Write-Host '      reports (0x013D census - must NOT be answered - 0x01ED log,'
+        Write-Host '      0x0420..0x0426 leaving burst, 3 undecoded). Named, routed'
+        Write-Host '      through session/reports.rs, and the log now says "is a client'
+        Write-Host '      report; nothing is expected back". 17 handled opcodes were'
+        Write-Host '      unnamed too (0x00E5, 0x0199...) - fixed, test-pinned.'
+        Write-Host '        grep -c UNKNOWN login.log world.log world-ch1.log -> 0'
+        Write-Host '          any hit = a packet never seen before; paste the line' -ForegroundColor Yellow
+        Write-Host '        "leaving the field: reason N" with N not 2 or 4 -> new; say N'
+        Write-Host '        "is not answered yet" on a non-report -> a real gap; paste'
         Write-Host ''
         Write-Host '  TR. AP / SP RESET SCROLLS - CONFIRMED: "both now work." STRUCK.' -ForegroundColor Green
         Write-Host '      Your two presses were 0x0116, not the coupons 0x0114, and'
