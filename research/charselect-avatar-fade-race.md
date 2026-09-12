@@ -1,0 +1,139 @@
+# The blank char-select avatars are a fade-deadline race, not a login-packet race — 2026-09-12
+
+The owner: *"Sometimes when the login happens too fast through transitions, the characters on
+character select do not render at all... it happens more for clients that are further away."*
+The stat scroll draws (STR/DEX etc. are right), the character frames draw, only the **avatar
+sprites** are missing, and they appear on a return visit to select.
+
+The 2026-09-10 theory (`research/select-screen-race-2026-09-10.md`) tied this to the client's
+four background tasks (`0x007A`) and the list re-send. That was disproven: the re-send fired
+correctly 403 ms after the list and the avatars still stayed blank. This file reads the
+client's char-select machinery statically and finds the actual gate. **Everything here is
+`[I]` — read off the listing with `tools/`, addresses resolved with the tool, not by hand —
+until the probe in §4 confirms it on a launch.**
+
+## 1. The gate: avatar placement is skipped when the list object is null
+
+The char-select avatars are drawn by **`FUN_141179970`** (it references `L"character%d"`,
+`L"selectEffect0/1"`). Every path that calls it first checks a pointer and skips placement
+if it is null. In the screen builder **`FUN_141b3e060`**, CharSelect case (screen 4):
+
+```text
+141b3e0c3  mov  rcx,[rbx+0x138]        ; the screen's own UI object
+141b3e0cf  mov  edx,4 ; call 141b46a70 ; builds the /pos frame + statboard
+141b3e0d9  mov  rcx,[rip+0x1f8c6b0]     ; -> global 0x143aca790  (the char-LIST object)
+141b3e0e0  test rcx,rcx
+141b3e0e3  je   141b3e11a               ; <<< NULL -> SKIP avatar placement
+141b3e0e5  mov  dl,1 ; call 141179970   ; place avatars
+```
+
+So "frames + statboard present, avatars absent" is exactly **the list object `0x143aca790`
+being null at the instant the screen is drawn.** The tool confirms every reader/writer of
+`0x143aca790` (gate `141b3e0d9`, decoder `141b33e9c`, login-result teardown `141b30ca0/cb1`,
+populator body `141b27da0`) resolves to that one address.
+
+## 2. Who fills `0x143aca790`, and when
+
+The only writer of the list object is **`FUN_141b27da0`** (populates from the decoded
+records), called from exactly one place: **`FUN_141b3f290`** — the "build screen contents"
+wrapper, which populates (`141b3f2fb`) and then places avatars (`141b3f3ef`).
+
+`FUN_141b3f290` is reached two ways:
+
+* the screen switcher `FUN_141b3f050`'s **instant (no-fade) path** — `141b3f0d0`; and
+* the **per-frame char-select driver `FUN_141b3efe2`**, when a pending transition's fade
+  **deadline has passed**:
+
+```text
+141b3efe7  call 1429e3ef0              ; now()
+141b3efec  cmp  byte [rbx+0x240],0     ; transition pending?  (switcher sets =1)
+141b3eff5  je   141b3f010              ;   no -> just tick
+141b3efff  call 1408fc980             ; elapsed? now >= deadline [rbx+0x248]
+141b3f006  je   141b3f010              ;   not yet -> just tick
+141b3f00b  call 141b3f290             ; DEADLINE PASSED -> POPULATE + PLACE
+>141b3f010 call 141b3e920             ; run the crossfade animation tick
+141b3f020  call 1408fc980             ; elapsed (second gate)?
+141b3f03c  jmp  141b3e060             ;   -> (re)build/draw the screen  [the §1 gate]
+```
+
+The login **record decoder `FUN_141b32860` always requests a faded transition** —
+`mov edx,4; mov r8d,0x258; call 141b3f050` (0x258 = 600), at both `141b33127` and
+`141b335dc`. The switcher arms the transition (`[obj+0x240]=1`, start `[obj+0x244]=now`,
+deadline `[obj+0x248] = now + fade*1.5`, K=1.5 read from `0x14327aa58`) and sets up the
+crossfade — **it does not populate on the fade path.** Neither the crossfade setup
+`FUN_141b3e1d0` nor the crossfade tick `FUN_141b3e920` populates or places (both are pure
+graphics — verified: no call to `141b27da0`/`141b3f290`/`141179970`/`141b3e060` in either).
+
+So on the login path the avatars are placed **only when the ~900 ms fade deadline passes**,
+via the driver's `141b3f00b` branch.
+
+## 3. RETRACTED the same day: the driver has no draw-before-populate window
+
+The first draft of this section said the driver could draw the screen before populating it,
+because draw and populate sit behind two different elapsed checks. Reading the operands
+(which the first pass had filtered out) kills that:
+
+```text
+141b3eff7  mov ecx,[rbx+0x244] ; populate when now > [+0x244]   (= arm time, or arm+fade/2)
+141b3f018  mov ecx,[rbx+0x248] ; draw     when now > [+0x248]   (= arm + 1.5*fade)
+141b3f2a7  mov byte [rcx+0x240],0        ; FUN_141b3f290 clears the pending flag first thing
+```
+
+`[+0x244] <= [+0x248]` always, and both run in the same per-frame function in that order,
+so **populate always precedes draw**. Whatever leaves `0x143aca790` null at draw time, it is
+not this ordering. The §1 gate and the §2 populate site stand; §3's race does not.
+
+## 4. What the decoder does that the first visit may miss, and the object's real origin
+
+Two more facts from the same read, both `[I]`:
+
+* **The populator is a lazy singleton builder for all the login sub-UIs**, not a
+  per-list refresh. `FUN_141b27da0` runs six blocks of the shape *"if
+  `FUN_141128090(stage, k)` says slot k is enabled: create the object if null (ctor), then
+  `[vtable+0x90](obj,0)`; else destroy it"*. Slot **5** is the character-select UI
+  (`FUN_141177490` at `141b28054`, 0x5f0 bytes). So the object is created by the **first
+  transition's** deadline after the stage is armed — which the **world list** already does
+  (`FUN_141b2fac0` calls the switcher at `141b2fb46`) — not by the character list.
+* **The character-list decoder refreshes the object rather than building it.** At the end
+  of its main path: `141b33e9c mov rcx,[0x143aca790]; call FUN_141177e40`, and
+  `FUN_141177e40(obj)` is `for slot in 0..3: FUN_141177e80(obj, slot); [vtable+0x90](obj,0)`
+  — the per-character fill. It has **no null check**. A second path through the decoder
+  (`141b330c5`: a remembered character id at `session+0x35b4` resolves) goes to the second
+  transition at `141b335dc` and **exits without that refresh**.
+
+So the shape of the bug that fits every observation is: **the character list is decoded
+before the client has constructed its select UI** (the ctor fires on a frame after the world
+list's transition arms; the list follows the world list by 0 ms pre-pause, 400 ms since),
+so the refresh finds nothing to fill and the object built moments later is empty. The
+2026-09-03..07 window drew because 400 ms was enough then; the 09-08 guard-page build slowed
+the client's start-up frames (its task durations went 64 ms → 787 ms) and 400 ms stopped
+being enough; a distant or slow client loses the same way. **This is a hypothesis.** It is
+one launch from being a measurement, and the measurement is cheap.
+
+## 5. The probe — wired as the launcher default, plan step TL
+
+```
+watch@1415db360:ret,141b2a280:rdx=0,142ef3e44:hits=8,141177490:hits=4,141177e40:hits=8,141179970:hits=12
+```
+
+| watch | what its line says |
+|---|---|
+| `141177490` | the select UI object's **constructor** - the moment the client built it. Compare with login.log's `-> 0x0010` time; both are the same machine's clock |
+| `141177e40` | the list decoder's **refresh** of it. **Its `rcx` IS the object**: `rcx=0x0` means the list arrived before it existed |
+| `141179970` | **avatar placement entered** = the null-gate passed |
+
+Watch lines are written on entry, so a missing line means never entered. Readings, written
+down before the launch:
+
+* **avatars draw**, ctor before the `0x0010`, refresh `rcx != 0`, placement present → the
+  good case works as read; model confirmed.
+* **avatars blank**, refresh `rcx=0x0` (or no refresh line) and **no** placement → the list
+  was decoded before the select UI existed. **That is the bug**, and the ctor's timestamp
+  says how long the server must hold (or repeat) the list.
+* **avatars blank but placement present** → placed and drew nothing: the avatar art is not
+  resident at select; a different fix.
+* **the client dies at the list** → `FUN_141177e40` does not tolerate a null object; a
+  finding in itself (`tools/decode_elog.py`).
+
+The owner cannot force the blank case; the probe stays the default across the next few logins,
+and a good login still pins the normal ordering.

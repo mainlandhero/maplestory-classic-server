@@ -866,22 +866,29 @@
            sheet right, top still bare -> requirements are not it; say so and I go to
                          the client with the two screens' difference narrowed to the look
 
-     TL. THE BLANK CHARACTER-SELECT SCREEN - the 400 ms pause stopped being enough on
-         2026-09-08, and the client says so itself. Its 0x007A report ("all four background
-         tasks done") used to land 5-10 ms behind the character list; since 09-08 it lands
-         200-400 ms AFTER it, so the list is arriving before the client is ready again -
-         the same race the pause was built for. research/select-screen-race-2026-09-10.md.
-         The list still goes out at 400 ms; when the report then arrives LATE, the server
-         sends the list a SECOND time, now that the client is done. Kill switch:
-         `--no-list-resend` on the login server. Watch the select screen on a fresh launch:
-           avatars draw, no flicker or duplication -> the re-send works; keep it
-           avatars draw but the screen visibly rebuilds once -> works, cosmetic; say so
-           characters DUPLICATED or the screen stuck -> a second 0x0010 is not accepted in
-                         this stage. Relaunch with -NoListResend and tell me; the fallback
-                         is a longer fixed pause, which is worse but known
-           still blank sometimes -> grep login.log for "re-sending the character list":
-                         present = the model is wrong; absent = the report came inside the
-                         threshold and the race is somewhere else
+     TL. THE BLANK CHARACTER-SELECT SCREEN - the 0x007A theory is DEAD (2026-09-12: the
+         re-send fired 403 ms after the list, exactly as designed, and the avatars stayed
+         blank). The client was read instead: research/charselect-avatar-fade-race.md.
+         Avatar placement is FUN_141179970, and every path to it first checks the select
+         UI object (global 0x143aca790) and SKIPS placement when it is null - frames and
+         statboard still draw. So the question is whether that object exists when the
+         character list is decoded, and the default -Probe now watches exactly that. No
+         server change this run; it is a measurement, and a GOOD login is informative too.
+         After the launch, in client-patched\maplecw-hook.log, find the WATCH lines for:
+           0x141177490 = the object's constructor (WHEN the client built it)
+           0x141177e40 = the list decoder's refresh of it; its rcx IS the object
+           0x141179970 = avatar placement entered = the null-gate passed
+         and compare their times with login.log's "-> 0x0010" line (same clock).
+           avatars draw; 141177490 BEFORE the 0x0010, 141177e40 rcx != 0, 141179970
+                         present -> the good case works as read; model confirmed
+           avatars BLANK; 141177e40 rcx=0x0 (or no line) and NO 141179970 -> the list
+                         was decoded before the client had built its select UI. That is
+                         the bug, and the ctor's time says how long to hold the list
+           avatars BLANK but 141179970 IS present -> placement ran and drew nothing:
+                         the avatar art is not resident at select; a different fix
+           the client DIES at the list -> 141177e40 does not tolerate a null object;
+                         say so, that is a finding too (and tools/decode_elog.py)
+         You cannot force the blank case; leave this probe on across a few logins.
 
      TR. THE AP AND SP RESET SCROLLS - CONFIRMED 2026-09-10: "both AP and SP scrolls now
          work." STRUCK. Kept for the record: they were on the wrong opcode. Your two presses at
@@ -1791,9 +1798,22 @@ param(
     # (0x0090) carries a full call stack that names the site for free, so the watch bought
     # nothing and was one of two suspects for the crash. `python tools/decode_elog.py`.
     #
-    # 141b36f60 is the migration handler; 142ef3e44 is __report_gsfailure, kept because a
-    # silent 37s death is the failure mode this project spends the most runs on.
-    [string]$Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141b36f60,142ef3e44:hits=8',
+    # 142ef3e44 is __report_gsfailure, kept because a silent 37s death is the failure mode
+    # this project spends the most runs on. The migration-handler watch (141b36f60) is
+    # dropped for now: it fired once per migration and answered nothing open.
+    #
+    # The other three slots are the blank-select-screen question, plan step TL, from
+    # research/charselect-avatar-fade-race.md. Avatar placement at character select is
+    # FUN_141179970, and it is skipped when the select UI object (global 0x143aca790) is
+    # null at the moment the screen is drawn - frames and statboard still draw, avatars do
+    # not, which is the screen the owner sees. So:
+    #   141177490:hits=4    the select UI object's CONSTRUCTOR - when the client built it.
+    #                       Compare its time with login.log's "-> 0x0010" line (same clock)
+    #   141177e40:hits=8    the character-list decoder's refresh of that object. Its rcx IS
+    #                       the object: rcx=0x0 means the list arrived before it existed
+    #   141179970:hits=12   avatar placement entered = the null-gate passed
+    # Watch lines are written on ENTRY, so a missing line means never entered.
+    [string]$Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142ef3e44:hits=8,141177490:hits=4,141177e40:hits=8,141179970:hits=12',
     [string]$SessionTokens = '',
     # Answer the migration hello with the fixed head of a SetField, and swap the probe for
     # the two watches that make the answer readable. See research/msexe-stage-setfield.md.
@@ -2778,19 +2798,26 @@ function Show-TestPlan {
         Write-Host '          requirements against the sheet; server needs a REQ gate'
         Write-Host '        sheet right, top still bare -> not requirements; say so'
         Write-Host ''
-        Write-Host '  TL. THE BLANK CHARACTER-SELECT SCREEN.' -ForegroundColor Magenta
-        Write-Host '      The 400 ms pause stopped being enough on 09-08: the client'
-        Write-Host '      own "tasks done" report (0x007A) now lands 200-400 ms AFTER'
-        Write-Host '      the list instead of 5 ms behind it. Same race, back again.'
-        Write-Host '      Now: list at 400 ms as before; if the report then comes'
-        Write-Host '      LATE, the list is sent a SECOND time. Kill switch:'
-        Write-Host '      --no-list-resend. On a fresh launch watch the select screen:'
-        Write-Host '        avatars draw, no flicker -> keep it'
-        Write-Host '        screen visibly rebuilds once -> works, cosmetic; say so'
-        Write-Host '        DUPLICATED characters or stuck -> second 0x0010 refused;' -ForegroundColor Yellow
-        Write-Host '                      relaunch with -NoListResend and tell me' -ForegroundColor Yellow
-        Write-Host '        still blank -> grep login.log for "re-sending the"'
-        Write-Host '                      present = model wrong; absent = race elsewhere'
+        Write-Host '  TL. THE BLANK CHARACTER-SELECT SCREEN - a MEASUREMENT.' -ForegroundColor Magenta
+        Write-Host '      The 0x007A theory is dead: the re-send fired on time and'
+        Write-Host '      the avatars stayed blank. Read from the client instead:'
+        Write-Host '      avatar placement (FUN_141179970) is SKIPPED whenever the'
+        Write-Host '      select UI object is null when the screen draws - frames and'
+        Write-Host '      statboard still draw. The default -Probe now watches that.'
+        Write-Host '      No server change. After the launch, in maplecw-hook.log'
+        Write-Host '      find the WATCH lines and compare with login.log "-> 0x0010":'
+        Write-Host '        0x141177490 = the object CONSTRUCTED (when)'
+        Write-Host '        0x141177e40 = list decoder refreshing it; rcx IS the object'
+        Write-Host '        0x141179970 = avatars placed (the null-gate passed)'
+        Write-Host '        draw; ctor before 0x0010, e40 rcx!=0, 970 present -> model'
+        Write-Host '                      confirmed for the good case'
+        Write-Host '        BLANK; e40 rcx=0x0 or absent, NO 970 -> list decoded' -ForegroundColor Yellow
+        Write-Host '                      before the select UI existed. THE BUG; the' -ForegroundColor Yellow
+        Write-Host '                      ctor time says how long to hold the list' -ForegroundColor Yellow
+        Write-Host '        BLANK but 970 present -> placed, drew nothing: art not'
+        Write-Host '                      resident at select; a different fix'
+        Write-Host '        client DIES at the list -> e40 cannot take null; say so'
+        Write-Host '      You cannot force BLANK; leave this probe on a few logins.'
         Write-Host ''
         Write-Host '  TR. AP / SP RESET SCROLLS - CONFIRMED: "both now work." STRUCK.' -ForegroundColor Green
         Write-Host '      Your two presses were 0x0116, not the coupons 0x0114, and'
