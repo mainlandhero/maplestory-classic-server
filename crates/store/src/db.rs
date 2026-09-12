@@ -503,18 +503,29 @@ impl Store {
             existing.insert(to.to_string());
         }
 
-        for column in INVENTORY_SLOT_COLUMNS {
-            if existing.contains(column) {
+        let defaults = net::opcode::default_inventory_slots();
+        for (column, default) in INVENTORY_SLOT_COLUMNS.iter().zip(defaults) {
+            if existing.contains(*column) {
                 continue;
             }
             conn.execute(
-                &format!(
-                    "ALTER TABLE characters ADD COLUMN {column} INTEGER NOT NULL DEFAULT {}",
-                    net::opcode::DEFAULT_INVENTORY_SLOTS
-                ),
+                &format!("ALTER TABLE characters ADD COLUMN {column} INTEGER NOT NULL DEFAULT {default}"),
                 [],
             )?;
         }
+
+        // The Deco tab is 150 from the first login and has no coupon (the owner, 2026-09-12),
+        // so a stored 30 there can only be the uniform default this column was created with.
+        // Same shape as the 24 repair below, and idempotent for the same reason: nothing can
+        // set this column to 30 on purpose.
+        conn.execute(
+            &format!(
+                "UPDATE characters SET slots_deco = {} WHERE slots_deco = {}",
+                net::opcode::DECO_INVENTORY_SLOTS,
+                net::opcode::DEFAULT_INVENTORY_SLOTS
+            ),
+            [],
+        )?;
 
         // A one-off repair, in the same spirit as the `map_id = 0` one above and with the
         // same justification: **24 was never a value anybody chose.**
@@ -970,7 +981,7 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         assert_eq!(
             loaded[0].inventory_slots,
-            [net::opcode::DEFAULT_INVENTORY_SLOTS; net::opcode::INVENTORY_COUNT]
+            net::opcode::default_inventory_slots()
         );
         drop(second);
         let _ = std::fs::remove_file(&path);
@@ -1201,7 +1212,7 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         assert_eq!(
             loaded[0].inventory_slots,
-            [net::opcode::DEFAULT_INVENTORY_SLOTS; net::opcode::INVENTORY_COUNT],
+            net::opcode::default_inventory_slots(),
             "a character made before the bag existed came back with no slots"
         );
     }

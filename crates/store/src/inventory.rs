@@ -837,9 +837,7 @@ pub(crate) fn read_bag(conn: &Connection, character_id: u32) -> Result<Bag> {
     // mid-field-entry and must still answer. Its counts are the default bag.
     let slots: [u16; net::opcode::INVENTORY_COUNT] = match slots {
         Ok(s) => s,
-        Err(rusqlite::Error::QueryReturnedNoRows) => {
-            [net::opcode::DEFAULT_INVENTORY_SLOTS; net::opcode::INVENTORY_COUNT]
-        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => net::opcode::default_inventory_slots(),
         Err(e) => return Err(e.into()),
     };
 

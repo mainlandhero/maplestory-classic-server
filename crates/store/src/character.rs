@@ -409,10 +409,8 @@ mod tests {
     fn a_new_character_gets_a_bag_with_slots_in_it() {
         let (store, account) = store_with_account();
         let made = store.create_character(account, 0, &named("Wanderer")).unwrap();
-        assert_eq!(
-            made.inventory_slots,
-            [net::opcode::DEFAULT_INVENTORY_SLOTS; net::opcode::INVENTORY_COUNT]
-        );
+        assert_eq!(made.inventory_slots, net::opcode::default_inventory_slots());
+        assert_eq!(made.inventory_slots[5], 150, "the Deco tab starts at its ceiling");
 
         let loaded = store.characters_for(account, 0).unwrap();
         assert_eq!(loaded.len(), 1);
