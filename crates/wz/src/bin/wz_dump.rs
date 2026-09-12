@@ -212,9 +212,18 @@ fn collect_canvases(
 /// strings  <name>   <patch.tsv>                       lines `path<TAB>value` set string
 ///                                                     leaves in the base's image of that name
 /// patch    <name>   <patch.tsv>                       lines `path<TAB>kind<TAB>value`, kind
-///                                                     `str` or `int`; same base rule, and the
-///                                                     base image may be absent (starts empty)
+///                                                     `str`, `int` or `uol` (a link to a
+///                                                     sibling path, the client's own way of
+///                                                     saying "same as 30"); same base rule,
+///                                                     and the base image may be absent
+///                                                     (starts empty)
 /// ```
+///
+/// **A `merge`/`strings`/`patch` row starts from the image an EARLIER row of this spec
+/// produced, when there is one, and from the base otherwise.** Without that, `copy X` then
+/// `patch X` did not layer: both pushed an addition named X, `merge_images` keeps the last,
+/// and the copied image was silently replaced by an empty one holding only the patch. Found
+/// 2026-09-12 wiring the weapon covers' per-type links onto the copied cover images.
 ///
 /// Everything in the base not named by the spec is copied verbatim. The result is verified
 /// against the reader before it is written, and re-opened after.
@@ -236,6 +245,17 @@ fn cmd_build(out: &Path, version: &str, spec: &Path, base: Option<&Path>) -> wz:
 
     let text = io(spec, std::fs::read_to_string(spec))?;
     let mut additions: Vec<ImageEntry> = Vec::new();
+    // The image a later row should start from: the newest addition of that name, else the
+    // base's. `merge_images` keeps the last addition per name, so a row that starts from a
+    // prior addition and pushes its result replaces it, which is the layering intended.
+    let starting_image = |additions: &Vec<ImageEntry>, name: &str| -> Option<Vec<u8>> {
+        additions
+            .iter()
+            .rev()
+            .find(|i| i.name == name)
+            .map(|i| i.bytes.clone())
+            .or_else(|| base_image(name).map(|b| b.to_vec()))
+    };
     let mut opened: std::collections::HashMap<PathBuf, Archive> = std::collections::HashMap::new();
     for (lineno, line) in text.lines().enumerate() {
         let line = line.trim_end_matches('\r');
@@ -268,8 +288,9 @@ fn cmd_build(out: &Path, version: &str, spec: &Path, base: Option<&Path>) -> wz:
                     }
                     let keys: Vec<&str> = f[4].split(',').map(str::trim).filter(|k| !k.is_empty()).collect();
                     let overlay = Owned::parse(src_bytes)?;
-                    let had_base = base_image(name).is_some();
-                    let mut target = match base_image(name) {
+                    let start = starting_image(&additions, name);
+                    let had_base = start.is_some();
+                    let mut target = match &start {
                         Some(b) => Owned::parse(b)?,
                         None => Owned::Object(Vec::new()),
                     };
@@ -298,11 +319,11 @@ fn cmd_build(out: &Path, version: &str, spec: &Path, base: Option<&Path>) -> wz:
                 }
                 let typed = f[0] == "patch";
                 let (name, patch) = (f[1], Path::new(f[2]));
-                let mut target = match base_image(name) {
-                    Some(b) => Owned::parse(b)?,
+                let mut target = match starting_image(&additions, name) {
+                    Some(b) => Owned::parse(&b)?,
                     None if typed => Owned::Object(Vec::new()),
                     None => {
-                        eprintln!("line {}: the base has no image {name} to patch", lineno + 1);
+                        eprintln!("line {}: neither the base nor an earlier row has an image {name} to patch", lineno + 1);
                         return Err(bad());
                     }
                 };
@@ -321,6 +342,10 @@ fn cmd_build(out: &Path, version: &str, spec: &Path, base: Option<&Path>) -> wz:
                         let v = match cols[1] {
                             "int" => Owned::Int(cols[2].trim().parse().map_err(|_| bad())?),
                             "str" => Owned::String(cols[2].replace("\\n", "\n")),
+                            // A UOL: the value is a path relative to the leaf's parent, e.g.
+                            // `32<TAB>uol<TAB>30` makes weapon type 32 an alias of type 30 -
+                            // exactly how the classic covers (01702001) spell 31/32/33.
+                            "uol" => Owned::Uol(cols[2].trim().to_string()),
                             other => {
                                 eprintln!("line {}: unknown leaf kind {other:?}", lineno + 1);
                                 return Err(bad());
