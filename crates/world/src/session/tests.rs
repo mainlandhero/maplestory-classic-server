@@ -10042,25 +10042,29 @@ fn the_collection_gives_every_set_and_a_set_coupon_gives_its_contents() {
         assert!(cash.contains(&set.coupon), "{} coupon missing", set.name);
     }
 
-    // Open Frieren's.
-    let frieren = crate::signaturestyle::set_for_coupon(5_681_543).unwrap();
+    // Open Frieren's: it asks which version first (Nexon ships three), and the coupon stays
+    // until a version is chosen. Choose the normal one.
+    let frieren = &crate::signaturestyle::FRIEREN_VERSIONS[0];
     let fslot = store.bag(id).unwrap().items_in(store::InventoryType::Cash).find(|i| i.item.item_id == 5_681_543).unwrap().slot;
     let out = s.on_use_cash_item(&use_cash_item_body(fslot, 5_681_543));
-    assert!(out.iter().any(|r| r.what.contains("10 item(s) given")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE && r.what.contains("which Frieren")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert_eq!(store.bag(id).unwrap().items_in(store::InventoryType::Cash).count(), 8, "nothing consumed by opening the menu");
+    let out = s.on_script_reply(&menu_reply(Some(0)));
+    assert!(out.iter().any(|r| r.what.contains("7 item(s) given")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
     let bag = store.bag(id).unwrap();
     let use_tab: Vec<u32> = bag.items_in(store::InventoryType::Use).map(|i| i.item.item_id).collect();
     let equip_tab: Vec<u32> = bag.items_in(store::InventoryType::Equip).map(|i| i.item.item_id).collect();
-    assert_eq!(use_tab.len(), 4, "three hair coupons and a face coupon: {use_tab:?}");
+    assert_eq!(use_tab.len(), 2, "one hair coupon and the face coupon: {use_tab:?}");
     for c in frieren.hair_coupons.iter().chain([&frieren.face_coupon]) {
         assert!(use_tab.contains(c), "{c} missing");
     }
-    assert_eq!(equip_tab.len(), 6, "{equip_tab:?}");
+    assert_eq!(equip_tab.len(), 5, "{equip_tab:?}");
     for e in frieren.equips {
         assert!(equip_tab.contains(e), "{e} missing");
     }
     assert_eq!(bag.items_in(store::InventoryType::Cash).count(), 7, "the Frieren coupon is gone, seven remain");
     // Every hand-out is told to the client: one InventoryOperation per row placed.
-    assert!(out.iter().filter(|r| r.opcode == net::inventory::INVENTORY_OPERATION).count() >= 10);
+    assert!(out.iter().filter(|r| r.opcode == net::inventory::INVENTORY_OPERATION).count() >= 7);
 }
 
 /// **A cash equip goes to the Deco tab, the chat says "Ubel", and a stray one in the Equip
@@ -10371,12 +10375,13 @@ fn reports_are_named_and_the_undecoded_ones_stay_whole() {
 #[test]
 fn opening_a_package_ends_with_the_administrators_receipt_and_ok_closes_it() {
     let (mut s, store, id) = gm_session();
-    let frieren = crate::signaturestyle::set_for_coupon(5_681_543).unwrap();
+    // Übel's: a fixed set (Frieren's now asks which version first - its own test).
+    let frieren = crate::signaturestyle::set_for_coupon(5_681_548).unwrap();
     let slot = store
-        .add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_681_543, 1), 1)
+        .add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_681_548, 1), 1)
         .unwrap()[0]
         .slot;
-    let out = s.on_use_cash_item(&use_cash_item_body(slot, 5_681_543));
+    let out = s.on_use_cash_item(&use_cash_item_body(slot, 5_681_548));
 
     let receipt = out.last().expect("a reply");
     assert_eq!(receipt.opcode, net::script::SCRIPT_MESSAGE, "{}", receipt.what);
@@ -10384,10 +10389,13 @@ fn opening_a_package_ends_with_the_administrators_receipt_and_ok_closes_it() {
     let text = String::from_utf8_lossy(&receipt.body).into_owned();
     assert!(text.contains("You have received the following items:"), "{text:?}");
     let given: Vec<u32> = frieren.hair_coupons.iter().chain([&frieren.face_coupon]).chain(frieren.equips).copied().collect();
+    // The line break is the LITERAL two characters backslash-n (scrollnpc::LINE_BREAK's
+    // lesson: a real CR LF draws as nothing).
     for item in &given {
-        assert!(text.contains(&format!("\r\n#i{item}# #t{item}#")), "no icon+name line for {item}: {text:?}");
+        assert!(text.contains(&format!(r"\n#i{item}# #t{item}#")), "no icon+name line for {item}: {text:?}");
     }
-    assert_eq!(text.matches("\r\n#i").count(), given.len(), "one line per item, no more");
+    assert_eq!(text.matches(r"\n#i").count(), given.len(), "one line per item, no more");
+    assert!(!text.contains('\n') && !text.contains('\r'), "no real newline bytes: {text:?}");
     // The speaker is the Administrator, and the box is a plain OK (no Next, no Yes/No).
     assert!(receipt.body.windows(4).any(|w| w == crate::signaturestyle::ADMINISTRATOR_NPC.to_le_bytes()));
     let convo = s.conversation.as_ref().expect("the receipt is parked");
@@ -10414,6 +10422,87 @@ fn the_receipt_path_cannot_be_confused_with_any_other_menu() {
     assert_ne!(p, crate::shanks::ASK_PATH);
     // And the text is exactly the shape the client draws: heading, then icon + name per line.
     let t = crate::signaturestyle::receipt_text(&[1_703_726, 2_543_137]);
-    assert_eq!(t, "You have received the following items:\r\n#i1703726# #t1703726#\r\n#i2543137# #t2543137#");
+    assert_eq!(t, r"You have received the following items:\n#i1703726# #t1703726#\n#i2543137# #t2543137#");
     assert_eq!(crate::signaturestyle::receipt_text(&[]), "You have received the following items:");
+    // The chooser's path is disjoint too, and its slot round-trips.
+    let c = crate::signaturestyle::frieren_chooser_path(3);
+    assert!(!crate::scrollnpc::is_scroll_path(&c));
+    assert!(!crate::taxi::is_taxi_path(&c));
+    assert!(!crate::secondjob::is_menu_path(&c));
+    assert!(!crate::dailyperks::is_menu_path(&c));
+    assert!(crate::jobguide::offer_index(&c).is_none());
+    assert_eq!(crate::signaturestyle::slot_from_frieren_chooser_path("package.frieren:12"), Some(12));
+    assert_eq!(crate::signaturestyle::slot_from_frieren_chooser_path("package.receipt"), None);
+    // And the menu is the scroll NPC's measured grammar: literal line breaks, `#L<n>#` rows.
+    let m = crate::signaturestyle::frieren_menu_text();
+    assert!(m.starts_with(r"Which version of the Frieren Outfit Set would you like?\n\n#L0##i2543137# #bFrieren Outfit Set#k#l\n#L1##i2543138#"), "{m:?}");
+    assert!(m.ends_with("#bFrieren (Sleep) Outfit Set#k#l"), "{m:?}");
+    assert!(!m.contains('\n'));
+}
+
+/// **Frieren's Cash-Shop coupon asks which version; the choice is what spends it.** Nexon
+/// ships the set as normal / Ringlets / Sleep, and the page's "Clothes Selector Coupon, your
+/// choice of Clothes / Winter Clothes" is, by the owner's rule, both. The owner, 2026-09-12.
+#[test]
+fn frierens_coupon_asks_which_version_and_the_choice_spends_it() {
+    let (mut s, store, id) = gm_session();
+    let coupon = crate::signaturestyle::FRIEREN_COUPON;
+    let slot = store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(coupon, 1), 1).unwrap()[0].slot;
+
+    // Opening: the latch is released, a MENU from the Administrator opens, nothing consumed.
+    let out = s.on_use_cash_item(&use_cash_item_body(slot, coupon));
+    let unlock = crate::mesodrop::unlock_unhandled_latching_request(net::cashitem::CLIENT_USE_CASH_ITEM);
+    assert_eq!(out[0].opcode, unlock[0].opcode, "the 0x0114 latch is released first");
+    assert_eq!(out[0].body, unlock[0].body);
+    let menu = out.iter().find(|r| r.opcode == net::script::SCRIPT_MESSAGE).expect("a menu");
+    assert!(menu.what.contains("which Frieren"), "{}", menu.what);
+    let text = String::from_utf8_lossy(&menu.body).into_owned();
+    for (i, v) in crate::signaturestyle::FRIEREN_VERSIONS.iter().enumerate() {
+        assert!(text.contains(&format!("#L{i}##i{}#", v.hair_coupons[0])), "row {i} with its hair icon: {text:?}");
+    }
+    assert_eq!(store.bag(id).unwrap().items_in(store::InventoryType::Cash).count(), 1, "the coupon stays while the menu is open");
+    assert_eq!(s.conversation.as_ref().unwrap().path, crate::signaturestyle::frieren_chooser_path(slot));
+
+    // Closing the menu keeps the coupon and says nothing.
+    let closed = s.on_script_reply(&menu_reply(None));
+    assert!(closed.is_empty());
+    assert!(s.conversation.is_none());
+    assert_eq!(store.bag(id).unwrap().items_in(store::InventoryType::Cash).count(), 1);
+
+    // Open again, choose Ringlets: that hair, the face, both clothes, shoes, earrings, staff -
+    // not the normal or the sleep hair. The coupon is spent by the choice; the receipt closes.
+    s.on_use_cash_item(&use_cash_item_body(slot, coupon));
+    let out = s.on_script_reply(&menu_reply(Some(1)));
+    assert!(out.iter().any(|r| r.what.contains("Frieren (Ringlets) Outfit Set") && r.what.contains("7 item(s) given")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    let bag = store.bag(id).unwrap();
+    let mut use_tab: Vec<u32> = bag.items_in(store::InventoryType::Use).map(|i| i.item.item_id).collect();
+    use_tab.sort_unstable();
+    assert_eq!(use_tab, vec![2_543_138, 2_897_007], "{use_tab:?}");
+    let equips: Vec<u32> = bag.items_in(store::InventoryType::Equip).chain(bag.items_in(store::InventoryType::Deco)).map(|i| i.item.item_id).collect();
+    for e in [1_054_555u32, 1_054_556, 1_074_234, 1_032_360, 1_703_722] {
+        assert!(equips.contains(&e), "{e} missing from {equips:?}");
+    }
+    assert_eq!(bag.items_in(store::InventoryType::Cash).count(), 0, "the coupon is spent by the choice");
+    assert_eq!(out.last().unwrap().opcode, net::script::SCRIPT_MESSAGE, "the receipt closes it");
+    assert_eq!(s.conversation.as_ref().unwrap().path, crate::signaturestyle::RECEIPT_PATH);
+
+    // Sleep is the short set: sleep hair, face, sleep clothes, earrings - four items.
+    let (mut s3, store3, id3) = gm_session();
+    let slot3 = store3.add_item(id3, store::InventoryType::Cash, &store::Item::bundle(coupon, 1), 1).unwrap()[0].slot;
+    s3.on_use_cash_item(&use_cash_item_body(slot3, coupon));
+    let out = s3.on_script_reply(&menu_reply(Some(2)));
+    assert!(out.iter().any(|r| r.what.contains("Frieren (Sleep) Outfit Set") && r.what.contains("4 item(s) given")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+
+    // A stale menu whose slot no longer holds the coupon spends nothing and hands out nothing.
+    let (mut s4, store4, id4) = gm_session();
+    let slot4 = store4.add_item(id4, store::InventoryType::Cash, &store::Item::bundle(coupon, 1), 1).unwrap()[0].slot;
+    s4.on_use_cash_item(&use_cash_item_body(slot4, coupon));
+    store4.remove_item(id4, store::InventoryType::Cash, slot4, Some(1)).unwrap();
+    let out = s4.on_script_reply(&menu_reply(Some(0)));
+    assert!(out.iter().any(|r| r.what.contains("no longer in that slot") || String::from_utf8_lossy(&r.body).contains("no longer")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(store4.bag(id4).unwrap().items_in(store::InventoryType::Use).next().is_none(), "nothing handed out");
+
+    // The two variant coupons, held directly, resolve to their version without a menu.
+    assert_eq!(crate::signaturestyle::set_for_coupon(5_681_544).unwrap().name, "Frieren (Ringlets)");
+    assert_eq!(crate::signaturestyle::set_for_coupon(5_681_545).unwrap().name, "Frieren (Sleep)");
 }

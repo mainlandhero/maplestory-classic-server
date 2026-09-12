@@ -961,6 +961,21 @@
                          world.log's "ScriptMessage ... receipt" line and what came after
               the name reads "Maple Administrator" -> the String.wz rename did not land;
                          say so
+         e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
+            normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
+            Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
+            opens a three-row MENU from the Administrator, each row with that version's
+            hair icon. The coupon is spent by the CHOICE, not by opening; End Chat keeps it.
+            Where the page says "your choice of" (Clothes / Winter Clothes) you get BOTH.
+              normal   -> Hair, Face, Clothes + Winter Clothes, Shoes, Earrings, Staff (7)
+              Ringlets -> Hair (Ringlets), Face, the same five (7)
+              Sleep    -> Hair (Sleep), Face, Sleep Clothes, Earrings (4)
+            Then the receipt (d) lists exactly those. Open the Frieren coupon:
+              menu with three rows and hair icons; pick one; those items + receipt -> done
+              menu opens but End Chat spends the coupon -> tell me (it must not)
+              no menu, the items arrive as before -> the coupon id differs; paste the
+                         world.log line for 0x0114
+              rows show no icons / wrong names -> say which
          c) The Übel Hair Coupon: Confirm sends 0x0165, which nothing answered. Handled:
             hair applied, coupon spent, the map re-entered to redraw (as !hair does).
               hair changes on re-entry, coupon gone -> done
@@ -2900,6 +2915,14 @@ function Show-TestPlan {
         Write-Host '           no box, items arrive -> unsolicited Say refused; paste'
         Write-Host '             the world.log "ScriptMessage ... receipt" line'
         Write-Host '           name reads "Maple Administrator" -> rename not landed'
+        Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
+        Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
+        Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'
+        Write-Host '         "your choice of" Clothes/Winter Clothes -> you get BOTH.'
+        Write-Host '           normal 7 items, Ringlets 7, Sleep 4, then the receipt'
+        Write-Host '           menu, pick, those items + receipt -> done'
+        Write-Host '           End Chat spends the coupon -> tell me; it must not' -ForegroundColor Yellow
+        Write-Host '           no menu, items arrive as before -> paste the 0x0114 line'
         Write-Host '      c) Hair/face coupon: 0x0165 handled - coupon spent, change'
         Write-Host '         broadcast to others, NO reload (client self-applies).'
         Write-Host '           your hair changes, no reload, coupon gone -> done'

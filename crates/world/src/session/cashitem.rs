@@ -73,6 +73,13 @@ impl Session {
         if req.item_id == crate::signaturestyle::COLLECTION {
             return self.open_collection(req.slot);
         }
+        // **Frieren's coupon asks which version first.** Nexon ships three (normal, Ringlets,
+        // Sleep) and the classic client has no Selector Coupon UI, so the Administrator asks.
+        // The coupon is consumed when a version is chosen, not when the menu opens; closing
+        // the menu keeps it. The owner, 2026-09-12.
+        if req.item_id == crate::signaturestyle::FRIEREN_COUPON {
+            return self.open_frieren_chooser(req.slot);
+        }
         if let Some(set) = crate::signaturestyle::set_for_coupon(req.item_id) {
             return self.open_outfit_set(set, req.slot);
         }
@@ -338,6 +345,78 @@ impl Session {
             out.push(self.package_receipt(&given));
         }
         out
+    }
+
+    /// The Frieren version menu. The `0x0114` latch is released now - the request is
+    /// answered, nothing is consumed yet - and the menu is parked under a path carrying the
+    /// coupon's slot so the answer can re-check it.
+    fn open_frieren_chooser(&mut self, slot: u16) -> Vec<Reply> {
+        let mut out = crate::mesodrop::unlock_unhandled_latching_request(net::cashitem::CLIENT_USE_CASH_ITEM);
+        self.conversation = Some(super::Conversation {
+            npc_template: crate::signaturestyle::ADMINISTRATOR_NPC,
+            quest_id: None,
+            path: crate::signaturestyle::frieren_chooser_path(slot),
+            sent: 0,
+            awaiting_yes_no: false,
+            sent_with_next: false,
+        });
+        out.push(Reply {
+            opcode: net::script::SCRIPT_MESSAGE,
+            body: net::script::npc_menu(
+                crate::signaturestyle::ADMINISTRATOR_NPC,
+                &crate::signaturestyle::frieren_menu_text(),
+            ),
+            what: format!(
+                "ScriptMessage MENU from NPC template {} (the Administrator): which Frieren Outfit Set version, coupon in Cash slot {slot}; nothing consumed yet",
+                crate::signaturestyle::ADMINISTRATOR_NPC
+            ),
+        });
+        out
+    }
+
+    /// The Frieren menu answered. `None` means "not mine" - fall through to the other menus.
+    pub(super) fn frieren_menu_answer(&mut self, body: &[u8]) -> Option<Vec<Reply>> {
+        let convo = self.conversation.clone()?;
+        let slot = crate::signaturestyle::slot_from_frieren_chooser_path(&convo.path)?;
+        let reply = net::script::parse_menu_reply(body)?;
+        self.conversation = None;
+        // Closed rather than chosen: the coupon stays, nothing is said. `0x00F3` holds no
+        // latch, so silence here is safe (the scroll NPC's menus measured that).
+        let Some(selection) = reply.selection else { return Some(Vec::new()) };
+        let Some(version) = crate::signaturestyle::FRIEREN_VERSIONS.get(selection as usize) else {
+            crate::server::log(&format!(
+                "   cash item: Frieren chooser answered with selection {selection}, which names no version; nothing consumed"
+            ));
+            return Some(Vec::new());
+        };
+        // The coupon must still be where the menu left it - the player could have moved or
+        // dropped it while the box was open. `hand_out` consumes from `slot`, so this check
+        // is what keeps a stale menu from spending whatever sits there now.
+        let chr = self.claimed_character()?;
+        let holding = self
+            .store
+            .bag_items(chr.id, store::InventoryType::Cash)
+            .ok()
+            .into_iter()
+            .flatten()
+            .find(|r| r.slot == slot)
+            .map(|r| r.item.item_id);
+        if holding != Some(crate::signaturestyle::FRIEREN_COUPON) {
+            crate::server::log(&format!(
+                "   cash item: Frieren chooser answered but Cash slot {slot} now holds {holding:?}, not the coupon; nothing consumed"
+            ));
+            return Some(self.cash_item_notice(
+                "The Frieren Outfit Set Coupon is no longer in that slot. Nothing was used up.".to_string(),
+            ));
+        }
+        let wares = crate::signaturestyle::set_contents(version);
+        Some(self.hand_out(
+            crate::signaturestyle::FRIEREN_COUPON,
+            slot,
+            &wares,
+            &format!("{} Outfit Set", version.name),
+            "its outfit, hair and face",
+        ))
     }
 
     /// The Administrator's "You have received the following items" box for `given`.
