@@ -198,6 +198,25 @@ derived with the dump tool's key schedule and pinned by a key-free test (`new ^ 
 second outcome names the fallback (the same six bytes in the exe file). Kill switch
 `-NoBeautyTextPatch` / `beautytext=off`.
 
+**2026-09-12: the Übel outfit run - Deco-tab equips were refused by the SERVER, the hair coupon's
+Confirm was unanswered, the weapon and the face are the backport's data.** The owner: *"none of the
+outfit items work"*, *"my hair did not change"*, *"The Ubel Face Coupon does not open up a
+corresponding UI"*, and the Beauty dialog text is *"readable now"* (TB struck). From
+`world.log`: the client sent every clothing equip from the Deco tab (`invType 6`, dst `-105`,
+`-107`, `-108`) and `on_inventory_move` knew only the Equip tab, so they fell to the bag-to-bag
+branch and were refused. Fixed: `equip_from_tab` / `unequip_to_tab`, worn slots 101+. **Still
+open:** the record discards worn slots above 31 [L] and the look's cover map is unbuilt, so a
+worn cash equip shows in the Deco equip window but does not draw and does not survive a relog
+as worn. The hair coupon's Confirm is **`0x0165`** (`u16 slot, u32 itemId, u16`), captured
+twice unanswered; `session::beautycoupon` applies the cosmetic from `world::cosmetics` (the
+coupons' `spec/cosmetic`, read from the WZ), spends the coupon and re-enters the map to redraw,
+as `!hair` does. The weapon refusal is the client's own per-type check: classic covers carry a
+child per weapon type (`01702001`: 30,31,32,33), the backported staff carries `30` and `49`,
+and the equipped suitcase is type 32 [L on the data, I on the check]. The face coupon: images
+installed and node-identical to a classic face; the one difference is the id (22035..22042
+against a classic space ending at 21825, while hair 42600 works outside its own space) - step
+TH's `!face 22039` tells the two readings apart.
+
 **Cash-equip covers do NOT work yet**, and it is not the gate: the character record keeps
 equipped slots `1..=31` only (`EQUIP_SLOTS`; a cash slot is decoded and discarded, `[L]`), and
 `avatar_look`'s second map - where the covered base items would go - is sent empty. A cash top

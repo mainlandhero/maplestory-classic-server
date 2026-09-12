@@ -494,6 +494,7 @@ impl Drop for Session {
 mod ability;
 mod buff;
 mod chair;
+mod beautycoupon;
 mod cashitem;
 mod cashshop;
 mod combat;
@@ -986,6 +987,11 @@ impl Session {
             // two presses on 2026-09-10 were both 0x0116 and both went unanswered.
             net::cashitem::CLIENT_USE_STAT_RESET_ITEM => {
                 return self.on_use_stat_reset_item(body.get(2..).unwrap_or(&[]));
+            }
+            // The Beauty Coupon dialog's Confirm. The owner's Übel Hair press arrived twice on this
+            // opcode on 2026-09-12 and nothing answered it.
+            net::beautycoupon::CLIENT_BEAUTY_COUPON_CONFIRM => {
+                return self.on_beauty_coupon_confirm(body.get(2..).unwrap_or(&[]));
             }
             // Anything else whose CLIENT-SIDE builder sets that same exclusive-request latch.
             // Not implemented, but silence here freezes the UI, so it gets the nine-byte
