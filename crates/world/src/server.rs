@@ -323,15 +323,25 @@ fn connection(
 
             let replies = session.handle(&body);
             if replies.is_empty() {
-                log(&format!(
-                    "   {} is not answered yet{} - see crates/world/src/session/",
-                    label(opcode),
-                    if opcode_name(opcode).is_none() {
-                        ", and it is UNKNOWN, so the full body is above"
-                    } else {
-                        ""
-                    }
-                ));
+                // Two different silences. A report is answered with nothing because that
+                // is correct (net::names::is_client_report - 0x013D must not be answered);
+                // anything else with no reply is a gap, and the line says which.
+                if net::names::is_client_report(opcode) {
+                    log(&format!(
+                        "   {} is a client report; nothing is expected back",
+                        label(opcode)
+                    ));
+                } else {
+                    log(&format!(
+                        "   {} is not answered yet{} - see crates/world/src/session/",
+                        label(opcode),
+                        if opcode_name(opcode).is_none() {
+                            ", and it is UNKNOWN, so the full body is above"
+                        } else {
+                            ""
+                        }
+                    ));
+                }
             }
             for reply in replies {
                 send(&mut stream, &mut tx, reply.opcode, &reply.packet(), &reply.what)?;

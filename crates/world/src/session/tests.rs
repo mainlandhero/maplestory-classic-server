@@ -10297,3 +10297,64 @@ fn a_beauty_coupon_confirm_changes_the_hair_and_spends_the_coupon() {
     s.on_beauty_coupon_confirm(&body);
     assert_eq!(s.claimed_character().unwrap().face, 22_039, "Übel Face");
 }
+
+// ---------------------------------------------------------------------------------------
+// The client's one-way reports - session/reports.rs.
+
+/// A dispatcher-enabled session; the reports need no claimed character.
+fn report_session() -> Session {
+    let (_, store, _, _) = session();
+    Session::new(store, Arc::new(Config { set_field_probe: true, ..Config::default() }))
+}
+
+/// **Every report is answered with nothing, and nothing panics on the bodies the archive
+/// actually carried.** `0x013D` in particular must not be answered (research/buffs.md sec 2):
+/// a reply here would be a regression the screen cannot show, only the log.
+#[test]
+fn every_client_report_is_answered_with_nothing() {
+    let mut s = report_session();
+    let bodies: &[(u16, &[u8])] = &[
+        (0x013D, &[0, 1, 0, 0, 0, 0xdf, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0x29, 0, 0, 0, 0, 0, 0, 0]),
+        (0x02F4, &[7, 0, 0, 0, 0x5a, 3, 0, 0, 0xab, 0xff, 0xff, 0xff]),
+        (0x01ED, &[0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+        (0x01A5, &[0, 0, 0, 0, 0, 0, 0, 0]),
+        (0x02DE, &[1]),
+        (0x0184, &[8, 0, 0, 0, 4, 0, 4, 0, 4, 0, 0, 0]),
+        (0x0194, &[1]),
+        (0x00B8, &[0]),
+        (0x0420, &[0x11, 0, b'2', b'0', b'2', b'6']),
+        (0x0422, &[4, 0, 0, 0, 2, 0, b'1', b'2']),
+        (0x0422, &[]),           // truncated: must not panic
+        (0x0422, &[2, 0, 0, 0]), // reason without a string: must not panic
+        (0x0425, &[0x64, 0, 0, 0, 1, 0, 0, 0]),
+        (0x0425, &[]),
+        (0x0426, &[0xff; 20]),
+        (0x01C1, &[0xd5, 0, 0, 0, 6, 0, b'J', b'o', b's', b'i', b'a', b'h']),
+        (0x01B9, &[]),
+        (0x0226, &[0x83, 2, 0, 0, 9, 0xf1, 0x78, 0x14, 0, 0]),
+    ];
+    for (op, body) in bodies {
+        assert!(net::names::is_client_report(*op), "0x{op:04X} is not listed as a report");
+        let mut packet = op.to_le_bytes().to_vec();
+        packet.extend_from_slice(body);
+        let out = s.handle(&packet);
+        assert!(out.is_empty(), "0x{op:04X} must be answered with NOTHING, got {:?}", out.iter().map(|r| r.opcode).collect::<Vec<_>>());
+    }
+}
+
+/// A report has a name, so `grep UNKNOWN` over a run finds only the genuinely new; and the
+/// three undecoded ones keep logging in full, because their bytes are the only evidence.
+#[test]
+fn reports_are_named_and_the_undecoded_ones_stay_whole() {
+    for op in [0x013Du16, 0x02F4, 0x01ED, 0x01A5, 0x02DE, 0x0184, 0x0194, 0x00B8, 0x0420, 0x0422, 0x0425, 0x0426, 0x01C1, 0x01B9, 0x0226] {
+        let label = net::names::label(op);
+        assert!(!label.contains("UNKNOWN"), "{label}");
+    }
+    for op in [0x01C1u16, 0x01B9, 0x0226] {
+        assert!(net::names::label(op).contains("UNDECODED"));
+        assert!(net::names::never_truncate(op), "0x{op:04X} must log whole");
+    }
+    // And a real request is not swallowed by the report arm: the beauty coupon still latches.
+    assert!(!net::names::is_client_report(net::beautycoupon::CLIENT_BEAUTY_COUPON_CONFIRM));
+    assert!(net::dropmoney::latches_the_exclusive_request(net::beautycoupon::CLIENT_BEAUTY_COUPON_CONFIRM));
+}
