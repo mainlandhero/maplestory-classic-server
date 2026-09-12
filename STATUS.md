@@ -158,13 +158,20 @@ avatars are blank because the **per-character fill never runs** (`141177e40` has
 the placement loop skips every slot whose character pointer at `+0x10` is null). The fill
 (`141177e80`) is reached only from the **mode-5** `0x0010` handler (`141b32860` -> `141177e40`)
 or the UI's vtable build (`141177790`); the client is patched **mode 5->2**, and the mode-2
-handler `FUN_141b307b0` decodes the list but fills nothing. **[I]** leading theory: a blank
-screen means the list was dispatched *after* the mode patch (so mode 2 handled it); the mode
-patch landed between the two `0x0010`s on the measured run. The probe is re-aimed to catch the
-fill on a good login and its absence on a blank one (`research/charselect-avatar-fade-race.md`
-sec 6-7, plan step TL). No server change yet. The `--no-list-resend` kill switch and the list
-re-send remain in place but are not the mechanism. `research/select-screen-race-2026-09-10.md`
-is superseded.
+handler `FUN_141b307b0` decodes the list but fills nothing. **Then three more instrumented
+logins (02:15-02:16), two good and one blank, settled the mechanism** (sec 8): the mode-race
+theory is dead too (mode 2 handled all three and the good ones filled), and the select UI is
+**built once**, at the fade-deadline populate, by `FUN_141177790`, from whatever character list
+exists at that instant. Good logins built it ~490 ms after the login request, after the list;
+the blank one built it **30 ms** after, from inside the still-running `0x0032` dispatch, from an
+empty list - and the mode-2 decode of the list that followed refilled nothing. No server timing
+can beat that ordering. **Fix, in the hook (2026-09-12, unverified on screen):**
+`grap_stub::session::refresh_select_after_dispatch` calls the client's own
+`FUN_141177e40(selectUi)` - the refill the mode-5 handler makes and mode 2 does not - after every
+`0x0010` when the select UI already exists; `selectfill=off` turns it off. It is a client patch
+and does not make the session valid. Plan step TL says what the hook log must show. The list
+re-send and `--no-list-resend` are not the mechanism and can go once this is confirmed.
+`research/select-screen-race-2026-09-10.md` is superseded.
 
 **2026-09-10, night: the locker-to-bag move is built, and the Cash Inventory is listed at
 entry.** The owner: *"Coupon when bought goes into the Cash Inventory, not the storage. The player

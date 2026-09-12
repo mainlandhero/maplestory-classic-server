@@ -229,3 +229,48 @@ Readings, before the launch:
 
 `141177490` (ctor) and `141179970` (placement) are dropped — §6 established they run on every
 login and do not discriminate.
+
+## 8. MEASURED (2026-09-12, 02:15–02:16): three logins, two good, one blank — the mechanism
+
+The owner: *"I relaunched 3 times, the first 2 launches drew the avatar at character select just
+fine, but the third launch drew blank avatars."* All three ran the §7 probe (hook logs
+`maplecw-hook-20260912-021549`, `-021601`, and the live one; one `login.log`, +4 h).
+
+```text
+                    good #1        good #2        BLANK #3
+login request 0x0080   35.338         54.986         08.040
+mode patched 5->2      35.341 (+3ms)  54.989 (+3ms)  08.595 (+555ms)   <- world list dispatched late
+-> 0x0010 (list)       35.740         55.388         08.441
+141177790 build        35.822 (+484)  55.486 (+500)  08.070 (+30ms, "while dispatching 0x0032")
+141177e80 fill x3      35.828-.903    55.495-.602    08.076-.077 (all three within 1 ms)
+141b32860 / 141177e40  never          never          never
+```
+
+* **§6's mode-race theory is dead**: mode 2 handled `0x0010` on all three, and the two good
+  logins filled anyway - through the UI's build method `FUN_141177790` (called from
+  `142bf3cce`, the generic create path), not through `141177e40`.
+* **The select UI is built once, at the fade-deadline populate, and `FUN_141177790` fills the
+  slots from whatever character list exists at that instant.** On the good logins that was
+  ~490 ms after the login request, after the list. On the blank login the build ran **30 ms**
+  after the login request, from *inside the still-running `0x0032` dispatch* - the client
+  dispatched nothing for the next 555 ms (the world list, sent at 08.040, was dispatched at
+  08.595) - so it filled from an **empty** list. The `0x0010` that followed was decoded by
+  the mode-2 body, which calls nothing in the fill chain, and nothing refilled the slots.
+  Placement then skipped all three (`slot+0x10` null). That is the blank screen.
+* The three fill lines on the blank run carry different arguments (`r8=0x20 r9=0x140331540`
+  vs `r8=0x14dda8 r9=0xfffb` on the good runs) and land within 1 ms of each other - an empty
+  fill against a good one, visible in the log.
+
+**No server timing can fix this ordering**: whatever the server sends is dispatched after the
+build. The client's own answer is the call the mode-5 handler makes after every decode and
+the mode-2 handler does not: `FUN_141177e40(selectUi)`, which re-fills the three slots from
+the decoded list. The hook now makes that call after every `0x0010` dispatch **when the
+object already exists** (`grap_stub::session::refresh_select_after_dispatch`; `selectfill=off`
+in the session marker turns it off). In the good ordering the object does not exist yet at
+that moment, the hook logs so and does nothing, and the build fills exactly as before. **This
+patches the client** and does not make the session valid.
+
+What the next launches must show (plan step TL): the hook log line `SELECTFILL: called
+FUN_141177e40` on a login whose select UI was built early, followed by `141177e40` and three
+`141177e80` watch lines *after* the `0x0010` - and avatars. On a login whose build came after
+the list: `SELECTFILL: the select UI is not built yet`, and the build fills as before.

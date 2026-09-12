@@ -866,28 +866,34 @@
            sheet right, top still bare -> requirements are not it; say so and I go to
                          the client with the two screens' difference narrowed to the look
 
-     TL. THE BLANK CHARACTER-SELECT SCREEN - MEASURED 2026-09-12 (01:54), and the earlier
-         two theories (0x007A pause, and the null-gate) are both DEAD. The probe caught it:
-         the select-UI object IS built and avatar placement (141179970) DOES run - the slots
-         are placed EMPTY because the per-character fill never runs. research/charselect-
-         avatar-fade-race.md sec 6. The fill (141177e80) is reached only from the mode-5
-         0x0010 handler (141b32860 -> 141177e40) or the UI's vtable build (141177790). We
-         patch the client mode 5->2, and the mode-2 handler decodes the list but fills
-         nothing - so the leading theory is that a blank screen means the list was handled
-         AFTER the mode patch (mode 2). No server change; this launch tests that.
-         FIRST confirm the instrument: maplecw-hook.log must say "probe: watching
-         0x141b32860". If not, uninstrumented - say so. Then the WATCH lines:
-           141177e80 = the per-slot fill itself (present on ANY login whose avatars draw)
-           141b32860 = the mode-5 handler (the one that fills)
-           141177e40 = the mode-5 slot refresh;  141177790 = the vtable build (other route)
-           avatars draw, 141177e80 present -> the fill ran. If 141b32860 + 141177e40 are
-                         also present, it filled via mode 5, so BLANK == mode 2 and the fix
-                         is to keep the list in mode 5 or make mode 2 fill. If 141177790
-                         instead, a vtable route fills and mode is not the discriminator
-           avatars BLANK, 141177e80 ABSENT -> confirms the slots are placed empty; note
-                         whether 141b32860 fired (mode) vs the good login
-         Report which watches fired on a GOOD login and on a BLANK one - that pair is the
-         whole measurement. You cannot force blank; leave the probe on a few logins.
+     TL. THE BLANK CHARACTER-SELECT SCREEN - MECHANISM MEASURED, FIX BUILT, UNVERIFIED.
+         Your three launches (2 good, 1 blank, all instrumented) settled it, and killed the
+         mode-race theory too: research/charselect-avatar-fade-race.md sec 8. The select UI
+         is built ONCE, by the fade-deadline populate, and its build (141177790) fills the
+         three slots from whatever character list exists at that instant. Good logins built
+         it ~490 ms after the login request, after the list. The blank one built it 30 ms
+         after, from inside the still-running 0x0032 dispatch - the client dispatched nothing
+         for the next 555 ms - so it filled from an EMPTY list, and the mode-2 decode of the
+         list that followed refills nothing. No server timing can beat that ordering.
+         THE FIX (hook, a CLIENT PATCH): after every 0x0010 dispatch, if the select UI
+         already exists, the hook calls the client's own FUN_141177e40(selectUi) - the refill
+         the mode-5 handler makes and mode 2 never does. Off with -Session token
+         selectfill=off. Launch normally, a few times; per login read maplecw-hook.log:
+           "SELECTFILL: the select UI is not built yet" -> the good ordering; the build
+                         fills after the list as before. Avatars must draw (they did)
+           "SELECTFILL: called FUN_141177e40(0x..)" then WATCH 141177e40 and THREE
+                         141177e80 lines AFTER the "-> 0x0010" time, and avatars DRAW
+                         -> the blank ordering happened and was rescued. FIXED
+           that SELECTFILL line, and avatars still BLANK -> the refill ran and did not
+                         draw; tell me, and keep the log - the e80 arguments will say why
+           "SELECTFILL: refusing" / "not readable" -> the guard tripped; it is in the log
+           the client DIES at the list -> the refill on an existing object is unsafe in
+                         this state; relaunch ONCE with
+                         -PinPatches -Session 'mode=2,create=on,guardpage=0x20+0x40,selectfill=off'
+                         (a pin - like -Probe, -Session only reaches the client that way)
+                         and say so
+         Say which line each login produced. Two "not built yet" logins prove nothing
+         about the fix; one "called" login with avatars is the confirmation.
 
      TR. THE AP AND SP RESET SCROLLS - CONFIRMED 2026-09-10: "both AP and SP scrolls now
          work." STRUCK. Kept for the record: they were on the wrong opcode. Your two presses at
@@ -2801,25 +2807,27 @@ function Show-TestPlan {
         Write-Host '          requirements against the sheet; server needs a REQ gate'
         Write-Host '        sheet right, top still bare -> not requirements; say so'
         Write-Host ''
-        Write-Host '  TL. THE BLANK CHARACTER-SELECT SCREEN - MEASURED 01:54.' -ForegroundColor Magenta
-        Write-Host '      Both earlier theories (0x007A pause, null-gate) are DEAD.'
-        Write-Host '      The probe caught it: the select-UI object IS built and'
-        Write-Host '      placement (141179970) DOES run - the slots are placed EMPTY'
-        Write-Host '      because the per-character fill never runs. The fill is'
-        Write-Host '      reached only via the mode-5 0x0010 handler or the UI vtable'
-        Write-Host '      build; we patch mode 5->2, and mode 2 fills nothing. Leading'
-        Write-Host '      theory: blank == the list was handled AFTER the mode patch.'
-        Write-Host '      No server change. FIRST: maplecw-hook.log must say' -ForegroundColor Yellow
-        Write-Host '      "probe: watching 0x141b32860" or it is uninstrumented.' -ForegroundColor Yellow
-        Write-Host '      Then the WATCH lines:'
-        Write-Host '        141177e80 = the per-slot fill (present if avatars draw)'
-        Write-Host '        141b32860 = mode-5 handler (the one that fills)'
-        Write-Host '        141177e40 = mode-5 refresh; 141177790 = vtable build'
-        Write-Host '        draw + e80 present -> fill ran. +32860/e40 => filled via'
-        Write-Host '                      mode 5, so BLANK == mode 2 (the fix target)' -ForegroundColor Yellow
-        Write-Host '        BLANK + NO e80 -> slots placed empty; note if 32860 fired'
-        Write-Host '      Report which fired on a GOOD login AND a BLANK one - that'
-        Write-Host '      pair is the measurement. Leave the probe on a few logins.'
+        Write-Host '  TL. BLANK CHARACTER-SELECT - MEASURED, FIX BUILT, UNVERIFIED.' -ForegroundColor Magenta
+        Write-Host '      Your 3 launches (2 good, 1 blank) settled it: the select UI'
+        Write-Host '      is built ONCE and filled from whatever character list exists'
+        Write-Host '      at that instant. Good: built ~490 ms after login, after the'
+        Write-Host '      list. Blank: built 30 ms after login, inside the 0x0032'
+        Write-Host '      dispatch, from an EMPTY list - and mode 2 never refills.'
+        Write-Host '      FIX (hook, a CLIENT PATCH): after each 0x0010, if the select'
+        Write-Host '      UI already exists, call the client own FUN_141177e40 refill.'
+        Write-Host '      Off: -Session token selectfill=off. Launch a few times; per'
+        Write-Host '      login read maplecw-hook.log for the SELECTFILL line:'
+        Write-Host '        "not built yet" -> good ordering; avatars draw as before'
+        Write-Host '        "called FUN_141177e40" + WATCH e40 and 3x e80 AFTER the' -ForegroundColor Yellow
+        Write-Host '          0x0010, and avatars DRAW -> blank ordering RESCUED. FIXED' -ForegroundColor Yellow
+        Write-Host '        "called" but still BLANK -> refill ran, did not draw; keep'
+        Write-Host '          the log, the e80 arguments say why'
+        Write-Host '        "refusing"/"not readable" -> a guard tripped; it is logged'
+        Write-Host '        client DIES at the list -> relaunch ONCE with -PinPatches' -ForegroundColor Yellow
+        Write-Host '          -Session mode=2,create=on,guardpage=0x20+0x40,selectfill=off' -ForegroundColor Yellow
+        Write-Host '          (a pin, like -Probe) and say so' -ForegroundColor Yellow
+        Write-Host '      Two "not built yet" logins prove nothing; one "called" login'
+        Write-Host '      with avatars is the confirmation.'
         Write-Host ''
         Write-Host '  TR. AP / SP RESET SCROLLS - CONFIRMED: "both now work." STRUCK.' -ForegroundColor Green
         Write-Host '      Your two presses were 0x0116, not the coupons 0x0114, and'

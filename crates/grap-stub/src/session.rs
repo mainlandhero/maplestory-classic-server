@@ -380,6 +380,163 @@ pub unsafe fn enable_character_creation_after_dispatch(opcode: u16) {
     }
 }
 
+/// The character-select UI singleton, `0x143aca790` - the object whose three slots hold
+/// the avatars on the select screen. Every reader resolves to this one address
+/// (`research/charselect-avatar-fade-race.md` §1); its constructor `FUN_141177490` stores it.
+const SELECT_UI_PTR_RVA: usize = 0x143ACA790 - 0x140000000;
+/// `FUN_141177e40(selectUi)` - refill the three slots from the decoded character list, then
+/// `[vtable+0x90](obj, 0)`. It is what the **mode-5** login-result handler calls at
+/// `141b33ea3` after decoding the list, and what the **mode-2** body never calls.
+const SELECT_REFRESH_RVA: usize = 0x141177E40 - 0x140000000;
+/// Its prologue, read back before the call so a different binary refuses instead of jumping
+/// into the wrong function: `mov [rsp+8],rbx; push rdi; sub rsp,0x20; mov rdi,rcx; xor ebx,ebx`.
+const SELECT_REFRESH_PROLOGUE: [u8; 15] =
+    [0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0xf9, 0x33, 0xdb];
+/// The select UI object is `FUN_14019b780(pool, 0x5f0)` bytes (`141b28033 mov edx,0x5f0`).
+const SELECT_UI_SIZE: usize = 0x5f0;
+
+/// Refill the character-select slots after a login result - the call the mode-2 handler
+/// is missing. Off with the session token `selectfill=off`; absent means on.
+///
+/// # Why
+///
+/// The owner, 2026-09-12: *"I relaunched 3 times, the first 2 launches drew the avatar at
+/// character select just fine, but the third launch drew blank avatars."* All three were
+/// instrumented (`research/charselect-avatar-fade-race.md` §6-§8). The select UI is built
+/// **once**, by the fade-deadline populator, and its build method `FUN_141177790` fills the
+/// three slots from whatever character list exists at that instant. On the two good logins
+/// the build ran ~490 ms after the login request, after `0x0010` had been decoded. On the
+/// blank one it ran **30 ms** after the login request, from inside the still-running `0x0032`
+/// dispatch - before the world list had even been dispatched - so it filled from an empty
+/// list, and when `0x0010` arrived 370 ms later nothing refilled it: the mode-2 handler
+/// `FUN_141b307b0` decodes the list and calls nothing in the fill chain. The placement loop
+/// then skips every slot whose character pointer is null, which is a select screen with
+/// frames, a statboard, and no avatars.
+///
+/// No server timing can fix that ordering - the client dispatched nothing for 555 ms while
+/// it built the empty screen. The client's own answer is this call: the mode-5 handler
+/// makes it after every decode. So this makes it after every `0x0010` dispatch, **only when
+/// the object already exists**. When it does not (the good ordering), the build that comes
+/// later fills from the decoded list exactly as it did on the two good logins, and this does
+/// nothing.
+///
+/// **This patches the client.** It calls a client function the live handler would not have
+/// called. It does not make the session valid; say so when reporting a result that depends
+/// on it.
+pub unsafe fn refresh_select_after_dispatch(opcode: u16) {
+    if opcode != LOGIN_RESULT_OPCODE || marker_token("selectfill=").as_deref() == Some("off") {
+        return;
+    }
+    let base = crate::hook::base();
+    let slot = base + SELECT_UI_PTR_RVA;
+    if !can_read(slot, 8) {
+        log(&format!("***** SELECTFILL: cannot read the select-UI pointer at {slot:#x}; skipped *****"));
+        return;
+    }
+    let obj = std::ptr::read_unaligned(slot as *const usize);
+    if obj == 0 {
+        // The good ordering: the list decoded before the screen was built, so the build
+        // that follows fills from it. Nothing to do, and worth one line, because it is the
+        // measurement that tells a good login from a rescued one.
+        log("***** SELECTFILL: the select UI is not built yet after this 0x0010 - the build \
+             will fill from the decoded list; nothing called *****");
+        return;
+    }
+    if !can_read(obj, SELECT_UI_SIZE) {
+        log(&format!("***** SELECTFILL: select UI {obj:#x} is not readable; refusing to call into it *****"));
+        return;
+    }
+    let at = base + SELECT_REFRESH_RVA;
+    if !can_read(at, SELECT_REFRESH_PROLOGUE.len()) {
+        log(&format!("***** SELECTFILL: {at:#x} is not readable; skipped *****"));
+        return;
+    }
+    let found = std::slice::from_raw_parts(at as *const u8, SELECT_REFRESH_PROLOGUE.len());
+    if found != SELECT_REFRESH_PROLOGUE {
+        log(&format!(
+            "***** SELECTFILL: refusing to call {at:#x} - expected {SELECT_REFRESH_PROLOGUE:02x?} \
+             (FUN_141177e40's prologue), found {found:02x?}. Different binary? *****"
+        ));
+        return;
+    }
+    let refresh: extern "system" fn(usize) = std::mem::transmute(at);
+    refresh(obj);
+    log(&format!(
+        "***** SELECTFILL: called FUN_141177e40({obj:#x}) after 0x0010 - the select UI existed \
+         before the list was decoded, so its three slots were built EMPTY; they are now \
+         refilled from the decoded list. THIS IS A CLIENT PATCH: it is the call the mode-5 \
+         login handler makes and the mode-2 handler does not (research/charselect-avatar-fade-race.md sec 8) *****"
+    ));
+}
+
+#[cfg(test)]
+mod selectfill_tests {
+    use super::*;
+
+    /// The RVAs are derived from the VAs rather than typed.
+    #[test]
+    fn the_rvas_are_the_vas_less_the_image_base() {
+        assert_eq!(SELECT_UI_PTR_RVA, 0x3aca790);
+        assert_eq!(SELECT_REFRESH_RVA, 0x1177e40);
+    }
+
+    /// Map an RVA to a file offset through the PE section table - the on-disk image is not
+    /// laid out like the mapped one, so a test that indexes the file by RVA reads garbage.
+    fn file_offset(bytes: &[u8], rva: usize) -> usize {
+        let u16_at = |o: usize| u16::from_le_bytes([bytes[o], bytes[o + 1]]) as usize;
+        let u32_at = |o: usize| u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap()) as usize;
+        let pe = u32_at(0x3c);
+        let nsec = u16_at(pe + 6);
+        let first = pe + 24 + u16_at(pe + 20);
+        for i in 0..nsec {
+            let s = first + i * 40;
+            let (vsize, va, rsize, raw) = (u32_at(s + 8), u32_at(s + 12), u32_at(s + 16), u32_at(s + 20));
+            if va <= rva && rva < va + vsize.max(rsize) {
+                return raw + (rva - va);
+            }
+        }
+        panic!("rva {rva:#x} is in no section");
+    }
+
+    /// **Every constant above, read back out of the client on disk.** `rip`-relative operands
+    /// are resolved the way the CPU does it - next instruction plus displacement - so this
+    /// test cannot agree with a hand-typed address by accident; it can only agree with the
+    /// bytes. Skipped, loudly, when the client is not beside the repo.
+    #[test]
+    fn the_constants_agree_with_the_client_on_disk() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../client-patched/MapleStory.exe");
+        let Ok(bytes) = std::fs::read(path) else {
+            eprintln!("skipped: {path} is not present");
+            return;
+        };
+        let at = |rva: usize, n: usize| {
+            let o = file_offset(&bytes, rva);
+            &bytes[o..o + n]
+        };
+        // The refresh's prologue, exactly what the runtime check compares against.
+        assert_eq!(at(SELECT_REFRESH_RVA, SELECT_REFRESH_PROLOGUE.len()), SELECT_REFRESH_PROLOGUE);
+
+        // `48 8b 0d disp32` = mov rcx,[rip+disp32]; target = next instruction + disp.
+        let rip_load = |rva: usize| {
+            let b = at(rva, 7);
+            assert_eq!(&b[..3], &[0x48, 0x8b, 0x0d], "not a mov rcx,[rip+..] at {rva:#x}: {b:02x?}");
+            let disp = i32::from_le_bytes(b[3..7].try_into().unwrap()) as isize;
+            (rva as isize + 7 + disp) as usize
+        };
+        // The screen builder's null-gate before avatar placement (research §1)...
+        assert_eq!(rip_load(0x141b3e0d9 - 0x140000000), SELECT_UI_PTR_RVA);
+        // ...and the mode-5 login handler's load right before it calls the refresh (§6).
+        assert_eq!(rip_load(0x141b33e9c - 0x140000000), SELECT_UI_PTR_RVA);
+
+        // `e8 rel32` at 141b33ea3: the mode-5 handler calling FUN_141177e40 with that object.
+        let call_rva = 0x141b33ea3 - 0x140000000;
+        let b = at(call_rva, 5);
+        assert_eq!(b[0], 0xe8, "not a call at {call_rva:#x}: {b:02x?}");
+        let rel = i32::from_le_bytes(b[1..5].try_into().unwrap()) as isize;
+        assert_eq!((call_rva as isize + 5 + rel) as usize, SELECT_REFRESH_RVA);
+    }
+}
+
 /// Poll the session object and report the two bytes that decide the prompt.
 pub unsafe fn monitor(base: usize) {
     let Some(mode) = mode() else { return };
