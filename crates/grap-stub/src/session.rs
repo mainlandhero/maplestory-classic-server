@@ -398,6 +398,30 @@ const SELECT_UI_SIZE: usize = 0x5f0;
 /// Refill the character-select slots after a login result - the call the mode-2 handler
 /// is missing. Off with the session token `selectfill=off`; absent means on.
 ///
+/// # THIS IS LOAD-BEARING. Do not remove it, gate it, or "simplify" it away.
+///
+/// **CONFIRMED on screen 2026-09-12 09:23**: four consecutive logins, every one the blank
+/// ordering (select UI built 30 ms after the login request, before the list), every one
+/// rescued - `SELECTFILL: called` after each `0x0010`, three fills carrying real records
+/// (`r8=0x14e0f8 r9=0xfffb`) where the build had filled empties (`r8=0x20 r9=0x140331540`),
+/// and the owner: *"it seems consistently fixed now."* Fixture:
+/// `research/fixtures/selectfill-rescued-early-build-avatars-drew-hook.log`. Before it,
+/// five of five blank logins were measured as this exact ordering, and no server-side
+/// timing can reach it (the client dispatches nothing while it builds the empty screen).
+/// The whole history - three wrong theories and the measurements that killed each - is
+/// `research/charselect-avatar-fade-race.md`; do not re-derive it from the symptom.
+///
+/// Things that look like cleanups and are not:
+/// * Removing this because "the login server re-sends the list": the re-send is not the
+///   mechanism (it was measured not to help; mode 2 never refills on any `0x0010`).
+/// * Gating it on the `0x0010` being the first, or on the mode: it must run on every
+///   `0x0010` on which the object already exists, and it correctly does nothing otherwise.
+/// * Adding a `-Probe` watch on `141177e40` "to see it fire": the watch's int3 is the byte
+///   this guard reads. It tolerates that now, but the `SELECTFILL:` line already says so.
+/// * Moving it before `enable_character_creation_after_dispatch`: harmless, but pointless -
+///   keep the three after-dispatch steps together in `hook.rs`, and keep the wiring test
+///   below green.
+///
 /// # Why
 ///
 /// The owner, 2026-09-12: *"I relaunched 3 times, the first 2 launches drew the avatar at
@@ -486,6 +510,33 @@ mod selectfill_tests {
     fn the_rvas_are_the_vas_less_the_image_base() {
         assert_eq!(SELECT_UI_PTR_RVA, 0x3aca790);
         assert_eq!(SELECT_REFRESH_RVA, 0x1177e40);
+    }
+
+    /// **Built is not wired** is this project's oldest silent failure (CLAUDE.md). The step
+    /// only exists if the dispatch hook calls it, so this reads `hook.rs` and refuses to let
+    /// the call be dropped without a test going red. If you are here because you removed
+    /// it: read the doc block on `refresh_select_after_dispatch` first.
+    #[test]
+    fn the_refill_step_is_wired_into_the_dispatch_hook() {
+        let hook = include_str!("hook.rs");
+        assert!(
+            hook.contains("crate::session::refresh_select_after_dispatch(opcode);"),
+            "hook.rs no longer calls refresh_select_after_dispatch after the handler - the \
+             blank character-select screen comes back on every fast start"
+        );
+        // And it stays behind the two steps it depends on nothing from but sits beside.
+        let order = |needle: &str| hook.find(needle).expect(needle);
+        assert!(order("patch_mode_after_dispatch(opcode)") < order("refresh_select_after_dispatch(opcode)"));
+    }
+
+    /// The default session marker must not disable it, and the token spelling the kill
+    /// switch documents is the one this code reads.
+    #[test]
+    fn the_shipped_session_does_not_switch_it_off() {
+        // launcher::client::DEFAULT_SESSION as of 2026-09-12; its twin test lives there.
+        let shipped = "mode=2,create=on,guardpage=0x20+0x40";
+        assert!(!shipped.contains("selectfill=off"));
+        assert!("mode=2,create=on,guardpage=0x20+0x40,selectfill=off".contains("selectfill=off"));
     }
 
     /// Map an RVA to a file offset through the PE section table - the on-disk image is not

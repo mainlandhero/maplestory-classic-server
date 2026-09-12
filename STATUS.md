@@ -172,8 +172,11 @@ can beat that ordering. **Fix, in the hook (2026-09-12, unverified on screen):**
 and does not make the session valid. **09:16: three more launches, 2 blank, 1 good - the fix
 never ran.** Both blank logins were the early-build ordering as predicted and SELECTFILL fired,
 but its prologue guard read the default probe's own int3 on `141177e40` and refused: the
-instrument defeated the fix (sec 9). Guard now tolerates the int3, watch removed. Plan step TL
-says what the hook log must show. The list
+instrument defeated the fix (sec 9). Guard now tolerates the int3, watch removed. **09:23:
+CONFIRMED - four more launches, all four the blank ordering, all four rescued; the owner: "it seems
+consistently fixed now"** (sec 10). `refresh_select_after_dispatch` is load-bearing: a wiring
+test in grap-stub fails if `hook.rs` stops calling it, and `141177e40` must never be watched in
+`-Probe`. The list
 re-send and `--no-list-resend` are not the mechanism and can go once this is confirmed.
 `research/select-screen-race-2026-09-10.md` is superseded.
 

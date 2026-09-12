@@ -4,7 +4,10 @@
 > **refuted by the probe** and kept only for the record. The select-UI object *is* built and
 > avatar placement *does* run; the slots are placed **empty** because the per-character fill
 > never runs. The measurement and the real mechanism are in §6, which supersedes §1–§5.
-> The probe is re-aimed accordingly (§7).
+> The probe is re-aimed accordingly (§7). **§8 has the mechanism (three logins, two good and
+> one blank), §9 the fix refusing itself on the probe's int3, §10 the confirmation: four for
+> four rescued. The fix is `grap_stub::session::refresh_select_after_dispatch` and it is
+> load-bearing.**
 
 # (SUPERSEDED) The blank char-select avatars as a fade-deadline race — 2026-09-12
 
@@ -295,3 +298,25 @@ now measured) and a null result for the fix. Two changes: the guard accepts `0xC
 (the probe's handler restores it for any caller) and logs that it called through an int3;
 and `141177e40` is off both `DEFAULT_PROBE`s - the `SELECTFILL:` line already says when the
 call happens. Still unverified on screen; plan step TL is the same measurement.
+
+## 10. CONFIRMED, 2026-09-12 09:23 — four for four
+
+With the guard tolerating the int3 and the `141177e40` watch gone, the owner launched four more
+times: *"it seems consistently fixed now."* Every one of the four was the **blank ordering**
+(build at +30 ms inside the `0x0032` dispatch, three empty fills `r8=0x20 r9=0x140331540`),
+and every one was rescued: after each `0x0010` (the list and the re-send) `SELECTFILL:
+called FUN_141177e40(...)`, preceded in the log by three fills carrying real records
+(`r8=0x14e0f8 r9=0xfffb`) - the fill lines land before the `SELECTFILL:` line because that
+line is written after the call returns. Fixture:
+`research/fixtures/selectfill-rescued-early-build-avatars-drew-hook.log`.
+
+Tally across the day: nine blank logins measured, nine were this ordering; four rescued by
+the refill, four drew. The good ordering (`not built yet`) still draws through the build, as
+it always did.
+
+**What must stay:** `grap_stub::session::refresh_select_after_dispatch`, wired in
+`hook.rs` after the handler (a test reads `hook.rs` and fails if the call goes); no `-Probe`
+watch on `141177e40` in either `DEFAULT_PROBE`; `selectfill=off` is the only sanctioned way
+to turn it off, for one launch, as a pin. The login server's list re-send
+(`LIST_RESEND_THRESHOLD_MS`, 2026-09-10) is **not** part of this fix - it was measured not to
+help - and may be removed later, at the cost of the launch that verifies the removal.

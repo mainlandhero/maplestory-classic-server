@@ -12,6 +12,14 @@ Rust workspace, SQLite, patched client in `client-patched/`. Testing only.
 - `client-patched/` exists so the original client is never touched.
 - **Nothing authenticates.** The game socket carries no credentials. Say so whenever reporting progress.
 - **Never renumber characters from 1.** Ids start at 200 (`FIRST_CHARACTER_ID`); a create reply carrying id 1 made the client silently refuse to transition.
+- **`grap_stub::session::refresh_select_after_dispatch` is load-bearing.** The client builds
+  its character-select screen once, from whatever character list exists at that instant; on a
+  fast start that is 30 ms after the login request, before the list, and the mode-2 login
+  handler never refills it - blank avatars. The hook now makes the client's own refill call
+  after every `0x0010`. Confirmed 2026-09-12 after three wrong theories
+  (`research/charselect-avatar-fade-race.md`). Do not remove it, do not gate it, and never
+  put a `-Probe` watch on `141177e40` - its int3 is the byte the guard reads. A test fails if
+  `hook.rs` stops calling it.
 
 ## Shell
 

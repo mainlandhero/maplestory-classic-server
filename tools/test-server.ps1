@@ -866,39 +866,22 @@
            sheet right, top still bare -> requirements are not it; say so and I go to
                          the client with the two screens' difference narrowed to the look
 
-     TL. THE BLANK CHARACTER-SELECT SCREEN - MECHANISM MEASURED, FIX BUILT, UNVERIFIED.
-         Your three launches (2 good, 1 blank, all instrumented) settled it, and killed the
-         mode-race theory too: research/charselect-avatar-fade-race.md sec 8. The select UI
-         is built ONCE, by the fade-deadline populate, and its build (141177790) fills the
-         three slots from whatever character list exists at that instant. Good logins built
-         it ~490 ms after the login request, after the list. The blank one built it 30 ms
-         after, from inside the still-running 0x0032 dispatch - the client dispatched nothing
-         for the next 555 ms - so it filled from an EMPTY list, and the mode-2 decode of the
-         list that followed refills nothing. No server timing can beat that ordering.
-         THE FIX (hook, a CLIENT PATCH): after every 0x0010 dispatch, if the select UI
-         already exists, the hook calls the client's own FUN_141177e40(selectUi) - the refill
-         the mode-5 handler makes and mode 2 never does. Off with -Session token
-         selectfill=off. **09:16, three launches: 2 blank, 1 good - and the fix never ran.**
-         Both blank logins were the early-build ordering exactly as predicted, SELECTFILL
-         fired on both - and REFUSED, because the default probe's own watch on 141177e40
-         had planted an int3 over the byte the guard checks. The instrument defeated the
-         fix. The guard now tolerates the int3 and that watch is off the default probe.
-         Launch normally, a few times; per login read maplecw-hook.log:
-           "SELECTFILL: the select UI is not built yet" -> the good ordering; the build
-                         fills after the list as before. Avatars must draw (they did)
-           "SELECTFILL: called FUN_141177e40(0x..)" then THREE 141177e80 WATCH lines
-                         AFTER the "-> 0x0010" time, and avatars DRAW -> the blank
-                         ordering happened and was rescued. FIXED
-           that SELECTFILL line, and avatars still BLANK -> the refill ran and did not
-                         draw; tell me, and keep the log - the e80 arguments will say why
-           "SELECTFILL: refusing" / "not readable" -> the guard tripped again; paste it
-           the client DIES at the list -> the refill on an existing object is unsafe in
-                         this state; relaunch ONCE with
-                         -PinPatches -Session 'mode=2,create=on,guardpage=0x20+0x40,selectfill=off'
-                         (a pin - like -Probe, -Session only reaches the client that way)
-                         and say so
-         Say which line each login produced. Two "not built yet" logins prove nothing
-         about the fix; one "called" login with avatars is the confirmation.
+     TL. THE BLANK CHARACTER-SELECT SCREEN - CONFIRMED FIXED 2026-09-12 09:23 ("it seems
+         consistently fixed now"). STRUCK. Kept for the record because THREE theories died
+         on the way and the fix is a hook step a tidy-minded agent could delete:
+         research/charselect-avatar-fade-race.md. The client builds the select UI ONCE and
+         fills its three slots from whatever character list exists at that instant; on a
+         fast start it builds it 30 ms after the login request, inside the 0x0032 dispatch,
+         from an EMPTY list, and the mode-2 login handler never refills. The hook now calls
+         the client's own refill FUN_141177e40 after every 0x0010 on which the select UI
+         already exists (grap_stub::session::refresh_select_after_dispatch). Four for four
+         rescued on the confirming launches; a wiring test keeps it in hook.rs. Kill switch,
+         one launch: -PinPatches -Session 'mode=2,create=on,guardpage=0x20+0x40,selectfill=off'.
+         Never watch 141177e40 in -Probe: the int3 is the byte the guard reads (it tolerates
+         it now, and the SELECTFILL: log line already says when the call happened).
+           blank avatars ever again -> grep maplecw-hook.log for SELECTFILL first: absent =
+                         the step was removed or switched off; "refusing" = a guard tripped
+                         (paste it); "called" and still blank = new problem, keep the log
 
      TR. THE AP AND SP RESET SCROLLS - CONFIRMED 2026-09-10: "both AP and SP scrolls now
          work." STRUCK. Kept for the record: they were on the wrong opcode. Your two presses at
@@ -2812,31 +2795,15 @@ function Show-TestPlan {
         Write-Host '          requirements against the sheet; server needs a REQ gate'
         Write-Host '        sheet right, top still bare -> not requirements; say so'
         Write-Host ''
-        Write-Host '  TL. BLANK CHARACTER-SELECT - MEASURED, FIX BUILT, UNVERIFIED.' -ForegroundColor Magenta
-        Write-Host '      Your 3 launches (2 good, 1 blank) settled it: the select UI'
-        Write-Host '      is built ONCE and filled from whatever character list exists'
-        Write-Host '      at that instant. Good: built ~490 ms after login, after the'
-        Write-Host '      list. Blank: built 30 ms after login, inside the 0x0032'
-        Write-Host '      dispatch, from an EMPTY list - and mode 2 never refills.'
-        Write-Host '      FIX (hook, a CLIENT PATCH): after each 0x0010, if the select'
-        Write-Host '      UI already exists, call the client own FUN_141177e40 refill.'
-        Write-Host '      Off: -Session token selectfill=off. 09:16 (2 blank, 1 good):'
-        Write-Host '      both blank logins were the early-build ordering as predicted,'
-        Write-Host '      SELECTFILL fired on both - and REFUSED: the probe own watch on'
-        Write-Host '      141177e40 had planted an int3 over the byte the guard checks.'
-        Write-Host '      Guard now tolerates it; that watch is gone. Launch a few'
-        Write-Host '      times; per login read maplecw-hook.log for the SELECTFILL line:'
-        Write-Host '        "not built yet" -> good ordering; avatars draw as before'
-        Write-Host '        "called FUN_141177e40" + 3x e80 WATCH lines AFTER the' -ForegroundColor Yellow
-        Write-Host '          0x0010, and avatars DRAW -> blank ordering RESCUED. FIXED' -ForegroundColor Yellow
-        Write-Host '        "called" but still BLANK -> refill ran, did not draw; keep'
-        Write-Host '          the log, the e80 arguments say why'
-        Write-Host '        "refusing"/"not readable" -> guard tripped again; paste it'
-        Write-Host '        client DIES at the list -> relaunch ONCE with -PinPatches' -ForegroundColor Yellow
-        Write-Host '          -Session mode=2,create=on,guardpage=0x20+0x40,selectfill=off' -ForegroundColor Yellow
-        Write-Host '          (a pin, like -Probe) and say so' -ForegroundColor Yellow
-        Write-Host '      Two "not built yet" logins prove nothing; one "called" login'
-        Write-Host '      with avatars is the confirmation.'
+        Write-Host '  TL. BLANK CHARACTER-SELECT - CONFIRMED FIXED 09:23. STRUCK.' -ForegroundColor Green
+        Write-Host '      The client builds the select UI once, from whatever list'
+        Write-Host '      exists at that instant; a fast start builds it EMPTY 30 ms'
+        Write-Host '      after login and mode 2 never refills. The hook now calls the'
+        Write-Host '      client own refill (FUN_141177e40) after every 0x0010 where'
+        Write-Host '      the UI already exists. Four for four rescued. A wiring test'
+        Write-Host '      keeps it in hook.rs. Never watch 141177e40 in -Probe.'
+        Write-Host '        blank ever again -> grep maplecw-hook.log SELECTFILL first:'
+        Write-Host '          absent = step removed/off; "refusing" = paste it'
         Write-Host ''
         Write-Host '  TR. AP / SP RESET SCROLLS - CONFIRMED: "both now work." STRUCK.' -ForegroundColor Green
         Write-Host '      Your two presses were 0x0116, not the coupons 0x0114, and'
