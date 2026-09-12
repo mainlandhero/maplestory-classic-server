@@ -932,17 +932,14 @@
                          That is the next piece of work, not a failure of this one
               refused again -> world.log names the reason; paste it
          b) The weapon: CLIENT-side, and it is the data - FIXED IN THE DATA 2026-09-12,
-            NOT YET INSTALLED. The classic covers spell the weapon TYPES they dress as
+            INSTALLED the same night (client closed; all 24 archives; originals kept .bak). The classic covers spell the weapon TYPES they dress as
             children: 01702001 has a real 30 and 31/32/33 as LINKS to it. Every backported
             cover has only 30 and 49 (49 = gun, a type this client lacks); your suitcase is
             type 32, so the client found nothing and refused. tools/backport_install.py now
             gives each of the six covers a link to 30 for every classic type (31,32,33,
-            37..47); built and verified, but the install needs the archives closed.
-            research/weapon-cover-types-2026-09-12.md. BEFORE the next launch, with the
-            client CLOSED, run:
-              python "C:\MapleCW\tools\backport_install.py" --install
-            (it says "installed ... Weapon_000.wz"; "held open" means the client is still
-            running). Then in game, drag the weapon onto the suitcase:
+            37..47); built, verified and installed - the cover on disk lists all fifteen.
+            research/weapon-cover-types-2026-09-12.md. Launch, and in game drag the weapon
+            onto the suitcase:
               it goes on (sits in the Deco window) -> the per-type rule is confirmed
               it does not DRAW -> expected: covers cannot draw until the record carries
                          worn slots above 31 (the same open item as a) above)
@@ -2869,13 +2866,10 @@ function Show-TestPlan {
         Write-Host '           not drawn / gone after relog -> EXPECTED for now: the'
         Write-Host '                      record cannot carry worn slots over 31 yet'
         Write-Host '           refused again -> world.log names why; paste it'
-        Write-Host '      b) Weapon: CLIENT data - FIXED, NOT YET INSTALLED. Covers list'
+        Write-Host '      b) Weapon: CLIENT data - FIXED AND INSTALLED. Covers list'
         Write-Host '         the weapon TYPES they dress as children (classic: 30 + links'
         Write-Host '         31/32/33); ours had 30 and 49 only; suitcase is 32. Each'
-        Write-Host '         cover now links every classic type. Install with the client'
-        Write-Host '         CLOSED, then relaunch:' -ForegroundColor Yellow
-        Write-Host '           python "C:\MapleCW\tools\backport_install.py" --install' -ForegroundColor Yellow
-        Write-Host '         ("held open" = client still running). Then drag it on:'
+        Write-Host '         cover now links every classic type; on disk. Drag it on:' -ForegroundColor Yellow
         Write-Host '           goes on (Deco window) -> per-type rule confirmed'
         Write-Host '           does not DRAW -> expected until worn slots >31 carry'
         Write-Host '           still refused silently -> not the type child; say so'
