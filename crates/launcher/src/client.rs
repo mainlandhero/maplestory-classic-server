@@ -56,13 +56,24 @@ pub const HOOK_MULTICLIENT_MARKER: &str = "maplecw-hook.multiclient";
 pub const HOOK_IDENTITY_MARKER: &str = "maplecw-hook.identity";
 pub const HOOK_LOG: &str = "maplecw-hook.log";
 
-/// `tools/test-server.ps1`'s `-Probe` default.
+/// `tools/test-server.ps1`'s `-Probe` default - and **this is the copy that reaches the
+/// client.** The launcher writes it over `maplecw-hook.probe` on every launch; the
+/// launcher script's own default only gets through as a `-PinPatches` pin. On 2026-09-12 the
+/// script's default was changed and this one was not, and a launch that was meant to measure
+/// the blank select screen armed the old four watches instead. Change both together.
 ///
 /// `1415db360:ret` and `141b2a280:rdx=0` are **not optional**: without the first the client
 /// `__fastfail`s about 37 seconds in, because its own reachability check overruns a stack
 /// buffer when nothing is reachable; without the second the "trouble logging in" dialog
-/// blocks the per-frame tick that enables the Login button.
-pub const DEFAULT_PROBE: &str = "watch@1415db360:ret,141b2a280:rdx=0,141b36f60,142ef3e44:hits=8";
+/// blocks the per-frame tick that enables the Login button. `142ef3e44` is
+/// `__report_gsfailure`, kept so a silent 37 s death stays visible.
+///
+/// The other three are plan step TL, `research/charselect-avatar-fade-race.md`: the
+/// character-select UI object's constructor (`141177490`), the list decoder's refresh of it
+/// (`141177e40` - its `rcx` IS the object, so `rcx=0x0` means the list arrived before it
+/// existed) and avatar placement (`141179970`), which the client skips while that object is
+/// null. Six slots, all in use.
+pub const DEFAULT_PROBE: &str = "watch@1415db360:ret,141b2a280:rdx=0,142ef3e44:hits=8,141177490:hits=4,141177e40:hits=8,141179970:hits=12";
 
 /// The size classes the shipped guard page quarantines, spelled the way
 /// `grap_stub::guardpage::parse_classes` reads them: `+`-joined, **never** comma-joined,

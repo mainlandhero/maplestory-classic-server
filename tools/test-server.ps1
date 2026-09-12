@@ -872,9 +872,13 @@
          Avatar placement is FUN_141179970, and every path to it first checks the select
          UI object (global 0x143aca790) and SKIPS placement when it is null - frames and
          statboard still draw. So the question is whether that object exists when the
-         character list is decoded, and the default -Probe now watches exactly that. No
-         server change this run; it is a measurement, and a GOOD login is informative too.
-         After the launch, in client-patched\maplecw-hook.log, find the WATCH lines for:
+         character list is decoded, and the default probe now watches exactly that - in
+         maplecw-launcher's compiled DEFAULT_PROBE, which is the copy the client gets (the
+         01:49 launch armed the OLD watches because only this script's default had been
+         changed; that run measured nothing and is not evidence). No server change; it is a
+         measurement, and a GOOD login is informative too. FIRST confirm the instrument:
+         client-patched\maplecw-hook.log must say "probe: watching 0x141177490". If it does
+         not, the run is uninstrumented - say so. Then find the WATCH lines for:
            0x141177490 = the object's constructor (WHEN the client built it)
            0x141177e40 = the list decoder's refresh of it; its rcx IS the object
            0x141179970 = avatar placement entered = the null-gate passed
@@ -1801,6 +1805,13 @@ param(
     # 142ef3e44 is __report_gsfailure, kept because a silent 37s death is the failure mode
     # this project spends the most runs on. The migration-handler watch (141b36f60) is
     # dropped for now: it fired once per migration and answered nothing open.
+    #
+    # **THIS DEFAULT DOES NOT REACH THE CLIENT ON ITS OWN.** The client is launched by
+    # maplecw-launcher, which writes ITS compiled default (crates/launcher/src/client.rs
+    # DEFAULT_PROBE) over maplecw-hook.probe on every launch; this string only gets through
+    # as a -PinPatches pin. 2026-09-12: this default was changed, the launcher's was not, and
+    # the launch meant to measure the blank select screen armed the old watches. The two are
+    # now identical - keep them so, and check "probe: watching 0x141177490" in the hook log.
     #
     # The other three slots are the blank-select-screen question, plan step TL, from
     # research/charselect-avatar-fade-race.md. Avatar placement at character select is
@@ -2803,9 +2814,11 @@ function Show-TestPlan {
         Write-Host '      the avatars stayed blank. Read from the client instead:'
         Write-Host '      avatar placement (FUN_141179970) is SKIPPED whenever the'
         Write-Host '      select UI object is null when the screen draws - frames and'
-        Write-Host '      statboard still draw. The default -Probe now watches that.'
-        Write-Host '      No server change. After the launch, in maplecw-hook.log'
-        Write-Host '      find the WATCH lines and compare with login.log "-> 0x0010":'
+        Write-Host '      statboard still draw. The LAUNCHER default probe now watches'
+        Write-Host '      that (the 01:49 launch armed the OLD watches - not evidence).'
+        Write-Host '      No server change. FIRST: maplecw-hook.log must say' -ForegroundColor Yellow
+        Write-Host '      "probe: watching 0x141177490" or the run is uninstrumented.' -ForegroundColor Yellow
+        Write-Host '      Then find the WATCH lines, compare with login.log "-> 0x0010":'
         Write-Host '        0x141177490 = the object CONSTRUCTED (when)'
         Write-Host '        0x141177e40 = list decoder refreshing it; rcx IS the object'
         Write-Host '        0x141179970 = avatars placed (the null-gate passed)'
