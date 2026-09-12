@@ -198,13 +198,25 @@ impl Session {
             return self.inventory_refused(&m, "no character is claimed on this connection");
         };
 
+        // **The tab the item lives in.** Equip for ordinary gear; Deco for cash equips, whose
+        // worn slots are 101 and up (`-101`.. on the wire). The owner, 2026-09-12: *"none of the
+        // outfit items work"* - the client sent every one from the Deco tab and this handler
+        // knew only the Equip tab, so they fell through to the bag-to-bag branch and were
+        // refused as "needs two positive slots". The client's own rule already names both
+        // tabs (`net::inventory::move_changes_the_avatar`).
+        let tab = if m.inv_type == net::inventory::INV_DECO {
+            store::InventoryType::Deco
+        } else {
+            store::InventoryType::Equip
+        };
+
         if let Some(equip_slot) = m.equipped_slot() {
             let dst = u16::try_from(m.dst).ok();
-            return match self.store.unequip_to_bag(chr.id, equip_slot, dst) {
+            return match self.store.unequip_to_tab(chr.id, equip_slot, tab, dst) {
                 Ok(row) => self.inventory_moved(
                     &m,
                     format!(
-                        "unequipped slot {equip_slot} into Equip bag slot {} - item {}, STORED, so the next SetField will not re-dress it",
+                        "unequipped slot {equip_slot} into {tab:?} bag slot {} - item {}, STORED, so the next SetField will not re-dress it",
                         row.slot, row.item.item_id
                     ),
                 ),
@@ -212,8 +224,8 @@ impl Session {
             };
         }
 
-        // An equip: out of a bag slot, into a negative worn slot.
-        if m.inv_type == net::inventory::INV_EQUIP && m.src > 0 && m.dst < 0 {
+        // An equip: out of a bag slot, into a negative worn slot - on either tab.
+        if m.is_equip() {
             let Ok(worn) = u8::try_from(-i32::from(m.dst)) else {
                 return self.inventory_refused(&m, "the worn slot does not fit in a u8");
             };
@@ -262,7 +274,7 @@ impl Session {
                 .and_then(|b| {
                     b.items
                         .iter()
-                        .find(|i| i.inv_type == store::InventoryType::Equip && i.slot == src)
+                        .find(|i| i.inv_type == tab && i.slot == src)
                         .map(|i| i.item.item_id)
                 })
                 .unwrap_or(0);
@@ -287,7 +299,9 @@ impl Session {
                     ),
                 );
             }
-            if let Some(other) = net::overall::conflicting_slot(incoming) {
+            // On the Deco tab the same pair is 105/106: a cash overall over a cash bottom.
+            let slot_base: u8 = if tab == store::InventoryType::Deco { 100 } else { 0 };
+            if let Some(other) = net::overall::conflicting_slot(incoming).map(|o| o + slot_base) {
                 if let Some(worn_there) = self
                     .store
                     .equipped_items(chr.id)
@@ -295,11 +309,11 @@ impl Session {
                     .into_iter()
                     .find(|e| e.slot == other)
                 {
-                    if net::overall::conflicts_with(incoming, worn_there.item_id, other) {
+                    if net::overall::conflicts_with(incoming, worn_there.item_id, other - slot_base) {
                         // `None` picks the lowest free bag slot, and returns
                         // `StoreError::BagFull` when there is not one - which is exactly the
                         // "unless the player does not have sufficient inventory space" case.
-                        match self.store.unequip_to_bag(chr.id, other, None) {
+                        match self.store.unequip_to_tab(chr.id, other, tab, None) {
                             Ok(moved) => {
                                 freed = Some(format!(
                                     "took off item {} from slot {other} into bag slot {} first \
@@ -322,19 +336,20 @@ impl Session {
                 }
             }
 
-            return match self.store.equip_from_bag(chr.id, src, worn) {
+            return match self.store.equip_from_tab(chr.id, tab, src, worn) {
                 Ok(done) => self.inventory_moved(
                     &m,
                     format!(
                         "{}{}",
                         match done.displaced {
                             Some(off) => format!(
-                                "equipped item {} from Equip bag slot {src} into slot {worn}, SWAPPING item {off} back into bag slot {src}",
+                                "equipped item {} from {tab:?} bag slot {src} into slot {worn}, SWAPPING item {off} back into bag slot {src}",
                                 done.equipped
                             ),
                             None => format!(
-                                "equipped item {} from Equip bag slot {src} into slot {worn}",
-                                done.equipped
+                                "equipped item {} from {tab:?} bag slot {src} into slot {worn}{}",
+                                done.equipped,
+                                if worn > 100 { " - a CASH equip; the record cannot carry worn slots above 31 yet, so it will not draw on the character or survive a relog as worn" } else { "" }
                             ),
                         },
                         match &freed {

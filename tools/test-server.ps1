@@ -865,7 +865,8 @@
            nothing, and the inventory is FROZEN -> the latch is not cleared; relog and tell me
            a message but no change -> the reset itself refused; the chat line says why
 
-     TB. THE BEAUTY COUPON DIALOG'S WHITE NAME. Frieren's was white too, so it is the client:
+     TB. THE BEAUTY COUPON DIALOG'S WHITE NAME - CONFIRMED FIXED 2026-09-12 ("The dialogue is
+         readable now"). STRUCK. Kept for the record: Frieren's was white too, so it is the client:
          its own string 0x0464 is "Would you like to use #fc0xffffffff#%s?" - opaque WHITE,
          meant for the modern dark panel. The hook now patches six bytes of that encrypted
          string at load so the colour is black. Kill switch: -NoBeautyTextPatch.
@@ -875,6 +876,38 @@
                          decrypted the table before the hook ran; I move the six bytes into
                          the exe file instead
            still white, and the log says "refusing" or "not readable" -> paste that line
+
+     TO. THE ÜBEL OUTFIT - three findings from your run, two fixed, one not.
+         a) The clothes (overall, shoes, gloves) from the DECO tab: the client SENT the
+            equips (invType 6, slot -> -105/-107/-108) and the SERVER refused them - the
+            equip path only knew the Equip tab. Fixed: Deco moves go on to worn slots
+            101+ and come off into the Deco tab. Drag each on again.
+              it sits in the Deco equip window -> the move works
+              BUT the character does not draw it and it is gone after a relog -> EXPECTED
+                         for now: the record cannot carry worn slots above 31 (measured,
+                         the client discards them) and the look's cover map is unbuilt.
+                         That is the next piece of work, not a failure of this one
+              refused again -> world.log names the reason; paste it
+         b) The weapon: CLIENT-side, and it is the data. The classic client's own covers
+            carry one child per weapon TYPE they can dress (01702001 has 30,31,32,33); the
+            backported staff carries 30 and 49. Your suitcase 1322999 is type 32, and 49
+            looks like the modern "all weapons" marker this client does not know. Try it
+            while holding a one-handed SWORD (type 30): if it goes on, that is the rule and
+            the backport should add a child per type (or all types) to each cover.
+         c) The Übel Hair Coupon: Confirm sends 0x0165, which nothing answered. Handled:
+            hair applied, coupon spent, the map re-entered to redraw (as !hair does).
+              hair changes on re-entry, coupon gone -> done
+              nothing -> grep world.log for 0x0165 and paste the line after it
+
+     TH. THE FACE COUPON opens no dialog and has no tooltip preview. The face's images are
+         installed and structurally identical to a classic face (checked node by node); the
+         one difference left is the ID: the classic client's faces are 20000..21825 and the
+         backport's are 22035..22042, while hair 42600 (also outside the classic 30000..31807)
+         works. So the client's FACE path checks the id and the HAIR path does not. [I]
+         Test that costs one chat line: `!face 22039`. If the face draws in the field, the
+         id works once applied and only the coupon UI refuses it (then a server-side apply
+         on double-click is the fix); if it does not draw either, the backport must renumber
+         the faces into the classic 20xxx/21xxx space.
 
      TF. THE FREE MARKET DOOR, which is the one that can strand somebody if it is wrong.
          From **Henesys Market** (10001040) walk into the `market00` portal, then walk back
@@ -2725,7 +2758,7 @@ function Show-TestPlan {
         Write-Host '        nothing and inventory FROZEN -> latch not cleared; tell me' -ForegroundColor Yellow
         Write-Host '        a message, no change -> the reset refused; chat says why'
         Write-Host ''
-        Write-Host '  TB. BEAUTY COUPON DIALOG - the white item name.' -ForegroundColor Magenta
+        Write-Host '  TB. BEAUTY COUPON DIALOG NAME - CONFIRMED readable. STRUCK.' -ForegroundColor Green
         Write-Host '      Frieren was white too, so it is the client: its own string'
         Write-Host '      0x0464 colours the name 0xffffffff. The hook now patches six'
         Write-Host '      bytes of it to black at load. Off switch: -NoBeautyTextPatch.'
@@ -2734,6 +2767,25 @@ function Show-TestPlan {
         Write-Host '        still white + hook.log "BEAUTYTEXT: patched" -> table was'
         Write-Host '                      decrypted before the hook; exe-file patch next'
         Write-Host '        still white + "refusing"/"not readable" -> paste the line'
+        Write-Host ''
+        Write-Host '  TO. THE UBEL OUTFIT - two fixed, one is data.' -ForegroundColor Magenta
+        Write-Host '      a) Clothes from the DECO tab: the SERVER had refused them.'
+        Write-Host '         Fixed. Drag each on again.'
+        Write-Host '           sits in the Deco equip window -> the move works'
+        Write-Host '           not drawn / gone after relog -> EXPECTED for now: the'
+        Write-Host '                      record cannot carry worn slots over 31 yet'
+        Write-Host '           refused again -> world.log names why; paste it'
+        Write-Host '      b) Weapon: CLIENT data. Covers list weapon TYPES they dress;'
+        Write-Host '         the staff lists 30 and 49, your suitcase is type 32.'
+        Write-Host '         Try it holding a one-handed SWORD (type 30).' -ForegroundColor Yellow
+        Write-Host '      c) Hair coupon: Confirm is 0x0165, now handled - hair applied,'
+        Write-Host '         coupon spent, map re-entered to redraw.'
+        Write-Host '           hair changes, coupon gone -> done'
+        Write-Host '  TH. FACE COUPON: no dialog, no preview. Images are fine; the'
+        Write-Host '      ID is the one difference (22039; classic faces end at 21825).'
+        Write-Host '      One chat line settles it: !face 22039' -ForegroundColor Yellow
+        Write-Host '        face draws in the field -> only the coupon UI refuses the id'
+        Write-Host '        does not draw -> the backport must renumber the faces'
         Write-Host ''
         Write-Host '  TF. THE FREE MARKET DOOR - can strand you if it is wrong.' -ForegroundColor Magenta
         Write-Host '      From HENESYS MARKET (10001040) walk into market00, then'

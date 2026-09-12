@@ -10141,3 +10141,61 @@ fn entering_the_shop_restores_the_bag_and_stamps_the_character_on_locker_rows() 
     assert_eq!(u32::from_le_bytes(rec[12..16].try_into().unwrap()), id, "dwCharacterID");
     assert_eq!(u32::from_le_bytes(rec[16..20].try_into().unwrap()), 5_681_548, "nItemID");
 }
+
+/// **A cash equip goes on from the Deco tab and comes off into it.** The owner, 2026-09-12:
+/// *"none of the outfit items work"* - the client sent `invType 6, slot 1 -> -105` and the
+/// server refused it as a bag-to-bag move. Worn slot 105 is the cash overall.
+#[test]
+fn a_cash_equip_moves_between_the_deco_tab_and_its_worn_slot() {
+    let (mut s, store, id) = gm_session();
+    let deco = store::InventoryType::Deco;
+    let slot = store.add_item(id, deco, &store::Item::equip(1054562), 1).unwrap()[0].slot;
+
+    let out = s.on_inventory_move(&inventory_move(net::inventory::INV_DECO, slot as i16, -105, -1));
+    assert_eq!(out.len(), 1);
+    assert!(!out[0].what.contains("REFUSING"), "{}", out[0].what);
+    assert!(out[0].what.contains("Deco bag slot") && out[0].what.contains("into slot 105"), "{}", out[0].what);
+    assert!(store.bag(id).unwrap().items_in(deco).next().is_none(), "the Deco tab slot is empty");
+    let worn = store.equipped_items(id).unwrap();
+    assert!(worn.iter().any(|e| e.slot == 105 && e.item_id == 1054562), "{worn:?}");
+
+    let out = s.on_inventory_move(&inventory_move(net::inventory::INV_DECO, -105, slot as i16, -1));
+    assert!(!out[0].what.contains("REFUSING"), "{}", out[0].what);
+    assert!(out[0].what.contains("Deco bag slot"), "{}", out[0].what);
+    assert!(store.equipped_items(id).unwrap().iter().all(|e| e.slot != 105));
+    let back: Vec<(u16, u32)> = store.bag(id).unwrap().items_in(deco).map(|i| (i.slot, i.item.item_id)).collect();
+    assert_eq!(back, vec![(slot, 1054562)]);
+}
+
+/// **The Beauty Coupon's Confirm applies the cosmetic, spends the coupon and re-enters the
+/// map**; a slot that does not hold the coupon changes nothing and is still answered.
+#[test]
+fn a_beauty_coupon_confirm_changes_the_hair_and_spends_the_coupon() {
+    let (mut s, store, id) = gm_session();
+    let use_tab = store::InventoryType::Use;
+    let slot = store.add_item(id, use_tab, &store::Item::bundle(2_543_143, 1), 1).unwrap()[0].slot;
+    let before = s.claimed_character().unwrap().hair;
+    assert_ne!(before, 42_600);
+
+    let mut body = slot.to_le_bytes().to_vec();
+    body.extend_from_slice(&2_543_143u32.to_le_bytes());
+    body.extend_from_slice(&[0, 0]);
+    let out = s.on_beauty_coupon_confirm(&body);
+    assert!(out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "re-entry redraws: {:?}", out.iter().map(|r| r.opcode).collect::<Vec<_>>());
+    assert_eq!(s.claimed_character().unwrap().hair, 42_600, "Übel Hair");
+    assert!(store.bag(id).unwrap().items_in(use_tab).all(|i| i.item.item_id != 2_543_143), "the coupon is spent");
+
+    // The control: the same confirm again - the slot is empty now - is refused with the
+    // unlock alone, and the hair stays.
+    let out = s.on_beauty_coupon_confirm(&body);
+    assert_eq!(out.len(), 1, "{out:?}");
+    assert_eq!(out[0].opcode, net::combat::STAT_CHANGED);
+    assert_eq!(s.claimed_character().unwrap().hair, 42_600);
+
+    // And a face coupon writes the face.
+    let fslot = store.add_item(id, use_tab, &store::Item::bundle(2_897_011, 1), 1).unwrap()[0].slot;
+    let mut body = fslot.to_le_bytes().to_vec();
+    body.extend_from_slice(&2_897_011u32.to_le_bytes());
+    s.on_beauty_coupon_confirm(&body);
+    assert_eq!(s.claimed_character().unwrap().face, 22_039, "Übel Face");
+}

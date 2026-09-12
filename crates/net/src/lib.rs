@@ -24,6 +24,7 @@ pub mod advertise;
 pub mod attack;
 pub mod classicshop;
 pub mod bag;
+pub mod beautycoupon;
 pub mod buff;
 pub mod cashitem;
 pub mod cashshop;

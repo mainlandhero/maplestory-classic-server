@@ -61,9 +61,16 @@ pub struct InventoryMove {
 }
 
 impl InventoryMove {
-    /// An unequip is a move **out of** a negative slot on the equip inventory.
+    /// An unequip is a move **out of** a negative slot on the Equip inventory - or on the
+    /// Deco inventory, whose worn slots are `-101` and below. The client names the tab it
+    /// is moving INTO in `inv_type`, and it is the tab the item lives in either way.
     pub fn is_unequip(&self) -> bool {
-        self.inv_type == INV_EQUIP && self.src < 0 && self.dst > 0
+        (self.inv_type == INV_EQUIP || self.inv_type == INV_DECO) && self.src < 0 && self.dst > 0
+    }
+
+    /// An equip is a move **into** a negative slot from a positive one, on either tab.
+    pub fn is_equip(&self) -> bool {
+        (self.inv_type == INV_EQUIP || self.inv_type == INV_DECO) && self.src > 0 && self.dst < 0
     }
 
     /// Which equipped slot this takes the item off, if it is an unequip.

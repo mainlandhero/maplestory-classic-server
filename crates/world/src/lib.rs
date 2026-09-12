@@ -42,6 +42,7 @@ pub mod fields;
 pub mod advbuffs;
 pub mod firstjob;
 pub mod consumables;
+pub mod cosmetics;
 pub mod damage;
 pub mod footholds;
 pub mod freemarket;

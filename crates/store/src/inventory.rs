@@ -1509,7 +1509,23 @@ impl Store {
         equip_slot: u8,
         dst: Option<u16>,
     ) -> Result<InvItem> {
-        let inv_type = InventoryType::Equip;
+        self.unequip_to_tab(character_id, equip_slot, InventoryType::Equip, dst)
+    }
+
+    /// [`Store::unequip_to_bag`] with the destination tab chosen: a cash equip comes off
+    /// into the **Deco** tab (worn slots 101 and up), an ordinary one into Equip.
+    ///
+    /// The owner, 2026-09-12: none of the Übel outfit would go on - the client sent the moves
+    /// from the Deco tab (`invType 6`, destination `-105`..) and the server refused them as
+    /// "a bag-to-bag move needs two positive slots", because both halves here were welded
+    /// to the Equip tab.
+    pub fn unequip_to_tab(
+        &self,
+        character_id: u32,
+        equip_slot: u8,
+        inv_type: InventoryType,
+        dst: Option<u16>,
+    ) -> Result<InvItem> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let bag = read_bag(&tx, character_id)?;
@@ -1569,7 +1585,19 @@ impl Store {
     /// [`Equipped::displaced`] is `None` when the worn slot was empty, which is the ordinary
     /// case and the only one that existed before.
     pub fn equip_from_bag(&self, character_id: u32, src: u16, equip_slot: u8) -> Result<Equipped> {
-        let inv_type = InventoryType::Equip;
+        self.equip_from_tab(character_id, InventoryType::Equip, src, equip_slot)
+    }
+
+    /// [`Store::equip_from_bag`] with the source tab chosen. The Deco tab's cash equips go
+    /// on through here, into worn slots 101 and up; a displaced item lands back in the same
+    /// tab and slot the incoming one left, exactly as for Equip.
+    pub fn equip_from_tab(
+        &self,
+        character_id: u32,
+        inv_type: InventoryType,
+        src: u16,
+        equip_slot: u8,
+    ) -> Result<Equipped> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let Some(item) = read_slot(&tx, character_id, inv_type, src)? else {
