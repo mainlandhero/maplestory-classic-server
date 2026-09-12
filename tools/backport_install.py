@@ -19,6 +19,7 @@ archive as the base. Every existing image is carried over byte for byte; ours ar
 | `Item/Cash/Cash_000.wz`, `Item/Consume/Consume_000.wz` | `merge`: an item image (`0522.img`) holds every item with that prefix, so only OUR nodes are taken from the modern image and laid onto the classic image of the same name (or an empty one) |
 | `Item/<Cash|Consume>/_Canvas/_Canvas_000.wz` | `merge`, the same keys |
 | `String/String_000.wz` | `strings`: `Eqp.img` (under `ClassicWorld/<Type>/<id>`), `Cash.img` and `Consume.img` (flat `<id>`) gain `name` and `desc` leaves |
+| `Effect/Effect_000.wz`, `Effect/_Canvas/_Canvas_000.wz` | `merge`: the classic client has no `ItemEff.img` at all, so a NEW one is made from the set items' worn-effect nodes (Himmel's Blessing, 1103918) and a new canvas `ItemEff.img` from the holders their outlinks name (1103930) |
 
 The modern client is opened read-only as the SOURCE of every copy; nothing there is
 written. The classic base is `client-patched/Data`, which is the copy this project exists
@@ -143,6 +144,45 @@ def main():
                     if t not in present:
                         fh.write("%d\tuol\t%d\n" % (t, anchor))
             add("Character/Weapon", "patch\t%s\t%s" % (image, tsv))
+
+    # 1c. Worn-item effects. The owner, 2026-09-12: "Himmel's cape should actually have an effect,
+    # but this effect currently does not appear in our version of the game."
+    #
+    # The cape's own image (Cape/01103918.img) is 1x1 frames - the garment IS its effect,
+    # and that lives in `Effect/ItemEff.img/<id>/effect`, a different archive. The classic
+    # client has the loader (`Effect/ItemEff.img/%d/%s` + `effect`, read through pointer
+    # slots by the avatar code and even the character-select slot filler - `tools/dataref.py
+    # 0x143a47080`), and its Effect_000.wz has NO ItemEff.img at all: 26 images, none of
+    # them that. Pure missing data, so: for every set item the modern ItemEff.img has a node
+    # for, merge that node onto a NEW classic ItemEff.img, and merge the canvas holders its
+    # outlinks name (`Effect/_Canvas/ItemEff.img/<holder>/...`; the Himmel frames sit under
+    # holder 1103930) onto a new `_Canvas/ItemEff.img`. The modern canvas image is 244 MB;
+    # the merge takes the one holder's subtree and nothing else (46 KB on disk).
+    eff_src = modern_part(source, "Effect", "ItemEff.img")
+    eff_tree = json.loads(subprocess.run([WZ_DUMP, "cat", eff_src, "ItemEff.img"], capture_output=True,
+                                         text=True, encoding="utf-8", errors="replace").stdout)
+    eff_keys, eff_holders = [], set()
+    for set_name, items in manifest["sets"].items():
+        for it in items:
+            node = eff_tree.get("%d" % it["id"])
+            if node is None:
+                continue
+            eff_keys.append("%d" % it["id"])
+            def holders(n):
+                if isinstance(n, dict):
+                    ol = n.get("_outlink")
+                    if isinstance(ol, str) and ol.startswith("Effect/_Canvas/ItemEff.img/"):
+                        eff_holders.add(ol.split("/")[3])
+                    for v in n.values():
+                        holders(v)
+            holders(node)
+            print("  effect   %-8s %8d  %s" % (set_name, it["id"], it.get("name", "")))
+    if eff_keys:
+        add("Effect", "merge\tItemEff.img\t%s\tItemEff.img\t%s" % (eff_src, ",".join(eff_keys)))
+        if eff_holders:
+            eff_canvas_src = modern_part(source, "Effect/_Canvas", "ItemEff.img")
+            add("Effect/_Canvas", "merge\tItemEff.img\t%s\tItemEff.img\t%s" % (
+                eff_canvas_src, ",".join(sorted(eff_holders))))
 
     # 2. Canvas images: every outlink target, copied whole for Character trees; merged by
     #    key for the Item trees (an Item canvas image holds every item of that prefix).

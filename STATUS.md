@@ -150,6 +150,20 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-12, night: Himmel's cape has its effect - installed, unverified on screen.** The owner:
+*"Himmel's cape should actually have an effect, but this effect currently does not appear in our
+version of the game."* The cape (Himmel's Blessing, 1103918) is 1x1 frames in its own image - the
+garment IS its effect - and worn-item effects live in `Effect/ItemEff.img/<id>/effect`. The classic
+`Effect_000.wz` has **no `ItemEff.img` at all** (26 images), while the client's loader for it is
+present: the format `Effect/ItemEff.img/%d/%s` + `effect` is read through a `.data` pointer slot
+(`tools/dataref.py 0x143a47080`) by five functions, among them the avatar code and the
+character-select slot filler `FUN_141177e80` - so the client dresses effects from the worn list on
+its own, no packet involved. Pure missing data. `tools/backport_install.py` step 1c now merges every
+set item's ItemEff node onto a new `ItemEff.img` (Himmel's is one 81x143 frame, `stand1`/`stand2`
+only, `z 10`, `action 1`) and the canvas holders its outlinks name (1103930, out of a 244 MB modern
+canvas image; 46 KB lands) onto a new `_Canvas/ItemEff.img`. Both verify. Plan step TO(h).
+`research/himmel-cape-effect-2026-09-12.md`.
+
 **2026-09-12, night: cash equips survive a relog - unverified on screen.** The owner: *"I last had
 Cobalt wear the entire Ubel outfit, but upon a fresh login, I do not see those cash items
 equipped anymore."* The database had them the whole time (Cobalt's `equipment` rows: 5, 6, 7, 11

@@ -1002,6 +1002,23 @@
                          being drawn too; say which item is on top
               client dies at login -> stop; paste client-exit.log. The record has no resync
                          point, so a wrong block here is fatal, not cosmetic
+         h) NEW 2026-09-12 - HIMMEL'S CAPE HAS ITS EFFECT. "Himmel's cape should actually
+            have an effect, but this effect currently does not appear." The cape's own image
+            is 1x1 frames - the garment IS its effect - and worn-item effects live in
+            Effect/ItemEff.img/<id>/effect, which the classic Effect archive did not contain
+            AT ALL (26 images, no ItemEff.img) while the client's loader for it is present
+            [L: the format string is read by the avatar code and the select-screen filler].
+            Installed: a new ItemEff.img holding 1103918's node (one 81x143 frame, stand1 and
+            stand2 only, drawn at z 10 - that is what Nexon ships) and its canvas. Put
+            Himmel's Blessing (cape, 1103918) on:
+              a glow/wing behind the character while standing -> done; say whether it
+                         stays while walking (Nexon's node has no walk frames; if it
+                         vanishes on walk, that is the data, not us)
+              nothing, cape slot filled -> the classic loader wants a different node
+                         shape (default/ instead of stand1/); say so, I re-key it
+              nothing, and the SELECT screen also shows no glow -> same reading
+              client dies on equip or on map entry -> STOP, paste client-exit.log;
+                         the effect node is the only new thing in Effect.wz
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -2978,6 +2995,17 @@ function Show-TestPlan {
         Write-Host '           base coat shows THROUGH the overall -> map 2 is drawn too'
         Write-Host '           client dies at login -> STOP, paste client-exit.log; the' -ForegroundColor Yellow
         Write-Host '             record has no resync point, a wrong block is fatal' -ForegroundColor Yellow
+        Write-Host '      h) NEW - HIMMEL''S CAPE EFFECT: the cape image is 1x1 frames; the' -ForegroundColor Yellow
+        Write-Host '         effect lives in Effect/ItemEff.img, which the classic archive'
+        Write-Host '         did not contain at all. Installed: ItemEff.img with 1103918'
+        Write-Host '         (one 81x143 frame, stand1/stand2 only, z 10) + its canvas.'
+        Write-Host '         Put Himmel''s Blessing (cape) on:'
+        Write-Host '           glow behind the character while standing -> done; say'
+        Write-Host '             whether it stays while walking (Nexon ships no walk frames)'
+        Write-Host '           nothing, slot filled -> loader wants default/ not stand1/;'
+        Write-Host '             say so, I re-key it'
+        Write-Host '           client dies on equip / map entry -> STOP, paste' -ForegroundColor Yellow
+        Write-Host '             client-exit.log; the node is the only new thing in Effect.wz' -ForegroundColor Yellow
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'
