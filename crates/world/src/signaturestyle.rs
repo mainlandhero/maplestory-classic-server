@@ -43,20 +43,104 @@ pub const ADMINISTRATOR_NPC: u32 = 9_010_000;
 /// one `0x00F3` reply and each answers only its own path.
 pub const RECEIPT_PATH: &str = "package.receipt";
 
+/// The line break the client's dialog text grammar uses: the **two literal characters**
+/// backslash and `n`, not a real newline. `scrollnpc::LINE_BREAK` records how that was
+/// measured - a real CR LF drew as nothing, and the failure read as bad wording.
+pub const LINE_BREAK: &str = r"\n";
+
 /// The receipt's text: the heading, then one line per item with its icon and its name,
 /// in the order the items were handed out. `#i<id>#` is the client's inline item icon
 /// and `#t<id>#` its item name (from String.wz, which the backport fills for these ids);
-/// `\r\n` is the line break the Say dialog draws.
+/// [`LINE_BREAK`] between lines.
 pub fn receipt_text(given: &[u32]) -> String {
     let mut text = String::from("You have received the following items:");
     for id in given {
-        text.push_str("\r\n#i");
+        text.push_str(LINE_BREAK);
+        text.push_str("#i");
         text.push_str(&id.to_string());
         text.push_str("# #t");
         text.push_str(&id.to_string());
         text.push('#');
     }
     text
+}
+
+/// The Frieren Outfit Set Coupon the Cash Shop sells and the Collection hands out. Opening it
+/// does not hand anything out directly: it opens a three-way menu, because Nexon ships this
+/// set in three versions and the classic client has no Selector Coupon UI to pick with.
+pub const FRIEREN_COUPON: u32 = 5_681_543;
+
+/// The three Frieren versions, in menu order, read off Nexon's sale page for the Signature
+/// Style Collection (`nexon.com/maplestory/news/sale/44291`, 2026-09-12). The owner: *"opening the
+/// one purchased in the Cash Shop should open a dialogue allowing the player to choose which
+/// version ... the normal one, the Ringlets, or the Sleep version"* and *"if the website says
+/// 'choose one', we'll give the player both versions."* The page's "Clothes Selector Coupon,
+/// which contains your choice of: Clothes / Winter Clothes" therefore becomes both.
+///
+/// | version | hair | face | equips per the page (selector -> both) |
+/// |---|---|---|---|
+/// | Frieren Outfit Set | 2543137 | 2897007 | Clothes 1054555, Winter Clothes 1054556, Shoes 1074234, Earrings 1032360, Staff 1703722 |
+/// | Frieren Outfit Set (Ringlets) | 2543138 | 2897007 | the same five |
+/// | Frieren Outfit Set (Sleep) | 2543139 | 2897007 | Sleep Clothes 1054557, Earrings 1032360 |
+///
+/// The Ringlets and Sleep coupons (`5681544`, `5681545`) exist as items in the backport; a
+/// player holding one directly gets that version without a menu (`set_for_coupon`).
+pub const FRIEREN_VERSIONS: [OutfitSet; 3] = [
+    OutfitSet {
+        coupon: 5_681_543,
+        name: "Frieren",
+        hair_coupons: &[2_543_137],
+        face_coupon: 2_897_007,
+        equips: &[1_054_555, 1_054_556, 1_074_234, 1_032_360, 1_703_722],
+    },
+    OutfitSet {
+        coupon: 5_681_544,
+        name: "Frieren (Ringlets)",
+        hair_coupons: &[2_543_138],
+        face_coupon: 2_897_007,
+        equips: &[1_054_555, 1_054_556, 1_074_234, 1_032_360, 1_703_722],
+    },
+    OutfitSet {
+        coupon: 5_681_545,
+        name: "Frieren (Sleep)",
+        hair_coupons: &[2_543_139],
+        face_coupon: 2_897_007,
+        equips: &[1_054_557, 1_032_360],
+    },
+];
+
+/// The chooser's conversation path carries the Cash slot the coupon sits in, so the answer
+/// can check the coupon is still there before anything is consumed: `package.frieren:<slot>`.
+pub const FRIEREN_CHOOSER_PATH_PREFIX: &str = "package.frieren:";
+
+pub fn frieren_chooser_path(slot: u16) -> String {
+    format!("{FRIEREN_CHOOSER_PATH_PREFIX}{slot}")
+}
+
+pub fn slot_from_frieren_chooser_path(path: &str) -> Option<u16> {
+    path.strip_prefix(FRIEREN_CHOOSER_PATH_PREFIX)?.parse().ok()
+}
+
+/// The chooser's text: a question, then one `#L<n>#` row per version with that version's
+/// hair-coupon icon (the hair is the one thing that differs between all three) and its name,
+/// in the client's menu grammar - the same row shape the scroll NPC's menus use.
+pub fn frieren_menu_text() -> String {
+    let rows: Vec<String> = FRIEREN_VERSIONS
+        .iter()
+        .enumerate()
+        .map(|(i, v)| format!("#L{i}##i{}# #b{} Outfit Set#k", v.hair_coupons[0], version_label(v)))
+        .collect();
+    // Question, a blank line, then the rows - the scroll NPC's measured menu grammar:
+    // `{lead}\n\n{row}#l\n{row}#l...` with every `\n` the literal two characters.
+    format!(
+        "Which version of the Frieren Outfit Set would you like?{LINE_BREAK}{LINE_BREAK}{}#l",
+        rows.join(&format!("#l{LINE_BREAK}"))
+    )
+}
+
+/// "Frieren", "Frieren (Ringlets)", "Frieren (Sleep)" -> the page's wording for the set name.
+fn version_label(v: &OutfitSet) -> &'static str {
+    v.name
 }
 
 /// One set: the coupon that opens it and what comes out.
@@ -144,7 +228,10 @@ pub const SETS: [OutfitSet; 8] = [
 
 /// The set a coupon opens, if it is one.
 pub fn set_for_coupon(item_id: u32) -> Option<&'static OutfitSet> {
-    SETS.iter().find(|s| s.coupon == item_id)
+    // The box's eight first, then the two Frieren variant coupons a player might hold
+    // directly. `FRIEREN_COUPON` itself resolves to the box's entry here but never reaches
+    // this: `on_use_cash_item` sends it to the chooser first.
+    SETS.iter().chain(FRIEREN_VERSIONS[1..].iter()).find(|s| s.coupon == item_id)
 }
 
 /// Everything one set hands out, as `(item id, inventory tab)`, in the order it is given.
@@ -203,7 +290,21 @@ mod tests {
             }
         }
         assert_eq!(set_for_coupon(COLLECTION), None, "the box is not a set");
-        assert_eq!(set_for_coupon(5_681_544), None, "the Ringlets coupon is not sold or opened here");
+        // The two Frieren variant coupons resolve to their versions (a player holding one
+        // directly opens it without the menu), and every version hands out only ids from
+        // the box's own Frieren listing - a version cannot invent an item.
+        assert_eq!(set_for_coupon(5_681_544).map(|s| s.name), Some("Frieren (Ringlets)"));
+        assert_eq!(set_for_coupon(5_681_545).map(|s| s.name), Some("Frieren (Sleep)"));
+        let union: std::collections::HashSet<u32> = set_contents(&SETS[0]).into_iter().map(|(id, _)| id).collect();
+        for v in &FRIEREN_VERSIONS {
+            for (id, _) in set_contents(v) {
+                assert!(union.contains(&id), "{id} in version {} is not in the Frieren listing", v.name);
+            }
+            assert_eq!(v.hair_coupons.len(), 1, "one hair per version");
+        }
+        let hairs: std::collections::HashSet<u32> = FRIEREN_VERSIONS.iter().map(|v| v.hair_coupons[0]).collect();
+        assert_eq!(hairs.len(), 3, "three distinct hairs");
+        assert_eq!(FRIEREN_VERSIONS[0].coupon, FRIEREN_COUPON);
     }
 
     /// **Every id here has a name in the hybrid client** - `gm-handbook/items.txt`, generated

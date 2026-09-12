@@ -2052,6 +2052,12 @@ impl Session {
         if let Some(replies) = self.daily_perk_menu_answer(body) {
             return replies;
         }
+        // A fifth disjoint prefix, `package.frieren:` - the Frieren version chooser
+        // (session/cashitem.rs). `the_receipt_path_cannot_be_confused_with_any_other_menu`
+        // asserts the disjointness for it and for the receipt's `package.receipt`.
+        if let Some(replies) = self.frieren_menu_answer(body) {
+            return replies;
+        }
         let Some(reply) = net::script::parse_script_reply(body) else { return Vec::new() };
         let Some(convo) = self.conversation.clone() else { return Vec::new() };
 

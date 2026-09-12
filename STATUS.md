@@ -156,8 +156,14 @@ items ... one per line along with the appropriate item icon."* `hand_out` now en
 NPC 9010000 (`signaturestyle::receipt_text`: heading, then `#i<id># #t<id>#` per item actually
 given, CR LF between lines), parked under `package.receipt` so OK closes it silently and no other
 `0x00F3` feature claims it (tests in both directions). The NPC's String.wz name is patched to
-"MapleStory Administrator" by `backport_install.py` (installed). Unseen on screen; plan step TO(d)
-says what each outcome means.
+"MapleStory Administrator" by `backport_install.py` (installed). **And Frieren's coupon asks which
+version first**: Nexon ships the set as normal / Ringlets / Sleep (sale page 44291, read 2026-09-12),
+so opening `5681543` opens a three-row menu from the Administrator (`FRIEREN_VERSIONS`, path
+`package.frieren:<slot>`); the choice spends the coupon, End Chat keeps it, and the page's
+"your choice of" Clothes / Winter Clothes becomes both (the owner's rule). The variant coupons `5681544`/
+`5681545`, held directly, open their version without a menu. The dialog line break is the LITERAL
+two characters backslash-n (`scrollnpc::LINE_BREAK`'s lesson; a real CR LF draws as nothing). Unseen
+on screen; plan step TO(d)/(e) say what each outcome means.
 
 **2026-09-12, afternoon: every inbound opcode has a disposition** (the owner: *"handle all of the
 opcodes"*). Enumerating the archive, deduplicated: everything still logging `UNKNOWN ... not
