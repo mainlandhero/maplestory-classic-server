@@ -150,6 +150,15 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-12, night: opening a package shows a receipt.** The owner: *"open a NPC dialogue from
+'MapleStory Administrator' along with 'You have received the following items', then list out the
+items ... one per line along with the appropriate item icon."* `hand_out` now ends with a Say from
+NPC 9010000 (`signaturestyle::receipt_text`: heading, then `#i<id># #t<id>#` per item actually
+given, CR LF between lines), parked under `package.receipt` so OK closes it silently and no other
+`0x00F3` feature claims it (tests in both directions). The NPC's String.wz name is patched to
+"MapleStory Administrator" by `backport_install.py` (installed). Unseen on screen; plan step TO(d)
+says what each outcome means.
+
 **2026-09-12, afternoon: every inbound opcode has a disposition** (the owner: *"handle all of the
 opcodes"*). Enumerating the archive, deduplicated: everything still logging `UNKNOWN ... not
 answered yet` is a one-way client report - `0x013D` (30 s census, **must not be answered**),

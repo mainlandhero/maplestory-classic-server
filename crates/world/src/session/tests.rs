@@ -10358,3 +10358,62 @@ fn reports_are_named_and_the_undecoded_ones_stay_whole() {
     assert!(!net::names::is_client_report(net::beautycoupon::CLIENT_BEAUTY_COUPON_CONFIRM));
     assert!(net::dropmoney::latches_the_exclusive_request(net::beautycoupon::CLIENT_BEAUTY_COUPON_CONFIRM));
 }
+
+// ---------------------------------------------------------------------------------------
+// The package receipt: the Administrator's "You have received the following items" box.
+
+/// **Opening a set coupon ends with the receipt**: a Say from NPC 9010000 whose text carries
+/// one `#i<id># #t<id>#` line per item actually handed out, the OK on it is answered the way
+/// every last box is (silently, conversation cleared), and nothing else on that reply path
+/// claims the receipt's conversation. The owner, 2026-09-12: *"open a NPC dialogue from
+/// 'MapleStory Administrator' ... list out the items ... one per line along with the
+/// appropriate item icon."*
+#[test]
+fn opening_a_package_ends_with_the_administrators_receipt_and_ok_closes_it() {
+    let (mut s, store, id) = gm_session();
+    let frieren = crate::signaturestyle::set_for_coupon(5_681_543).unwrap();
+    let slot = store
+        .add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_681_543, 1), 1)
+        .unwrap()[0]
+        .slot;
+    let out = s.on_use_cash_item(&use_cash_item_body(slot, 5_681_543));
+
+    let receipt = out.last().expect("a reply");
+    assert_eq!(receipt.opcode, net::script::SCRIPT_MESSAGE, "{}", receipt.what);
+    assert!(receipt.what.contains("receipt"), "{}", receipt.what);
+    let text = String::from_utf8_lossy(&receipt.body).into_owned();
+    assert!(text.contains("You have received the following items:"), "{text:?}");
+    let given: Vec<u32> = frieren.hair_coupons.iter().chain([&frieren.face_coupon]).chain(frieren.equips).copied().collect();
+    for item in &given {
+        assert!(text.contains(&format!("\r\n#i{item}# #t{item}#")), "no icon+name line for {item}: {text:?}");
+    }
+    assert_eq!(text.matches("\r\n#i").count(), given.len(), "one line per item, no more");
+    // The speaker is the Administrator, and the box is a plain OK (no Next, no Yes/No).
+    assert!(receipt.body.windows(4).any(|w| w == crate::signaturestyle::ADMINISTRATOR_NPC.to_le_bytes()));
+    let convo = s.conversation.as_ref().expect("the receipt is parked");
+    assert_eq!(convo.path, crate::signaturestyle::RECEIPT_PATH);
+    assert!(!convo.awaiting_yes_no && !convo.sent_with_next);
+
+    // OK closes it: nothing sent (the established rule for the last box), conversation gone.
+    let closed = s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_YES));
+    assert!(closed.is_empty(), "{:?}", closed.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(s.conversation.is_none());
+
+}
+
+/// The receipt's path is claimed by none of the four other features that answer `0x00F3`
+/// by path, in every direction - the same guarantee each of them already carries.
+#[test]
+fn the_receipt_path_cannot_be_confused_with_any_other_menu() {
+    let p = crate::signaturestyle::RECEIPT_PATH;
+    assert!(!crate::scrollnpc::is_scroll_path(p));
+    assert!(!crate::taxi::is_taxi_path(p));
+    assert!(!crate::secondjob::is_menu_path(p));
+    assert!(!crate::dailyperks::is_menu_path(p));
+    assert!(crate::jobguide::offer_index(p).is_none());
+    assert_ne!(p, crate::shanks::ASK_PATH);
+    // And the text is exactly the shape the client draws: heading, then icon + name per line.
+    let t = crate::signaturestyle::receipt_text(&[1_703_726, 2_543_137]);
+    assert_eq!(t, "You have received the following items:\r\n#i1703726# #t1703726#\r\n#i2543137# #t2543137#");
+    assert_eq!(crate::signaturestyle::receipt_text(&[]), "You have received the following items:");
+}

@@ -326,7 +326,40 @@ impl Session {
             body: net::notice::chat_notice(&format!("{label}: you received {contents} ({} items).", given.len())),
             what: format!("ChatNotice: {label} opened, {} item(s) given", given.len()),
         });
+        // **The receipt.** The owner, 2026-09-12: *"open a NPC dialogue from 'MapleStory
+        // Administrator' along with the dialogue of 'You have received the following items',
+        // then list out the items ... one per line along with the appropriate item icon."*
+        // A plain Say (no Next, no Yes/No) from the Administrator, listing exactly what was
+        // handed out - `given`, not `wares`, so a store fault part-way is not papered over.
+        // The conversation is parked under its own path so the OK that closes it is answered
+        // the way every last box is (silently, conversation cleared) and cannot be mistaken
+        // for the taxi's, the instructor's, the scroll NPC's or the perks' menus.
+        if !given.is_empty() {
+            out.push(self.package_receipt(&given));
+        }
         out
+    }
+
+    /// The Administrator's "You have received the following items" box for `given`.
+    fn package_receipt(&mut self, given: &[u32]) -> Reply {
+        let text = crate::signaturestyle::receipt_text(given);
+        self.conversation = Some(super::Conversation {
+            npc_template: crate::signaturestyle::ADMINISTRATOR_NPC,
+            quest_id: None,
+            path: crate::signaturestyle::RECEIPT_PATH.to_string(),
+            sent: 0,
+            awaiting_yes_no: false,
+            sent_with_next: false,
+        });
+        Reply {
+            opcode: net::script::SCRIPT_MESSAGE,
+            body: net::script::npc_say(crate::signaturestyle::ADMINISTRATOR_NPC, &text, false, false),
+            what: format!(
+                "ScriptMessage Say from NPC template {} (the Administrator): the package receipt, {} item line(s) with icons",
+                crate::signaturestyle::ADMINISTRATOR_NPC,
+                given.len()
+            ),
+        }
     }
 
     /// The AP or SP reset scroll. `ap` picks which.
