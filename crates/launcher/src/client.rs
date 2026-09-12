@@ -68,12 +68,14 @@ pub const HOOK_LOG: &str = "maplecw-hook.log";
 /// blocks the per-frame tick that enables the Login button. `142ef3e44` is
 /// `__report_gsfailure`, kept so a silent 37 s death stays visible.
 ///
-/// The other three are plan step TL, `research/charselect-avatar-fade-race.md`: the
-/// character-select UI object's constructor (`141177490`), the list decoder's refresh of it
-/// (`141177e40` - its `rcx` IS the object, so `rcx=0x0` means the list arrived before it
-/// existed) and avatar placement (`141179970`), which the client skips while that object is
-/// null. Six slots, all in use.
-pub const DEFAULT_PROBE: &str = "watch@1415db360:ret,141b2a280:rdx=0,142ef3e44:hits=8,141177490:hits=4,141177e40:hits=8,141179970:hits=12";
+/// The other three are plan step TL, `research/charselect-avatar-fade-race.md` §7. The 01:54
+/// launch measured the blank screen: the select-UI object IS built and avatar placement DOES
+/// run - the slots are placed EMPTY because the per-character fill never runs. So these watch
+/// the fill chain: the mode-5 `0x0010` handler (`141b32860`, the one that fills), its slot
+/// refresh (`141177e40`), the select UI's vtable build (`141177790`, the other fill route),
+/// and the per-slot fill itself (`141177e80`, present on any login whose avatars draw). Six
+/// slots, all in use.
+pub const DEFAULT_PROBE: &str = "watch@1415db360:ret,141b2a280:rdx=0,141b32860:hits=4,141177e40:hits=6,141177790:hits=6,141177e80:hits=16";
 
 /// The size classes the shipped guard page quarantines, spelled the way
 /// `grap_stub::guardpage::parse_classes` reads them: `+`-joined, **never** comma-joined,

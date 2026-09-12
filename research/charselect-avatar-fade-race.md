@@ -1,4 +1,12 @@
-# The blank char-select avatars are a fade-deadline race, not a login-packet race — 2026-09-12
+# The blank char-select avatars — MEASURED 2026-09-12: the slots are placed EMPTY
+
+> **UPDATE 2026-09-12, instrumented run (01:54).** The null-gate hypothesis below (§1) is
+> **refuted by the probe** and kept only for the record. The select-UI object *is* built and
+> avatar placement *does* run; the slots are placed **empty** because the per-character fill
+> never runs. The measurement and the real mechanism are in §6, which supersedes §1–§5.
+> The probe is re-aimed accordingly (§7).
+
+# (SUPERSEDED) The blank char-select avatars as a fade-deadline race — 2026-09-12
 
 The owner: *"Sometimes when the login happens too fast through transitions, the characters on
 character select do not render at all... it happens more for clients that are further away."*
@@ -138,12 +146,86 @@ down before the launch:
 The owner cannot force the blank case; the probe stays the default across the next few logins,
 and a good login still pins the normal ordering.
 
-**The 01:49 launch on 2026-09-12 reproduced the blank screen and measured nothing.** Its hook
-log armed the four OLD watches: only `tools/test-server.ps1`'s default had been changed, and
-the client's probe comes from `maplecw-launcher`'s compiled `DEFAULT_PROBE`
-(`crates/launcher/src/client.rs`), which overwrites `maplecw-hook.probe` on every launch -
-the script's default reaches the client only as a `-PinPatches` pin. Both defaults are now the
-string above. Before reading any run against this section, confirm the hook log says
-`probe: watching 0x141177490`; without that line the run is uninstrumented, not "zero hits".
-The one thing that launch does say: list at +401 ms, `0x007A` at +673 ms, re-send at
-+674 ms, blank - the same shape as the last blank run.
+**The 01:49 launch on 2026-09-12 reproduced the blank screen and measured nothing** (the old
+watches were armed; the launcher's compiled `DEFAULT_PROBE` is the copy that reaches the
+client, and only the script's had been changed). The 01:54 launch, correctly instrumented,
+is §6.
+
+---
+
+## 6. MEASURED (2026-09-12, 01:54) — the object is built, placement runs, the slots are empty
+
+All six watches armed (`probe: watching 0x141177490` … `0x141179970`). On a blank-avatar
+login the hook log shows:
+
+```text
+01:54:09.546  141177490 ENTERED  called-from=141b28059   <- the select-UI object IS constructed
+01:54:09.638  141179970 ENTERED  called-from=141b3f3f4  rdx=0   <- placement runs (during 0x0032)
+01:54:10.045  141179970 ENTERED  called-from=141b3f3f4  rdx=0   <- again (during 0x0010 #1)
+01:54:10.300  141179970 ENTERED  called-from=141b3f3f4  rdx=0   <- again (during 0x0010 #2, resend)
+01:54:12.689  141179970 ENTERED  called-from=141b3e0ec  rdx=1   <- screen-build repaint
+              141177e40           NEVER ENTERED
+```
+
+login.log (same clock +4 h): world list 09.516, `0x0010` #1 at 09.917, `0x0010` #2 at 10.246.
+The hook patched the client's mode 5→2 at **10.029 — between the two `0x0010`s**.
+
+So §1's gate is innocent: **the object is non-null (its ctor ran at 09.546) and placement is
+entered four times.** The avatars are blank because the **per-character fill never runs** —
+`141177e40` has no line. `141179970` places the slot frames and select effects
+(`character%d`, `selectEffect0/1`); the per-slot *character* object at `slot+0x10` is filled
+by `FUN_141177e80`, and its loop **skips any slot whose `+0x10` is null** (`141179b2a
+cmp qword [rdi+0x10],0; je next`). Nothing wrote those pointers, so every slot is skipped.
+
+`FUN_141177e80` is reached only from `FUN_141177e40` (the login handler's slot refresh) or
+`FUN_141177790` (the select UI's vtable+0x20 build method). **Neither ran** — the placement
+lines come from `141b3f3f4`/`141b3e0ec` (the fade driver and screen build), never from
+`1411778cb` (inside `141177790`).
+
+### Why the fill is skipped — the leading hypothesis, from the call graph
+
+The `0x0010` handler is `FUN_141b307b0`, which forks on the session mode at its head
+(`cmp eax,5; jne <mode-2 body>`):
+
+* **mode 5** → `FUN_141b32860`, which decodes the list (`14108bdf0`) **and** refreshes the
+  select slots (`141177e40` at `141b33e9c`) — avatars fill.
+* **mode 2** → the in-line body, which decodes the list (`14108bdf0` at `141b3101c`) and
+  transitions, but **never calls `141177e40`, `141177e80`, `141177790`, `141b27da0` or
+  `141b3f290`.** It fills nothing. (Confirmed: those are the only fill-chain calls in either
+  function; grep of `FUN_141b307b0`'s listing finds only the `14108bdf0` call.)
+
+The hook patches mode 5→2 after the world list, so **whether `0x0010` is handled in mode 5
+(fills) or mode 2 (does not) depends on whether the client dispatches the list before or
+after the patch** — which varies with timing and latency. This launch patched the mode
+between the two `0x0010`s, and the fill never ran. **This is `[I]`** — it explains every
+observation (intermittent, worse on slow/distant clients, drew in some eras) but the good
+case has not been captured, and it does not yet explain how mode-2 *ever* draws. §7 settles
+both with one launch.
+
+The fade-deadline machinery in §2–§4 is real and correctly read, but it builds and places
+the select UI; it does **not** fill per-character data, so it was never the whole story.
+
+## 7. The re-aimed probe — catches the fill on a good run, its absence on a blank one
+
+```
+watch@1415db360:ret,141b2a280:rdx=0,141b32860:hits=4,141177e40:hits=6,141177790:hits=6,141177e80:hits=16
+```
+
+| watch | what its line says |
+|---|---|
+| `141b32860` | the **mode-5** `0x0010` handler ran (the one that fills). Absent = the list was handled in mode 2 |
+| `141177e40` | the mode-5 **slot refresh** ran |
+| `141177790` | the select UI's **vtable build** ran (the other route to the fill) |
+| `141177e80` | the **per-slot fill** itself — present on any login whose avatars draw |
+
+Readings, before the launch:
+
+* **avatars draw**, `141177e80` present → the fill ran; `141b32860`+`141177e40` present means
+  it filled through the mode-5 handler (so blank ⟺ mode-2, and the fix is to keep the list in
+  mode 5 or make mode-2 fill); `141177790` present instead means a vtable route fills and the
+  mode is not the discriminator.
+* **avatars blank**, `141177e80` absent → confirms §6: the slots are placed empty. Compare
+  `141b32860` present/absent between a good and a blank login to confirm the mode race.
+
+`141177490` (ctor) and `141179970` (placement) are dropped — §6 established they run on every
+login and do not discriminate.

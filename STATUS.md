@@ -150,18 +150,21 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
-**2026-09-10, night: the blank select screen is the 400 ms pause being too short since
-09-08, and the client's own report says so.** The owner: *"Sometimes when the login happens too fast
-through transitions, the characters on character select do not render at all... it happens
-more for clients that are further away."* `0x007A` is the client's "all four background tasks
-done" report. Across every archived login it arrived ~0.35 s after the login request before the
-pause existed (avatars blank), 5-46 ms behind the list during the pause era (avatars drew), and
-200-400 ms **after** the list since 2026-09-08 - the race is back, and a slower client loses it
-more. Waiting for the report would deadlock (one task ends on the list), so the list goes out at
-400 ms as before and, when the report then lands more than 100 ms after it, the list is sent a
-second time. **[I]**: a second `0x0010` inside the select stage is unmeasured; `--no-list-resend`
-is the kill switch and step TL says what each outcome means. The four durations are now parsed
-into `login.log`. `research/select-screen-race-2026-09-10.md`.
+**2026-09-12: the blank select screen is MEASURED - the slots are placed EMPTY, and both
+earlier theories are dead.** The 0x007A/400 ms-pause theory (2026-09-10) and the null-gate
+theory (2026-09-12 morning) are both refuted. An instrumented blank login (01:54) shows the
+select-UI object IS constructed and avatar placement (`141179970`) DOES run four times - the
+avatars are blank because the **per-character fill never runs** (`141177e40` has no line, and
+the placement loop skips every slot whose character pointer at `+0x10` is null). The fill
+(`141177e80`) is reached only from the **mode-5** `0x0010` handler (`141b32860` -> `141177e40`)
+or the UI's vtable build (`141177790`); the client is patched **mode 5->2**, and the mode-2
+handler `FUN_141b307b0` decodes the list but fills nothing. **[I]** leading theory: a blank
+screen means the list was dispatched *after* the mode patch (so mode 2 handled it); the mode
+patch landed between the two `0x0010`s on the measured run. The probe is re-aimed to catch the
+fill on a good login and its absence on a blank one (`research/charselect-avatar-fade-race.md`
+sec 6-7, plan step TL). No server change yet. The `--no-list-resend` kill switch and the list
+re-send remain in place but are not the mechanism. `research/select-screen-race-2026-09-10.md`
+is superseded.
 
 **2026-09-10, night: the locker-to-bag move is built, and the Cash Inventory is listed at
 entry.** The owner: *"Coupon when bought goes into the Cash Inventory, not the storage. The player
