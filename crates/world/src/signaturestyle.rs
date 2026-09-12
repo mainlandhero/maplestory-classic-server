@@ -27,7 +27,13 @@
 //! gives everything rather than one at random.
 
 /// The box. Cash item, sold in the Special tab.
-pub const COLLECTION: u32 = 5_222_221;
+/// **Not Nexon's `5222221`.** The classic client opens a Cash item on double-click by its
+/// id family; `522` is not one it opens (the owner, 2026-09-12: double-clicking the box sent no
+/// packet at all) while `568` - its native 5-slot coupons, and the eight set coupons - is,
+/// measured on screen. So `tools/backport_install.py` installs the box's node, string and
+/// Cash Shop row under this id (`BOX_ID` there; the two must agree, and the commodity test
+/// reads the regenerated table). The icon canvas stays under the modern id's path.
+pub const COLLECTION: u32 = 5_681_599;
 
 /// The NPC whose face fronts the receipt dialog a package opens with: the classic client's
 /// `9010000`, which its String.wz names "Maple Administrator" and the backport renames

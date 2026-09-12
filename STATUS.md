@@ -150,6 +150,22 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-12, later: the Collection box now wears id 5681599.** The owner: *"Double clicking the
+Signature Style Collection box does not grant all 8 character costume coupons."* `world.log` shows
+NO packet for the double-click - the client did not treat it as a use. It opens a Cash item on
+double-click by id FAMILY: Nexon's box is `5222221` (family 522, of which this client has no
+items) and sent nothing; the set coupons are `5681xxx` (family 568, the client's own 5-slot
+coupons) and send `0x0114` every time, measured on screen [the family reading is I; the pair of
+controls is L]. No archived run had ever recorded the box opening. `backport_install.py` now
+installs the box's node under `0568.img/05681599` (a `k=k2` rename form on `wz-dump build`'s
+merge), its string and Cash Shop row under `5681599`, `signaturestyle::COLLECTION` matches, and
+`store::inventory::rename_item_ids` rewrites `5222221 -> 5681599` in every item table on every
+open (the live database gets it on restart; a test derives the table list from the schema).
+The installer now builds every archive from its pristine `.bak` (a rebuild is a function of the
+original and the script; the previous way carried stale nodes forward) - and its first version
+installed over the `.bak` files by mistake; all 24 originals were restored from `.bak.bak`,
+sizes checked. Unseen on screen; plan step TO(f).
+
 **2026-09-12, night: opening a package shows a receipt.** The owner: *"open a NPC dialogue from
 'MapleStory Administrator' along with 'You have received the following items', then list out the
 items ... one per line along with the appropriate item icon."* `hand_out` now ends with a Say from
