@@ -356,7 +356,9 @@ mod tests {
         assert_eq!(t.len(), 168, "159 classic sale rows + 9 backported Special-tab rows");
         assert_eq!(t.problems, 0, "every row parses");
         let special = t.get(120_000_000).expect("the Signature Style Collection is on sale");
-        assert_eq!((special.item_id, special.price, special.on_sale), (5_222_221, 8_000, true));
+        // The box wears 5681599 in the classic client (family 568 opens on double-click;
+        // 522 does not) - crate::signaturestyle::COLLECTION, and backport_install.py's BOX_ID.
+        assert_eq!((special.item_id, special.price, special.on_sale), (crate::signaturestyle::COLLECTION, 8_000, true));
 
         // The price column is NX and the observed set is tiny. If a price ever lands outside
         // it, the column has moved and the whole table is decoding shifted.

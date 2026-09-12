@@ -277,6 +277,10 @@ impl Store {
         crate::inventory::create_tables(&conn)?;
         crate::storage::create_tables(&conn)?;
         crate::cash::create_tables(&conn)?;
+        // After the three tables that carry item ids exist: rewrite ids the client no longer
+        // knows into the ones it does. Idempotent, every open - the live server runs a
+        // different database from the repo's, and a restart is how it gets this.
+        crate::inventory::rename_item_ids(&conn)?;
         crate::skills::create_tables(&conn)?;
         // The spent half of a skill point. A whole new table, so `CREATE TABLE IF NOT EXISTS`
         // is enough - see `skillpoints::create_tables` for what that means for a character who

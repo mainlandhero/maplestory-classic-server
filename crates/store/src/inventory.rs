@@ -756,6 +756,38 @@ pub(crate) fn create_tables(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Item ids that changed under the client's feet: `(old, new)`. Every open rewrites every
+/// row in every table that carries an item id, so a database written before the change
+/// keeps working after it - and the live server's database is not the repo's, so this
+/// cannot be a one-off edit of a file (memory: `maplecw-live-db-migrations`).
+///
+/// * `5222221 -> 5681599`, 2026-09-12: the Signature Style Collection box. Nexon's id is in
+///   family 522, which the classic client does not open on double-click (the owner: the box sent
+///   no packet at all); the set coupons' family 568 is opened, so the backport now installs
+///   the box under 5681599 (`tools/backport_install.py` `BOX_ID`,
+///   `world::signaturestyle::COLLECTION`). A box bought before that sat in a bag as 5222221 -
+///   an item the client can no longer name or open.
+pub const ITEM_ID_RENAMES: &[(u32, u32)] = &[(5_222_221, 5_681_599)];
+
+/// The tables that carry an item id, all of which [`rename_item_ids`] visits. `equipment`
+/// (worn items) is here because the invariant is "every table with the column", not
+/// "every table a box could be in" - the test below derives the list from the schema and
+/// fails the moment a fifth table appears without being added.
+pub const ITEM_ID_TABLES: &[&str] = &["inventory", "equipment", "cash_locker", "storage_item"];
+
+/// Apply [`ITEM_ID_RENAMES`] to every table in [`ITEM_ID_TABLES`]. Runs on every open.
+pub(crate) fn rename_item_ids(conn: &Connection) -> Result<()> {
+    for &(old, new) in ITEM_ID_RENAMES {
+        for table in ITEM_ID_TABLES {
+            conn.execute(
+                &format!("UPDATE {table} SET item_id = ?1 WHERE item_id = ?2"),
+                rusqlite::params![new, old],
+            )?;
+        }
+    }
+    Ok(())
+}
+
 /// Give an existing table the [`EQUIP_STAT_COLUMNS`] tail.
 ///
 /// **`equipment` already exists in the owner's database**, so this cannot be a `CREATE TABLE IF NOT
@@ -2502,5 +2534,69 @@ mod tests {
             .conn()
             .query_row("SELECT COUNT(*) FROM inventory", [], |row| row.get(0))
             .unwrap()
+    }
+}
+
+#[cfg(test)]
+mod item_id_rename_tests {
+    use super::*;
+
+    /// A box bought under Nexon's id, in a bag, a cash locker and a storage box, reads back
+    /// under the classic client's id after the open-time rewrite - and a second run changes
+    /// nothing, because the live server re-runs it on every start.
+    #[test]
+    fn a_box_under_the_old_id_is_rewritten_in_every_item_table_and_the_rewrite_is_idempotent() {
+        let store = crate::Store::open_in_memory().unwrap();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Wanderer".to_string(), ..Default::default() };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        store.add_item(id, InventoryType::Cash, &Item::bundle(5_222_221, 1), 1).unwrap();
+        {
+            let conn = store.conn();
+            // The other two tables, written directly: what matters is the rewrite, not the
+            // API that would normally put a row there.
+            // kind 2 = a bundle, the box's kind; slot 1 is the first locker/storage slot.
+            for table in ["cash_locker", "storage_item"] {
+                conn.execute(
+                    &format!("INSERT INTO {table} (account_id, slot, item_id, kind, quantity) VALUES (?1, 1, 5222221, 2, 1)"),
+                    rusqlite::params![account],
+                )
+                .unwrap();
+            }
+            rename_item_ids(&conn).unwrap();
+            rename_item_ids(&conn).unwrap(); // idempotent
+            for table in ["inventory", "cash_locker", "storage_item"] {
+                let old: i64 = conn.query_row(&format!("SELECT count(*) FROM {table} WHERE item_id = 5222221"), [], |r| r.get(0)).unwrap();
+                let new: i64 = conn.query_row(&format!("SELECT count(*) FROM {table} WHERE item_id = 5681599"), [], |r| r.get(0)).unwrap();
+                assert_eq!((old, new), (0, 1), "{table}");
+            }
+            // `equipment` is visited too; nothing is worn here, so it simply stays empty.
+            let worn: i64 = conn.query_row("SELECT count(*) FROM equipment", [], |r| r.get(0)).unwrap();
+            assert_eq!(worn, 0);
+        }
+        let cash: Vec<u32> = store.bag(id).unwrap().items_in(InventoryType::Cash).map(|i| i.item.item_id).collect();
+        assert_eq!(cash, vec![5_681_599]);
+    }
+
+    /// Every table with an `item_id` column is in [`ITEM_ID_TABLES`] - a new table that
+    /// carries item ids would otherwise be skipped by the rename in silence.
+    #[test]
+    fn every_table_with_an_item_id_column_is_renamed() {
+        let store = crate::Store::open_in_memory().unwrap();
+        let conn = store.conn();
+        let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").unwrap();
+        let tables: Vec<String> = stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        let mut with_item_id = Vec::new();
+        for t in &tables {
+            let mut cols = conn.prepare(&format!("PRAGMA table_info({t})")).unwrap();
+            let names: Vec<String> = cols.query_map([], |r| r.get(1)).unwrap().map(|r| r.unwrap()).collect();
+            if names.iter().any(|n| n == "item_id") {
+                with_item_id.push(t.clone());
+            }
+        }
+        with_item_id.sort();
+        let mut expected: Vec<String> = ITEM_ID_TABLES.iter().map(|s| s.to_string()).collect();
+        expected.sort();
+        assert_eq!(with_item_id, expected, "tables carrying item_id vs the rename list");
     }
 }

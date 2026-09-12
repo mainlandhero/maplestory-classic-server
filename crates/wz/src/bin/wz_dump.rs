@@ -208,7 +208,8 @@ fn collect_canvases(
 /// copy     <name>   <src.wz>   <src image>            the image, byte for byte
 /// merge    <name>   <src.wz>   <src image>   <k1,k2>  top-level keys k1.. of the source
 ///                                                     image replace/append into the base's
-///                                                     image of that name (empty if absent)
+///                                                     image of that name (empty if absent);
+///                                                     `k=k2` takes source key k in as k2
 /// strings  <name>   <patch.tsv>                       lines `path<TAB>value` set string
 ///                                                     leaves in the base's image of that name
 /// patch    <name>   <patch.tsv>                       lines `path<TAB>kind<TAB>value`, kind
@@ -286,7 +287,21 @@ fn cmd_build(out: &Path, version: &str, spec: &Path, base: Option<&Path>) -> wz:
                     if f.len() < 5 {
                         return Err(bad());
                     }
-                    let keys: Vec<&str> = f[4].split(',').map(str::trim).filter(|k| !k.is_empty()).collect();
+                    // `k` takes the source's top-level `k` as `k`; `k=k2` takes it as `k2`.
+                    // The rename exists for the Signature Style Collection box: the classic
+                    // client opens a Cash item on double-click by its id FAMILY, and 522
+                    // (the modern box's) is not one it opens while 568 (the set coupons') is
+                    // - so the box's node moves from 0522.img/05222221 to 0568.img/05681599,
+                    // its outlinks still pointing at the 0522 canvas, which stays put.
+                    let keys: Vec<(&str, &str)> = f[4]
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|k| !k.is_empty())
+                        .map(|k| match k.split_once('=') {
+                            Some((from, to)) => (from.trim(), to.trim()),
+                            None => (k, k),
+                        })
+                        .collect();
                     let overlay = Owned::parse(src_bytes)?;
                     let start = starting_image(&additions, name);
                     let had_base = start.is_some();
@@ -295,12 +310,12 @@ fn cmd_build(out: &Path, version: &str, spec: &Path, base: Option<&Path>) -> wz:
                         None => Owned::Object(Vec::new()),
                     };
                     let mut taken = 0;
-                    for k in &keys {
-                        let Some(v) = overlay.get(k) else {
-                            eprintln!("line {}: {src_img} has no top-level {k}", lineno + 1);
+                    for (from, to) in &keys {
+                        let Some(v) = overlay.get(from) else {
+                            eprintln!("line {}: {src_img} has no top-level {from}", lineno + 1);
                             return Err(bad());
                         };
-                        target.set(k, v.clone());
+                        target.set(to, v.clone());
                         taken += 1;
                     }
                     let bytes = target.serialize_image();

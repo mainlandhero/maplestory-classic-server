@@ -44,6 +44,12 @@ WZ_DUMP = os.path.join(REPO, "target", "release", "wz-dump" + (".exe" if os.name
 EXTRACT = os.path.join(REPO, "backport", "signature-style")
 CLASSIC = os.path.join(REPO, "client-patched", "Data")
 CLASSIC_VERSION = "779"
+# The Signature Style Collection box: Nexon's id, and the id it wears in the classic client
+# (family 568, the one the client opens on double-click - see step 3). Must equal
+# `world::signaturestyle::COLLECTION`; a test there reads gm-handbook/commodity.txt, which
+# this script regenerates after an install, so a mismatch fails the suite rather than a run.
+BOX_MODERN_ID = 5222221
+BOX_ID = 5681599
 
 
 def modern_part(source, tree_rel, image):
@@ -163,10 +169,31 @@ def main():
             add(tree_rel + "/_Canvas", "copy\t%s\t%s\t%s" % (image, src, image))
 
     # 3. Item property images: merge our nodes onto the classic image of the same name.
+    #
+    # **Except the box, which changes id family.** The owner, 2026-09-12: *"Double clicking the
+    # Signature Style Collection box does not grant all 8 character costume coupons."* The
+    # world log shows NO packet at all for the double-click - the client did not treat it as
+    # a use. The classic client opens a Cash item on double-click by its id family, and the
+    # modern box is 5222221 (family 522, which this client has no items of); the set coupons
+    # are 5681xxx (family 568 - its native 5-slot coupons) and their double-click sends
+    # 0x0114 every time, measured on screen this session. The two nodes are otherwise the
+    # same shape (`info`: cash, collabo, icons). [The family reading is I; the pair of
+    # controls is L.] So the box's property node is merged into 0568.img under BOX_ID; its
+    # icon outlinks still name the 0522 canvas, which is copied as before, and the string,
+    # the Cash Shop row and the server (world::signaturestyle::COLLECTION) all say BOX_ID.
     for (tree_rel, image), keys in sorted(item_keys.items()):
         pkey = (tree_rel, image, "prop")
         if pkey not in part_cache:
             part_cache[pkey] = modern_part(source, tree_rel, image)
+        if (tree_rel, image) == ("Item/Cash", "%04d.img" % (BOX_MODERN_ID // 10000)):
+            box_key = "%08d" % BOX_MODERN_ID
+            rest = [k for k in keys if k != box_key]
+            if rest:
+                add(tree_rel, "merge\t%s\t%s\t%s\t%s" % (image, part_cache[pkey], image, ",".join(rest)))
+            if box_key in keys:
+                home = "%04d.img" % (BOX_ID // 10000)
+                add(tree_rel, "merge\t%s\t%s\t%s\t%s=%08d" % (home, part_cache[pkey], image, box_key, BOX_ID))
+            continue
         add(tree_rel, "merge\t%s\t%s\t%s\t%s" % (image, part_cache[pkey], image, ",".join(keys)))
 
     # 4. Strings: one TSV per image, `path<TAB>value`.
@@ -185,7 +212,8 @@ def main():
             # gives every set (the owner, 2026-09-10), and the tooltip is the one place a player
             # reads the rule.
             root = dict(root)
-            root["5222221"] = {
+            root.pop("%d" % BOX_MODERN_ID, None)  # the box lives under BOX_ID now (step 3)
+            root["%d" % BOX_ID] = {
                 "name": "Signature Style Collection",
                 "desc": "A collection of every Signature Style outfit. #cDouble-click# to receive "
                         "all eight Outfit Set Coupons: Frieren, Fern, Stark, \u00dcbel, Himmel, "
@@ -236,7 +264,7 @@ def main():
             open(category_patch, "w", encoding="utf-8", newline="\n") as ch:
         ch.write("2/0/name\tstr\tSignature Style\n")
         for i, (name, price) in enumerate(wares):
-            item_id = by_name[name]
+            item_id = BOX_ID if name == "Signature Style Collection" else by_name[name]
             sn = 120_000_000 + i
             row = classic_rows + i
             for field, value in [
@@ -255,7 +283,20 @@ def main():
     built = []
     for tree_rel, lines in sorted(specs.items()):
         name = tree_rel.rsplit("/", 1)[-1]
-        base = os.path.join(CLASSIC, *tree_rel.split("/"), name + "_000.wz")
+        # `target` is the archive the client reads and the one --install replaces; `base` is
+        # what the build starts from.
+        target = os.path.join(CLASSIC, *tree_rel.split("/"), name + "_000.wz")
+        # **Build against the pristine classic archive, not the last install.** `--install`
+        # keeps the untouched original as `.bak` beside each archive; building on the hybrid
+        # instead carried every earlier install's nodes forward verbatim, so a node this spec
+        # no longer emits (the box under its old id, 2026-09-12) survived as a stale twin and
+        # the store's item-count drift test caught it (2864 where 2863 was right). With the
+        # `.bak` as base a rebuild is a function of the original and this script alone.
+        #
+        # The two paths are deliberately separate variables: the first version of this
+        # reassigned one name, and --install then wrote the build OVER the .bak and moved the
+        # pristine original to .bak.bak while the client's archive went untouched.
+        base = target + ".bak" if os.path.exists(target + ".bak") else target
         if not os.path.exists(base):
             raise SystemExit("classic base missing: %s" % base)
         out = os.path.join(args.build_dir, "Data", *tree_rel.split("/"), name + "_000.wz")
@@ -270,7 +311,7 @@ def main():
         if p.returncode != 0:
             sys.stdout.write(p.stdout)
             raise SystemExit("wz-dump build failed for %s:\n%s" % (tree_rel, p.stderr))
-        built.append((tree_rel, base, out))
+        built.append((tree_rel, target, out))
 
     # 6. Prove the builds parse, image by image, with the ordinary reader.
     print("verifying every image of every built archive parses...")

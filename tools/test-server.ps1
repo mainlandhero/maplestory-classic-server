@@ -961,6 +961,25 @@
                          world.log's "ScriptMessage ... receipt" line and what came after
               the name reads "Maple Administrator" -> the String.wz rename did not land;
                          say so
+         f) THE BOX ITSELF - "Double clicking the Signature Style Collection box does not
+            grant all 8 character costume coupons" (2026-09-12). world.log shows NO packet
+            for the double-click: the client did not treat it as a use. It opens a Cash item
+            on double-click by its id FAMILY; Nexon's box is 5222221 (family 522, which this
+            client has no items of) while the set coupons are 5681xxx (family 568, its own
+            5-slot coupons) and their double-click sends 0x0114 every time - measured, this
+            session. [The family reading is I; the pair of controls is L.] So the box now
+            wears 5681599: its node, string and Cash Shop row are installed under it, the
+            server's COLLECTION is 5681599, and a box already in a bag under the old id is
+            rewritten on the next server start (store::inventory::rename_item_ids, every
+            open, so the live database gets it too). No archived run ever recorded the box
+            opening - this was never exercised on screen before today. Double-click it:
+              the eight coupons arrive (Cash tab), the Administrator's receipt lists
+                         them, the box is gone -> done
+              still nothing, and world.log has no 0x0114 -> the family reading is wrong;
+                         say so, and I read the client's double-click dispatch instead
+              0x0114 arrives but the server refuses -> world.log names why; paste it
+              the box in your bag shows no name / a blank icon -> the rename on open did
+                         not run; grep world.log for "rename" and paste
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -2915,6 +2934,15 @@ function Show-TestPlan {
         Write-Host '           no box, items arrive -> unsolicited Say refused; paste'
         Write-Host '             the world.log "ScriptMessage ... receipt" line'
         Write-Host '           name reads "Maple Administrator" -> rename not landed'
+        Write-Host '      f) THE BOX: double-click sent NO packet - the client opens a' -ForegroundColor Yellow
+        Write-Host '         Cash item by id FAMILY, and 522 is not one it opens; the'
+        Write-Host '         568 coupons are. The box now wears 5681599 (node, string,'
+        Write-Host '         shop row, server); an old one in a bag is renamed on start.'
+        Write-Host '           eight coupons + receipt, box gone -> done'
+        Write-Host '           still nothing, no 0x0114 in world.log -> family reading' -ForegroundColor Yellow
+        Write-Host '             wrong; say so' -ForegroundColor Yellow
+        Write-Host '           0x0114 arrives, server refuses -> paste world.log line'
+        Write-Host '           box in bag has no name/icon -> rename did not run; say so'
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'
