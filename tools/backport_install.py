@@ -171,7 +171,14 @@ def main():
 
     # 4. Strings: one TSV per image, `path<TAB>value`.
     os.makedirs(args.build_dir, exist_ok=True)
-    for image, root in [("Eqp.img", strings["ClassicWorld"]), ("Cash.img", strings["Cash"]), ("Consume.img", strings["Consume"])]:
+    # `Npc.img`: the package receipt (world::signaturestyle::ADMINISTRATOR_NPC) speaks as
+    # NPC 9010000, which the classic String.wz names "Maple Administrator". The owner asked for the
+    # dialogue to come from "MapleStory Administrator" (2026-09-12), and the name the dialog
+    # shows is this string, so it is renamed here - everywhere the NPC appears, which is the
+    # one place a name can live. Reversible with --revert like everything else in this file.
+    npc_strings = {"9010000": {"name": "MapleStory Administrator"}}
+    for image, root in [("Eqp.img", strings["ClassicWorld"]), ("Cash.img", strings["Cash"]),
+                        ("Consume.img", strings["Consume"]), ("Npc.img", npc_strings)]:
         tsv = os.path.join(args.build_dir, "strings-" + image + ".tsv")
         if image == "Cash.img":
             # The modern text says "obtain 1 item according to set probability rates". Ours

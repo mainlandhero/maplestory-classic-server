@@ -946,6 +946,21 @@
               still refused, silently -> the check is not the type child; say so and I
                          read the client's equip check rather than the data
               refused WITH a message -> paste the message
+         d) NEW 2026-09-12 - THE RECEIPT. Opening the Collection or any Outfit Set Coupon
+            now also opens an NPC box from "MapleStory Administrator" (NPC 9010000,
+            renamed in String.wz from "Maple Administrator"): "You have received the
+            following items:" then one line per item, icon + name (#i/#t tags). OK closes
+            it. Open a set coupon and look:
+              the box appears, every item on its own line with its icon -> done
+              box appears, names missing or "null" -> #t does not resolve for that id; say
+                         which lines (the equips' names live under Eqp.img/ClassicWorld)
+              box appears, no icons -> #i does not resolve; say so, and whether the
+                         inventory shows the same icons
+              lines run together -> the client wants a different line break; say so
+              no box at all, items still arrive -> the unsolicited Say is refused; paste
+                         world.log's "ScriptMessage ... receipt" line and what came after
+              the name reads "Maple Administrator" -> the String.wz rename did not land;
+                         say so
          c) The Übel Hair Coupon: Confirm sends 0x0165, which nothing answered. Handled:
             hair applied, coupon spent, the map re-entered to redraw (as !hair does).
               hair changes on re-entry, coupon gone -> done
@@ -2874,6 +2889,17 @@ function Show-TestPlan {
         Write-Host '           does not DRAW -> expected until worn slots >31 carry'
         Write-Host '           still refused silently -> not the type child; say so'
         Write-Host '           refused with a message -> paste it'
+        Write-Host '      d) NEW - THE RECEIPT: opening the Collection or a Set Coupon' -ForegroundColor Yellow
+        Write-Host '         also opens an NPC box from "MapleStory Administrator":'
+        Write-Host '         "You have received the following items:" then one line per'
+        Write-Host '         item, icon + name. OK closes it. Open a set coupon:'
+        Write-Host '           box, every item on its line with its icon -> done'
+        Write-Host '           names missing/null -> #t unresolved; say which lines'
+        Write-Host '           no icons -> #i unresolved; say so'
+        Write-Host '           lines run together -> wrong line break; say so'
+        Write-Host '           no box, items arrive -> unsolicited Say refused; paste'
+        Write-Host '             the world.log "ScriptMessage ... receipt" line'
+        Write-Host '           name reads "Maple Administrator" -> rename not landed'
         Write-Host '      c) Hair/face coupon: 0x0165 handled - coupon spent, change'
         Write-Host '         broadcast to others, NO reload (client self-applies).'
         Write-Host '           your hair changes, no reload, coupon gone -> done'

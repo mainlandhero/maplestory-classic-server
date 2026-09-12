@@ -29,6 +29,36 @@
 /// The box. Cash item, sold in the Special tab.
 pub const COLLECTION: u32 = 5_222_221;
 
+/// The NPC whose face fronts the receipt dialog a package opens with: the classic client's
+/// `9010000`, which its String.wz names "Maple Administrator" and the backport renames
+/// "MapleStory Administrator" (the owner, 2026-09-12: *"open a NPC dialogue from 'MapleStory
+/// Administrator' along with the dialogue of 'You have received the following items'"*).
+/// The template has to be one the client can draw a portrait for; this one stands on
+/// map 10001000 and three others, so its image is always loaded.
+pub const ADMINISTRATOR_NPC: u32 = 9_010_000;
+
+/// The conversation path the receipt parks under. Its prefix is claimed by nothing else -
+/// not the taxi, the instructor, the scroll NPC nor the daily perks - and a test in
+/// `session::tests` says so in every direction, because four features already share the
+/// one `0x00F3` reply and each answers only its own path.
+pub const RECEIPT_PATH: &str = "package.receipt";
+
+/// The receipt's text: the heading, then one line per item with its icon and its name,
+/// in the order the items were handed out. `#i<id>#` is the client's inline item icon
+/// and `#t<id>#` its item name (from String.wz, which the backport fills for these ids);
+/// `\r\n` is the line break the Say dialog draws.
+pub fn receipt_text(given: &[u32]) -> String {
+    let mut text = String::from("You have received the following items:");
+    for id in given {
+        text.push_str("\r\n#i");
+        text.push_str(&id.to_string());
+        text.push_str("# #t");
+        text.push_str(&id.to_string());
+        text.push('#');
+    }
+    text
+}
+
 /// One set: the coupon that opens it and what comes out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OutfitSet {
