@@ -265,13 +265,25 @@ pub struct FieldMob {
     /// `-6`, and it annotates the value `// init -> -2, -1 else`. That is why the default is
     /// `-2`. **[I]** - if mobs pop in wrong, `-1` is the one-byte alternative.
     ///
-    /// # DO NOT send the WZ's `summonType` here
+    /// # A `summonType` here is a SUMMON EFFECT, and the mob is SUSPENDED until told otherwise
     ///
-    /// `research/mob-spawn.md` section 2f floats exactly that, and it would make **every mob
-    /// permanently unhittable**. `summonType` is `1` for both templates this server can
-    /// reach, and `appear_type >= 0` takes the default arm of the switch at `141c51a84`,
-    /// which stores the literal `1` into `mob+0x504` - the field gate 2 of the client's
-    /// target collector rejects on.
+    /// `appear_type >= 0` takes the default arm of the switch at `141c51a84`: it creates
+    /// `Effect/Summon.img/<appear_type>` - the summoning animation everyone on the map sees -
+    /// and stores the literal `1` into `mob+0x504`, the field gate 2 of the client's target
+    /// collector rejects on. Earlier versions of this comment called that **permanent**, and
+    /// that was a scan that stopped at `encodeInit`'s four writers. Re-enumerated 2026-09-12
+    /// (`tools/fieldrefs.py 0x504 --lo 0x141c40000 --hi 0x141d60000 --write`, 13 writers):
+    /// `0x03E8`'s handler `FUN_141c82390` writes `0` there (`141c82951`) after reading one
+    /// `u8` that must be non-zero (`141c823b7 je <return>`), and `FUN_141d32b30`'s 117-entry
+    /// table at `0x141d33448` puts `0x3E8` on it. **[L]** The reference names it
+    /// `MOB_SUSPEND_RESET` at the same offset from `MOB_ENTER_FIELD` as our `0x3C6`, `0x3D2`
+    /// and `0x3D9` (four for four). So: effect, then suspended, then
+    /// [`crate::mobmove::mob_suspend_reset`] makes it a mob. Sending the effect WITHOUT the
+    /// reset is what would leave it unhittable - and that is what the old warning was
+    /// really describing.
+    ///
+    /// Ordinary spawns stay on `-2` (no effect, no suspension). The summoning sack is the
+    /// one path that wants the effect, and it schedules the reset for when the animation ends.
     ///
     /// The reachability, per arm, from `research/mob-target-gates.md`: `-2`, `-1` and `-6`
     /// write neither `mob+0x504` nor `mob+0x300`, so both keep their constructor values and
@@ -337,6 +349,47 @@ pub const APPEAR_ALREADY_THERE: i8 = -1;
 /// The fade is correct here and wrong on field entry; that is the whole distinction. Same
 /// safety argument as [`APPEAR_ALREADY_THERE`]: `-2` writes neither gate field.
 pub const APPEAR_SPAWNING: i8 = -2;
+
+/// `appear_type` for a mob arriving **with a summoning animation** - `Effect/Summon.img/<n>`,
+/// where `n` is the template's WZ `summonType` (`gm-handbook/mobtemplates.txt`, last column).
+///
+/// The mob is SUSPENDED (untargetable, `mob+0x504 = 1`) from this packet until a
+/// [`crate::mobmove::mob_suspend_reset`] arrives; see [`FieldMob::appear_type`]. The caller
+/// owns that second packet. `None` when the WZ value would not select an effect - the
+/// classic `Summon.img` has entries `0..=8`.
+pub fn appear_with_summon_effect(summon_type: u32) -> Option<i8> {
+    (summon_type <= SUMMON_EFFECT_MAX).then_some(summon_type as i8)
+}
+
+/// The last `Effect/Summon.img` entry in this client: `0..=8`, read off the image.
+pub const SUMMON_EFFECT_MAX: u32 = 8;
+
+/// How long each `Effect/Summon.img/<n>` plays, in milliseconds: the sum of its frames'
+/// `delay` values, read off the classic image on 2026-09-12 (a frame without a `delay` is
+/// the client's 100 ms default, which is `1` and `7`). The reset is due when this elapses.
+///
+/// ```text
+/// n  frames  ms      n  frames  ms
+/// 0    25    2500    5    12    1080
+/// 1     4     400    6     8     800
+/// 2     5     580    7     9     900
+/// 3     7     840    8    16    1870
+/// 4    10    1100
+/// ```
+pub fn summon_effect_ms(summon_type: u32) -> u64 {
+    match summon_type {
+        0 => 2500,
+        1 => 400,
+        2 => 580,
+        3 => 840,
+        4 => 1100,
+        5 => 1080,
+        6 => 800,
+        7 => 900,
+        8 => 1870,
+        _ => 0,
+    }
+}
 
 impl FieldMob {
     /// An ordinary field mob: full HP, no scaling, no optional template blocks,

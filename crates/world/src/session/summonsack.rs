@@ -32,6 +32,30 @@ use super::{Reply, Session};
 
 impl Session {
     /// `0x0111` - the player used a summoning sack.
+    /// Send `0x03E8` to every summoned mob whose animation has ended - to the whole map, since
+    /// every client on it holds the mob suspended. Called from [`Session::tick`].
+    pub(super) fn suspend_reset_tick(&mut self, now_ms: u64) -> Vec<Reply> {
+        if self.pending_suspend_resets.is_empty() {
+            return Vec::new();
+        }
+        let (due, later): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.pending_suspend_resets).into_iter().partition(|(at, _, _)| now_ms >= *at);
+        self.pending_suspend_resets = later;
+        let mut out = Vec::new();
+        for (_, map, object_id) in due {
+            let reply = Reply {
+                opcode: net::mobmove::MOB_SUSPEND_RESET,
+                body: net::mobmove::mob_suspend_reset(object_id),
+                what: format!(
+                    "MobSuspendReset: object id {object_id} - its summoning animation has ended; mob+0x504 goes back to 0 and it can be hit. Map-wide."
+                ),
+            };
+            self.bus().publish(self.subscriber, map, reply.clone(), None);
+            out.push(reply);
+        }
+        out
+    }
+
     pub(super) fn on_summon_sack(&mut self, body: &[u8]) -> Vec<Reply> {
         let unlock =
             || crate::mesodrop::unlock_unhandled_latching_request(net::summon::CLIENT_SUMMON_SACK);
@@ -113,7 +137,16 @@ impl Session {
                 .unwrap_or(1);
             let live = self.fields.summon_mob(map, *template_id, (x, y), fh, hp);
             let mut mob = live.as_seen();
-            mob.appear_type = net::mob::APPEAR_SPAWNING;
+            // **The summoning animation, for everyone on the map.** The owner, 2026-09-12: *"Upon
+            // summon, it is also missing the summon effect that is played for all players."*
+            // `appear_type >= 0` is `Effect/Summon.img/<summonType>` - and a mob that arrives
+            // that way is SUSPENDED (untargetable) until a 0x03E8 says otherwise, which is
+            // what the old "never send summonType" warning was really about. The reset is
+            // scheduled below for when the animation ends. `net::mob::FieldMob::appear_type`.
+            let summon_type = self.config.mob_templates.get(template_id).map(|t| t.summon_type);
+            let effect = summon_type.and_then(net::mob::appear_with_summon_effect);
+            mob.appear_type = effect.unwrap_or(net::mob::APPEAR_SPAWNING);
+            mob.appear_option = 0;
             // Without this the client has no attack power for the mob and its own contact
             // damage floors at 1 - the same line every other spawn path carries.
             mob.forced_stat = self.forced_stat_for(mob.template_id);
@@ -122,14 +155,47 @@ impl Session {
                 body: net::mob::mob_enter_field(&mob),
                 what: format!(
                     "MobEnterField: SUMMONED template {} from sack {} at ({x}, {y}), object id \
-                     {}, hp {hp}. Nothing authenticates.",
-                    mob.template_id, req.item_id, mob.object_id
+                     {}, hp {hp}, appear {} ({}). Nothing authenticates.",
+                    mob.template_id,
+                    req.item_id,
+                    mob.object_id,
+                    mob.appear_type,
+                    match effect {
+                        Some(n) => format!("Effect/Summon.img/{n}; SUSPENDED until the 0x03E8 in {} ms", net::mob::summon_effect_ms(n as u32)),
+                        None => "no summon effect for this template; a plain spawn".to_string(),
+                    }
                 ),
             };
+            if let Some(n) = effect {
+                self.pending_suspend_resets.push((
+                    self.clock_ms.saturating_add(net::mob::summon_effect_ms(n as u32)),
+                    map,
+                    mob.object_id,
+                ));
+            }
             // Everyone on the map sees it. A summoned boss the rest of the map cannot see
             // would be hit by one person and invisible to everybody else.
             self.bus().publish(self.subscriber, map, spawn.clone(), None);
             out.push(spawn);
+            // **And somebody has to run it.** The owner, 2026-09-12, with a Balrog standing
+            // beside them: *"the resulting mob in the game does not have AI and does not have
+            // movement and does not use skills."* The server never drives a mob; it hands
+            // each one to exactly one client with 0x03D2, and that client runs the wander,
+            // the aggro and the skills and reports the path back as 0x02FF. Field entry and
+            // the respawn tick both grant it; this path spawned the mob and stopped. The
+            // grant is unicast on purpose - two controllers roll two paths and the screens
+            // diverge (`spawn_due_mobs` has the argument) - and `claim_one` is the test-and-set
+            // that makes it exactly one.
+            if self.fields.controllers().claim_one(map, mob.object_id, self.subscriber.get()) {
+                out.push(Reply {
+                    opcode: net::mobmove::MOB_CHANGE_CONTROLLER,
+                    body: net::mobmove::mob_change_controller(&mob, net::mobmove::CONTROL_NORMAL),
+                    what: format!(
+                        "MobChangeController: summoned object id {} to this client, which claimed it. Without this the Balrog stood still with no AI (2026-09-12).",
+                        mob.object_id
+                    ),
+                });
+            }
         }
 
         // The sack's own slot: mode 1 with what is left, mode 3 when that was the last one.

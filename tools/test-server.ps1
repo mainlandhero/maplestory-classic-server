@@ -674,6 +674,34 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
+     TN. THE SUMMONING SACK: THE BALROG MOVES, AND IT ARRIVES WITH THE CIRCLE.
+         The owner, 2026-09-12 04:21: the sack's Balrog *"does not have AI and does not have
+         movement and does not use skills"*, and *"it is also missing the summon effect
+         that is played for all players."* Two causes, two changes:
+           1. The sack spawned the mob (0x03C6) and granted nobody control (0x03D2). The
+              server never drives a mob; the client that holds 0x03D2 runs its wander,
+              aggro and skills. Field entry and the respawn tick grant it; the sack did
+              not. It does now, to the summoner, right after the spawn.
+           2. The spawn now carries the template's summonType as its appear type: the
+              client plays Effect/Summon.img/<n> for everyone on the map (Balrog: 0, the
+              2.5 s circle) and holds the mob SUSPENDED - untargetable - until a 0x03E8
+              MobSuspendReset, which the server now sends to the map when the animation
+              ends (read off the client's own 0x3E8 handler, 141c82390; the old "summonType
+              makes mobs permanently unhittable" warning was this packet's absence).
+         Use a Balrog sack (2100006) on an empty platform. Watch for:
+           the summoning circle plays, THEN the Balrog walks and attacks, and you can hit
+                          it after ~2.5 s -> both fixed
+           no circle, but it moves -> the appear type is being ignored; say so, and
+                          whether it was hittable at once
+           circle plays, it never moves and cannot be hit -> the 0x03E8 did not clear
+                          the state; world.log shows whether it went out (2500 ms after
+                          the spawn line) - if it did, the next run watches 141c82390
+           it moves but stays unhittable -> the reset reached it late or not at all; same
+           the client DIES at the spawn -> the appear-option word; say so, the hook log
+                          names the packet
+         (Jr. Balrog 800020 and 700004 are summonType 0 too; the sack's other mobs are 1,
+          a 0.4 s pop. Both are Summon.img entries in this client.)
+
      TM. THE OUTFIT IS IN THE DECO TAB, AND THE CHAT SAYS "UBEL". -SetFieldProbe.
          The owner, 2026-09-11 04:12: the Ubel set opened, the chat drew the U-umlaut as a box,
          and the Deco tab was empty. The four equips had gone to the EQUIP tab by their
@@ -2654,6 +2682,20 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
+        Write-Host '  TN. THE SUMMONING SACK: THE BALROG MOVES, AND ARRIVES WITH THE CIRCLE.' -ForegroundColor Magenta
+        Write-Host '      04:21: the sack''s Balrog had no AI and no summon effect. The sack'
+        Write-Host '      spawned it and granted nobody control (0x03D2) - it does now. And'
+        Write-Host '      the spawn carries the WZ summonType: the client plays the'
+        Write-Host '      Summon.img circle for everyone and holds the mob untargetable'
+        Write-Host '      until a 0x03E8, which the server sends when the animation ends.'
+        Write-Host '      Use a Balrog sack on an empty platform:'
+        Write-Host '        circle, THEN it walks/attacks, hittable after ~2.5 s -> fixed'
+        Write-Host '        no circle but it moves -> appear type ignored; say so'
+        Write-Host '        circle, never moves, cannot be hit -> the 0x03E8 did not'
+        Write-Host '          clear it; world.log says if it went out 2500 ms later'
+        Write-Host '        moves but unhittable -> same; say so'
+        Write-Host '        client DIES at the spawn -> the appear-option word' -ForegroundColor Red
+        Write-Host ''
         Write-Host '  TM. THE OUTFIT IS IN THE DECO TAB; THE CHAT SAYS "UBEL". -SetFieldProbe.' -ForegroundColor Magenta
         Write-Host '      04:12: the Ubel set went to the EQUIP tab by leading digit; the'
         Write-Host '      client keeps cash equips (info/cash = 1) in tab 6, Deco. The'

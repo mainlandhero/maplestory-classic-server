@@ -241,6 +241,9 @@ pub struct Session {
     /// entered at t = 30 s came due at 3-9 s - already in the past - and the whole field
     /// spoke on the very next tick. It is at most one tick stale, which is 500 ms.
     clock_ms: u64,
+    /// Summoned mobs whose summoning animation is still playing: `(due_ms, map, objectId)`.
+    /// [`Session::tick`] sends each its `0x03E8` when due. `session/summonsack.rs`.
+    pending_suspend_resets: Vec<(u64, u32, u32)>,
     /// The NPC whose shop is open, and the rows **exactly as they went on the wire**.
     ///
     /// The client hands back only a `row_key`, so the rows have to be kept to turn one back
@@ -556,6 +559,7 @@ impl Session {
             chatter: Vec::new(),
             rng: Xorshift(seed),
             clock_ms: 0,
+            pending_suspend_resets: Vec::new(),
             fields,
             open_shop: None,
             open_storage: None,
@@ -651,6 +655,8 @@ impl Session {
         // same reason the sweep is: `chatter_off` turns off NPC idle lines and nothing else,
         // and a run with it set should not also stop the world respawning.
         out.extend(self.spawn_due_mobs(here, now_ms));
+        // Summoned mobs whose animation has ended become targetable. `session/summonsack.rs`.
+        out.extend(self.suspend_reset_tick(now_ms));
         // The event banner. Wall-clock, not `now_ms` - see `crate::session::rates`.
         out.extend(self.banner_tick());
         // Idle regeneration, which uses `now_ms` rather than the wall clock - it is a
