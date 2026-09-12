@@ -980,6 +980,28 @@
               0x0114 arrives but the server refuses -> world.log names why; paste it
               the box in your bag shows no name / a blank icon -> the rename on open did
                          not run; grep world.log for "rename" and paste
+         g) NEW 2026-09-12 - CASH EQUIPS SURVIVE A RELOG. "I last had Cobalt wear the
+            entire Ubel outfit, but upon a fresh login, I do not see those cash items
+            equipped anymore." The database had them the whole time (worn slots 105, 107,
+            108, 111). Two packets were dropping them: the compact look sent the slot
+            numbers raw and the client's reader keeps 1..31 only, so character select and
+            other players never saw them [L]; and the SetField record had no second
+            equipped block, so after a login the client held them in NO list - not drawn,
+            not in the equip window, not removable. Now: the look draws a cash item at its
+            base slot with the covered item in the second map, and the record opens
+            presence[44] with the worn cash items at base slots (the listing at
+            0x140306654; same shape as the first block). Log in as Cobalt:
+              select screen shows the Ubel outfit AND in the field it is drawn and the
+                         Deco equip window lists it -> done
+              select screen dressed, field naked/empty window -> the presence[44] block is
+                         refused or misplaced; paste client-exit.log and maplecw-hook.log's
+                         last lines (a record fault shows up as a fade-to-black or a fault)
+              select screen naked, field dressed -> the first look map is not the drawn one
+                         (reference-server reading wrong); say so, I swap the maps
+              drawn, but the base coat shows THROUGH the overall -> the covered map is
+                         being drawn too; say which item is on top
+              client dies at login -> stop; paste client-exit.log. The record has no resync
+                         point, so a wrong block here is fatal, not cosmetic
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -2943,6 +2965,19 @@ function Show-TestPlan {
         Write-Host '             wrong; say so' -ForegroundColor Yellow
         Write-Host '           0x0114 arrives, server refuses -> paste world.log line'
         Write-Host '           box in bag has no name/icon -> rename did not run; say so'
+        Write-Host '      g) NEW - CASH EQUIPS SURVIVE A RELOG: the DB had the Ubel set' -ForegroundColor Yellow
+        Write-Host '         (slots 105..111); the look sent those raw (client keeps 1..31)'
+        Write-Host '         and the SetField had no second equipped block. Now the look'
+        Write-Host '         draws cash at the base slot, covered item in map 2, and the'
+        Write-Host '         record opens presence[44] with the worn cash. Log in as Cobalt:'
+        Write-Host '           select AND field dressed, Deco equip window lists it -> done'
+        Write-Host '           select dressed, field naked/empty window -> presence[44]' -ForegroundColor Yellow
+        Write-Host '             block refused; paste client-exit.log + hook.log tail' -ForegroundColor Yellow
+        Write-Host '           select naked, field dressed -> map 1 is not the drawn one;'
+        Write-Host '             say so, I swap the maps'
+        Write-Host '           base coat shows THROUGH the overall -> map 2 is drawn too'
+        Write-Host '           client dies at login -> STOP, paste client-exit.log; the' -ForegroundColor Yellow
+        Write-Host '             record has no resync point, a wrong block is fatal' -ForegroundColor Yellow
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'

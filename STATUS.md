@@ -150,6 +150,23 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-12, night: cash equips survive a relog - unverified on screen.** The owner: *"I last had
+Cobalt wear the entire Ubel outfit, but upon a fresh login, I do not see those cash items
+equipped anymore."* The database had them the whole time (Cobalt's `equipment` rows: 5, 6, 7, 11
+and **105, 107, 108, 111**), so this was never a persistence bug - it was two packets dropping
+them. (1) `net::opcode::avatar_look` put the worn slot numbers on the wire raw, and the client's
+reader keeps `1..=31` only (`0x1402ee9c0`) - character select and other players never saw a cash
+item. Now `look_maps` draws a cash item at its **base** slot and puts the item it covers in the
+look's second map (`+0xb9`; the first map's index 0 is the hair, so the first is the drawn one).
+(2) The SetField record sent no second equipped block, so after a login the client held the worn
+cash items in **no list** - not drawn, not in the Deco equip window, not removable, while the
+server still had them worn. Now a character wearing anything cash opens **presence[44]** and the
+record carries `cash_equipped_block`: flagA 0, `(u16 base slot, item)*`, four `u16 0` - read off
+the listing at `0x140306654..0x140306830`, the mirror of the first block. Absent for everyone
+else, so their record is byte-identical to before. Plan step TO(g) says what each outcome means;
+the record has no resync point, so a wrong block there is fatal, not cosmetic.
+`research/cash-equip-relog-2026-09-12.md`.
+
 **2026-09-12, later: the Collection box now wears id 5681599.** The owner: *"Double clicking the
 Signature Style Collection box does not grant all 8 character costume coupons."* `world.log` shows
 NO packet for the double-click - the client did not treat it as a use. It opens a Cash item on

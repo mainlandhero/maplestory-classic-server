@@ -10506,3 +10506,54 @@ fn frierens_coupon_asks_which_version_and_the_choice_spends_it() {
     assert_eq!(crate::signaturestyle::set_for_coupon(5_681_544).unwrap().name, "Frieren (Ringlets)");
     assert_eq!(crate::signaturestyle::set_for_coupon(5_681_545).unwrap().name, "Frieren (Sleep)");
 }
+
+/// **A cash equip survives a relog.** The owner, 2026-09-12: *"I last had Cobalt wear the entire
+/// Ubel outfit, but upon a fresh login, I do not see those cash items equipped anymore."*
+/// The store had them the whole time (worn slots 105/107/108/111); the SetField record sent
+/// those slot numbers raw in the look, which the client discards, and sent no second
+/// equipped block at all, so the equip window had nothing either. This asserts the bytes of
+/// the next field entry: the look draws the cash item at the base slot with the ordinary
+/// one behind it (that look is what character select and other players see), and the
+/// SetField record opens presence[44] with a block carrying the cash item at base slot 5.
+#[test]
+fn a_cash_equip_worn_at_105_is_drawn_and_listed_on_the_next_field_entry() {
+    let (mut s, store, id) = claimed_session();
+    let coat = 1040002u32; // an ordinary top, worn at 5
+    let cash_coat = 1054562u32; // Ubel's Overall, worn OVER it at 105
+    store.set_inventory_slot(id, store::InventoryType::Equip, 1, &store::Item::equip(coat)).unwrap();
+    store.equip_from_bag(id, 1, 5).unwrap();
+    store.set_inventory_slot(id, store::InventoryType::Deco, 1, &store::Item::equip(cash_coat)).unwrap();
+    store.equip_from_tab(id, store::InventoryType::Deco, 1, 105).unwrap();
+
+    let mut chr = s.claimed_character().expect("the claim resolves");
+    assert!(chr.equips.contains(&(105, cash_coat)), "the store keeps it at 105: {:?}", chr.equips);
+    assert!(chr.equips.contains(&(5, coat)), "and the coat it covers is still worn");
+
+    let replies = s.go_to_map(&mut chr, 40, 0, "a relog, as far as the record is concerned".to_string());
+    let sf = &replies.iter().find(|r| r.opcode == net::opcode::SET_FIELD).expect("a SetField").body;
+
+    // The SetField record carries no compact look - the client dresses the local player
+    // from the worn lists it decodes - so the look half of the fix is asserted on the
+    // shared builder the character list and UserEnterField use: cash at the base slot,
+    // the covered coat in the second map, no raw 105 anywhere.
+    let (drawn, covered) = net::opcode::look_maps(&chr.equips);
+    assert!(drawn.contains(&(5, cash_coat)), "{drawn:?}");
+    assert!(covered.contains(&(5, coat)), "{covered:?}");
+    let look = net::opcode::avatar_look(&chr);
+    let mut raw_105 = vec![105u8];
+    raw_105.extend_from_slice(&cash_coat.to_le_bytes());
+    assert!(!look.windows(5).any(|w| w == raw_105.as_slice()), "the raw worn slot must not reach the look");
+
+    // The second equipped block, with the cash coat at BASE slot 5 and the real stats.
+    let dressed = s.dressed(&chr);
+    let block = net::opcode::cash_equipped_block(&dressed);
+    assert_eq!(block.len(), net::opcode::CASH_EQUIPPED_BLOCK_OVERHEAD + net::opcode::EQUIPPED_ENTRY_LEN);
+    assert!(sf.windows(block.len()).any(|w| w == block.as_slice()), "the presence[44] block is not in the record");
+
+    // And it is what the block costs, exactly - so the byte is set and nothing else moved.
+    let mut bare = chr.clone();
+    bare.equips.retain(|&(slot, _)| !net::opcode::CASH_EQUIP_SLOTS.contains(&slot));
+    let without = &s.go_to_map(&mut bare, 40, 0, "the same walk, nothing cash".to_string())
+        .iter().find(|r| r.opcode == net::opcode::SET_FIELD).expect("a SetField").body.clone();
+    assert_eq!(sf.len() - without.len(), block.len(), "one block with one entry, and nothing else moved");
+}
