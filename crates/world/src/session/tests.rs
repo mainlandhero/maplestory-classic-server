@@ -3902,8 +3902,8 @@ fn the_record_sizes_the_bag_and_the_override_reaches_it() {
     let plain = record_of(Config { set_field_probe: true, ..Config::default() });
     assert_eq!(
         read(&plain),
-        vec![net::opcode::DEFAULT_INVENTORY_SLOTS; net::opcode::INVENTORY_COUNT],
-        "a new character reached the wire with no bag"
+        net::opcode::default_inventory_slots().to_vec(),
+        "a new character reached the wire with no bag (five at 30, Deco at its 150)"
     );
     assert_eq!(plain[net::opcode::PRESENCE_INVENTORY_SIZE], 1);
 

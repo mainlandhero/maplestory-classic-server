@@ -873,7 +873,7 @@ impl Default for Character {
             portal: 0, // the map's spawn point
             equips: Vec::new(),
             equip_bag: Vec::new(),
-            inventory_slots: [DEFAULT_INVENTORY_SLOTS; INVENTORY_COUNT],
+            inventory_slots: default_inventory_slots(),
         }
     }
 }
@@ -2053,16 +2053,36 @@ pub const INVENTORY_SLOT_ORDER: [&str; INVENTORY_COUNT] =
 /// arrives, which is what makes buying slots expressible.
 pub const DEFAULT_INVENTORY_SLOTS: u16 = 30;
 
-/// The largest slot count a bag can reach: **125**.
+/// The Deco tab's size, which is also its ceiling: **150, from the first login.**
+///
+/// The owner, 2026-09-12: *"The deco inventory does not have expansion coupons because it starts
+/// out at the maximum 150 slots."* The other five start at [`DEFAULT_INVENTORY_SLOTS`] and
+/// grow by coupon; this one has no coupon in the client (`SlotCoupon` names Equip, Use, Set
+/// Up, Etc, Cash and storage) and never needs one. 30 here was the uniform default nobody
+/// chose for this tab - a cash equip past the thirtieth would have been refused at placement.
+pub const DECO_INVENTORY_SLOTS: u16 = 150;
+
+/// The six starting sizes, indexed like [`Character::inventory_slots`]: five at
+/// [`DEFAULT_INVENTORY_SLOTS`], Deco at [`DECO_INVENTORY_SLOTS`].
+pub const fn default_inventory_slots() -> [u16; INVENTORY_COUNT] {
+    let mut slots = [DEFAULT_INVENTORY_SLOTS; INVENTORY_COUNT];
+    slots[INVENTORY_COUNT - 1] = DECO_INVENTORY_SLOTS;
+    slots
+}
+
+/// The largest slot count a bag can reach: **150**.
 ///
 /// The owner, 2026-08-19: *"The inventory slots starts at 30 default and is expandable up to 125
-/// slots using slot expansion USE items of that type of tab."* **[I]** - it is their knowledge
-/// of the live game, and nothing in the client has been read to confirm the ceiling.
+/// slots using slot expansion USE items of that type of tab."* - and the client's own Etc
+/// coupon text, on screen 2026-09-11: *"You can have up to 150 slots."* The client's number
+/// wins over the remembered one; the Deco tab is 150 from the start
+/// ([`DECO_INVENTORY_SLOTS`]), which is the same ceiling seen from the other side.
 ///
-/// It was 100 for one commit, which was mine and arbitrary. Nothing in the decoder bounds
-/// `V` at all - it is a `u16` and the resize takes whatever arrives - so this cap exists only
-/// so a typo cannot ask the client to allocate 65535 slots and walk them six times over.
-pub const MAX_INVENTORY_SLOTS: u16 = 125;
+/// It was 100 for one commit, which was mine and arbitrary, then 125. Nothing in the decoder
+/// bounds `V` at all - it is a `u16` and the resize takes whatever arrives - so this cap
+/// exists only so a typo cannot ask the client to allocate 65535 slots and walk them six
+/// times over.
+pub const MAX_INVENTORY_SLOTS: u16 = 150;
 
 /// **Never send fewer than 30.** The owner, 2026-08-19: *"the minimum number has to be 30, setting
 /// it below 30 has no use."* The window draws a fixed 5x6 grid, so a smaller number cannot
@@ -3954,14 +3974,14 @@ mod tests {
         assert!(!uses_extended_sp(plain.job));
         assert_eq!(character_record_for_set_field(&plain, 0).len(), 248);
 
-        // The bag: six u16 between the string flags and the equipped list, every one of
-        // them the default. Their POSITION is the load-bearing part - the record has no
-        // resync point, so twelve bytes in the wrong place silently ruins the equipped
-        // list behind them.
+        // The bag: six u16 between the string flags and the equipped list - five at the
+        // default, Deco at its 150. Their POSITION is the load-bearing part - the record
+        // has no resync point, so twelve bytes in the wrong place silently ruins the
+        // equipped list behind them.
         let sizes_at = STAT_BLOCK_AT + stat_block_len(chr.job) + 4;
         assert_eq!(
             &record[sizes_at..sizes_at + INVENTORY_SIZE_BLOCK_LEN],
-            &inventory_size_block(&[DEFAULT_INVENTORY_SLOTS; INVENTORY_COUNT])[..]
+            &inventory_size_block(&default_inventory_slots())[..]
         );
         // Indexing by the loop variable rather than zipping, on purpose: the assertion is
         // that the record's Nth pair of bytes matches INVENTORY_SLOT_ORDER's Nth entry, and
@@ -3971,7 +3991,7 @@ mod tests {
             let at = sizes_at + i * 2;
             assert_eq!(
                 u16::from_le_bytes([record[at], record[at + 1]]),
-                DEFAULT_INVENTORY_SLOTS,
+                if INVENTORY_SLOT_ORDER[i] == "deco" { DECO_INVENTORY_SLOTS } else { DEFAULT_INVENTORY_SLOTS },
                 "inventory {} ({}) did not get the default bag",
                 i,
                 INVENTORY_SLOT_ORDER[i]
