@@ -576,6 +576,24 @@ mod tests {
         Some(Archive::open(p).unwrap())
     }
 
+    /// A UOL leaf set at the root survives serialise + parse as a UOL (not a string), and
+    /// reads back through the same accessor the covers' type lookup would use. This is the
+    /// leaf kind the weapon-cover fix writes (`32 -> 30`), spelled the way the classic
+    /// cover 01702001.img spells its own 31/32/33.
+    #[test]
+    fn a_uol_leaf_round_trips_as_a_link() {
+        let mut img = Owned::Object(Vec::new());
+        img.set_path("30/stand1/0/arm", Owned::Int(1));
+        img.set_path("32", Owned::Uol("30".to_string()));
+        let bytes = img.serialize_image();
+        let back = Owned::parse(&bytes).unwrap();
+        assert!(matches!(back.get("32"), Some(Owned::Uol(s)) if s == "30"), "{back:?}");
+        assert!(matches!(back.get("30").and_then(|n| n.get("stand1")), Some(Owned::Object(_))));
+        // And the reader agrees it is a link, which is what the client will see.
+        let node = crate::prop::parse_image(&bytes).unwrap();
+        assert_eq!(node.get("32").and_then(|v| v.as_str()), Some("30"));
+    }
+
     /// `encrypt_offset` is the exact inverse of the reader's decrypt, at the positions and
     /// values a real archive uses.
     #[test]

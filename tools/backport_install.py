@@ -92,6 +92,52 @@ def main():
             src = os.path.join(source, it["prop_archive"])
             add(tree_rel, "copy\t%s\t%s\t%s" % (image, src, image))
 
+    # 1b. Weapon covers: one link child per classic weapon TYPE.
+    #
+    # The owner, 2026-09-12: "Ubel's weapon still cannot be equipped over all weapons." The client
+    # decides whether a cash weapon cover may go on by looking for a child of the cover's
+    # image named after the equipped weapon's type: the classic cover 01702001.img carries a
+    # real `30` subtree and `31`/`32`/`33` as UOL links to it. Every modern cover here carries
+    # only `30` and `49` (49 = gun, a type this client does not have), so over Cobalt's
+    # suitcase - type 32 - the client found nothing and refused, exactly as the tooltip's
+    # "all weapons" promised it would not. [L on the data; the check itself is I, and the
+    # classic file is the control.] So each cover gets a UOL to `30` for every weapon type
+    # the classic Weapon archive actually contains. The two-handed types (40..47) will be
+    # equippable and may not draw in two-handed stances, which the link cannot supply; covers
+    # do not draw at all yet (STATUS: the record carries worn slots 1..31 only), so that is
+    # not a regression of anything.
+    weapon_base = os.path.join(CLASSIC, "Character", "Weapon", "Weapon_000.wz")
+    if os.path.exists(weapon_base + ".bak"):
+        weapon_base += ".bak"  # the untouched classic, when an earlier install left it beside
+    tree = subprocess.run([WZ_DUMP, "tree", weapon_base, "1"], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace").stdout
+    classic_types = sorted({int(l.split("[IMG]", 1)[1].split()[0][2:4]) for l in tree.splitlines()
+                            if "[IMG]" in l and l.split("[IMG]", 1)[1].split()[0][:2] == "01"
+                            and l.split("[IMG]", 1)[1].split()[0][2:4] not in ("70",)})
+    classic_types = [t for t in classic_types if 30 <= t <= 49]
+    if not classic_types:
+        raise SystemExit("no weapon types found in %s - the tree listing is broken" % weapon_base)
+    os.makedirs(args.build_dir, exist_ok=True)
+    for set_name, items in manifest["sets"].items():
+        for it in items:
+            if it["type"] != "Weapon" or not (1700000 <= it["id"] < 1800000):
+                continue
+            image = "%08d.img" % it["id"]
+            src = os.path.join(source, it["prop_archive"])
+            have = json.loads(subprocess.run([WZ_DUMP, "cat", src, image], capture_output=True,
+                                             text=True, encoding="utf-8", errors="replace").stdout)
+            present = sorted(int(k) for k in have if k.isdigit())
+            anchor = next((t for t in present if t in classic_types), None)
+            if anchor is None:
+                raise SystemExit("%s has no type child this client knows (%s)" % (image, present))
+            tsv = os.path.join(args.build_dir, "cover-types-%08d.tsv" % it["id"])
+            with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write("# %s: every classic weapon type as a link to %d, the classic covers' own pattern\n" % (image, anchor))
+                for t in classic_types:
+                    if t not in present:
+                        fh.write("%d\tuol\t%d\n" % (t, anchor))
+            add("Character/Weapon", "patch\t%s\t%s" % (image, tsv))
+
     # 2. Canvas images: every outlink target, copied whole for Character trees; merged by
     #    key for the Item trees (an Item canvas image holds every item of that prefix).
     item_keys = {}  # (tree_rel, image) -> keys we own
