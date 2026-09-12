@@ -274,3 +274,24 @@ What the next launches must show (plan step TL): the hook log line `SELECTFILL: 
 FUN_141177e40` on a login whose select UI was built early, followed by `141177e40` and three
 `141177e80` watch lines *after* the `0x0010` - and avatars. On a login whose build came after
 the list: `SELECTFILL: the select UI is not built yet`, and the build fills as before.
+
+## 9. 09:16, three more launches with the fix armed: 2 blank, 1 good — the fix never ran
+
+Both blank logins were the early-build ordering exactly as §8 predicts (build at +30 ms inside
+the `0x0032` dispatch, three empty fills with `r8=0x20 r9=0x140331540`), the mode patch came
+~500 ms later, and `SELECTFILL` fired after each `0x0010` — and **refused**:
+
+```text
+SELECTFILL: refusing to call 0x141177e40 - expected [48, 89, 5c, ...], found [cc, 89, 5c, ...]
+```
+
+`0xCC` is the probe's own int3: the default probe watched `141177e40` to measure the fill,
+and the guard read the watch. **The instrument defeated the fix.** The good login (`not built
+yet`, build at +492 ms after the list) drew as before. Fixture:
+`research/fixtures/selectfill-refused-by-own-probe-int3-early-build-blank-hook.log`.
+
+So the run is a positive result for the model (blank ⟺ early build, on all five blank logins
+now measured) and a null result for the fix. Two changes: the guard accepts `0xCC` at byte 0
+(the probe's handler restores it for any caller) and logs that it called through an int3;
+and `141177e40` is off both `DEFAULT_PROBE`s - the `SELECTFILL:` line already says when the
+call happens. Still unverified on screen; plan step TL is the same measurement.

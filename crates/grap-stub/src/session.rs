@@ -452,7 +452,14 @@ pub unsafe fn refresh_select_after_dispatch(opcode: u16) {
         return;
     }
     let found = std::slice::from_raw_parts(at as *const u8, SELECT_REFRESH_PROLOGUE.len());
-    if found != SELECT_REFRESH_PROLOGUE {
+    // **A `-Probe` watch on this very function plants `0xCC` over its first byte**, and on
+    // 2026-09-12 (09:16) that is exactly what was there: the default probe watched 141177e40
+    // to measure the fill, so the instrument defeated the fix on both blank logins - the
+    // guard read [cc, 89, 5c, ...] and refused. A planted int3 is not a different binary:
+    // the probe's handler restores the byte and continues for any caller, this one included.
+    // So byte 0 may be 0xCC, the other fourteen must match, and the log says which it was.
+    let watched = found[0] == 0xCC;
+    if found[1..] != SELECT_REFRESH_PROLOGUE[1..] || !(watched || found[0] == SELECT_REFRESH_PROLOGUE[0]) {
         log(&format!(
             "***** SELECTFILL: refusing to call {at:#x} - expected {SELECT_REFRESH_PROLOGUE:02x?} \
              (FUN_141177e40's prologue), found {found:02x?}. Different binary? *****"
@@ -462,10 +469,11 @@ pub unsafe fn refresh_select_after_dispatch(opcode: u16) {
     let refresh: extern "system" fn(usize) = std::mem::transmute(at);
     refresh(obj);
     log(&format!(
-        "***** SELECTFILL: called FUN_141177e40({obj:#x}) after 0x0010 - the select UI existed \
+        "***** SELECTFILL: called FUN_141177e40({obj:#x}) after 0x0010{} - the select UI existed \
          before the list was decoded, so its three slots were built EMPTY; they are now \
          refilled from the decoded list. THIS IS A CLIENT PATCH: it is the call the mode-5 \
-         login handler makes and the mode-2 handler does not (research/charselect-avatar-fade-race.md sec 8) *****"
+         login handler makes and the mode-2 handler does not (research/charselect-avatar-fade-race.md sec 8) *****",
+        if watched { " (through a -Probe int3 planted on it)" } else { "" }
     ));
 }
 
