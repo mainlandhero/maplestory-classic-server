@@ -1028,6 +1028,24 @@ fn put_fixed(out: &mut Vec<u8>, s: &str, len: usize) {
 /// Shared, because the same reader is reached from more than one packet: the character list
 /// (`FUN_1403094b0`), and the three inbound channel opcodes `0x0107`, `0x0114` and
 /// **`0x0138`** - see [`USER_AVATAR_MODIFIED`].
+///
+/// # The two maps, and where a cash equip goes
+///
+/// The owner, 2026-09-12: *"I last had Cobalt wear the entire Ubel outfit, but upon a fresh
+/// login, I do not see those cash items equipped anymore."* The database had them - worn
+/// slots 105, 107, 108 and 111 - and this function put those numbers on the wire as-is.
+/// The reader's loop guard is `(u8)(slot - 1) < 0x1f` (`0x1402ee9c0`), so every one of
+/// them was decoded and **discarded**: 5 bytes each, no garment. **[L]**
+///
+/// The look has two `0xFF`-terminated maps, both indexed 1..=31: the first lands at
+/// `look + 0x39 + slot*4`, the second at `look + 0xb9 + slot*4`. The first is the drawn
+/// one - its index 0, at `+0x39`, is the hair, which is not optional on any screen.
+/// **[D]** from the reader; the reference server calls the two `hairEquips` and
+/// `unseenEquips`, which is the same split. So [`look_maps`] puts a cash item worn at
+/// `100 + s` into the **first** map at `s`, and the ordinary item it covers, if any, into
+/// the **second** map at `s`. A slot with no cash item goes into the first map as before,
+/// and a character with no cash equips produces byte-identical output to what has been
+/// through this reader on screen since 2026-08-19.
 pub fn avatar_look(chr: &Character) -> Vec<u8> {
     let mut out = Vec::new();
     out.push(chr.gender);
@@ -1037,12 +1055,17 @@ pub fn avatar_look(chr: &Character) -> Vec<u8> {
     out.extend_from_slice(&u32::from(chr.job).to_le_bytes());
     out.push(0); // read and discarded
     out.extend_from_slice(&chr.hair.to_le_bytes()); // equipment array index 0
-    for (slot, item) in &chr.equips {
+    let (drawn, covered) = look_maps(&chr.equips);
+    for (slot, item) in &drawn {
         out.push(*slot);
         out.extend_from_slice(&item.to_le_bytes());
     }
-    out.push(0xFF); // end of the equipment map
-    out.push(0xFF); // end of the second map
+    out.push(0xFF); // end of the equipment map - the drawn one, look+0x39
+    for (slot, item) in &covered {
+        out.push(*slot);
+        out.extend_from_slice(&item.to_le_bytes());
+    }
+    out.push(0xFF); // end of the second map - what a cash item covers, look+0xb9
     for _ in 0..4 {
         out.extend_from_slice(&0u32.to_le_bytes());
     }
@@ -1054,6 +1077,47 @@ pub fn avatar_look(chr: &Character) -> Vec<u8> {
     out.extend_from_slice(&0u32.to_le_bytes());
     out.extend_from_slice(&[0u8; CHARACTER_NAME_LEN]);
     out
+}
+
+/// A cash equip is worn at `100 + its base slot`: the store keeps it there, the client's
+/// Deco tab sends `-105` for a cash overall, and both of the look's maps are indexed by the
+/// base slot alone.
+pub const CASH_EQUIP_SLOT_BASE: u8 = 100;
+
+/// The worn slots a cash equip can occupy - [`EQUIP_SLOTS`] shifted by
+/// [`CASH_EQUIP_SLOT_BASE`]. The record's second equipped block (`presence[44]`) stores
+/// `1..=31` of them, checked exactly like the first (`LEA EAX,[RCX-1] / CMP EAX,0x1e / JA`
+/// at `0x1403066b8`). **[L]**
+pub const CASH_EQUIP_SLOTS: std::ops::RangeInclusive<u8> = 101..=131;
+
+/// Split the worn list into the look's two maps: `(drawn, covered)`.
+///
+/// Every entry in both is a base slot in [`EQUIP_SLOTS`]. A cash equip at `100 + s` is
+/// drawn at `s`; the ordinary equip at `s` is then *covered* - sent in the second map so
+/// the client still knows what is underneath. Without a cash item at `s`, the ordinary
+/// equip is drawn. Anything outside both ranges is dropped here rather than paid for on
+/// the wire. Order is by base slot, so the output is stable whatever order the rows came
+/// in.
+pub fn look_maps(equips: &[(u8, u32)]) -> (Vec<(u8, u32)>, Vec<(u8, u32)>) {
+    let mut drawn = Vec::new();
+    let mut covered = Vec::new();
+    for slot in EQUIP_SLOTS {
+        let base = equips.iter().find(|&&(s, _)| s == slot).map(|&(_, id)| id);
+        let cash = equips
+            .iter()
+            .find(|&&(s, _)| s == slot + CASH_EQUIP_SLOT_BASE)
+            .map(|&(_, id)| id);
+        match (cash, base) {
+            (Some(cash), Some(base)) => {
+                drawn.push((slot, cash));
+                covered.push((slot, base));
+            }
+            (Some(cash), None) => drawn.push((slot, cash)),
+            (None, Some(base)) => drawn.push((slot, base)),
+            (None, None) => {}
+        }
+    }
+    (drawn, covered)
 }
 
 /// Dress a character already standing on a field. **Dead code in the client. Not sent.**
@@ -1945,9 +2009,74 @@ pub fn character_record_for_set_field_with(
         &chr.equip_bag,
         chr.inventory_slots[0],
     ));
+    // The worn CASH equips, behind presence[44]. The block sits at 0x14030661c, after the
+    // presence[2] region and before the skill gate (0x140306d28) and both quest gates, so
+    // it goes here and nowhere else. Absent when nothing cash is worn, so the record stays
+    // byte-identical to the one confirmed on screen for every character that has none.
+    if equips.iter().any(|(slot, _, _)| CASH_EQUIP_SLOTS.contains(slot)) {
+        out[PRESENCE_CASH_EQUIPPED] = 1;
+        out.extend_from_slice(&cash_equipped_block(equips));
+    }
     out.push(0); // the final ungated read, at 0x140308b3f
     out
 }
+
+/// The presence byte that opens the **second equipped block** - the worn cash equips.
+///
+/// `research/charrecord-presence-map.md` row 44: key `0x143abeb80`, gate `0x140306632`,
+/// region `[0x140306654, 0x140306830)`. The gate itself scans presence bytes 44..99 for
+/// any non-zero value (`CMP ECX,0x64 / JB` at `0x14030664a`), so this byte is the lowest
+/// that opens it and the one the client's own encoder writes. **[L]**
+///
+/// The owner, 2026-09-12: a relog undressed Cobalt. The look ([`avatar_look`]) is what draws the
+/// avatar, and it was dropping the cash slots; but the *equip window* reads this block, and
+/// without it the worn cash items are nowhere in the client at all - not drawn, not listed,
+/// and not removable, while the server still holds them in slots 105.. . Both halves are
+/// needed and this is the second one.
+pub const PRESENCE_CASH_EQUIPPED: usize = 44;
+
+/// The second equipped block, read at `0x140306654..0x140306830`. **[L]**, every row from
+/// the listing, and it mirrors the first block's shape exactly:
+///
+/// ```text
+/// u8   flagA                    0x14030665c  MUST be 0: non-zero skips FUN_14030b6f0(6)
+///                                            and with it the u16 terminator below
+/// per worn cash item:
+///   u16 slot                    0x14030668c  BASE slot, 1..=31 (the worn slot minus 100);
+///                                            stored at charData + 0x3a8 + slot*0x10, or
+///                                            keyed -100-slot when [rbp+0x3118] is set
+///   item                        0x1403066ae  FUN_1403095e0 - the same pooled item factory
+///                                            as the first block, so equipped_item applies
+/// u16  0                        end of the list
+/// u16  0                        FUN_14030b6f0(closure, 6): the Deco BAG. Sent empty - the
+///                               Deco tab is restored by 0x0070 mode 5 on field entry like
+///                               the other bags, and a second copy here would double it
+/// u16  0, u16 0                 FUN_14030b9e0(6): indices 0 and 1 only (FUN_140255790),
+///                               the 1200 and 1800 ranges. Nothing this server makes goes
+///                               there
+/// ```
+///
+/// `9 + entries` bytes. Slots outside [`CASH_EQUIP_SLOTS`] are skipped: the client would
+/// decode and discard them, exactly as the first block does with anything outside 1..=31.
+pub fn cash_equipped_block(equips: &[(u8, u32, EquipStats)]) -> Vec<u8> {
+    let mut b = Vec::new();
+    b.push(0); // flagA - 0x140306663 TEST AL / SETNE R14B; R14B set skips b6f0(6)
+    for (slot, item_id, stats) in equips {
+        if !CASH_EQUIP_SLOTS.contains(slot) {
+            continue;
+        }
+        let base = slot - CASH_EQUIP_SLOT_BASE;
+        b.extend_from_slice(&u16::from(base).to_le_bytes());
+        b.extend_from_slice(&equipped_item(*item_id, stats));
+    }
+    b.extend_from_slice(&0u16.to_le_bytes()); // end of the worn cash list
+    b.extend_from_slice(&0u16.to_le_bytes()); // FUN_14030b6f0(6) - the Deco bag, empty here
+    b.extend_from_slice(&[0u8; 4]); // FUN_14030b9e0(6) - two lists, indices 0 and 1
+    b
+}
+
+/// The fixed cost of [`cash_equipped_block`]: `flagA` plus four `u16` terminators.
+pub const CASH_EQUIPPED_BLOCK_OVERHEAD: usize = 1 + 2 + 2 + 4;
 
 /// Field 1 of the character record: the presence array that gates 43 blocks.
 pub const PRESENCE_ARRAY_LEN: usize = 100;
@@ -2289,7 +2418,9 @@ pub const EQUIPPED_ITEM_TYPE: u8 = 1;
 ///
 /// `LEA EAX,[RCX-1] / CMP EAX,0x1e / JA` at `0x140306229` stores the item at
 /// `record + 0x1a8 + slot*0x10` only for `1 <= slot <= 31`. **[L]** So a cash-equip slot
-/// costs 127 bytes of wire and achieves nothing; [`equipped_block`] drops them.
+/// costs 127 bytes of wire and achieves nothing *here*; [`equipped_block`] drops them, and
+/// they travel in the second equipped block instead - [`cash_equipped_block`], behind
+/// [`PRESENCE_CASH_EQUIPPED`], where the same check accepts the worn slot minus 100.
 pub const EQUIP_SLOTS: std::ops::RangeInclusive<u8> = 1..=31;
 
 /// "This item never expires", as a Windows FILETIME.
@@ -4450,6 +4581,139 @@ mod tests {
             EQUIPPED_BLOCK_OVERHEAD + EQUIPPED_ENTRY_LEN,
             "slots 105 and 0 are outside 1..=31 and should not be sent"
         );
+    }
+
+    /// The owner, 2026-09-12: Cobalt relogged undressed. The store had the Ubel set in slots
+    /// 105/107/108/111 and the look sent those numbers raw, which the reader discards.
+    #[test]
+    fn a_cash_equip_is_drawn_at_its_base_slot_and_the_item_it_covers_goes_to_the_second_map() {
+        // Cobalt's actual rows, in store order: four ordinary, four cash.
+        let worn = vec![
+            (5u8, 1040021u32),
+            (6, 1062999),
+            (7, 1072999),
+            (11, 1322999),
+            (105, 1054562),
+            (107, 1074238),
+            (108, 1082878),
+            (111, 1703726),
+        ];
+        let (drawn, covered) = look_maps(&worn);
+        assert_eq!(
+            drawn,
+            vec![(5, 1054562), (6, 1062999), (7, 1074238), (8, 1082878), (11, 1703726)],
+            "cash over the base slot; the bottom, which has no cash cover, stays"
+        );
+        assert_eq!(
+            covered,
+            vec![(5, 1040021), (7, 1072999), (11, 1322999)],
+            "only the covered ones - slot 8 had nothing under the gloves"
+        );
+        for (slot, _) in drawn.iter().chain(covered.iter()) {
+            assert!(EQUIP_SLOTS.contains(slot), "every wire slot is one the reader keeps");
+        }
+
+        // Nothing cash: byte-identical to the list that has been through the reader.
+        let plain: Vec<(u8, u32)> = worn[..4].to_vec();
+        assert_eq!(look_maps(&plain), (plain.clone(), Vec::new()));
+        // Garbage slots are dropped, not sent.
+        assert_eq!(look_maps(&[(0, 1), (32, 2), (100, 3), (132, 4)]), (Vec::new(), Vec::new()));
+
+        // And the bytes: the drawn map, 0xFF, the covered map, 0xFF, straight after hair.
+        let chr = Character { hair: 0xBBBB_BBBB, equips: worn, ..Character::default() };
+        let look = avatar_look(&chr);
+        let hair_at = look
+            .windows(4)
+            .position(|w| w == 0xBBBB_BBBBu32.to_le_bytes())
+            .expect("hair is in the look");
+        let mut want = Vec::new();
+        for (slot, id) in drawn.iter().chain(std::iter::once(&(0xFFu8, 0u32))) {
+            want.push(*slot);
+            if *slot != 0xFF {
+                want.extend_from_slice(&id.to_le_bytes());
+            }
+        }
+        for (slot, id) in &covered {
+            want.push(*slot);
+            want.extend_from_slice(&id.to_le_bytes());
+        }
+        want.push(0xFF);
+        assert_eq!(&look[hair_at + 4..hair_at + 4 + want.len()], &want[..]);
+        // The client's walk still lands on the end of the record.
+        let record = character_record(&chr, 0);
+        assert_eq!(read_character_record(&record), record.len());
+    }
+
+    /// The second half of the same bug: without this block the worn cash items are in no
+    /// list the client has, so the equip window shows them empty and they cannot be taken
+    /// off. Shape from the listing at 0x140306654..0x140306830 - flagA, entries at the BASE
+    /// slot, then four u16 terminators.
+    #[test]
+    fn the_cash_equipped_block_uses_base_slots_and_carries_four_terminators() {
+        let empty = cash_equipped_block(&[]);
+        assert_eq!(empty.len(), CASH_EQUIPPED_BLOCK_OVERHEAD);
+        assert_eq!(empty.len(), 9);
+        assert!(empty.iter().all(|&b| b == 0));
+
+        let worn = vec![
+            (5u8, 1040021u32, EquipStats::default()), // ordinary - not this block's
+            (105, 1054562, EquipStats::default()),
+            (111, 1703726, EquipStats::default()),
+            (132, 1, EquipStats::default()), // past the 31 the reader keeps - dropped
+            (100, 1, EquipStats::default()), // base 0 - dropped
+        ];
+        let block = cash_equipped_block(&worn);
+        assert_eq!(block.len(), CASH_EQUIPPED_BLOCK_OVERHEAD + 2 * EQUIPPED_ENTRY_LEN);
+        assert_eq!(block[0], 0, "flagA stays 0 so FUN_14030b6f0(6) runs and eats its u16");
+        let mut at = 1;
+        for (base, item_id) in [(5u16, 1054562u32), (11, 1703726)] {
+            assert_eq!(u16::from_le_bytes([block[at], block[at + 1]]), base, "BASE slot, not 105");
+            assert_eq!(
+                &block[at + 2..at + 2 + EQUIPPED_ITEM_LEN],
+                &equipped_item(item_id, &EquipStats::default())[..]
+            );
+            at += EQUIPPED_ENTRY_LEN;
+        }
+        assert_eq!(&block[at..], &[0u8; 8], "list end, Deco bag end, two b9e0(6) lists");
+    }
+
+    /// The block is gated by presence[44], sits right after the first equipped block, and
+    /// is absent - byte for byte - for a character wearing nothing cash.
+    #[test]
+    fn a_character_wearing_cash_opens_presence_44_and_one_without_sends_the_old_record() {
+        let chr = Character {
+            equips: vec![(5, 1040002), (6, 1060002), (7, 1072001), (11, 1302000)],
+            ..Character::default()
+        };
+        let plain: Vec<(u8, u32, EquipStats)> =
+            chr.equips.iter().map(|&(s, i)| (s, i, EquipStats::default())).collect();
+        let without = character_record_for_set_field_with(&chr, 0, &plain);
+        assert_eq!(without[PRESENCE_CASH_EQUIPPED], 0);
+
+        let mut dressed = plain.clone();
+        dressed.push((105, 1054562, EquipStats::default()));
+        dressed.push((111, 1703726, EquipStats::default()));
+        let mut chr_cash = chr.clone();
+        chr_cash.equips.extend([(105, 1054562), (111, 1703726)]);
+        let with = character_record_for_set_field_with(&chr_cash, 0, &dressed);
+        assert_eq!(with[PRESENCE_CASH_EQUIPPED], 1);
+        assert_eq!(
+            with.len() - without.len(),
+            CASH_EQUIPPED_BLOCK_OVERHEAD + 2 * EQUIPPED_ENTRY_LEN,
+            "exactly one block of two entries was added"
+        );
+        // Placement: everything before the block is the old record minus its final byte,
+        // and the block is followed by that byte alone.
+        let block = cash_equipped_block(&dressed);
+        let head = without.len() - 1;
+        assert_eq!(&with[PRESENCE_ARRAY_LEN..head], &without[PRESENCE_ARRAY_LEN..head]);
+        assert_eq!(&with[head..head + block.len()], &block[..]);
+        assert_eq!(&with[head + block.len()..], &[0u8], "then the ungated read at 0x140308b3f");
+        // The look inside the same record drew the cash items at the base slot.
+        let look = avatar_look(&chr_cash);
+        let mut cash_over_coat = vec![5u8];
+        cash_over_coat.extend_from_slice(&1054562u32.to_le_bytes());
+        assert!(look.windows(5).any(|w| w == cash_over_coat.as_slice()));
     }
 
     /// A dressed character's record is 743 bytes, and the equipped block sits between the
