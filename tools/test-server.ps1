@@ -866,33 +866,28 @@
            sheet right, top still bare -> requirements are not it; say so and I go to
                          the client with the two screens' difference narrowed to the look
 
-     TL. THE BLANK CHARACTER-SELECT SCREEN - the 0x007A theory is DEAD (2026-09-12: the
-         re-send fired 403 ms after the list, exactly as designed, and the avatars stayed
-         blank). The client was read instead: research/charselect-avatar-fade-race.md.
-         Avatar placement is FUN_141179970, and every path to it first checks the select
-         UI object (global 0x143aca790) and SKIPS placement when it is null - frames and
-         statboard still draw. So the question is whether that object exists when the
-         character list is decoded, and the default probe now watches exactly that - in
-         maplecw-launcher's compiled DEFAULT_PROBE, which is the copy the client gets (the
-         01:49 launch armed the OLD watches because only this script's default had been
-         changed; that run measured nothing and is not evidence). No server change; it is a
-         measurement, and a GOOD login is informative too. FIRST confirm the instrument:
-         client-patched\maplecw-hook.log must say "probe: watching 0x141177490". If it does
-         not, the run is uninstrumented - say so. Then find the WATCH lines for:
-           0x141177490 = the object's constructor (WHEN the client built it)
-           0x141177e40 = the list decoder's refresh of it; its rcx IS the object
-           0x141179970 = avatar placement entered = the null-gate passed
-         and compare their times with login.log's "-> 0x0010" line (same clock).
-           avatars draw; 141177490 BEFORE the 0x0010, 141177e40 rcx != 0, 141179970
-                         present -> the good case works as read; model confirmed
-           avatars BLANK; 141177e40 rcx=0x0 (or no line) and NO 141179970 -> the list
-                         was decoded before the client had built its select UI. That is
-                         the bug, and the ctor's time says how long to hold the list
-           avatars BLANK but 141179970 IS present -> placement ran and drew nothing:
-                         the avatar art is not resident at select; a different fix
-           the client DIES at the list -> 141177e40 does not tolerate a null object;
-                         say so, that is a finding too (and tools/decode_elog.py)
-         You cannot force the blank case; leave this probe on across a few logins.
+     TL. THE BLANK CHARACTER-SELECT SCREEN - MEASURED 2026-09-12 (01:54), and the earlier
+         two theories (0x007A pause, and the null-gate) are both DEAD. The probe caught it:
+         the select-UI object IS built and avatar placement (141179970) DOES run - the slots
+         are placed EMPTY because the per-character fill never runs. research/charselect-
+         avatar-fade-race.md sec 6. The fill (141177e80) is reached only from the mode-5
+         0x0010 handler (141b32860 -> 141177e40) or the UI's vtable build (141177790). We
+         patch the client mode 5->2, and the mode-2 handler decodes the list but fills
+         nothing - so the leading theory is that a blank screen means the list was handled
+         AFTER the mode patch (mode 2). No server change; this launch tests that.
+         FIRST confirm the instrument: maplecw-hook.log must say "probe: watching
+         0x141b32860". If not, uninstrumented - say so. Then the WATCH lines:
+           141177e80 = the per-slot fill itself (present on ANY login whose avatars draw)
+           141b32860 = the mode-5 handler (the one that fills)
+           141177e40 = the mode-5 slot refresh;  141177790 = the vtable build (other route)
+           avatars draw, 141177e80 present -> the fill ran. If 141b32860 + 141177e40 are
+                         also present, it filled via mode 5, so BLANK == mode 2 and the fix
+                         is to keep the list in mode 5 or make mode 2 fill. If 141177790
+                         instead, a vtable route fills and mode is not the discriminator
+           avatars BLANK, 141177e80 ABSENT -> confirms the slots are placed empty; note
+                         whether 141b32860 fired (mode) vs the good login
+         Report which watches fired on a GOOD login and on a BLANK one - that pair is the
+         whole measurement. You cannot force blank; leave the probe on a few logins.
 
      TR. THE AP AND SP RESET SCROLLS - CONFIRMED 2026-09-10: "both AP and SP scrolls now
          work." STRUCK. Kept for the record: they were on the wrong opcode. Your two presses at
@@ -1802,29 +1797,26 @@ param(
     # (0x0090) carries a full call stack that names the site for free, so the watch bought
     # nothing and was one of two suspects for the crash. `python tools/decode_elog.py`.
     #
-    # 142ef3e44 is __report_gsfailure, kept because a silent 37s death is the failure mode
-    # this project spends the most runs on. The migration-handler watch (141b36f60) is
-    # dropped for now: it fired once per migration and answered nothing open.
+    # The migration-handler (141b36f60) and GS-reporter (142ef3e44) watches are both dropped
+    # for the blank-select question - four slots are needed.
     #
     # **THIS DEFAULT DOES NOT REACH THE CLIENT ON ITS OWN.** The client is launched by
     # maplecw-launcher, which writes ITS compiled default (crates/launcher/src/client.rs
     # DEFAULT_PROBE) over maplecw-hook.probe on every launch; this string only gets through
-    # as a -PinPatches pin. 2026-09-12: this default was changed, the launcher's was not, and
-    # the launch meant to measure the blank select screen armed the old watches. The two are
-    # now identical - keep them so, and check "probe: watching 0x141177490" in the hook log.
+    # as a -PinPatches pin. Keep the two IDENTICAL, and check the hook log armed them.
     #
-    # The other three slots are the blank-select-screen question, plan step TL, from
-    # research/charselect-avatar-fade-race.md. Avatar placement at character select is
-    # FUN_141179970, and it is skipped when the select UI object (global 0x143aca790) is
-    # null at the moment the screen is drawn - frames and statboard still draw, avatars do
-    # not, which is the screen the owner sees. So:
-    #   141177490:hits=4    the select UI object's CONSTRUCTOR - when the client built it.
-    #                       Compare its time with login.log's "-> 0x0010" line (same clock)
-    #   141177e40:hits=8    the character-list decoder's refresh of that object. Its rcx IS
-    #                       the object: rcx=0x0 means the list arrived before it existed
-    #   141179970:hits=12   avatar placement entered = the null-gate passed
+    # The four non-mandatory slots are the blank-select-screen question, plan step TL, from
+    # research/charselect-avatar-fade-race.md. The 01:54 launch MEASURED the blank screen:
+    # the select-UI object IS built and avatar placement (141179970) DOES run - the slots are
+    # placed EMPTY because the per-character fill never runs. The null-gate hypothesis is
+    # refuted. These watch the fill chain:
+    #   141b32860:hits=4   the MODE-5 0x0010 handler (the one that fills). Absent = the list
+    #                      was handled in mode 2, which decodes but never fills the slots
+    #   141177e40:hits=6   the mode-5 slot refresh
+    #   141177790:hits=6   the select UI's vtable build (the other route to the fill)
+    #   141177e80:hits=16  the per-slot fill ITSELF - present on any login whose avatars draw
     # Watch lines are written on ENTRY, so a missing line means never entered.
-    [string]$Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142ef3e44:hits=8,141177490:hits=4,141177e40:hits=8,141179970:hits=12',
+    [string]$Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141b32860:hits=4,141177e40:hits=6,141177790:hits=6,141177e80:hits=16',
     [string]$SessionTokens = '',
     # Answer the migration hello with the fixed head of a SetField, and swap the probe for
     # the two watches that make the answer readable. See research/msexe-stage-setfield.md.
@@ -2809,28 +2801,25 @@ function Show-TestPlan {
         Write-Host '          requirements against the sheet; server needs a REQ gate'
         Write-Host '        sheet right, top still bare -> not requirements; say so'
         Write-Host ''
-        Write-Host '  TL. THE BLANK CHARACTER-SELECT SCREEN - a MEASUREMENT.' -ForegroundColor Magenta
-        Write-Host '      The 0x007A theory is dead: the re-send fired on time and'
-        Write-Host '      the avatars stayed blank. Read from the client instead:'
-        Write-Host '      avatar placement (FUN_141179970) is SKIPPED whenever the'
-        Write-Host '      select UI object is null when the screen draws - frames and'
-        Write-Host '      statboard still draw. The LAUNCHER default probe now watches'
-        Write-Host '      that (the 01:49 launch armed the OLD watches - not evidence).'
+        Write-Host '  TL. THE BLANK CHARACTER-SELECT SCREEN - MEASURED 01:54.' -ForegroundColor Magenta
+        Write-Host '      Both earlier theories (0x007A pause, null-gate) are DEAD.'
+        Write-Host '      The probe caught it: the select-UI object IS built and'
+        Write-Host '      placement (141179970) DOES run - the slots are placed EMPTY'
+        Write-Host '      because the per-character fill never runs. The fill is'
+        Write-Host '      reached only via the mode-5 0x0010 handler or the UI vtable'
+        Write-Host '      build; we patch mode 5->2, and mode 2 fills nothing. Leading'
+        Write-Host '      theory: blank == the list was handled AFTER the mode patch.'
         Write-Host '      No server change. FIRST: maplecw-hook.log must say' -ForegroundColor Yellow
-        Write-Host '      "probe: watching 0x141177490" or the run is uninstrumented.' -ForegroundColor Yellow
-        Write-Host '      Then find the WATCH lines, compare with login.log "-> 0x0010":'
-        Write-Host '        0x141177490 = the object CONSTRUCTED (when)'
-        Write-Host '        0x141177e40 = list decoder refreshing it; rcx IS the object'
-        Write-Host '        0x141179970 = avatars placed (the null-gate passed)'
-        Write-Host '        draw; ctor before 0x0010, e40 rcx!=0, 970 present -> model'
-        Write-Host '                      confirmed for the good case'
-        Write-Host '        BLANK; e40 rcx=0x0 or absent, NO 970 -> list decoded' -ForegroundColor Yellow
-        Write-Host '                      before the select UI existed. THE BUG; the' -ForegroundColor Yellow
-        Write-Host '                      ctor time says how long to hold the list' -ForegroundColor Yellow
-        Write-Host '        BLANK but 970 present -> placed, drew nothing: art not'
-        Write-Host '                      resident at select; a different fix'
-        Write-Host '        client DIES at the list -> e40 cannot take null; say so'
-        Write-Host '      You cannot force BLANK; leave this probe on a few logins.'
+        Write-Host '      "probe: watching 0x141b32860" or it is uninstrumented.' -ForegroundColor Yellow
+        Write-Host '      Then the WATCH lines:'
+        Write-Host '        141177e80 = the per-slot fill (present if avatars draw)'
+        Write-Host '        141b32860 = mode-5 handler (the one that fills)'
+        Write-Host '        141177e40 = mode-5 refresh; 141177790 = vtable build'
+        Write-Host '        draw + e80 present -> fill ran. +32860/e40 => filled via'
+        Write-Host '                      mode 5, so BLANK == mode 2 (the fix target)' -ForegroundColor Yellow
+        Write-Host '        BLANK + NO e80 -> slots placed empty; note if 32860 fired'
+        Write-Host '      Report which fired on a GOOD login AND a BLANK one - that'
+        Write-Host '      pair is the measurement. Leave the probe on a few logins.'
         Write-Host ''
         Write-Host '  TR. AP / SP RESET SCROLLS - CONFIRMED: "both now work." STRUCK.' -ForegroundColor Green
         Write-Host '      Your two presses were 0x0116, not the coupons 0x0114, and'
