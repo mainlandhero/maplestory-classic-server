@@ -4,10 +4,11 @@
 //! press arrived twice as `0x0165` and nothing answered it - `net::beautycoupon` has the
 //! capture. The dialog and its preview are the client's; the decision is the server's.
 //!
-//! **The redraw is a field re-entry**, the same way `!hair` and `!face` do it: `0x0138`
-//! applies nothing in this client (`net::opcode::USER_AVATAR_MODIFIED`), so the look is
-//! rebuilt by a `SetField` of the map the player is standing on. That re-entry also re-sends
-//! the bag, which is how the spent coupon leaves the screen.
+//! **No field re-entry** (the owner, 2026-09-12: *"switch immediately... without a reload"*). The
+//! client's own dialog previews the look and commits it on Confirm, so the player's own
+//! screen is already right; the server persists it, spends the coupon, and tells the OTHER
+//! clients through `Session::broadcast_look_change`. `0x0138` applies nothing in this client
+//! (`research/naked-character.md`), which is why the remote update rides the user-pool packet.
 
 use super::{Reply, Session};
 
@@ -76,17 +77,18 @@ impl Session {
             crate::cosmetics::Kind::Face => "face",
         };
         crate::server::log(&format!(
-            "   beauty coupon: character {} used {} - {what} is now {cosmetic}; re-entering map {} to redraw",
-            chr.id, req.item_id, chr.map_id
+            "   beauty coupon: character {} used {} - {what} is now {cosmetic}; broadcasting to the field, no reload",
+            chr.id, req.item_id
         ));
-        let map = chr.map_id;
-        let mut out = self.stack_change_replies(store::InventoryType::Use, req.slot, 0);
-        out.extend(self.go_to_map(
-            &mut chr,
-            map,
-            0,
-            format!("beauty coupon {}: {what} -> {cosmetic}, re-entry so the look is rebuilt", req.item_id),
-        ));
+        // **No field re-entry.** The owner, 2026-09-12: *"The hair should just switch immediately
+        // on screen without a reload."* The client's own Beauty dialog previewed the look and
+        // committed it on Confirm, so the player's screen is already right; a `SetField` here
+        // was a visible reload for nothing. The OTHER clients are told through
+        // `broadcast_look_change`, and the coupon is answered with its inventory op plus the
+        // exclusive-request unlock, so nothing is left latched.
+        let mut out = crate::mesodrop::unlock_unhandled_latching_request(opcode);
+        out.extend(self.stack_change_replies(store::InventoryType::Use, req.slot, 0));
+        self.broadcast_look_change(&chr);
         out
     }
 }

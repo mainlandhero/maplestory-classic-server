@@ -372,6 +372,31 @@ impl Session {
         here
     }
 
+    /// **Tell the field this character's hair or face just changed.** No field re-entry.
+    ///
+    /// The owner, 2026-09-12: *"The hair should just switch immediately on screen without a
+    /// reload... The moment any hair or face change happens, it should also show up on other
+    /// clients."* The player's own client already applied the look - the Beauty dialog
+    /// previews it and commits it on Confirm - so the server owes only the OTHER clients an
+    /// update. `0x0138` (the incremental avatar-modify) applies nothing in this client
+    /// (`research/naked-character.md`), so the update rides the user-pool enter packet the
+    /// field already uses: everyone here re-adds this character with its new look, and the
+    /// stored spawn is refreshed so a later joiner gets it too.
+    ///
+    /// **[I] on the remote side**: whether a second `USER_ENTER_FIELD` for a character
+    /// already in the pool redraws it or is ignored is not measured. It is the only live
+    /// avatar mechanism this client has; the plan's step names the falsifier.
+    pub(super) fn broadcast_look_change(&mut self, chr: &net::opcode::Character) {
+        let Some(map) = self.bus().map_of(self.subscriber) else { return };
+        let spawn = self.presence(chr).spawn;
+        self.bus().refresh_spawn(self.subscriber, spawn.clone());
+        self.bus().publish(self.subscriber, map, spawn, None);
+        crate::server::log(&format!(
+            "   look change for character {} (hair {}, face {}) broadcast to field {map}",
+            chr.id, chr.hair, chr.face
+        ));
+    }
+
     /// Rebroadcast a movement report to everyone else on this field.
     ///
     /// `body` is the `0x00D9` body with the opcode already stripped, and
