@@ -137,3 +137,13 @@ down before the launch:
 
 The owner cannot force the blank case; the probe stays the default across the next few logins,
 and a good login still pins the normal ordering.
+
+**The 01:49 launch on 2026-09-12 reproduced the blank screen and measured nothing.** Its hook
+log armed the four OLD watches: only `tools/test-server.ps1`'s default had been changed, and
+the client's probe comes from `maplecw-launcher`'s compiled `DEFAULT_PROBE`
+(`crates/launcher/src/client.rs`), which overwrites `maplecw-hook.probe` on every launch -
+the script's default reaches the client only as a `-PinPatches` pin. Both defaults are now the
+string above. Before reading any run against this section, confirm the hook log says
+`probe: watching 0x141177490`; without that line the run is uninstrumented, not "zero hits".
+The one thing that launch does say: list at +401 ms, `0x007A` at +673 ms, re-send at
++674 ms, blank - the same shape as the last blank run.
