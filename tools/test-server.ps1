@@ -878,15 +878,20 @@
          THE FIX (hook, a CLIENT PATCH): after every 0x0010 dispatch, if the select UI
          already exists, the hook calls the client's own FUN_141177e40(selectUi) - the refill
          the mode-5 handler makes and mode 2 never does. Off with -Session token
-         selectfill=off. Launch normally, a few times; per login read maplecw-hook.log:
+         selectfill=off. **09:16, three launches: 2 blank, 1 good - and the fix never ran.**
+         Both blank logins were the early-build ordering exactly as predicted, SELECTFILL
+         fired on both - and REFUSED, because the default probe's own watch on 141177e40
+         had planted an int3 over the byte the guard checks. The instrument defeated the
+         fix. The guard now tolerates the int3 and that watch is off the default probe.
+         Launch normally, a few times; per login read maplecw-hook.log:
            "SELECTFILL: the select UI is not built yet" -> the good ordering; the build
                          fills after the list as before. Avatars must draw (they did)
-           "SELECTFILL: called FUN_141177e40(0x..)" then WATCH 141177e40 and THREE
-                         141177e80 lines AFTER the "-> 0x0010" time, and avatars DRAW
-                         -> the blank ordering happened and was rescued. FIXED
+           "SELECTFILL: called FUN_141177e40(0x..)" then THREE 141177e80 WATCH lines
+                         AFTER the "-> 0x0010" time, and avatars DRAW -> the blank
+                         ordering happened and was rescued. FIXED
            that SELECTFILL line, and avatars still BLANK -> the refill ran and did not
                          draw; tell me, and keep the log - the e80 arguments will say why
-           "SELECTFILL: refusing" / "not readable" -> the guard tripped; it is in the log
+           "SELECTFILL: refusing" / "not readable" -> the guard tripped again; paste it
            the client DIES at the list -> the refill on an existing object is unsafe in
                          this state; relaunch ONCE with
                          -PinPatches -Session 'mode=2,create=on,guardpage=0x20+0x40,selectfill=off'
@@ -1811,18 +1816,18 @@ param(
     # DEFAULT_PROBE) over maplecw-hook.probe on every launch; this string only gets through
     # as a -PinPatches pin. Keep the two IDENTICAL, and check the hook log armed them.
     #
-    # The four non-mandatory slots are the blank-select-screen question, plan step TL, from
-    # research/charselect-avatar-fade-race.md. The 01:54 launch MEASURED the blank screen:
-    # the select-UI object IS built and avatar placement (141179970) DOES run - the slots are
-    # placed EMPTY because the per-character fill never runs. The null-gate hypothesis is
-    # refuted. These watch the fill chain:
-    #   141b32860:hits=4   the MODE-5 0x0010 handler (the one that fills). Absent = the list
-    #                      was handled in mode 2, which decodes but never fills the slots
-    #   141177e40:hits=6   the mode-5 slot refresh
-    #   141177790:hits=6   the select UI's vtable build (the other route to the fill)
-    #   141177e80:hits=16  the per-slot fill ITSELF - present on any login whose avatars draw
-    # Watch lines are written on ENTRY, so a missing line means never entered.
-    [string]$Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141b32860:hits=4,141177e40:hits=6,141177790:hits=6,141177e80:hits=16',
+    # 142ef3e44 is __report_gsfailure, kept because a silent 37s death is the failure mode
+    # this project spends the most runs on. The last two are plan step TL,
+    # research/charselect-avatar-fade-race.md sec 8:
+    #   141177790:hits=6   the select UI's build. Its time against login.log's "-> 0x0010"
+    #                      says whether the screen was built BEFORE the list (the blank
+    #                      ordering, which the hook's SELECTFILL step now rescues) or after
+    #   141177e80:hits=16  the per-slot fill - three lines per fill
+    # **Never watch 141177e40 here.** The hook's selectfill step CALLS it and reads its
+    # prologue first; a watch plants 0xCC over byte 0, and on 2026-09-12 that made the guard
+    # refuse the fix on both blank logins. The SELECTFILL: log line already says when the
+    # call happens. Watch lines are written on ENTRY, so a missing line means never entered.
+    [string]$Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142ef3e44:hits=8,141177790:hits=6,141177e80:hits=16',
     [string]$SessionTokens = '',
     # Answer the migration hello with the fixed head of a SetField, and swap the probe for
     # the two watches that make the answer readable. See research/msexe-stage-setfield.md.
@@ -2815,14 +2820,18 @@ function Show-TestPlan {
         Write-Host '      dispatch, from an EMPTY list - and mode 2 never refills.'
         Write-Host '      FIX (hook, a CLIENT PATCH): after each 0x0010, if the select'
         Write-Host '      UI already exists, call the client own FUN_141177e40 refill.'
-        Write-Host '      Off: -Session token selectfill=off. Launch a few times; per'
-        Write-Host '      login read maplecw-hook.log for the SELECTFILL line:'
+        Write-Host '      Off: -Session token selectfill=off. 09:16 (2 blank, 1 good):'
+        Write-Host '      both blank logins were the early-build ordering as predicted,'
+        Write-Host '      SELECTFILL fired on both - and REFUSED: the probe own watch on'
+        Write-Host '      141177e40 had planted an int3 over the byte the guard checks.'
+        Write-Host '      Guard now tolerates it; that watch is gone. Launch a few'
+        Write-Host '      times; per login read maplecw-hook.log for the SELECTFILL line:'
         Write-Host '        "not built yet" -> good ordering; avatars draw as before'
-        Write-Host '        "called FUN_141177e40" + WATCH e40 and 3x e80 AFTER the' -ForegroundColor Yellow
+        Write-Host '        "called FUN_141177e40" + 3x e80 WATCH lines AFTER the' -ForegroundColor Yellow
         Write-Host '          0x0010, and avatars DRAW -> blank ordering RESCUED. FIXED' -ForegroundColor Yellow
         Write-Host '        "called" but still BLANK -> refill ran, did not draw; keep'
         Write-Host '          the log, the e80 arguments say why'
-        Write-Host '        "refusing"/"not readable" -> a guard tripped; it is logged'
+        Write-Host '        "refusing"/"not readable" -> guard tripped again; paste it'
         Write-Host '        client DIES at the list -> relaunch ONCE with -PinPatches' -ForegroundColor Yellow
         Write-Host '          -Session mode=2,create=on,guardpage=0x20+0x40,selectfill=off' -ForegroundColor Yellow
         Write-Host '          (a pin, like -Probe) and say so' -ForegroundColor Yellow

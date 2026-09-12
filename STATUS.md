@@ -169,7 +169,11 @@ can beat that ordering. **Fix, in the hook (2026-09-12, unverified on screen):**
 `grap_stub::session::refresh_select_after_dispatch` calls the client's own
 `FUN_141177e40(selectUi)` - the refill the mode-5 handler makes and mode 2 does not - after every
 `0x0010` when the select UI already exists; `selectfill=off` turns it off. It is a client patch
-and does not make the session valid. Plan step TL says what the hook log must show. The list
+and does not make the session valid. **09:16: three more launches, 2 blank, 1 good - the fix
+never ran.** Both blank logins were the early-build ordering as predicted and SELECTFILL fired,
+but its prologue guard read the default probe's own int3 on `141177e40` and refused: the
+instrument defeated the fix (sec 9). Guard now tolerates the int3, watch removed. Plan step TL
+says what the hook log must show. The list
 re-send and `--no-list-resend` are not the mechanism and can go once this is confirmed.
 `research/select-screen-race-2026-09-10.md` is superseded.
 

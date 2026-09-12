@@ -68,14 +68,18 @@ pub const HOOK_LOG: &str = "maplecw-hook.log";
 /// blocks the per-frame tick that enables the Login button. `142ef3e44` is
 /// `__report_gsfailure`, kept so a silent 37 s death stays visible.
 ///
-/// The other three are plan step TL, `research/charselect-avatar-fade-race.md` §7. The 01:54
-/// launch measured the blank screen: the select-UI object IS built and avatar placement DOES
-/// run - the slots are placed EMPTY because the per-character fill never runs. So these watch
-/// the fill chain: the mode-5 `0x0010` handler (`141b32860`, the one that fills), its slot
-/// refresh (`141177e40`), the select UI's vtable build (`141177790`, the other fill route),
-/// and the per-slot fill itself (`141177e80`, present on any login whose avatars draw). Six
-/// slots, all in use.
-pub const DEFAULT_PROBE: &str = "watch@1415db360:ret,141b2a280:rdx=0,141b32860:hits=4,141177e40:hits=6,141177790:hits=6,141177e80:hits=16";
+/// `142ef3e44` is `__report_gsfailure`, kept so a silent 37 s death stays visible.
+///
+/// The last two are plan step TL, `research/charselect-avatar-fade-race.md` §8: the select
+/// UI's build (`141177790` - its time against the `0x0010` says whether the screen was built
+/// before or after the list) and the per-slot fill (`141177e80`, three lines per fill).
+///
+/// **Do not watch `141177e40` here.** The hook's `selectfill` step calls that function, and
+/// its prologue guard reads the bytes first; a watch plants `0xCC` over byte 0. On 2026-09-12
+/// the default probe watched it to measure the fill and thereby refused the fix on both
+/// blank logins. The guard now tolerates the int3, but the `SELECTFILL:` log line already
+/// says when the call happens, so the watch buys nothing. Five slots in use, one free.
+pub const DEFAULT_PROBE: &str = "watch@1415db360:ret,141b2a280:rdx=0,142ef3e44:hits=8,141177790:hits=6,141177e80:hits=16";
 
 /// The size classes the shipped guard page quarantines, spelled the way
 /// `grap_stub::guardpage::parse_classes` reads them: `+`-joined, **never** comma-joined,
