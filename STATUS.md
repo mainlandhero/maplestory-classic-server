@@ -242,11 +242,10 @@ coupons' `spec/cosmetic`, read from the WZ), spends the coupon and re-enters the
 as `!hair` does. The weapon refusal is the client's own per-type check: classic covers carry a
 child per weapon type (`01702001`: a real `30`, and `31`/`32`/`33` as UOL links to it), every
 backported cover carries only `30` and `49`, and the equipped suitcase is type 32 [L on the data,
-I on the check]. **Fixed in the data, 2026-09-12 (built, verified, NOT yet installed - the
-client held the archives):** `tools/backport_install.py` now gives each of the six covers a UOL
+I on the check]. **Fixed in the data, 2026-09-12 (built, verified, installed; unseen on screen):** `tools/backport_install.py` now gives each of the six covers a UOL
 to `30` for every classic weapon type (31,32,33,37..47), `wz-dump build` gained the `uol` patch
 kind and layers a `patch` onto an earlier `copy` of the same image (it used to replace it).
-Install with the client closed, then equip the weapon over the suitcase: it should go on. The face coupon: images
+Next launch: equip the weapon over the suitcase; it should go on (drawing is the separate open item). The face coupon: images
 installed and node-identical to a classic face; the one difference is the id (22035..22042
 against a classic space ending at 21825, while hair 42600 works outside its own space) - step
 TH's `!face 22039` tells the two readings apart.
