@@ -112,6 +112,25 @@ pub const MOB_MOVE_REQUEST: u16 = 0x02FF;
 /// stub. **[L]**
 pub const MOB_MOVE: u16 = 0x03D9;
 
+/// `0x03E8` **MobSuspendReset** - end a mob's summoning suspension, making it targetable.
+///
+/// `FUN_141d32b30`'s second table (`0x141d33448`, 117 entries from `0x3D9`) sends `0x3E8`
+/// to `141d32c4d` -> `FUN_141c82390(mob, packet)`. That reads one `u8` (`141c823b0`) and
+/// returns at once when it is zero (`141c823b7`); otherwise it writes `mob+0x504 = 0`
+/// (`141c82951`, gate 2 passes again) and `mob+0x324 = 1`. **[L]** The object id is read by
+/// the dispatcher before the table (`141d32b4d`). The reference's `MobPool.suspendReset` is
+/// `int objectId, byte true`, at the same offset from `MOB_ENTER_FIELD` as every other mob
+/// opcode this server has matched. The pair with `mob::appear_with_summon_effect`.
+pub const MOB_SUSPEND_RESET: u16 = 0x03E8;
+
+/// Build a [`MOB_SUSPEND_RESET`]: `u32 objectId, u8 1`.
+pub fn mob_suspend_reset(object_id: u32) -> Vec<u8> {
+    let mut b = Vec::with_capacity(5);
+    b.extend_from_slice(&object_id.to_le_bytes());
+    b.push(1); // 141c823b7: zero is a no-op
+    b
+}
+
 /// **`MobCtrlAck` - the answer to [`MOB_MOVE_REQUEST`].**
 ///
 /// Same table, entry `0x3E4 - 0x3D9 = 11` -> stub `141d32b9d` -> `FUN_141c82060`, whose only

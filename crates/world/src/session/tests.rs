@@ -9963,6 +9963,64 @@ fn use_cash_item_body(slot: u16, item_id: u32) -> Vec<u8> {
     b
 }
 
+/// **A summoned mob is handed to the client that summoned it.** The owner, 2026-09-12, beside a
+/// Balrog from a sack: *"does not have AI and does not have movement and does not use
+/// skills."* The sack spawned it (0x03C6) and granted nobody control (0x03D2); no client
+/// runs a mob it does not control. Field entry and the respawn tick both grant, the sack
+/// did not. The 0x03C6 is map-wide; the 0x03D2 is this connection's alone.
+#[test]
+fn a_sack_summons_a_mob_and_grants_this_client_control_of_it() {
+    let (mut s, store, id) = gm_session();
+    let mut cfg = (*s.config).clone();
+    cfg.summon_sacks.insert(2_100_006, crate::config::SummonSack { mobs: vec![800_023] });
+    // Balrog: summonType 0 - Effect/Summon.img/0, the 2.5 s summoning circle.
+    cfg.mob_templates.insert(800_023, crate::config::MobTemplate { max_hp: 325_400, summon_type: 0, ..Default::default() });
+    s.config = Arc::new(cfg);
+    let slot = store.add_item(id, store::InventoryType::Use, &store::Item::bundle(2_100_006, 1), 1).unwrap()[0].slot;
+    s.last_position = Some((520, 395));
+
+    let mut body = Vec::new();
+    body.extend_from_slice(&0u32.to_le_bytes());
+    body.extend_from_slice(&slot.to_le_bytes());
+    body.extend_from_slice(&2_100_006u32.to_le_bytes());
+    let out = s.on_summon_sack(&body);
+    let ops: Vec<u16> = out.iter().map(|r| r.opcode).collect();
+    let spawn = out.iter().position(|r| r.opcode == net::mob::MOB_ENTER_FIELD).expect("the spawn");
+    let grant = out.iter().position(|r| r.opcode == net::mobmove::MOB_CHANGE_CONTROLLER).expect("the grant: {ops:?}");
+    assert!(spawn < grant, "grant after the spawn, as the client requires: {ops:?}");
+    let object_id = u32::from_le_bytes(out[spawn].body[1..5].try_into().unwrap()); // after sealedInsteadDead
+    assert_eq!(u32::from_le_bytes(out[grant].body[1..5].try_into().unwrap()), object_id, "the same mob");
+    assert_eq!(out[grant].body[0], net::mobmove::CONTROL_NORMAL);
+    assert!(out[grant].what.contains("summoned"), "{}", out[grant].what);
+    // The registry agrees, and a second claim by anyone is refused.
+    assert!(!s.fields.controllers().claim_one(s.claimed_character().unwrap().map_id, object_id, 99));
+
+    // **The summoning animation, then the reset that makes the mob hittable.** The owner,
+    // 2026-09-12: "it is also missing the summon effect that is played for all players."
+    // appear_type is the template's summonType (0 -> Effect/Summon.img/0), which suspends the
+    // mob (mob+0x504 = 1); the 0x03E8 is due when the 2500 ms animation ends, not before.
+    // (The body's appear byte sits after the forced-stat block, whose length depends on the
+    // template, so the log line - built from the same FieldMob - is the stable readout.)
+    assert!(out[spawn].what.contains("appear 0 (Effect/Summon.img/0; SUSPENDED until the 0x03E8 in 2500 ms"), "{}", out[spawn].what);
+    assert!(out.iter().all(|r| r.opcode != net::mobmove::MOB_SUSPEND_RESET), "not yet");
+    let early = s.tick(2_400);
+    assert!(early.iter().all(|r| r.opcode != net::mobmove::MOB_SUSPEND_RESET), "still playing at 2400 ms");
+    let due = s.tick(2_500);
+    let reset = due.iter().find(|r| r.opcode == net::mobmove::MOB_SUSPEND_RESET).expect("the reset at 2500 ms");
+    assert_eq!(&reset.body[..], &[object_id.to_le_bytes().as_slice(), &[1u8]].concat()[..], "u32 objectId, u8 1");
+    assert!(s.tick(9_000).iter().all(|r| r.opcode != net::mobmove::MOB_SUSPEND_RESET), "sent once");
+    // A template with no effect entry (summonType past the image) is a plain -2 spawn.
+    let mut cfg = (*s.config).clone();
+    cfg.mob_templates.insert(800_023, crate::config::MobTemplate { max_hp: 325_400, summon_type: 99, ..Default::default() });
+    s.config = Arc::new(cfg);
+    let slot = store.add_item(id, store::InventoryType::Use, &store::Item::bundle(2_100_006, 1), 1).unwrap()[0].slot;
+    body[4..6].copy_from_slice(&slot.to_le_bytes());
+    let out = s.on_summon_sack(&body);
+    let spawn = out.iter().find(|r| r.opcode == net::mob::MOB_ENTER_FIELD).unwrap();
+    assert!(spawn.what.contains("appear -2 (no summon effect"), "{}", spawn.what);
+    assert!(s.pending_suspend_resets.is_empty(), "nothing to reset for a plain spawn");
+}
+
 /// **The box hands out all eight Outfit Set Coupons, and a set coupon hands out its set.**
 /// The owner, 2026-09-10: *"instead of obtaining 1 at random rates, we give them all of the
 /// sets."* The box is consumed, the eight land in the Cash tab, and opening Frieren's puts

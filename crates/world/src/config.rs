@@ -2026,6 +2026,10 @@ pub struct MobTemplate {
     pub md_damage: u32,
     pub accuracy: u32,
     pub evasion: u32,
+    /// `summonType`, column 17: which `Effect/Summon.img` entry plays when the mob is
+    /// SUMMONED (a sack, a mob skill). `0` for the Balrogs, `1` for 180 of 193. Not used
+    /// by ordinary spawns, which arrive with no effect (`net::mob::APPEAR_SPAWNING`).
+    pub summon_type: u32,
 }
 
 /// Every mob template's stats, from `tools/dump_mobs.py`'s `mobtemplates.txt`.
@@ -2072,6 +2076,7 @@ pub fn load_mob_templates(path: &std::path::Path) -> HashMap<u32, MobTemplate> {
                 md_damage: n(8).unwrap_or(0).max(0) as u32,
                 accuracy: n(9).unwrap_or(0).max(0) as u32,
                 evasion: n(10).unwrap_or(0).max(0) as u32,
+                summon_type: n(16).unwrap_or(0).max(0) as u32,
             },
         );
     }
