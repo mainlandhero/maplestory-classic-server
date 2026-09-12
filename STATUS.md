@@ -164,7 +164,16 @@ only, `z 10`, `action 1`) and the canvas holders its outlinks name (1103930, out
 canvas image; 46 KB lands) onto a new `_Canvas/ItemEff.img`. Both verify. Plan step TO(h).
 `research/himmel-cape-effect-2026-09-12.md`.
 
-**2026-09-12, night: cash equips survive a relog - unverified on screen.** The owner: *"I last had
+**2026-09-12, night: cash equips survive a relog - CONFIRMED on screen** (the owner: *"I do see the
+cash equips on my character upon login"*), **with one miss fixed after it, unverified:** *"for
+Ubel's weapon, I do not see the proper rendering of it on character select. (It does show up fine
+in the game world)"*. The field dresses from the worn list; the select screen reads the compact
+look, and `look_maps` had put the weapon COVER (1703726, family 170) in slot 11 of the drawn map
+with the real weapon demoted to the covered map. A cover is not a weapon and has no stance:
+`look_layout` now keeps the weapon in slot 11 and sends the cover in the `u32` right after the
+two maps - the weapon STICKER field (`look+0x2d`; the reference's field order, **[I]**, and the
+classic client ships covers of its own so the field is exercised). Plan step TO(g) re-cut. The
+original write-up follows.** The owner: *"I last had
 Cobalt wear the entire Ubel outfit, but upon a fresh login, I do not see those cash items
 equipped anymore."* The database had them the whole time (Cobalt's `equipment` rows: 5, 6, 7, 11
 and **105, 107, 108, 111**), so this was never a persistence bug - it was two packets dropping

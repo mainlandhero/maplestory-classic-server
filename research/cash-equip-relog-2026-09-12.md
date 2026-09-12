@@ -82,6 +82,21 @@ bytes plus entries - and it sits after the presence[2] region and before the ski
 101..=131 is worn. The Deco bag list is left empty because the Deco tab is restored by
 `0x0070` mode 5 on field entry like the other bags; a second copy here would double it.
 
+### 2.3 The weapon cover is not a weapon - 2026-09-12, after the first launch
+
+The owner: *"I do see the cash equips on my character upon login, but for Ubel's weapon, I do not
+see the proper rendering of it on character select. (It does show up fine in the game world)"*.
+
+The field dresses from the worn lists the record carried (section 2.2), so it was right; the
+select screen reads the compact look, and 2.1's rule had put the cover `1703726` (family 170)
+in slot 11 of the drawn map with the real weapon `1322999` demoted to the covered map. A cover
+has no weapon type and so no stance. The look's four `u32`s after the maps land at `+0x2d`,
+`+0x31`, `+0x35`, `+0x1c1` **[L]**; the reference encodes them as `weaponStickerId`,
+`weaponId`, `subWeaponId`, `0` **[R]**, and the classic client ships covers of its own
+(`Character/Weapon/01702001.img`), so the field is exercised by the real thing. `look_layout`
+now keeps the weapon in slot 11 of the drawn map and puts the cover in the first `u32`. Only
+the sticker is filled; the other three stay 0, as they were on every screen so far.
+
 ## 3. What is measured and what is not
 
 * Rows, reader guards, block layout, gate: **[L]**, above.

@@ -1055,7 +1055,7 @@ pub fn avatar_look(chr: &Character) -> Vec<u8> {
     out.extend_from_slice(&u32::from(chr.job).to_le_bytes());
     out.push(0); // read and discarded
     out.extend_from_slice(&chr.hair.to_le_bytes()); // equipment array index 0
-    let (drawn, covered) = look_maps(&chr.equips);
+    let LookLayout { drawn, covered, weapon_sticker } = look_layout(&chr.equips);
     for (slot, item) in &drawn {
         out.push(*slot);
         out.extend_from_slice(&item.to_le_bytes());
@@ -1066,7 +1066,15 @@ pub fn avatar_look(chr: &Character) -> Vec<u8> {
         out.extend_from_slice(&item.to_le_bytes());
     }
     out.push(0xFF); // end of the second map - what a cash item covers, look+0xb9
-    for _ in 0..4 {
+    // Four u32s: look+0x2d, +0x31, +0x35, +0x1c1. The first is the WEAPON STICKER - the cash
+    // weapon cover drawn over the real weapon, which stays in slot 11 of the drawn map so
+    // the stance still comes from it. [I: the reference server's field order, weaponSticker
+    // / weapon / subWeapon; the classic client ships covers (01702001.img) so the field is
+    // exercised by the real thing.] the owner, 2026-09-12: with the cover in slot 11 of the
+    // drawn map instead, character select drew Ubel's weapon wrong while the field - which
+    // dresses from the worn list itself - drew it right.
+    out.extend_from_slice(&weapon_sticker.to_le_bytes());
+    for _ in 0..3 {
         out.extend_from_slice(&0u32.to_le_bytes());
     }
     out.extend_from_slice(&0u32.to_le_bytes()); // taken modulo 360
@@ -1099,25 +1107,63 @@ pub const CASH_EQUIP_SLOTS: std::ops::RangeInclusive<u8> = 101..=131;
 /// the wire. Order is by base slot, so the output is stable whatever order the rows came
 /// in.
 pub fn look_maps(equips: &[(u8, u32)]) -> (Vec<(u8, u32)>, Vec<(u8, u32)>) {
-    let mut drawn = Vec::new();
-    let mut covered = Vec::new();
+    let LookLayout { drawn, covered, .. } = look_layout(equips);
+    (drawn, covered)
+}
+
+/// The weapon slot, and the id family of a **cash weapon cover** - the one cash item that
+/// does not go into the drawn map. A cover (`1702001` is the classic client's own) is drawn
+/// over the real weapon by the look's weapon-sticker field while the weapon itself stays in
+/// slot 11, because the stance comes from the weapon's type and a cover has none.
+pub const WEAPON_SLOT: u8 = 11;
+pub const WEAPON_COVER_IDS: std::ops::Range<u32> = 1_700_000..1_800_000;
+
+/// Where each worn item goes in the look.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LookLayout {
+    /// The first map, `look+0x39`: what is drawn, by base slot.
+    pub drawn: Vec<(u8, u32)>,
+    /// The second map, `look+0xb9`: the ordinary item under a cash one, by base slot.
+    pub covered: Vec<(u8, u32)>,
+    /// The `u32` after the maps, `look+0x2d`: a cash weapon cover, or 0.
+    pub weapon_sticker: u32,
+}
+
+/// [`look_maps`] plus the weapon sticker. The owner, 2026-09-12: *"for Ubel's weapon, I do not
+/// see the proper rendering of it on character select. (It does show up fine in the game
+/// world)"* - the field dresses from the worn list itself; the select screen reads this
+/// look, and the cover had been put in slot 11 of the drawn map with the real weapon
+/// demoted to the covered map. A cover is not a weapon: it goes in the sticker field, and
+/// the weapon keeps its slot. **[I]** from the reference's field order; the screen is the
+/// test.
+pub fn look_layout(equips: &[(u8, u32)]) -> LookLayout {
+    let mut out = LookLayout::default();
     for slot in EQUIP_SLOTS {
         let base = equips.iter().find(|&&(s, _)| s == slot).map(|&(_, id)| id);
         let cash = equips
             .iter()
             .find(|&&(s, _)| s == slot + CASH_EQUIP_SLOT_BASE)
             .map(|&(_, id)| id);
+        if slot == WEAPON_SLOT {
+            if let Some(cover) = cash.filter(|id| WEAPON_COVER_IDS.contains(id)) {
+                out.weapon_sticker = cover;
+                if let Some(base) = base {
+                    out.drawn.push((slot, base));
+                }
+                continue;
+            }
+        }
         match (cash, base) {
             (Some(cash), Some(base)) => {
-                drawn.push((slot, cash));
-                covered.push((slot, base));
+                out.drawn.push((slot, cash));
+                out.covered.push((slot, base));
             }
-            (Some(cash), None) => drawn.push((slot, cash)),
-            (None, Some(base)) => drawn.push((slot, base)),
+            (Some(cash), None) => out.drawn.push((slot, cash)),
+            (None, Some(base)) => out.drawn.push((slot, base)),
             (None, None) => {}
         }
     }
-    (drawn, covered)
+    out
 }
 
 /// Dress a character already standing on a field. **Dead code in the client. Not sent.**
@@ -4598,16 +4644,32 @@ mod tests {
             (108, 1082878),
             (111, 1703726),
         ];
+        let layout = look_layout(&worn);
         let (drawn, covered) = look_maps(&worn);
+        assert_eq!((&layout.drawn, &layout.covered), (&drawn, &covered));
         assert_eq!(
             drawn,
-            vec![(5, 1054562), (6, 1062999), (7, 1074238), (8, 1082878), (11, 1703726)],
-            "cash over the base slot; the bottom, which has no cash cover, stays"
+            vec![(5, 1054562), (6, 1062999), (7, 1074238), (8, 1082878), (11, 1322999)],
+            "cash over the base slot; the bottom, which has no cash cover, stays; and the \
+             WEAPON stays - the cover is not a weapon"
         );
         assert_eq!(
             covered,
-            vec![(5, 1040021), (7, 1072999), (11, 1322999)],
-            "only the covered ones - slot 8 had nothing under the gloves"
+            vec![(5, 1040021), (7, 1072999)],
+            "only the covered ones - slot 8 had nothing under the gloves, and the weapon is \
+             not covered, it is stickered"
+        );
+        assert_eq!(layout.weapon_sticker, 1703726, "Ubel's Cane rides in the sticker field");
+        // A cover with no weapon under it: sticker set, slot 11 empty. A cash item in slot
+        // 111 that is NOT a cover (nothing this server makes, but the rule has to say) goes
+        // the ordinary way.
+        assert_eq!(
+            look_layout(&[(111, 1703726)]),
+            LookLayout { drawn: vec![], covered: vec![], weapon_sticker: 1703726 }
+        );
+        assert_eq!(
+            look_layout(&[(11, 1322999), (111, 1302000)]),
+            LookLayout { drawn: vec![(11, 1302000)], covered: vec![(11, 1322999)], weapon_sticker: 0 }
         );
         for (slot, _) in drawn.iter().chain(covered.iter()) {
             assert!(EQUIP_SLOTS.contains(slot), "every wire slot is one the reader keeps");
@@ -4638,6 +4700,8 @@ mod tests {
             want.extend_from_slice(&id.to_le_bytes());
         }
         want.push(0xFF);
+        want.extend_from_slice(&1703726u32.to_le_bytes()); // the sticker, look+0x2d
+        want.extend_from_slice(&[0u8; 12]); // +0x31, +0x35, +0x1c1
         assert_eq!(&look[hair_at + 4..hair_at + 4 + want.len()], &want[..]);
         // The client's walk still lands on the end of the record.
         let record = character_record(&chr, 0);
