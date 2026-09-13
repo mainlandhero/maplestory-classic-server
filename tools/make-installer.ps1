@@ -144,7 +144,7 @@ Regenerate on this machine first:
   python "$repo\tools\dump_itemdata.py"
 "@
 }
-foreach ($needed in @('maps.txt', 'mobtemplates.txt', 'skills.txt', 'footholds.txt')) {
+foreach ($needed in @('maps.txt', 'mobtemplates.txt', 'skills.txt', 'footholds.txt', 'reactors.txt')) {
     if (-not (Test-Path (Join-Path $handbook $needed))) {
         Fail "gm-handbook\$needed is missing - regenerate the handbook before packaging"
     }

@@ -507,6 +507,7 @@ mod gm;
 mod ground;
 mod inventory;
 mod keymap;
+mod reactor;
 mod multiplayer;
 mod npc;
 mod party;
@@ -656,6 +657,8 @@ impl Session {
         // same reason the sweep is: `chatter_off` turns off NPC idle lines and nothing else,
         // and a run with it set should not also stop the world respawning.
         out.extend(self.spawn_due_mobs(here, now_ms));
+        // Broken boxes whose reactorTime has run out. session/reactor.rs.
+        out.extend(self.spawn_due_reactors(here, now_ms));
         // Summoned mobs whose animation has ended become targetable. `session/summonsack.rs`.
         out.extend(self.suspend_reset_tick(now_ms));
         // The event banner. Wall-clock, not `now_ms` - see `crate::session::rates`.
@@ -814,6 +817,10 @@ impl Session {
             net::opcode::CLIENT_CHAT => return self.on_chat(body.get(2..).unwrap_or(&[])),
             net::script::CLIENT_QUEST_REQUEST => {
                 return self.on_quest_request(body.get(2..).unwrap_or(&[]))
+            }
+            // A breakable box struck. session/reactor.rs.
+            net::reactor::CLIENT_REACTOR_HIT => {
+                return self.on_reactor_hit(body.get(2..).unwrap_or(&[]))
             }
             op if net::combat::is_attack_opcode(op) => {
                 return self.on_attack(op, body.get(2..).unwrap_or(&[]))

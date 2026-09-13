@@ -1144,8 +1144,14 @@ mod tests {
         let again = Store::open(&copy).expect("the second open is where a bad schema shows up");
         let victim = again.list_accounts().unwrap()[0].id;
         if let Some(chr) = again.characters_for(victim, 0).unwrap().first() {
+            // Relative to whatever the live character has left, not an absolute: this is
+            // The owner's real database and they spend points in it (2026-09-13, three into Three
+            // Snails and the literal 58 was 27). The claim is that a spend works after the
+            // second open, and that is what the difference says.
+            let before = again.skill_points_available(chr.id, FIRST_JOB, 61).unwrap();
+            assert!(before >= 3, "the live character has at least the three points this spends: {before}");
             must_spend(&again, chr.id, 2001005, FIRST_JOB, 61, 3);
-            assert_eq!(again.skill_points_available(chr.id, FIRST_JOB, 61).unwrap(), 58);
+            assert_eq!(again.skill_points_available(chr.id, FIRST_JOB, 61).unwrap(), before - 3);
         }
         drop(again);
         let _ = std::fs::remove_dir_all(&dir);

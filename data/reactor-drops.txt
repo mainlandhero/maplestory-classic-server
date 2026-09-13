@@ -1,0 +1,26 @@
+# reactorId | itemId | chance% | minQty | maxQty | score | name
+#
+# What a breakable box gives when it breaks - the same shape as data/drops.txt, keyed by the
+# Reactor.wz image id instead of a mob template. Read by world::config::Config::reactor_drops
+# and rolled once per break with the server's drop rate applied.
+#
+# Rows from meowdb.com/msclassic/api/breakable-drops?breakableId=0000001 (2026-09-13): four
+# items, all community-confirmed (score 2). THE CHANCES ARE OURS, as in drops.txt - the site
+# has votes, not rates. Pio's "Collecting Recycled Goods" (1012) wants 3 Rusty Screws and 3
+# Old Wooden Boards; 19 boxes stand on the six Amherst maps and each comes back in about two
+# minutes, so half odds on the quest items make the quest a walk rather than a grind.
+1 | 4031003 | 50 | 1 | 1 | 2 | Rusty Screw
+1 | 4031004 | 50 | 1 | 1 | 2 | Old Wooden Board
+1 | 2010001 | 25 | 1 | 1 | 2 | Apple
+1 | 2010002 | 25 | 1 | 1 | 2 | Egg
+#
+# The rest of the reactors, the owner, 2026-09-13: "Coconuts just guarantees a Coconut Drop",
+# "Ellinia Flower drops Plant Sample", "Witch's Herb drops Witchgrass Leaf"; the Maple Codex
+# (2) has no published drops, nor do 8 and 9. Game ids from the same feed (breakableId
+# 0000003..0000007). The two quest items follow the quest-item rule: a character without
+# the quest is not shown them (world::questitems, the same filter a mob's drops pass).
+3 | 4031072 | 100 | 1 | 1 | 1 | Plant Sample
+4 | 4031012 | 100 | 1 | 1 | 1 | Witchgrass Leaf
+5 | 4000061 | 100 | 1 | 1 | 1 | Coconut
+6 | 4000061 | 100 | 1 | 1 | 1 | Coconut
+7 | 4000061 | 100 | 1 | 1 | 1 | Coconut

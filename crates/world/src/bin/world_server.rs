@@ -100,6 +100,8 @@ fn main() -> ExitCode {
     let mut item_data_path = PathBuf::from("gm-handbook/itemdata.txt");
     // Authored source like data/shops.txt: it cannot be regenerated from the client.
     let mut drops_path = PathBuf::from("data/drops.txt");
+    let mut reactors_path = PathBuf::from("gm-handbook/reactors.txt");
+    let mut reactor_drops_path = PathBuf::from("data/reactor-drops.txt");
     let mut exp_curve_path = PathBuf::from("data/exp-curve.txt");
     let mut quest_reqs_path = PathBuf::from("gm-handbook/questreq.txt");
     let mut args = std::env::args().skip(1);
@@ -166,6 +168,8 @@ fn main() -> ExitCode {
             "--item-names" => value().map(|v| item_names_path = PathBuf::from(v)),
             "--item-data" => value().map(|v| item_data_path = PathBuf::from(v)),
             "--drops" => value().map(|v| drops_path = PathBuf::from(v)),
+            "--reactors-file" => value().map(|v| reactors_path = PathBuf::from(v)),
+            "--reactor-drops" => value().map(|v| reactor_drops_path = PathBuf::from(v)),
             "--exp-curve" => value().map(|v| exp_curve_path = PathBuf::from(v)),
             "--quest-reqs" => value().map(|v| quest_reqs_path = PathBuf::from(v)),
             "--inventory-slots" => value().and_then(|v| {
@@ -444,6 +448,24 @@ fn main() -> ExitCode {
     // What mobs drop. Missing is legal and means nothing drops - see DropTables::load for
     // why this degrades rather than refusing to start.
     config.drops = world::droptables::DropTables::load(&drops_path);
+    // The breakable boxes and what they give. The owner, 2026-09-13: Pio's quest items come out of
+    // Wooden Boxes nobody was placing. Both tables missing is legal and means no boxes.
+    config.reactors = world::config::Config::load_reactors(&reactors_path);
+    config.reactor_drops = world::droptables::DropTables::load(&reactor_drops_path);
+    if config.reactors.is_empty() {
+        eprintln!(
+            "maplecw-world: no reactors loaded from {} - no breakable boxes on any map. Regenerate with: python tools/dump_portals.py",
+            reactors_path.display()
+        );
+    } else {
+        println!(
+            "maplecw-world: {} reactor placement(s) across {} map(s) from {}; drops from {}",
+            config.reactors.values().map(Vec::len).sum::<usize>(),
+            config.reactors.len(),
+            reactors_path.display(),
+            reactor_drops_path.display()
+        );
+    }
     config.exp_curve = world::expcurve::ExpCurve::load(&exp_curve_path);
     config.quest_reqs = match std::fs::read_to_string(&quest_reqs_path) {
         Ok(text) => net::quest::QuestRequirementTable::parse(&text),

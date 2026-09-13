@@ -10774,3 +10774,86 @@ fn rains_quiz_question_is_a_menu_and_a_wrong_answer_is_corrected_then_asked_agai
     assert!(s2.on_script_reply(&menu_reply(None)).is_empty());
     assert!(s2.conversation.is_none());
 }
+
+/// **The Wooden Boxes stand, break in four hits, drop, and come back.** The owner, 2026-09-13:
+/// *"the items come out of breakable wooden boxes which we do not spawn right now. We need to
+/// spawn them and provide the drops for the Wooden Box."* The shape is the client's reactor
+/// pool (`net::reactor`): `0x0484` on entry, `0x0478` per hit, drops on the breaking hit,
+/// `0x0485` + `0x0484` when `reactorTime` runs out.
+#[test]
+fn a_wooden_box_stands_on_entry_breaks_on_the_fourth_hit_drops_and_comes_back() {
+    let (mut s, _store, _id) = claimed_session();
+    let map = net::opcode::START_MAP_ID;
+    let mut reactors = std::collections::HashMap::new();
+    reactors.insert(map, vec![crate::config::ReactorSpawn {
+        object_id: crate::config::REACTOR_OBJECT_ID_BASE,
+        template_id: 1,
+        x: 610,
+        y: 259,
+        respawn_s: 2,
+        flip: false,
+        break_at: 4,
+        name: String::new(),
+    }]);
+    let reactor_drops = crate::droptables::DropTables::parse(
+        "1 | 4031003 | 100 | 1 | 1 | 2 | Rusty Screw
+         1 | 2010001 | 100 | 1 | 1 | 2 | Apple
+",
+    );
+    s.config = Arc::new(Config { reactors, reactor_drops, set_field_probe: true, ..(*s.config).clone() });
+    let cfg = s.config.clone();
+    s.fields.seed(map, &cfg, 0);
+
+    // Field entry: the box, state 0, at its WZ position.
+    let entry = s.on_field_entered();
+    let boxes: Vec<&Reply> = entry.iter().filter(|r| r.opcode == net::reactor::REACTOR_ENTER_FIELD).collect();
+    assert_eq!(boxes.len(), 1, "{:?}", entry.iter().map(|r| &r.what).collect::<Vec<_>>());
+    let b = &boxes[0].body;
+    assert_eq!(u32::from_le_bytes(b[1..5].try_into().unwrap()), crate::config::REACTOR_OBJECT_ID_BASE);
+    assert_eq!(u32::from_le_bytes(b[5..9].try_into().unwrap()), 1, "Reactor.wz 0000001");
+    assert_eq!(b[9], 0, "fresh");
+
+    // The client's hit: u32 objectId, u32 hitOption, u16 delay, u32 skillId, behind 0x032F.
+    let hit = |delay: u16| {
+        let mut p = net::reactor::CLIENT_REACTOR_HIT.to_le_bytes().to_vec();
+        p.extend_from_slice(&crate::config::REACTOR_OBJECT_ID_BASE.to_le_bytes());
+        p.extend_from_slice(&0u32.to_le_bytes());
+        p.extend_from_slice(&delay.to_le_bytes());
+        p.extend_from_slice(&0u32.to_le_bytes());
+        p
+    };
+    for expect_state in 1..=3u8 {
+        let out = s.handle(&hit(150));
+        assert_eq!(out.len(), 1, "one change of state and nothing else: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+        assert_eq!(out[0].opcode, net::reactor::REACTOR_CHANGE_STATE);
+        assert_eq!(out[0].body[4], expect_state);
+        assert_eq!(u16::from_le_bytes(out[0].body[9..11].try_into().unwrap()), 150, "the delay echoed");
+    }
+    // The fourth hit breaks it: state 4, then the two drops at the box.
+    let out = s.handle(&hit(150));
+    assert_eq!(out[0].opcode, net::reactor::REACTOR_CHANGE_STATE);
+    assert_eq!(out[0].body[4], 4, "the broken state");
+    let drops: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::drops::DROP_ENTER_FIELD).collect();
+    assert_eq!(drops.len(), 2, "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(s.fields.reactors_on(map).is_empty(), "a broken box is not standing");
+
+    // A fifth hit hits nothing: no reactor by that id is standing.
+    assert!(s.handle(&hit(150)).is_empty());
+
+    // Not back before its time; back after it, as leave + enter with the same id.
+    assert!(s.spawn_due_reactors(map, 1_999).is_empty());
+    let back = s.spawn_due_reactors(map, 2_000);
+    assert_eq!(back.iter().map(|r| r.opcode).collect::<Vec<_>>(), vec![net::reactor::REACTOR_LEAVE_FIELD, net::reactor::REACTOR_ENTER_FIELD]);
+    assert_eq!(back[1].body[9], 0, "fresh again");
+    assert_eq!(s.fields.reactors_on(map).len(), 1);
+
+    // And the real table: 19 boxes on the six Amherst maps, every reactor the client ships.
+    let path = std::path::Path::new("../../gm-handbook/reactors.txt");
+    if path.exists() {
+        let table = crate::config::Config::load_reactors(path);
+        let boxes: usize = [1000u32, 1010, 1011, 1012, 1013, 1014].iter().map(|m| table.get(m).map(Vec::len).unwrap_or(0)).sum();
+        assert_eq!(boxes, 19, "the fan site's count and the WZ's agree");
+        assert!(table.values().flatten().all(|r| r.break_at >= 1 && r.respawn_s >= 1));
+        assert_eq!(table[&1010][0].break_at, 4, "Reactor.wz 0000001: events on states 0..3");
+    }
+}

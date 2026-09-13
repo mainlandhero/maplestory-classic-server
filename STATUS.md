@@ -179,6 +179,28 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13: reactors - the breakable boxes - are spawned, hit, broken, looted and respawned;
+unverified on screen.** The owner: *"Pio's Collecting Recycled Goods ... the items come out of breakable
+wooden boxes which we do not spawn right now. We need to spawn them and provide the drops"*, then
+*"make sure the rest of the reactors also spawn"*. Found from the data up: `Reactor/%07d.img` is read
+through `.data` slots by two template loaders whose callers climb to **`FUN_141f2c0a0`, the reactor
+pool**, called from `CField::OnPacket` at `0x141821f5a`; its switch is `add edx,-0x478 / cmp edx,0x14`
+over a 21-entry table, so the pool owns **`0x0478..=0x048C`**: `0x0478` ChangeState (reads u32, u8,
+u16, u16, u16, u8, u32, u32), **`0x0484` EnterField** (u8, u32, u32, u8, u16, u16, u8, str), `0x0485`
+LeaveField (u32). **[L]**, and the reference's `ReactorPool.java` encodes the same widths in the same
+order. Outbound, the client's builders in that code range send `0x032F` as `u32, u32, u16, u32` - the
+classic ReactorHit - **[I]** until the first capture. `Reactor.wz/0000001.img` (the Wooden Box) has
+events on states 0..3 and none on 4: four hits. `tools/dump_portals.py` now emits
+`gm-handbook/reactors.txt` (228 placements, nine reactors; `breakAt` counted from Reactor.wz), the
+world loads it and `data/reactor-drops.txt` (the fan site's feed at
+`api/breakable-drops?breakableId=0000001`: Rusty Screw, Old Wooden Board, Apple, Egg; and
+0000003..7: Plant Sample 4031072, Witchgrass Leaf 4031012, Coconut 4000061 - chances ours), the
+field pool seeds every placement, `session/reactor.rs` sends `0x0484` on entry, answers `0x032F`
+with `0x0478` to the map and on the breaking hit rolls the table through the mob quest-item filter
+and lands the drops at the box, and the tick sends `0x0485` + `0x0484` after `reactorTime`. Object
+ids 6000.. per map. Both packagers now require `reactors.txt`. Plan step TO(n).
+`research/reactors-2026-09-13.md`.
+
 **2026-09-13: Rain's quiz killed the client - the question is a MENU, now sent as one.** The owner: *"I
 just tried taking Rain's quiz, and after finishing question one, the client exited."* Quest 1013's
 `Say.1.0` is the question with four `#L<n>#` choices and `Say.1.ask = 1`; `say_line` sent it as type

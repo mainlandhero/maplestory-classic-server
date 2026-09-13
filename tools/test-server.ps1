@@ -1071,6 +1071,32 @@
               client exits again -> paste the last 0x055B line in world.log; the shape of
                          the text is the suspect (#b inside #L, or the \n)
               the correction line comes with no Next / closes -> say so
+         n) NEW 2026-09-13 - THE BREAKABLES STAND. "Pio's Collecting Recycled Goods ... the
+            items come out of breakable wooden boxes which we do not spawn right now" and
+            "make sure the rest of the reactors also spawn". Every `reactor` node of every
+            map is in gm-handbook/reactors.txt now (228 placements: 19 Wooden Boxes on the
+            six Amherst maps, 45 Ellinia Flowers, 68 Witch's Herbs, 92 coconuts, 2 Maple
+            Codex, two singletons) and the server sends each as 0x0484 after the NPCs. The
+            client's reactor pool (FUN_141f2c0a0, opcodes 0x0478..0x048C) was read for the
+            shapes; the HIT is 0x032F by its builder's encode order (u32 objectId, u32
+            hitOption, u16 delay, u32 skillId) - that one is I until this run. A hit
+            advances the state (0x0478 to everyone on the map); the fourth breaks a box and
+            rolls data/reactor-drops.txt at it (Rusty Screw 50%, Old Wooden Board 50%, Apple,
+            Egg; coconuts 100%; Plant Sample and Witchgrass Leaf 100% but only with the
+            quest - the mob quest-item rule), then it is back after reactorTime (120 s).
+            Walk into Amherst (map 1010) and hit a box:
+              boxes drawn where the fan site puts them; each hit cracks it; the fourth
+                         breaks it and something drops; two minutes later it is back -> done
+              boxes drawn, a hit does nothing, world.log has an UNKNOWN opcode near the
+                         swing -> the hit is not 0x032F; paste that line and its body
+              boxes drawn, hits arrive (world.log "ReactorChangeState") but the box does
+                         not crack on screen -> the state or the delay field; say what it
+                         does (nothing / jumps straight to broken / vanishes)
+              no boxes at all -> paste world.log's "ReactorEnterField" lines if any; none
+                         means the table did not load (the server prints a count at start)
+              client dies on entering Amherst -> paste client-exit.log; the enter shape is L
+                         but the name string is the one field a decoder could disagree on
+            Then Pio (map 1010, Rainbow Street): take the quest, break boxes, hand in 3 + 3.
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3091,6 +3117,17 @@ function Show-TestPlan {
         Write-Host '             "That''s right!" -> done; then Quiz 2'
         Write-Host '           choices shown, picking does nothing -> paste the 0x00F3 line'
         Write-Host '           client exits again -> paste the last 0x055B line' -ForegroundColor Yellow
+        Write-Host '      n) NEW - THE BREAKABLES STAND: every map''s reactors are sent (228;' -ForegroundColor Yellow
+        Write-Host '         19 Wooden Boxes in Amherst). Hit = 0x032F by its builder [I]; a'
+        Write-Host '         hit advances the state, the 4th breaks a box and drops (Screw /'
+        Write-Host '         Board 50%, coconuts 100%, quest items only with the quest), back'
+        Write-Host '         in 120 s. Go to Amherst (1010), hit a box:'
+        Write-Host '           drawn, cracks per hit, breaks + drops, back in 2 min -> done'
+        Write-Host '           drawn, hit does nothing, UNKNOWN opcode near it -> paste it' -ForegroundColor Yellow
+        Write-Host '           hits logged, box does not crack -> say what it does instead'
+        Write-Host '           no boxes -> server start line says how many loaded; say so'
+        Write-Host '           client dies entering Amherst -> paste client-exit.log' -ForegroundColor Yellow
+        Write-Host '         Then Pio: take the quest, break boxes, hand in 3 + 3.'
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'

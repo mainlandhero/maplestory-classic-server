@@ -159,6 +159,8 @@ impl Session {
                 String::new()
             }
         ));
+        // The breakable boxes, before the mobs: scenery first. session/reactor.rs.
+        out.extend(self.reactor_entry_replies(chr.map_id));
         for live in live_mobs {
             let mut mob = live.as_seen();
             // Already on the field when you walked in - no spawn effect. The owner: *"if the
