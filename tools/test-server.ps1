@@ -1156,6 +1156,34 @@
               the map thins out over time (fewer than 49 standing)      -> a refill is being
                          dropped; paste world.log
               two mobs on one point, or more than 49                    -> paste world.log
+         t) NEW 2026-09-13 - THE BOX AFTER RAIN'S OK IS THE CLIENT'S; NAME IT. The owner: "Rain
+            still repeats their dialogue when I select the right answer and then press OK."
+            world.log for that exact exchange (16:37:14): right answer -> 0x0089 completion,
+            +300 exp, QuestClear, ONE Say ("That's right! ...") -> the OK's 0x00F3 at
+            16:37:15.698 -> NOTHING sent after it, and no 0x0151 until 16:57. So whatever
+            appeared after OK was drawn by the client from the completion record - the same
+            finding as 04:59 in the fixture, and the server cannot see which box it was.
+            The client's record handler (FUN_142d59e20, decompiled today) does two things
+            on a state-2 record that can put something on screen: it walks the quests whose
+            prerequisite is the one just completed and raises a fade pop-up for a newly
+            available one (FUN_14180d7f0, UI/FadeYesNo icon6), and a separate path can open
+            a quest's own dialogue (FUN_142d9ac30 - the one every NPC click uses). Which of
+            those you saw, and for which quest, is what this run measures. Launch WITH the
+            watches (each logs its quest id and who called it), take Rain's next question,
+            answer it right, press OK, and then write down the EXACT text of the box that
+            appears and which buttons it has:
+              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,142d9ac30:hits=40,141f0e4c0:hits=40,142ce6750:hits=40,14180d7f0:hits=40"
+              the box is the NEXT question's opening ("You're on question number N ...")
+                         with Accept/Decline  -> the client auto-offers the chain's next
+                         quest on the record; the hook log will show 142d9ac30 with rdx =
+                         the next quest id. That is the real game's behaviour for a
+                         nextQuest chain, and stopping it means not telling the client the
+                         quest completed until the OK - say if you want that
+              the box is "That's right! ..." AGAIN, OK only -> the client re-drew the
+                         finished quest's own dialogue; 142d9ac30 with rdx = the quest just
+                         finished. Fixable on the server by sending the record after the OK
+              a small fading notice, no buttons -> 14180d7f0 only; nothing to fix
+              nothing at all -> it was the old order; done
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3210,6 +3238,15 @@ function Show-TestPlan {
         Write-Host '           stands up elsewhere, maybe another type, count stays 49 -> designed'
         Write-Host '           always back on the same spot -> paste SPAWN lines around a kill' -ForegroundColor Yellow
         Write-Host '           map thins out, or more than 49 -> paste world.log' -ForegroundColor Yellow
+        Write-Host '      t) NEW - THE BOX AFTER RAIN''S OK IS THE CLIENT''S; NAME IT: world.log' -ForegroundColor Yellow
+        Write-Host '         shows the server sent NOTHING after the OK (16:37:15). The client'
+        Write-Host '         draws it from the completion record. Launch with the watches:'
+        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,142d9ac30:hits=40,141f0e4c0:hits=40,142ce6750:hits=40,14180d7f0:hits=40"' -ForegroundColor Cyan
+        Write-Host '         answer Rain right, press OK, and write down the EXACT text of the'
+        Write-Host '         box that follows and its buttons:'
+        Write-Host '           next question''s opening + Accept -> client auto-offers the chain'
+        Write-Host '           "That''s right" again, OK only -> re-drew the finished quest; fixable'
+        Write-Host '           small fading notice -> nothing to fix;  nothing -> done'
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'
