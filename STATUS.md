@@ -179,6 +179,15 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13: an accept with no `yes` branch says nothing - unverified on screen.** The owner: *"Nina's
+quest dialogue seems to be repeated when accepting their 'What Sen wants to eat' quest. They say the
+same two dialogues before and after I click 'Accept'."* world.log 04:06:17: the `0x0151` accept for
+1003, the record, then *"line 1 of 2 on path 0"* again. The client shows `Say.0` itself before the
+button (the 2026-08-19 lesson in `on_quest_request`); the server's answer is `Say.0.yes`, and 1003 has
+`Say.0` and `Say.0.no` but no `yes`, so the match fell through to `"0"`. Now `Some(_) if accepted =>
+None` and a `silent_accept` return before `say_line`, so neither the opening nor the NPC's `d0`
+greeting goes out - the record alone. Test with Heena's 1000 as the control. Plan step TO(k).
+
 **2026-09-12, release readiness.** The owner: *"Make sure everything we worked on is release-able to the
 server and client packages."* Everything this week is either server code (built by the packagers)
 or client data under `client-patched\Data` (copied by `make-installer.ps1`), and the gap was that

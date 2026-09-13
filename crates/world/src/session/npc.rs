@@ -124,6 +124,17 @@ impl Session {
         let mut speaking_quest = req.quest_id;
         let path = match quest {
             Some(q) if accepted && q.say.contains_key(&branch) => Some(branch),
+            // **An accept with no `yes` branch says NOTHING.** The owner, 2026-09-13: *"Nina's
+            // quest dialogue seems to be repeated when accepting their 'What Sen wants to eat'
+            // quest. They say the same two dialogues before and after I click 'Accept'."*
+            // Quest 1003 has `Say.0` (two lines) and `Say.0.no`, and no `Say.0.yes`; the arm
+            // below this one then chose `"0"` - the opening the client had just shown on its
+            // own, which is the loop the comment above describes. world.log 04:06:17: the
+            // 0x0151 accept, the record, then "line 1 of 2 on path 0" again. The client's own
+            // window closes on Accept and the record is already on the wire, so there is
+            // nothing a box has to say and no NPC d0 fallback either - `silent_accept`
+            // returns before `say_line`.
+            Some(_) if accepted => None,
             Some(q) if q.say.contains_key(state) => Some(state.to_string()),
             // A completion whose quest has nothing to say hands over to the next quest in
             // the chain, and the conversation belongs to THAT quest from here on - the
@@ -138,6 +149,10 @@ impl Session {
             Some(q) if q.say.contains_key("0") => Some("0".to_string()),
             _ => None,
         };
+        // Known quest, Accept pressed, nothing to say: see the `Some(_) if accepted` arm. An
+        // UNKNOWN quest is not this - it keeps the NPC's own line, so an accept the data
+        // cannot explain still draws something rather than nothing.
+        let silent_accept = accepted && quest.is_some() && path.is_none();
         self.conversation = Some(Conversation {
             npc_template: req.npc_template_id,
             quest_id: path.as_ref().map(|_| speaking_quest),
@@ -178,6 +193,13 @@ impl Session {
         }
         let map_after = self.claimed_character().map(|c| c.map_id);
         if map_before != map_after {
+            self.conversation = None;
+            return out;
+        }
+        // An accept whose quest has no `yes` branch: the record went out, the client's own
+        // quest window has closed, and there is no line to put in a box - not the opening
+        // again, and not the NPC's d0 greeting that `say_line` falls back to without a quest.
+        if silent_accept {
             self.conversation = None;
             return out;
         }

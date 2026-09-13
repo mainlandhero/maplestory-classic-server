@@ -1019,6 +1019,20 @@
                          vs face on something else; say what it shows
               still nothing -> the range reading is wrong; say so
               the coupon in your bag has no name/icon -> the rename on start did not run
+         k) NEW 2026-09-13 - NINA NO LONGER REPEATS HERSELF ON ACCEPT. "They say the same two
+            dialogues before and after I click 'Accept'" (What Sen wants to eat, 1003). The
+            client shows a quest's Say.0 itself before the button; the server's answer to the
+            Accept (0x0151 action 1) is the Say.0.yes branch - and 1003 has none, so the code
+            fell back to Say.0 and replayed it (world.log 04:06:17). An accept with no yes
+            branch now sends the quest record and NO box; quests that have a yes branch
+            (Heena's 1000) are unchanged. Take 1003 from Nina again (give it up first if held):
+              their two lines, Accept, the window closes, journal has the quest -> done
+              their two lines, Accept, the SAME two lines again -> the fix is not in the
+                         running server; say so
+              their two lines, Accept, their greeting ("Hello...") -> the d0 fallback is still
+                         reachable; say so
+              Heena's quest no longer says "hill to the east" after Accept -> the yes branch
+                         broke; say so
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3014,6 +3028,13 @@ function Show-TestPlan {
         Write-Host '           dialog opens, wrong/no preview -> say what it shows'
         Write-Host '           still nothing -> range reading wrong; say so' -ForegroundColor Yellow
         Write-Host '           coupon has no name/icon -> rename on start did not run'
+        Write-Host '      k) NEW - NINA NO LONGER REPEATS HERSELF ON ACCEPT: 1003 has no Say.0.yes,' -ForegroundColor Yellow
+        Write-Host '         so the server replayed Say.0 after the button. An accept with no yes'
+        Write-Host '         branch now sends the record and NO box. Take 1003 from Nina again:'
+        Write-Host '           two lines, Accept, window closes, quest in journal -> done'
+        Write-Host '           the same two lines again -> fix not in the running server; say so'
+        Write-Host '           their greeting after Accept -> d0 fallback still reachable; say so'
+        Write-Host '           Heena no longer says "hill to the east" -> yes branch broke' -ForegroundColor Yellow
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'
