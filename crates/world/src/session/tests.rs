@@ -10594,3 +10594,46 @@ fn a_saved_key_layout_is_restored_right_after_the_setfield() {
     assert_eq!(slot(0x34), (5, 52));
     assert_eq!(slot(0x10), (4, 8), "and Q is still the factory menu, not a zero");
 }
+
+/// **An accept with no `yes` branch says nothing.** The owner, 2026-09-13: *"Nina's quest dialogue
+/// seems to be repeated when accepting their 'What Sen wants to eat' quest. They say the same
+/// two dialogues before and after I click 'Accept'."* Quest 1003 has `Say.0` (two lines the
+/// client shows on its own before the button) and no `Say.0.yes`; the server was answering
+/// the accept with `Say.0` again. Now: the quest record, and no box at all - not the opening,
+/// and not Nina's own greeting either.
+#[test]
+fn accepting_a_quest_with_no_yes_branch_sends_the_record_and_no_dialogue() {
+    let path = std::path::Path::new("../../gm-handbook/questlines.txt");
+    if !path.exists() {
+        return; // generated data, gitignored
+    }
+    let config = Config { quests: crate::config::load_quests(path), ..Config::default() };
+    let nina = &config.quests[&1003];
+    assert_eq!(nina.say["0"].len(), 2, "the two lines the owner saw twice");
+    assert!(!nina.say.contains_key("0.yes"), "the premise: no yes branch to answer with");
+
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    store.set_gm("maplecw", true).unwrap();
+    let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    let mut s = Session::new(store, Arc::new(config));
+    s.claim_for_character(id);
+
+    // world.log 04:06:17.183: action 1, quest 1003, NPC 4 (Nina).
+    let replies = s.on_quest_request(&hex("01eb030000040000008d00d70000000000"));
+    assert_eq!(replies.len(), 1, "the quest record and nothing else: {:?}", replies.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert_eq!(replies[0].opcode, net::quest::MESSAGE);
+    assert_eq!(replies[0].body, net::quest::quest_accepted(1003));
+    assert!(!replies.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE), "no Say - the client showed the opening itself");
+    assert!(s.conversation.is_none(), "nothing left open to answer an OK with");
+    let rows = s.store.quest_rows(id).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].quest_id, 1003);
+
+    // The control: Heena's quest 1000 HAS a yes branch and still gets it.
+    let heena = s.on_quest_request(&hex("01e8030000010000000c046d0100000000"));
+    assert_eq!(heena.len(), 2, "record + the yes branch, unchanged");
+    assert!(heena[1].what.contains("0.yes"), "{}", heena[1].what);
+}
