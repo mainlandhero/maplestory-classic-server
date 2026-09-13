@@ -1073,6 +1073,19 @@
                          and clicking Rain asks again -> done for that half
               "That's right!" but no quest-clear sound / exp -> the deferred record did not
                          fire; paste world.log's "quiz:" line
+         o) NEW 2026-09-13 - ONE REWARD FROM THE POOL. "When I finished 'Please bring this
+            letter to Lucas', Maria gave me one of every single Headband item when it's
+            suppose to be choose 1 randomly from the pool." Quest 1008's Act.1.item.1..7 are
+            seven headbands each marked prop 1; the letter back (item.0, count -1) has no
+            prop. The turn-in handed over every row. Now prop 0 rows are unconditional, the
+            prop > 0 rows of a state form a pool and ONE is drawn with weight prop, and a
+            gender-marked row goes only to that gender. 39 quests carry the mark. Any of them
+            on a fresh character - Lucas's Reply is the nearest: take Maria's letter to Lucas,
+            bring their reply back:
+              ONE headband in the Equip tab, the letter gone -> done
+              still all seven -> the running server predates the fix; say so
+              no headband at all -> the draw picked nothing; paste world.log's "reward rows"
+                         line
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3092,6 +3105,13 @@ function Show-TestPlan {
         Write-Host '           offer opens BEFORE the question -> paste 0x0151..menu lines' -ForegroundColor Yellow
         Write-Host '           wrong + close -> quest still started, click asks again -> done'
         Write-Host '           right, no clear sound/exp -> paste the "quiz:" line'
+        Write-Host '      o) NEW - ONE REWARD FROM THE POOL: Lucas''s Reply gave all seven' -ForegroundColor Yellow
+        Write-Host '         headbands; the WZ marks them prop 1 = draw one. prop 0 rows are'
+        Write-Host '         unconditional, prop > 0 rows are a weighted pool of one, gender'
+        Write-Host '         rows go to that gender (39 quests). Do Lucas''s Reply again:'
+        Write-Host '           ONE headband, letter gone -> done'
+        Write-Host '           still seven -> old server; say so'
+        Write-Host '           none -> paste world.log "reward rows" line' -ForegroundColor Yellow
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'

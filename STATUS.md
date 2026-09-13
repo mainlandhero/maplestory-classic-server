@@ -179,6 +179,15 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13: a `prop`-marked quest reward is one draw from the pool.** The owner: *"When I finished
+'Please bring this letter to Lucas', Maria gave me one of every single Headband item when it's
+suppose to be choose 1 randomly from the pool."* Quest 1008 (Lucas's Reply): `Act.1.item.1..7`
+are seven headbands each with `prop 1`; `item.0` (the letter back) has none. **[L]** The loader
+read only `id` and `count`, so the turn-in handed over every row. Now `Quest::complete_rewards`
+(and `start_rewards`) keep `prop` and `gender` per item, and `config::choose_rewards` gives every
+`prop 0` row, draws ONE of the `prop > 0` rows with weight `prop` from the session's rng, and drops
+rows marked for the other gender. 39 quests carry the mark. Plan step TO(o).
+
 **2026-09-13: a quiz's turn-in waits for the right answer.** The owner: *"Rain's quiz dialogue repeats
 after I choose the correct answer. That is not okay."* The wire for that run: `0x0151` complete ->
 record + exp + fanfare -> the menu -> the right choice -> the closing line -> nothing more from the
