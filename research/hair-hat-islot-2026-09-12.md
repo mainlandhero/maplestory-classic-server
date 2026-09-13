@@ -46,3 +46,28 @@ hair shows through the hat, that is the next variant, not this one.
 * Whether the client hides the hair under the hat with the modern `vslot` (see above).
 * The token reading itself - a listing of the islot parser would settle it; the screen will
   settle whether it matters.
+
+
+## 5. `islot Cp` was not the gate - 2026-09-12, second launch
+
+The owner: *"Nope, equipping the hair caps still does not work."* world.log for that run: two
+`0x0107`s, both the cape (Deco slot 15 to -109 and back); **none for a hat**. The islot reading
+in section 2 is refuted as the gate - it may still be a gate, but not the first one.
+
+What the static side gave before it stopped paying:
+
+* `FUN_1417dd7e0` is the double-click equip path: it checks the tab (`cmp eax, 6` at
+  `0x1417de178` for Deco), calls the slot validator `FUN_140253980` at `0x1417de24c`, the
+  worn-slot lookup `FUN_140397680`, the requirement check `FUN_140397db0` at `0x1417de965`
+  (level, STR/DEX/INT/LUK, job - it is handed the character's stat fields from `+0x13a..+0x172`),
+  and ends in the `0x0107` builder `FUN_142cc5b00` at `0x1417dea90`. **[L]**
+* `FUN_140253980` is a category jump table on `itemId / 10000 - 100` with a gender check in
+  front (`(id/1000) % 10`: 0 male, 1 female, else any); category 100 maps to body part 1. A hat
+  passes it. **[L]**
+* The message boxes that function can raise (`0x4e8..0x4ed`, `0xb63`) are the ring and
+  bonus-EXP limits. Not this. **[L]**
+* A dozen further exits (`je 0x1417dd910`) sit between entry and the send, and reading them
+  all is more expensive than one instrumented double-click.
+
+So the next launch measures: watches on `1417dd7e0`, `140397db0` and `142cc5b00`. Which of the
+three fire, in that order, names the gate's neighbourhood; plan step TO(i) has the readings.

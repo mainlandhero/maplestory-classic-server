@@ -10295,9 +10295,9 @@ fn a_beauty_coupon_confirm_changes_the_hair_and_spends_the_coupon() {
     assert_eq!(s.claimed_character().unwrap().hair, 42_600);
 
     // And a face coupon writes the face.
-    let fslot = store.add_item(id, use_tab, &store::Item::bundle(2_897_011, 1), 1).unwrap()[0].slot;
+    let fslot = store.add_item(id, use_tab, &store::Item::bundle(2_890_911, 1), 1).unwrap()[0].slot;
     let mut body = fslot.to_le_bytes().to_vec();
-    body.extend_from_slice(&2_897_011u32.to_le_bytes());
+    body.extend_from_slice(&2_890_911u32.to_le_bytes());
     s.on_beauty_coupon_confirm(&body);
     assert_eq!(s.claimed_character().unwrap().face, 22_039, "Übel Face");
 }
@@ -10477,7 +10477,7 @@ fn frierens_coupon_asks_which_version_and_the_choice_spends_it() {
     let bag = store.bag(id).unwrap();
     let mut use_tab: Vec<u32> = bag.items_in(store::InventoryType::Use).map(|i| i.item.item_id).collect();
     use_tab.sort_unstable();
-    assert_eq!(use_tab, vec![2_543_138, 2_897_007], "{use_tab:?}");
+    assert_eq!(use_tab, vec![2_543_138, 2_890_907], "{use_tab:?}");
     let equips: Vec<u32> = bag.items_in(store::InventoryType::Equip).chain(bag.items_in(store::InventoryType::Deco)).map(|i| i.item.item_id).collect();
     for e in [1_054_555u32, 1_054_556, 1_074_234, 1_032_360, 1_703_722] {
         assert!(equips.contains(&e), "{e} missing from {equips:?}");

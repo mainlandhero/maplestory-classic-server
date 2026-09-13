@@ -179,6 +179,27 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-12, latest: cape CONFIRMED; hats still refused, now instrumented; face coupons re-numbered.**
+The owner: *"Nope, equipping the hair caps still does not work. Himmel's cape now looks fine. The face
+coupons from the backported collaboration items still does not work."*
+
+* **Himmel's cape**: done - the effect draws behind the body at `z -2`, so the modern image's sign
+  convention holds in this client. **[L]** on screen.
+* **The hair-hats**: `islot Cp` was not the gate - world.log again has **no `0x0107`** for them. The
+  double-click equip path is `FUN_1417dd7e0` (it ends in the `0x0107` builder `FUN_142cc5b00` at
+  `0x1417dea90`); the slot validator `FUN_140253980` it calls is a category jump table (cap -> slot
+  1) and passes; the level/stat/job check is `FUN_140397db0`; a dozen other exits sit between. Not
+  settled statically - plan step TO(i) carries a probe line (`1417dd7e0`, `140397db0`, `142cc5b00`,
+  hits) and the readings. The ring-limit strings `0x4e8..0x4ed`/`0xb63` that function can raise are
+  not this.
+* **Face coupons**: no packet in any run. The Beauty Coupon dialog's opener (`0x141785d90`) accepts
+  seven id ranges: `2540000..2549999` (hair), `2890000..2890999` (the modern client's "Face Coupon"
+  family), `2889000`, `2893000` (skins), `2894000`/`2895000` (android faces), `2900168`.. - and
+  `2897xxx` is in none of them. **[L]** So the eight face coupons wear **2890907..2890914**: installer
+  `RENAMES` (generalised from the box's), `world::cosmetics` and `signaturestyle`, and
+  `store::ITEM_ID_RENAMES` for coupons already in a bag. Installed, read back, handbook regenerated,
+  1389 store+world tests pass. Plan step TO(j).
+
 **2026-09-12, later: the three hair-hats go on - installed, unverified on screen.** The owner: *"The
 Aura, Lugner and Linie hair does not wear when double clicked on."* world.log has **no `0x0107`** for
 1006910/1006911/1006912 in any run they sat in a bag (`grep` over `previous-runs/`), so the client
