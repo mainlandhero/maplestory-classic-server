@@ -211,6 +211,10 @@ pub struct Session {
     // number is still drawn. See `session::field::on_field_entered`.
     /// The NPC conversation in progress, if any.
     conversation: Option<Conversation>,
+    /// A quiz quest whose turn-in is waiting on the right answer: `(quest, the quest whose
+    /// lines are being spoken)`. Set by `on_quest_request` when the completion path carries
+    /// `ask`, consumed by `quiz_menu_answer` on the right choice. session/npc.rs.
+    quiz_completion_pending: Option<(u32, u32)>,
     /// **Is the client showing the Cash Shop rather than the field?**
     ///
     /// The owner, 2026-08-26: *"we should fix NPC idle chatter when player is in cash shop."* The
@@ -557,6 +561,7 @@ impl Session {
             peer_addr: None,
             local_addr: None,
             conversation: None,
+            quiz_completion_pending: None,
             in_cash_shop: false,
             chatter: Vec::new(),
             rng: Xorshift(seed),

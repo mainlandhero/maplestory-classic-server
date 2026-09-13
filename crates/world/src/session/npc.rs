@@ -153,6 +153,11 @@ impl Session {
         // UNKNOWN quest is not this - it keeps the NPC's own line, so an accept the data
         // cannot explain still draws something rather than nothing.
         let silent_accept = accepted && quest.is_some() && path.is_none();
+        // A completion path that carries `ask` is a quiz: the turn-in waits on the answer.
+        // Computed here, while `quest` and `path` are in hand - see the block below.
+        let quiz_defers_completion = completing
+            && path.as_deref() == Some(state)
+            && quest.is_some_and(|q| q.say.contains_key(&format!("{state}.ask")));
         self.conversation = Some(Conversation {
             npc_template: req.npc_template_id,
             quest_id: path.as_ref().map(|_| speaking_quest),
@@ -188,8 +193,20 @@ impl Session {
         if accepted {
             out.extend(self.record_quest_start(req.quest_id, req.npc_template_id));
         }
-        if completing {
+        // **A quiz is turned in by its answer, not by the click.** The owner, 2026-09-13: *"Rain's
+        // quiz dialogue repeats after I choose the correct answer. That is not okay."* The
+        // completion went out BEFORE the question (world.log 04:59:24: record, exp, fanfare,
+        // then the menu), and the client acts on a completion at once - the next quest in the
+        // chain is offered - so its offer box was drawn, covered by the menu, and came back
+        // after the closing line. `Say.1.ask = 1` is the data saying the turn-in depends on the
+        // answer; so for a completion path that carries `ask` the record, the exp and the
+        // fanfare wait in `quiz_completion_pending` until `quiz_menu_answer` sees the right
+        // choice. A wrong choice or a closed box leaves the quest in progress, as it should.
+        if completing && !quiz_defers_completion {
             out.extend(self.record_quest_complete(req.quest_id, speaking_quest));
+        }
+        if quiz_defers_completion {
+            self.quiz_completion_pending = Some((req.quest_id, speaking_quest));
         }
         let map_after = self.claimed_character().map(|c| c.map_id);
         if map_before != map_after {
@@ -2051,7 +2068,10 @@ impl Session {
         let answer_key = self.quiz_answer_key(&convo)?;
         let reply = net::script::parse_menu_reply(body)?;
         let Some(selection) = reply.selection else {
+            // Closed without choosing: the quest stays where it was - in progress if the
+            // turn-in was waiting on this answer.
             self.conversation = None;
+            self.quiz_completion_pending = None;
             return Some(Vec::new());
         };
         let quest = self.config.quests.get(&convo.quest_id?)?.clone();
@@ -2067,7 +2087,15 @@ impl Session {
                 "   quiz: quest {} path {} choice {chosen} is the answer ({}) - on to the next line",
                 quest_id_of(&convo), convo.path, answer.unwrap_or(0)
             ));
-            return Some(self.say_line(1));
+            // The turn-in that waited on this answer: record, exp, fanfare - then the line.
+            let mut out = Vec::new();
+            if let Some((finished, chained_to)) = self.quiz_completion_pending.take() {
+                if Some(finished) == convo.quest_id || Some(chained_to) == convo.quest_id {
+                    out.extend(self.record_quest_complete(finished, chained_to));
+                }
+            }
+            out.extend(self.say_line(1));
+            return Some(out);
         }
         let stop_key = format!("{}.stop.0", convo.path);
         let text = quest

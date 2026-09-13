@@ -10741,6 +10741,13 @@ fn rains_quiz_question_is_a_menu_and_a_wrong_answer_is_corrected_then_asked_agai
     let out = s.on_quest_request(&hex("02f503000013000000caff1201ffffffff"));
     let boxes: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::script::SCRIPT_MESSAGE).collect();
     assert_eq!(boxes.len(), 1, "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    // **Not complete yet.** The owner, 2026-09-13: the completion before the question made the
+    // client offer the next quiz under the menu, and the offer came back after the answer -
+    // "the quiz dialogue repeats". The turn-in waits for the right choice.
+    assert!(!out.iter().any(|r| r.opcode == net::quest::MESSAGE), "no record before the answer: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert_eq!(out.len(), 1, "the question alone");
+    let rows = s.store.quest_rows(id).unwrap();
+    assert!(rows.iter().any(|r| r.quest_id == 1013 && r.state == store::QuestState::InProgress), "{rows:?}");
     assert_eq!(boxes[0].body[10], net::script::SCRIPT_TYPE_MENU, "type 6, not a Say: {}", boxes[0].what);
     assert!(String::from_utf8_lossy(&boxes[0].body).contains("#L2# up arrow key"));
 
@@ -10759,11 +10766,15 @@ fn rains_quiz_question_is_a_menu_and_a_wrong_answer_is_corrected_then_asked_agai
     assert!(String::from_utf8_lossy(&out[0].body).contains("down arrow key is used to crouch"), "{}", out[0].what);
     s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_YES));
 
-    // Right: the up arrow (choice 2). "That's right!", the last line, and OK closes it.
+    // Right: the up arrow (choice 2). NOW the turn-in - record first - then "That's right!",
+    // the last line, and OK closes it.
     let out = s.on_script_reply(&menu_reply(Some(2)));
-    assert_eq!(out.len(), 1);
-    assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_SAY);
-    assert!(String::from_utf8_lossy(&out[0].body).contains("That's right"), "{}", out[0].what);
+    assert!(out.iter().any(|r| r.opcode == net::quest::MESSAGE), "the completion record rides with the right answer: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    let last = out.last().unwrap();
+    assert_eq!(last.body[10], net::script::SCRIPT_TYPE_SAY);
+    assert!(String::from_utf8_lossy(&last.body).contains("That's right"), "{}", last.what);
+    assert!(s.store.quest_rows(id).unwrap().iter().any(|r| r.quest_id == 1013 && r.state == store::QuestState::Complete), "completed by the answer");
+    let out = vec![last.clone()];
     let out = s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_YES));
     assert!(out.is_empty(), "the last box; OK closes it: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
     assert!(s.conversation.is_none());

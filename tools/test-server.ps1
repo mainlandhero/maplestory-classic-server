@@ -1053,50 +1053,26 @@
                          locally; say so (then the refusal has to also revert HP)
               nothing at all with no shell -> the line was refused; paste world.log's
                          "itemCon" line
-         m) NEW 2026-09-13 - RAIN'S QUIZ IS A MENU. "I just tried taking Rain's quiz, and after
-            finishing question one, the client exited." The question (quest 1013, Say.1.0)
-            carries four #L<n># choices and Say.1.ask = 1, and it went out as a Say (type 0);
-            the client faulted 22 ms after the box arrived (fixture rain-quiz-say-with-menu-
-            tags-client-fault-*). A #L list only renders in message type 6, so a path whose
-            node has `ask` now sends its first line as a MENU, grades the choice against
-            stop.0.answer (1-based), answers a wrong choice with its stop.0.<n> line and then
-            asks again, and a right one with the next line ("That's right!"). 18 such nodes
-            in the client's quests, all this shape - Rain's seven, Stan, Icarus, Hella...
-            Turn in Rain's Maple Quiz 1 (talk to them again if it is already complete - the
-            question is their completion line):
-              a four-choice box; a wrong pick gets their correction, Next re-asks; up arrow
-                         gets "That's right!" -> done; then try Quiz 2 the same way
-              the box shows the choices but picking does nothing -> the type-6 reply is not
-                         reaching quiz_menu_answer; say so and paste world.log's 0x00F3 line
-              client exits again -> paste the last 0x055B line in world.log; the shape of
-                         the text is the suspect (#b inside #L, or the \n)
-              the correction line comes with no Next / closes -> say so
-         n) NEW 2026-09-13 - THE BREAKABLES STAND. "Pio's Collecting Recycled Goods ... the
-            items come out of breakable wooden boxes which we do not spawn right now" and
-            "make sure the rest of the reactors also spawn". Every `reactor` node of every
-            map is in gm-handbook/reactors.txt now (228 placements: 19 Wooden Boxes on the
-            six Amherst maps, 45 Ellinia Flowers, 68 Witch's Herbs, 92 coconuts, 2 Maple
-            Codex, two singletons) and the server sends each as 0x0484 after the NPCs. The
-            client's reactor pool (FUN_141f2c0a0, opcodes 0x0478..0x048C) was read for the
-            shapes; the HIT is 0x032F by its builder's encode order (u32 objectId, u32
-            hitOption, u16 delay, u32 skillId) - that one is I until this run. A hit
-            advances the state (0x0478 to everyone on the map); the fourth breaks a box and
-            rolls data/reactor-drops.txt at it (Rusty Screw 50%, Old Wooden Board 50%, Apple,
-            Egg; coconuts 100%; Plant Sample and Witchgrass Leaf 100% but only with the
-            quest - the mob quest-item rule), then it is back after reactorTime (120 s).
-            Walk into Amherst (map 1010) and hit a box:
-              boxes drawn where the fan site puts them; each hit cracks it; the fourth
-                         breaks it and something drops; two minutes later it is back -> done
-              boxes drawn, a hit does nothing, world.log has an UNKNOWN opcode near the
-                         swing -> the hit is not 0x032F; paste that line and its body
-              boxes drawn, hits arrive (world.log "ReactorChangeState") but the box does
-                         not crack on screen -> the state or the delay field; say what it
-                         does (nothing / jumps straight to broken / vanishes)
-              no boxes at all -> paste world.log's "ReactorEnterField" lines if any; none
-                         means the table did not load (the server prints a count at start)
-              client dies on entering Amherst -> paste client-exit.log; the enter shape is L
-                         but the name string is the one field a decoder could disagree on
-            Then Pio (map 1010, Rainbow Street): take the quest, break boxes, hand in 3 + 3.
+         m) RAIN'S QUIZ - the MENU works (2026-09-13: quiz 2 answered, "Yup..." drawn), and
+            then "Rain's quiz dialogue repeats after I choose the correct answer. That is not
+            okay." world.log 04:59:24: the record, the exp and the fanfare went out BEFORE
+            the question, then the menu, then the answer and the closing line - and the
+            server sent nothing after. So what came back was the client's own doing: it acts
+            on a completion at once and offers the NEXT quiz (1015's opening), which the menu
+            covered and which reappeared after the closing line. Say.1.ask = 1 is the data
+            saying the turn-in depends on the answer, so now a quiz's completion WAITS for the
+            right choice: the click sends the question alone; the right pick sends the record,
+            the exp, the fanfare and "That's right!"; a wrong pick or a closed box leaves the
+            quest in progress. Take Rain's Maple Quiz 3 (talk to them):
+              question; right answer -> quest-clear sound, "That's right!", OK closes, and
+                         Rain's NEXT offer opens ONCE (that is the chain, and it is theirs to
+                         open) -> done
+              the offer opens BEFORE the question again -> the completion is still early;
+                         paste the world.log lines between 0x0151 and the menu
+              wrong answer, close the box: the quest is still in the journal as started,
+                         and clicking Rain asks again -> done for that half
+              "That's right!" but no quest-clear sound / exp -> the deferred record did not
+                         fire; paste world.log's "quiz:" line
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3108,26 +3084,14 @@ function Show-TestPlan {
         Write-Host '           line in an odd colour -> say which; category 11 is the guess'
         Write-Host '           mob still hurt with no shell -> client-local damage; say so'
         Write-Host '           nothing at all -> paste world.log "itemCon" line' -ForegroundColor Yellow
-        Write-Host '      m) NEW - RAIN''S QUIZ IS A MENU: the question carried #L choices in a' -ForegroundColor Yellow
-        Write-Host '         Say box and the client faulted. A node with `ask` now sends line 0'
-        Write-Host '         as type 6, grades against stop.0.answer, corrects + re-asks a wrong'
-        Write-Host '         pick, "That''s right!" on the right one. 18 quiz nodes, all fixed.'
-        Write-Host '         Turn in Rain''s Maple Quiz 1 (talk to them again):'
-        Write-Host '           four choices; wrong -> correction, Next re-asks; up arrow ->'
-        Write-Host '             "That''s right!" -> done; then Quiz 2'
-        Write-Host '           choices shown, picking does nothing -> paste the 0x00F3 line'
-        Write-Host '           client exits again -> paste the last 0x055B line' -ForegroundColor Yellow
-        Write-Host '      n) NEW - THE BREAKABLES STAND: every map''s reactors are sent (228;' -ForegroundColor Yellow
-        Write-Host '         19 Wooden Boxes in Amherst). Hit = 0x032F by its builder [I]; a'
-        Write-Host '         hit advances the state, the 4th breaks a box and drops (Screw /'
-        Write-Host '         Board 50%, coconuts 100%, quest items only with the quest), back'
-        Write-Host '         in 120 s. Go to Amherst (1010), hit a box:'
-        Write-Host '           drawn, cracks per hit, breaks + drops, back in 2 min -> done'
-        Write-Host '           drawn, hit does nothing, UNKNOWN opcode near it -> paste it' -ForegroundColor Yellow
-        Write-Host '           hits logged, box does not crack -> say what it does instead'
-        Write-Host '           no boxes -> server start line says how many loaded; say so'
-        Write-Host '           client dies entering Amherst -> paste client-exit.log' -ForegroundColor Yellow
-        Write-Host '         Then Pio: take the quest, break boxes, hand in 3 + 3.'
+        Write-Host '      m) RAIN''S QUIZ - menu works; the "repeat" after the right answer was the' -ForegroundColor Yellow
+        Write-Host '         client offering the NEXT quiz: our completion went out before the'
+        Write-Host '         question. Now the turn-in waits for the right choice (record, exp,'
+        Write-Host '         fanfare ride with "That''s right!"). Take Quiz 3:'
+        Write-Host '           question; right -> clear sound, line, next offer opens ONCE -> done'
+        Write-Host '           offer opens BEFORE the question -> paste 0x0151..menu lines' -ForegroundColor Yellow
+        Write-Host '           wrong + close -> quest still started, click asks again -> done'
+        Write-Host '           right, no clear sound/exp -> paste the "quiz:" line'
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'

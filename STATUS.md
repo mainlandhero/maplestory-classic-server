@@ -179,6 +179,16 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13: a quiz's turn-in waits for the right answer.** The owner: *"Rain's quiz dialogue repeats
+after I choose the correct answer. That is not okay."* The wire for that run: `0x0151` complete ->
+record + exp + fanfare -> the menu -> the right choice -> the closing line -> nothing more from the
+server. The repeat was the client's: it acts on a completion at once and offers the chain's next
+quest, which the menu covered and which came back after the closing line. `Say.1.ask = 1` says the
+turn-in depends on the answer, so `on_quest_request` now defers `record_quest_complete` for a
+completion path that carries `ask` (`quiz_completion_pending`), and `quiz_menu_answer` fires it on
+the right choice, before the line; a wrong choice or a closed box leaves the quest in progress.
+The menu itself is CONFIRMED on screen (quiz 2 answered). Plan step TO(m) re-cut.
+
 **2026-09-13: reactors - the breakable boxes - are spawned, hit, broken, looted and respawned;
 unverified on screen.** The owner: *"Pio's Collecting Recycled Goods ... the items come out of breakable
 wooden boxes which we do not spawn right now. We need to spawn them and provide the drops"*, then
