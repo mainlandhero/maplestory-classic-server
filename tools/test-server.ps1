@@ -984,23 +984,22 @@
             2026-09-12: "Ubel's weapon is fine in game and on character select"). The cover
             rides in the look's weapon-sticker u32 (look+0x2d) and the real weapon keeps
             slot 11. Nothing to test here any more.
-         h) NEW 2026-09-12 - HIMMEL'S CAPE HAS ITS EFFECT. "Himmel's cape should actually
-            have an effect, but this effect currently does not appear." The cape's own image
-            is 1x1 frames - the garment IS its effect - and worn-item effects live in
-            Effect/ItemEff.img/<id>/effect, which the classic Effect archive did not contain
-            AT ALL (26 images, no ItemEff.img) while the client's loader for it is present
-            [L: the format string is read by the avatar code and the select-screen filler].
-            Installed: a new ItemEff.img holding 1103918's node (one 81x143 frame, stand1 and
-            stand2 only, drawn at z 10 - that is what Nexon ships) and its canvas. Put
-            Himmel's Blessing (cape, 1103918) on:
-              a glow/wing behind the character while standing -> done; say whether it
-                         stays while walking (Nexon's node has no walk frames; if it
-                         vanishes on walk, that is the data, not us)
-              nothing, cape slot filled -> the classic loader wants a different node
-                         shape (default/ instead of stand1/); say so, I re-key it
-              nothing, and the SELECT screen also shows no glow -> same reading
-              client dies on equip or on map entry -> STOP, paste client-exit.log;
-                         the effect node is the only new thing in Effect.wz
+         h) HIMMEL'S CAPE - THE EFFECT DRAWS (confirmed 2026-09-12, screenshot), but IN
+            FRONT: "Himmel's cape should have an offset and appear behind the player's
+            character, currently it blocks the character when idle." Nexon's node says z 10
+            on effect and on effect/stand1 and this client put that in front of the body;
+            the same modern image gives its plain behind-the-body auras z -2 (1103988, the
+            first key), so every z leaf under 1103918/effect is rewritten to -2 by the
+            installer (itemeff-z.tsv, one patch line each). The frame's origin is untouched -
+            it is centred on the body, which from the front is the "offset" once the draw is
+            behind. [I: the sign convention comes from the sibling entries, not the client.]
+            Installed once the client was closed. Put the cape on and stand still:
+              the glow is BEHIND Cobalt, body fully visible -> done
+              still in front -> negative z is not "behind" here; say so, and I try the
+                         frame's own z (stand1/0/z, currently 0) next - one variant at a time
+              behind, but shifted off the body -> the origin needs a change; say which way
+                         and by roughly how much (a body width, half a body...)
+              gone entirely -> a negative z hides it in this client; say so
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -2978,17 +2977,15 @@ function Show-TestPlan {
         Write-Host '           box in bag has no name/icon -> rename did not run; say so'
         Write-Host '      g) CASH EQUIPS + THE WEAPON COVER SURVIVE A RELOG - CONFIRMED on select' -ForegroundColor DarkGray
         Write-Host '         and in the field (2026-09-12). Nothing to test here.' -ForegroundColor DarkGray
-        Write-Host '      h) NEW - HIMMEL''S CAPE EFFECT: the cape image is 1x1 frames; the' -ForegroundColor Yellow
-        Write-Host '         effect lives in Effect/ItemEff.img, which the classic archive'
-        Write-Host '         did not contain at all. Installed: ItemEff.img with 1103918'
-        Write-Host '         (one 81x143 frame, stand1/stand2 only, z 10) + its canvas.'
-        Write-Host '         Put Himmel''s Blessing (cape) on:'
-        Write-Host '           glow behind the character while standing -> done; say'
-        Write-Host '             whether it stays while walking (Nexon ships no walk frames)'
-        Write-Host '           nothing, slot filled -> loader wants default/ not stand1/;'
-        Write-Host '             say so, I re-key it'
-        Write-Host '           client dies on equip / map entry -> STOP, paste' -ForegroundColor Yellow
-        Write-Host '             client-exit.log; the node is the only new thing in Effect.wz' -ForegroundColor Yellow
+        Write-Host '      h) HIMMEL''S CAPE: the effect DRAWS (confirmed) but IN FRONT of the' -ForegroundColor Yellow
+        Write-Host '         body. Nexon''s node says z 10; the same image''s plain auras say'
+        Write-Host '         z -2, so every z under 1103918/effect is now -2 (installed after'
+        Write-Host '         the client closed). Put the cape on, stand still:'
+        Write-Host '           glow BEHIND Cobalt, body fully visible -> done'
+        Write-Host '           still in front -> negative z is not behind here; say so, I' -ForegroundColor Yellow
+        Write-Host '             try the frame''s own z next' -ForegroundColor Yellow
+        Write-Host '           behind but shifted off the body -> origin; say which way, how far'
+        Write-Host '           gone entirely -> negative z hides it; say so'
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'

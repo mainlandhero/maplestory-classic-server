@@ -179,6 +179,16 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-12, later: the cape effect DRAWS - in front of the body.** The owner, with a screenshot of
+Cobalt standing inside a grey block: *"Himmel's cape should have an offset and appear behind the
+player's character, currently it blocks the character when idle."* So the ItemEff route is right
+(the loader found the new image and drew the frame) and the depth is wrong: Nexon's node carries
+`z 10` on `effect` and `effect/stand1`, which this client puts in front. The same modern image gives
+its plain behind-the-body auras `z -2` (1103988), so the installer now rewrites every `z` leaf under
+`1103918/effect` to -2 (`itemeff-z.tsv`, a `patch` op after the merge). The frame origin (38,141 on
+81x143, centred on the body) is untouched. **[I]** on the sign; the screen decides. The install waited
+for the client to close. Plan step TO(h) re-cut. The entry below is how the effect got there.
+
 **2026-09-12, night: Himmel's cape has its effect - installed, unverified on screen.** The owner:
 *"Himmel's cape should actually have an effect, but this effect currently does not appear in our
 version of the game."* The cape (Himmel's Blessing, 1103918) is 1x1 frames in its own image - the

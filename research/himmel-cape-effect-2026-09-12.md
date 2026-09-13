@@ -70,3 +70,25 @@ Both archives verify image by image.
 * Whether the effect persists while walking: the node has no walk frames. That would be the
   data, not this client.
 * Anything on a screen. Plan step TO(h).
+
+
+## 6. First screen: it draws, in front - 2026-09-12
+
+The owner, with a screenshot: *"Himmel's cape should have an offset and appear behind the player's
+character, currently it blocks the character when idle."* Cobalt stands inside an opaque grey
+block the size of the 81x143 frame. So:
+
+* The loader route in section 2 is right: a worn cash item's id is looked up in
+  `Effect/ItemEff.img` and the frame is drawn at the body. **[L]** on screen.
+* The action-keyed node (`effect/stand1/0`) is accepted as is - the effect showed while idle.
+* The depth is wrong. Nexon's node carries `z 10` on `effect` and on `effect/stand1`, with
+  `z 0` on the frame itself; this client drew it in front of the body.
+
+The same modern `ItemEff.img` gives its ordinary behind-the-body auras `z -2` (key 1103988, the
+first in the image, `effect/default/0..6`). Whether `10` means a special layer in the modern
+renderer or nothing at all, the classic renderer has read it as "in front", and -2 is the
+value the sibling entries use for "behind". The installer rewrites every `z` leaf under
+`<id>/effect` to -2 for each shipped effect (`itemeff-z.tsv`, three lines for Himmel). The
+frame's own `z 0` and the origin are left alone: one variant at a time, and the origin is
+already centred on the body, which is what "offset" reads as once the draw is behind.
+**[I]** for the sign convention; plan step TO(h) names the four screen outcomes.

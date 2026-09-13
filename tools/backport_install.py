@@ -179,6 +179,27 @@ def main():
             print("  effect   %-8s %8d  %s" % (set_name, it["id"], it.get("name", "")))
     if eff_keys:
         add("Effect", "merge\tItemEff.img\t%s\tItemEff.img\t%s" % (eff_src, ",".join(eff_keys)))
+        # The effect's depth. The owner, 2026-09-12, with a screenshot of Cobalt standing inside a
+        # grey block: "Himmel's cape should have an offset and appear behind the player's
+        # character, currently it blocks the character when idle." Nexon's node says `z 10`
+        # on `effect` and on `effect/stand1`, and this client drew that IN FRONT of the
+        # body. The same modern image gives its plain aura entries `z -2` (1103988 is the
+        # first key), which is the value a behind-the-body effect carries; so every node
+        # we ship gets its `z` leaves rewritten to -2. [I: the sign convention is read off
+        # the sibling entries, not the client; the screen is the test.] The frame origin
+        # (38,141 on an 81x143 canvas, i.e. centred on the body) is left alone - "offset"
+        # in the owner's sentence is what a behind-the-body draw looks like from the front.
+        eff_z_tsv = os.path.join(args.build_dir, "itemeff-z.tsv")
+        with open(eff_z_tsv, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("# every z leaf under <id>/effect rewritten to -2: behind the body\n")
+            for key in eff_keys:
+                node = eff_tree[key]["effect"]
+                if "z" in node:
+                    fh.write("%s/effect/z\tint\t-2\n" % key)
+                for action, sub in node.items():
+                    if isinstance(sub, dict) and "z" in sub:
+                        fh.write("%s/effect/%s/z\tint\t-2\n" % (key, action))
+        add("Effect", "patch\tItemEff.img\t%s" % eff_z_tsv)
         if eff_holders:
             eff_canvas_src = modern_part(source, "Effect/_Canvas", "ItemEff.img")
             add("Effect/_Canvas", "merge\tItemEff.img\t%s\tItemEff.img\t%s" % (
