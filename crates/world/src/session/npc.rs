@@ -157,9 +157,19 @@ impl Session {
         // greeting is not what a finished quest sounds like. Found by the 2026-09-13 audit
         // (`no_quest_answers_its_accept_or_turn_in_with_its_own_opening_lines`): quest 1002.
         let silent_accept = (accepted || completing) && quest.is_some() && path.is_none();
-        // A completion path that carries `ask` is a quiz: the turn-in waits on the answer.
-        // Computed here, while `quest` and `path` are in hand - see the block below.
-        let quiz_defers_completion = completing
+        // **A quiz is conducted by the CLIENT; the turn-in only finalises it.** The owner,
+        // 2026-09-13, with five timestamped screenshots and the log beside them: for quest
+        // 1016 the client drew the offer, the question and a "Yes, that's correct!" box
+        // entirely on its own - `world.log` has ZERO inbound quest/script packets for the 41 s
+        // those boxes were up (17:20:14..55, only toggles and telemetry) - and only THEN sent
+        // the turn-in. The server used to answer that turn-in by asking the same question a
+        // SECOND time (17:20:55 menu, 17:21:06 answer), so the player answered twice. The
+        // client has the quest's `#L` choices and its `stop.0.answer` in `Quest.wz` and grades
+        // them itself; it sends the turn-in only on a right answer, and when the server sent a
+        // redundant menu the client dismissed it unanswered (`06 00`, world.log 16:58:34). So
+        // a quiz turn-in records the completion and says nothing - the closing line is already
+        // on screen. `quiz_answer_key` marks the shape: a completion path whose node has `ask`.
+        let quiz_turn_in = completing
             && path.as_deref() == Some(state)
             && quest.is_some_and(|q| q.say.contains_key(&format!("{state}.ask")));
         self.conversation = Some(Conversation {
@@ -197,20 +207,12 @@ impl Session {
         if accepted {
             out.extend(self.record_quest_start(req.quest_id, req.npc_template_id));
         }
-        // **A quiz is turned in by its answer, not by the click.** The owner, 2026-09-13: *"Rain's
-        // quiz dialogue repeats after I choose the correct answer. That is not okay."* The
-        // completion went out BEFORE the question (world.log 04:59:24: record, exp, fanfare,
-        // then the menu), and the client acts on a completion at once - the next quest in the
-        // chain is offered - so its offer box was drawn, covered by the menu, and came back
-        // after the closing line. `Say.1.ask = 1` is the data saying the turn-in depends on the
-        // answer; so for a completion path that carries `ask` the record, the exp and the
-        // fanfare wait in `quiz_completion_pending` until `quiz_menu_answer` sees the right
-        // choice. A wrong choice or a closed box leaves the quest in progress, as it should.
-        if completing && !quiz_defers_completion {
+        // The turn-in records the completion - the record, the exp and the fanfare - for a
+        // quiz exactly as for any other quest. What differs is only what is SAID afterwards:
+        // a quiz says nothing (the client already drew the closing line), which the
+        // `quiz_turn_in` arm below handles by returning right after this.
+        if completing {
             out.extend(self.record_quest_complete(req.quest_id, speaking_quest));
-        }
-        if quiz_defers_completion {
-            self.quiz_completion_pending = Some((req.quest_id, speaking_quest));
         }
         let map_after = self.claimed_character().map(|c| c.map_id);
         if map_before != map_after {
@@ -220,7 +222,11 @@ impl Session {
         // An accept whose quest has no `yes` branch: the record went out, the client's own
         // quest window has closed, and there is no line to put in a box - not the opening
         // again, and not the NPC's d0 greeting that `say_line` falls back to without a quest.
-        if silent_accept {
+        //
+        // A quiz turn-in is the same shape for the same reason: the client conducted the quiz
+        // and drew its own "That's right!" box, so the completion record is the whole answer
+        // and a `say_line` here would repeat the closing line - the second box the owner saw.
+        if silent_accept || quiz_turn_in {
             self.conversation = None;
             return out;
         }
@@ -2026,26 +2032,22 @@ impl Session {
             last && !on_branch && convo.quest_id.is_some() && self.has_branch(&convo, "yes");
         let has_next = !last;
 
-        // **A quiz question is a MENU, not a Say.** The owner, 2026-09-13: *"I just tried taking
-        // Rain's quiz, and after finishing question one, the client exited."* Quest 1013's
-        // `Say.1.0` is the question with its four `#L<n>#` choices and `Say.1.ask = 1`, and
-        // it went out as type 0; the client faulted (0xc0000005 at 0x142a5ce2f) 22 ms after
-        // the box arrived - `research/fixtures/rain-quiz-say-with-menu-tags-client-fault-*`.
-        // A `#L` list only renders inside message type 6, so a path whose node carries `ask`
-        // sends its first line as `npc_menu`, and `quiz_menu_answer` grades the reply.
-        let quiz = index == 0 && !has_next_quiz_retry(&convo.path) && self.quiz_answer_key(&convo).is_some();
-        let has_next = has_next && !quiz;
+        // **A quiz's `#L` menu is never sent from here.** Quest 1013's `Say.1.0` carries four
+        // `#L<n>#` choices; sent as a Say (type 0) it faulted the client 22 ms later
+        // (`research/fixtures/rain-quiz-say-with-menu-tags-client-fault-*`). It is not sent as a
+        // Say now either - it is not sent AT ALL: the client conducts the quiz from its own
+        // `Quest.wz` and sends only the turn-in, which `on_quest_request` finalises without a
+        // box. So `say_line` only ever walks non-quiz lines and a quiz path never reaches it.
+        // `a_quiz_turn_in_completes_silently_because_the_client_conducts_the_quiz`.
 
-        let body = if quiz {
-            net::script::npc_menu(convo.npc_template, &text)
-        } else if branches {
+        let body = if branches {
             net::script::npc_ask(convo.npc_template, &text, true)
         } else {
             net::script::npc_say(convo.npc_template, &text, false, has_next)
         };
         let what = format!(
             "ScriptMessage {} from NPC template {}{}, line {} of {} on path \"{}\"",
-            if quiz { "quiz MENU (type 6; the #L choices are graded by quiz_menu_answer)" } else if branches { "yes/no prompt" } else { "Say" },
+            if branches { "yes/no prompt" } else { "Say" },
             convo.npc_template,
             convo.quest_id.map(|q| format!(" for quest {q}")).unwrap_or_default(),
             index + 1,
@@ -2062,94 +2064,6 @@ impl Session {
     }
 
 
-    /// The `<path>.stop.0.answer` key of a quiz path, when the path is one - i.e. when the
-    /// quest's `Say` tree has `<path>.ask`. Rain's quizzes (1013..) are the shape: the
-    /// question is line 0 with `#L<n>#` choices, `stop.0.answer` is the right choice
-    /// **1-based**, and `stop.0.<n>` is what they say to wrong choice `n` (0-based). **[L]**
-    /// off `questlines.txt`; the 1-based reading of `answer` is **[D]** from the one quiz
-    /// whose `stop.0` lines are 0, 1 and 3 with `answer 3`: up arrow, the third choice.
-    fn quiz_answer_key(&self, convo: &Conversation) -> Option<String> {
-        let q = self.config.quests.get(&convo.quest_id?)?;
-        q.say.contains_key(&format!("{}.ask", convo.path)).then(|| format!("{}.stop.0.answer", convo.path))
-    }
-
-    /// The client's answer to a quiz MENU. Same precondition shape as the taxi's and the
-    /// Administrator's: it claims the packet only when this session's conversation is
-    /// parked on a quiz question, so a type-6 body never reaches the Say-shaped decoder.
-    ///
-    /// Right: the path's next line (*"That's right! ..."*) and the conversation carries on
-    /// as an ordinary Say. Wrong: the `stop.0.<n>` line as a Say with Next, on the retry
-    /// path, and the Next re-asks the question. Closed: nothing, as everywhere.
-    fn quiz_menu_answer(&mut self, body: &[u8]) -> Option<Vec<Reply>> {
-        let convo = self.conversation.clone()?;
-        if convo.sent != 0 || has_next_quiz_retry(&convo.path) {
-            return None;
-        }
-        let answer_key = self.quiz_answer_key(&convo)?;
-        let reply = net::script::parse_menu_reply(body)?;
-        let Some(selection) = reply.selection else {
-            // Closed without choosing: the quest stays where it was - in progress if the
-            // turn-in was waiting on this answer.
-            self.conversation = None;
-            self.quiz_completion_pending = None;
-            return Some(Vec::new());
-        };
-        let quest = self.config.quests.get(&convo.quest_id?)?.clone();
-        let answer = quest
-            .say
-            .get(&answer_key)
-            .and_then(|v| v.first())
-            .and_then(|v| v.trim().parse::<u32>().ok());
-        let chosen = u32::try_from(selection).unwrap_or(u32::MAX);
-        let right = answer.is_some_and(|a| a == chosen + 1);
-        if right {
-            crate::server::log(&format!(
-                "   quiz: quest {} path {} choice {chosen} is the answer ({}) - on to the next line",
-                quest_id_of(&convo), convo.path, answer.unwrap_or(0)
-            ));
-            // The turn-in that waited on this answer: record, exp, fanfare - then the line.
-            let mut out = Vec::new();
-            if let Some((finished, chained_to)) = self.quiz_completion_pending.take() {
-                if Some(finished) == convo.quest_id || Some(chained_to) == convo.quest_id {
-                    out.extend(self.record_quest_complete(finished, chained_to));
-                }
-            }
-            out.extend(self.say_line(1));
-            return Some(out);
-        }
-        let stop_key = format!("{}.stop.0", convo.path);
-        let text = quest
-            .say_indices
-            .get(&stop_key)
-            .and_then(|idx| idx.iter().position(|&i| i == chosen as usize))
-            .and_then(|pos| quest.say.get(&stop_key).and_then(|lines| lines.get(pos)).cloned());
-        let Some(text) = text else {
-            // A choice the data has no line for (or a crafted number): ask again.
-            crate::server::log(&format!(
-                "   quiz: quest {} path {} choice {chosen} is wrong and has no stop line - asking again",
-                quest_id_of(&convo), convo.path
-            ));
-            return Some(self.say_line(0));
-        };
-        crate::server::log(&format!(
-            "   quiz: quest {} path {} choice {chosen} is wrong (answer {}) - the stop line, then the question again",
-            quest_id_of(&convo), convo.path, answer.unwrap_or(0)
-        ));
-        if let Some(c) = self.conversation.as_mut() {
-            c.path = format!("{}{QUIZ_RETRY_SUFFIX}", convo.path);
-            c.sent = 0;
-            c.awaiting_yes_no = false;
-            c.sent_with_next = true;
-        }
-        Some(vec![Reply {
-            opcode: net::script::SCRIPT_MESSAGE,
-            body: net::script::npc_say(convo.npc_template, &text, false, true),
-            what: format!(
-                "ScriptMessage Say from NPC template {} for quest {}: wrong quiz answer {chosen} on path \"{}\" - Next re-asks",
-                convo.npc_template, quest_id_of(&convo), convo.path
-            ),
-        }])
-    }
 
     /// The lines of the path the conversation is currently on.
     pub(super) fn say_lines(&self, convo: &Conversation) -> Option<Vec<String>> {
@@ -2218,11 +2132,6 @@ impl Session {
         if let Some(replies) = self.frieren_menu_answer(body) {
             return replies;
         }
-        // A quiz question's choice (Rain, quest 1013..): type 6, claimed only while the
-        // conversation is parked on one.
-        if let Some(replies) = self.quiz_menu_answer(body) {
-            return replies;
-        }
         let Some(reply) = net::script::parse_script_reply(body) else { return Vec::new() };
         let Some(convo) = self.conversation.clone() else { return Vec::new() };
 
@@ -2231,15 +2140,6 @@ impl Session {
             return Vec::new();
         }
 
-        // Next on a wrong quiz answer's line: back to the question, as a menu again.
-        if let Some(base) = convo.path.strip_suffix(QUIZ_RETRY_SUFFIX) {
-            if let Some(c) = self.conversation.as_mut() {
-                c.path = base.to_string();
-                c.sent = 0;
-                c.sent_with_next = false;
-            }
-            return self.say_line(0);
-        }
 
         // **Phil's job guide holds its place in `Conversation::path`.** This must come BEFORE
         // the `awaiting_yes_no` block, not after: that flag is true on Phil's box too, so the
@@ -2370,17 +2270,4 @@ impl Session {
             ),
         }
     }
-}
-
-/// The path suffix a conversation carries while a wrong quiz answer's line is on screen.
-/// Next strips it and re-asks; `say_lines` has no node by this name, which is deliberate -
-/// nothing walks it as a line list.
-const QUIZ_RETRY_SUFFIX: &str = ".quiz.retry";
-
-fn has_next_quiz_retry(path: &str) -> bool {
-    path.ends_with(QUIZ_RETRY_SUFFIX)
-}
-
-fn quest_id_of(convo: &Conversation) -> u32 {
-    convo.quest_id.unwrap_or(0)
 }
