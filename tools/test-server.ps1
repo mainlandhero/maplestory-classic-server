@@ -1033,6 +1033,26 @@
                          reachable; say so
               Heena's quest no longer says "hill to the east" after Accept -> the yes branch
                          broke; say so
+         l) NEW 2026-09-13 - THREE SNAILS THROWS A SHELL. "Three Snails is a skill that takes
+            1 Red Snail Shell to cast ... the skill should output a red error text in chat
+            saying you do not have enough Red Snail Shell ... Casting it should decrease the
+            client's Red Snail Shell inventory count by 1." Skill.wz: level 1 throws a Snail
+            Shell (4000001), level 2 a Blue Snail Shell (4000002), level 3 a Red Snail Shell
+            (4000004), one a cast. The server now takes the shell from the Etc tab on every
+            cast (0x0070 count change) and, with none, answers the swing with ONE system
+            chat line (category 11, the client's own "You cannot" colour) and nothing else:
+            no MP, no damage, no broadcast. Cast it at a snail with a few shells, then with
+            none:
+              the Etc count drops by one per cast; with none, the red/pink line appears and
+                         the mob takes no damage -> done
+              the count drops on the server (world.log "itemCon: ... threw") but not in
+                         the bag window -> the 0x0070 shape for Etc; say so
+              the line appears in a colour that is not the client's usual error colour ->
+                         say which; category 11 is the guess, 1..5 are the client's own
+              the swing still hurts the mob with no shell -> the client applies damage
+                         locally; say so (then the refusal has to also revert HP)
+              nothing at all with no shell -> the line was refused; paste world.log's
+                         "itemCon" line
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3035,6 +3055,15 @@ function Show-TestPlan {
         Write-Host '           the same two lines again -> fix not in the running server; say so'
         Write-Host '           their greeting after Accept -> d0 fallback still reachable; say so'
         Write-Host '           Heena no longer says "hill to the east" -> yes branch broke' -ForegroundColor Yellow
+        Write-Host '      l) NEW - THREE SNAILS THROWS A SHELL: level 3 takes a Red Snail Shell' -ForegroundColor Yellow
+        Write-Host '         (4000004) per cast from the Etc tab (0x0070 count change); with'
+        Write-Host '         none, the swing gets ONE system chat line and nothing else. Cast it'
+        Write-Host '         with a few shells, then with none:'
+        Write-Host '           count drops per cast; no shell -> red line, mob unhurt -> done'
+        Write-Host '           server log says threw, bag window unchanged -> 0x0070 shape; say so'
+        Write-Host '           line in an odd colour -> say which; category 11 is the guess'
+        Write-Host '           mob still hurt with no shell -> client-local damage; say so'
+        Write-Host '           nothing at all -> paste world.log "itemCon" line' -ForegroundColor Yellow
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'

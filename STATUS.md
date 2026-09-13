@@ -179,6 +179,18 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13: Three Snails throws its shell, and refuses in red without one - unverified on
+screen.** The owner: *"Three Snails is a skill that takes 1 Red Snail Shell to cast ... red error text
+in chat ... Casting it should decrease the client's Red Snail Shell inventory count by 1."* The
+skill table already carried `itemCon`/`itemConNo` (level 1 Snail Shell 4000001, level 2 Blue
+4000002, level 3 Red 4000004, one each - **[L]** from Skill.wz) and nothing spent them.
+`Session::spend_attack_item` runs first in `on_attack`: enough in the Etc tab -> lowest stack
+debited, `0x0070` per stack (the arrows' shape); short -> `Err` with one `0x0089` chat line in the
+client's system category 11 (`0xFFFFAFAF`, the colour of its own "You cannot" lines) and the swing
+returns THAT alone - no MP, no damage, no broadcast. It is the first attack cost that refuses; MP
+and arrows are floored, not refused, because the client has already spent them locally. Whether the
+client also applies the damage locally on a refused cast is the open reading. Plan step TO(l).
+
 **2026-09-13: an accept with no `yes` branch says nothing - unverified on screen.** The owner: *"Nina's
 quest dialogue seems to be repeated when accepting their 'What Sen wants to eat' quest. They say the
 same two dialogues before and after I click 'Accept'."* world.log 04:06:17: the `0x0151` accept for
