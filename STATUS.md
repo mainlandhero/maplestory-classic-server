@@ -196,8 +196,9 @@ arm, the same shape as `silent_accept`. The whole server-side quiz driver (`quiz
 **removed** - it was built on the theory that the server asks the quiz, which the screenshots
 disprove, and it was unreachable once the menu stopped. `research/quiz-client-driven-2026-09-13.md`;
 tests `a_quiz_turn_in_completes_silently_because_the_client_conducts_the_quiz` and the all-quests
-audit (11 quiz turn-ins now complete silently). Plan step TO(t) is settled - no launch needed to
-name the box; it was the client's own quiz.
+audit (11 quiz turn-ins now complete silently). **Unverified on screen:** a quiz turn-in answered by
+the record alone - the silent accept is the precedent, a turn-in is a different request. Plan step
+TO(t) is now that check, not the watch run; the box after OK was the client's own quiz.
 
 **2026-09-13: the box after Rain's OK is the client's, and a launch with watches names it.**
 The owner: *"Rain still repeats their dialogue when I select the right answer and then press OK. I believe

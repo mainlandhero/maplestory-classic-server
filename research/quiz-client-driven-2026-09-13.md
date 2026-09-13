@@ -33,9 +33,14 @@ The server then answered that turn-in by asking the same question a **second** t
 The owner answered twice. When the server's redundant menu was NOT wanted, the client dismissed it
 unanswered - `06 00`, world.log 16:58:34, an earlier turn-in of the same quest.
 
-Contrast the "worked" case (quest 1015, 16:37): there the client ALSO pre-ran (an 8 s packet-free
-gap between action 1 and action 2), then answered the server's menu manually - so it doubled too;
-it just was not the one the owner screenshotted.
+The "worked" case (quest 1015, 16:37) is **[I]**: an 8 s packet-free gap sits between its accept
+and its turn-in, which is room for the client to have run the quiz locally before the server's menu
+was answered by hand - a double the owner did not screenshot. Not measured; only 1016 is.
+
+**Unverified on screen:** a quiz turn-in answered by the completion record and no box. The
+precedent is the silent accept (Nina, 2026-09-13), which the release the owner played did not freeze on;
+the 16:58 dismissal says the client did not want a box. A turn-in is still a different request, so
+plan step TO(t) watches for it.
 
 ## The rule
 
