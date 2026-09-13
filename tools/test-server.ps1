@@ -1110,6 +1110,21 @@
               client dies at purchase or at the move -> paste client-exit.log and the last
                          0x03E1 / 0x0070 line in world.log; the pet body is I on meanings
               only three pets listed -> the Pets tab does not list by SN prefix; say so
+         q) NEW 2026-09-13 - THE REPEAT-DIALOGUE AUDIT, every quest. "Please audit all of the
+            questline and make sure repeat dialogue is no longer a concern." The rule the three
+            fixes converge on: the client shows a quest's OPENING (Say.0) itself, so the server
+            must never answer that quest's Accept or turn-in with its own Say.0, and one request
+            never opens two boxes. A test now walks all 316 quests with dialogue through Accept
+            and turn-in and asserts exactly that: Accept -> 157 speak their yes branch, 159 send
+            the record alone; turn-in -> 287 speak Say.1, 11 ask a quiz (menu, completion on the
+            answer), 7 chain to the next quest's opening (accepting it in the same breath, so the
+            client does not offer it again - 1000 -> 1001, seen 2026-08-20), 11 send the record
+            alone. It found one more: a finished quest with nothing to say (1002, Roger) was
+            answered with the NPC's greeting - silent now. The one path the server still speaks
+            Say.0 on is action 4, the opening SCRIPT (27 captures, all quest 1002, all fine): a
+            scripted quest has no local text. Nothing to test as a step; take any quest and it
+            is covered. If a line still repeats anywhere, name the quest and WHICH line (the
+            opening, the yes branch, the completion) - the audit test is where it gets pinned.
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3146,6 +3161,11 @@ function Show-TestPlan {
         Write-Host '           buy one: locker icon, moves to Cash tab, no death -> body right'
         Write-Host '           client dies at buy/move -> paste client-exit.log + last 0x03E1' -ForegroundColor Yellow
         Write-Host '           only three listed -> tab does not list by SN prefix; say so'
+        Write-Host '      q) THE REPEAT-DIALOGUE AUDIT: a test walks all 316 quests with dialogue' -ForegroundColor DarkGray
+        Write-Host '         through Accept and turn-in - the server never answers with the quest''s' -ForegroundColor DarkGray
+        Write-Host '         own opening and never opens two boxes. One more found and fixed (1002''s' -ForegroundColor DarkGray
+        Write-Host '         turn-in said the NPC''s greeting). If a line still repeats, name the' -ForegroundColor DarkGray
+        Write-Host '         quest and WHICH line.' -ForegroundColor DarkGray
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'

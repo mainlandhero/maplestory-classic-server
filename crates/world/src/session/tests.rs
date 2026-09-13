@@ -10982,3 +10982,109 @@ fn a_pet_is_bought_as_a_type_3_item_that_never_dies() {
     assert_eq!(&blob[36..44], &net::opcode::ITEM_NEVER_EXPIRES.to_le_bytes(), "dateDead: never revived");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// **The repeat-dialogue audit, over every quest the client ships.** The owner, 2026-09-13: *"Please
+/// audit all of the questline and make sure repeat dialogue is no longer a concern."*
+///
+/// The rule the three fixes of 2026-09-13 converge on: **the client shows a quest's opening
+/// (`Say.0`) itself, so the server must never send a `Say.0` line of THAT quest in answer to
+/// its Accept (action 1) or its turn-in (action 2)**, and one request never opens two boxes at
+/// once. What the server may send: the `0.yes` branch on Accept; the `Say.1` lines (or a quiz
+/// menu) on turn-in; the NEXT quest's opening when a turn-in chains and the finished quest has
+/// nothing of its own to say (1000 -> 1001, on screen 2026-08-20). Action 4, the opening script,
+/// is the one place the server speaks `Say.0` - the client has no local text for a scripted
+/// quest (27 captures, all quest 1002, all fine).
+#[test]
+fn no_quest_answers_its_accept_or_turn_in_with_its_own_opening_lines() {
+    let path = std::path::Path::new("../../gm-handbook/questlines.txt");
+    if !path.exists() {
+        return; // generated data, gitignored
+    }
+    let quests = crate::config::load_quests(path);
+    let config = Arc::new(Config { quests: quests.clone(), set_field_probe: true, ..Config::default() });
+    let request = |action: u8, quest: u32, npc: u32| -> Vec<u8> {
+        let mut b = vec![action];
+        b.extend_from_slice(&quest.to_le_bytes());
+        b.extend_from_slice(&npc.to_le_bytes());
+        b.extend_from_slice(&[0x0a, 0x01, 0x12, 0x01]); // x, y as captured
+        b.extend_from_slice(if action == 2 { &[0xff; 4] } else { &[0; 4] });
+        b
+    };
+    let own_opening = |replies: &[Reply], quest: u32| -> Option<String> {
+        replies.iter().find(|r| {
+            r.opcode == net::script::SCRIPT_MESSAGE
+                && r.what.contains(&format!("for quest {quest},"))
+                && r.what.contains("on path \"0\"")
+        }).map(|r| r.what.clone())
+    };
+    let boxes = |replies: &[Reply]| replies.iter().filter(|r| r.opcode == net::script::SCRIPT_MESSAGE).count();
+
+    let mut audited = 0;
+    let mut accepted_silently = 0;
+    let mut accepted_with_yes = 0;
+    let mut turned_in_with_line = 0;
+    let mut turned_in_with_quiz = 0;
+    let mut turned_in_chained = 0;
+    let mut turned_in_silently = 0;
+    let mut ids: Vec<u32> = quests.keys().copied().collect();
+    ids.sort_unstable();
+    // One session for the lot: an account costs an argon2id hash, and 316 of them took three
+    // minutes. Each quest is its own row, so one character can accept them all in turn.
+    let (mut s, _store, id2) = claimed_session();
+    s.config = config.clone();
+    for qid in ids {
+        let q = &quests[&qid];
+        if q.say.is_empty() {
+            continue;
+        }
+        audited += 1;
+        let npc = q.start_npc.unwrap_or(1);
+
+        // Accept.
+        s.conversation = None;
+        s.quiz_completion_pending = None;
+        let out = s.on_quest_request(&request(1, qid, npc));
+        assert!(own_opening(&out, qid).is_none(), "quest {qid}: Accept answered with its own opening: {:?}", own_opening(&out, qid));
+        assert!(boxes(&out) <= 1, "quest {qid}: Accept opened {} boxes at once", boxes(&out));
+        if q.say.contains_key("0.yes") {
+            assert!(out.iter().any(|r| r.what.contains("on path \"0.yes\"")), "quest {qid}: has a yes branch and did not say it: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+            accepted_with_yes += 1;
+        } else {
+            assert_eq!(boxes(&out), 0, "quest {qid}: no yes branch, yet a box: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+            accepted_silently += 1;
+        }
+
+        // Turn-in. The accept above started it (or the store has it started).
+        s.conversation = None;
+        s.quiz_completion_pending = None;
+        let _ = s.store.start_quest(id2, qid);
+        let end_npc = q.end_npc.unwrap_or(npc);
+        let out = s.on_quest_request(&request(2, qid, end_npc));
+        assert!(own_opening(&out, qid).is_none(), "quest {qid}: turn-in answered with its own opening: {:?}", own_opening(&out, qid));
+        assert!(boxes(&out) <= 1, "quest {qid}: turn-in opened {} boxes at once", boxes(&out));
+        let is_quiz = q.say.contains_key("1.ask");
+        if is_quiz {
+            assert!(out.iter().any(|r| r.what.contains("quiz MENU")), "quest {qid}: a quiz whose question is not a menu: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+            assert!(!out.iter().any(|r| r.opcode == net::quest::MESSAGE), "quest {qid}: a quiz completed before its answer");
+            turned_in_with_quiz += 1;
+        } else if q.say.contains_key("1") {
+            assert!(out.iter().any(|r| r.what.contains(&format!("for quest {qid}, line 1 of")) && r.what.contains("on path \"1\"")), "quest {qid}: has Say.1 and did not say it: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+            turned_in_with_line += 1;
+        } else if let Some(next) = q.next_quest.filter(|n| quests.get(n).is_some_and(|nq| nq.say.contains_key("0"))) {
+            // The chain: the NEXT quest's opening, spoken because the finished one has nothing.
+            // The next quest is accepted in the same breath, so the client will not offer it a
+            // second time - on screen 2026-08-20 for 1000 -> 1001.
+            assert!(out.iter().any(|r| r.what.contains(&format!("for quest {next},")) && r.what.contains("on path \"0\"")), "quest {qid}: should chain to {next}: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+            assert!(s.store.quest_row(id2, next).unwrap().is_some(), "quest {qid}: chained to {next} without starting it");
+            turned_in_chained += 1;
+        } else {
+            assert_eq!(boxes(&out), 0, "quest {qid}: nothing to say, yet a box: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+            turned_in_silently += 1;
+        }
+    }
+    eprintln!(
+        "audited {audited} quests: accept -> {accepted_with_yes} spoke the yes branch, {accepted_silently} sent the record alone; turn-in -> {turned_in_with_line} spoke Say.1, {turned_in_with_quiz} asked a quiz, {turned_in_chained} chained, {turned_in_silently} sent the record alone"
+    );
+    assert!(audited > 300, "the client ships 322 quests; {audited} audited");
+    assert_eq!(turned_in_with_quiz, 11, "the quiz nodes on path 1: Rain's seven, Stan, I'm Bored 1, Flying Medicine, Animal Fossils (the other seven ask nodes are openings, which the client shows itself)");
+}

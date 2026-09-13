@@ -179,6 +179,21 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13: the repeat-dialogue audit, every quest.** The owner: *"Please audit all of the questline
+and make sure repeat dialogue is no longer a concern."* The rule the day's three fixes converge on:
+**the client shows a quest's opening (`Say.0`) itself, so the server must never answer that quest's
+Accept (action 1) or turn-in (action 2) with its own `Say.0`, and one request never opens two
+boxes.** `no_quest_answers_its_accept_or_turn_in_with_its_own_opening_lines` walks all 316 quests
+with dialogue: Accept -> 157 speak `0.yes`, 159 send the record alone; turn-in -> 287 speak `Say.1`,
+11 ask a quiz (menu; completion on the answer), 7 chain to the next quest's opening (and start it,
+so the client does not offer it again - 1000 -> 1001 on screen 2026-08-20), 11 send the record
+alone. It found one more: a known quest's turn-in with nothing to say and nothing to chain to
+(1002) fell to the NPC's `d0` greeting - the `silent_accept` return now covers turn-ins too. The
+one path on which the server speaks `Say.0` is action 4, the opening script (27 captures in the
+archive, all quest 1002; the client has no local text for a scripted quest). Not re-checked and
+left as is: action 6 (requirement failed) would take the `"0"` arm; it has never arrived.
+`research/quest-dialogue-audit-2026-09-13.md`.
+
 **2026-09-13: the eleven pets - permanent, all in the shop, and buyable as type-3 items;
 unverified on screen.** The owner: *"Brown Puppy, Panda and Dino Boy all have 3 day duration. Please edit
 the WZ if needed to change all of them to permanent duration. Also please add all of the other pets
