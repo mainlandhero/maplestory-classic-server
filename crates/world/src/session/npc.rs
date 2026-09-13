@@ -152,7 +152,11 @@ impl Session {
         // Known quest, Accept pressed, nothing to say: see the `Some(_) if accepted` arm. An
         // UNKNOWN quest is not this - it keeps the NPC's own line, so an accept the data
         // cannot explain still draws something rather than nothing.
-        let silent_accept = accepted && quest.is_some() && path.is_none();
+        // ...and the same for a turn-in with nothing of its own to say and nothing to chain
+        // to: the record goes out, the client's quest window closes, and the NPC's d0
+        // greeting is not what a finished quest sounds like. Found by the 2026-09-13 audit
+        // (`no_quest_answers_its_accept_or_turn_in_with_its_own_opening_lines`): quest 1002.
+        let silent_accept = (accepted || completing) && quest.is_some() && path.is_none();
         // A completion path that carries `ask` is a quiz: the turn-in waits on the answer.
         // Computed here, while `quest` and `path` are in hand - see the block below.
         let quiz_defers_completion = completing

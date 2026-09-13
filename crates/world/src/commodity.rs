@@ -353,7 +353,12 @@ mod tests {
         // 159 is what research/cash-shop-items.md counted in the classic client alone. The
         // 9 more are the Signature Style Collection rows tools/backport_install.py writes
         // into the Special tab (2026-09-10): the box and eight set coupons, SN 120000000..8.
-        assert_eq!(t.len(), 168, "159 classic sale rows + 9 backported Special-tab rows");
+        // ...and 8 more are the pets the classic shop never listed (2026-09-13): SN 160000003..10.
+        assert_eq!(t.len(), 176, "159 classic sale rows + 9 backported Special-tab rows + 8 pet rows");
+        for (sn, pet) in [(160_000_003u32, 5_000_000u32), (160_000_010, 5_000_010)] {
+            let row = t.get(sn).expect("a pet row the installer wrote");
+            assert_eq!((row.item_id, row.price, row.period_days, row.on_sale), (pet, 100, 0, true), "permanent, 100 LP, on sale");
+        }
         assert_eq!(t.problems, 0, "every row parses");
         let special = t.get(120_000_000).expect("the Signature Style Collection is on sale");
         // The box wears 5681599 in the classic client (family 568 opens on double-click;
