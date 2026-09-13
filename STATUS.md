@@ -179,6 +179,17 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-12, later: the three hair-hats go on - installed, unverified on screen.** The owner: *"The
+Aura, Lugner and Linie hair does not wear when double clicked on."* world.log has **no `0x0107`** for
+1006910/1006911/1006912 in any run they sat in a bag (`grep` over `previous-runs/`), so the client
+refused locally and sent nothing - the same shape as the Collection box. Their `info/islot` is
+`HrCp`, the modern two-slot type (hair slot and cap slot); every classic cap says `Cp`, and `MaPn`
+- which the overalls carry and which equips fine - has no whole-string match in the image either,
+so the client reads the type in two-letter tokens: `Hr` first, hair, which no bag can put on. **[L]**
+on the data and the absent packet, **[I]** on the token reading. `tools/backport_install.py` step 1d
+patches `info/islot` to `Cp` on every cap whose type starts with `Hr`; `vslot` is left as Nexon wrote
+it (one variant at a time). Installed. Plan step TO(i).
+
 **2026-09-12, later: the cape effect DRAWS - in front of the body.** The owner, with a screenshot of
 Cobalt standing inside a grey block: *"Himmel's cape should have an offset and appear behind the
 player's character, currently it blocks the character when idle."* So the ItemEff route is right

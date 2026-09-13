@@ -1000,6 +1000,20 @@
               behind, but shifted off the body -> the origin needs a change; say which way
                          and by roughly how much (a body width, half a body...)
               gone entirely -> a negative z hides it in this client; say so
+         i) NEW 2026-09-12 - THE HAIR-HATS GO ON. "The Aura, Lugner and Linie hair does not
+            wear when double clicked on." world.log has NO 0x0107 for 1006910/11/12 in any
+            run - the client never sent the move, it refused locally. Their info/islot is
+            HrCp, the modern two-slot type (hair slot + cap slot); every classic cap says
+            Cp, and the client reads the type in two-letter tokens, so the first token - Hr,
+            hair - gave the double-click no destination. [Absent packet and the data are L;
+            the token reading is I.] Installed: islot -> Cp on all three; vslot (which hair
+            parts the hat hides) left as Nexon wrote it. Double-click one from the Deco tab:
+              it goes on, your own hair is hidden under it -> done
+              it goes on but your hair shows through / clips -> vslot tokens the classic
+                         client does not know are being ignored; say which parts show
+              still nothing, and world.log still has no 0x0107 for it -> the type was not
+                         the gate; say so, I read the double-click dispatch for caps
+              0x0107 arrives, server refuses -> paste the world.log line
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -2986,6 +3000,14 @@ function Show-TestPlan {
         Write-Host '             try the frame''s own z next' -ForegroundColor Yellow
         Write-Host '           behind but shifted off the body -> origin; say which way, how far'
         Write-Host '           gone entirely -> negative z hides it; say so'
+        Write-Host '      i) NEW - THE HAIR-HATS GO ON: Aura/Lugner/Linie hair sent NO 0x0107' -ForegroundColor Yellow
+        Write-Host '         on double-click. Their islot is HrCp (modern two-slot type); the'
+        Write-Host '         client reads two-letter tokens and Hr is hair, no destination.'
+        Write-Host '         Installed: islot -> Cp. Double-click one from the Deco tab:'
+        Write-Host '           goes on, own hair hidden under it -> done'
+        Write-Host '           goes on, hair shows through/clips -> vslot tokens; say which'
+        Write-Host '           still nothing, no 0x0107 -> type was not the gate; say so' -ForegroundColor Yellow
+        Write-Host '           0x0107 arrives, server refuses -> paste the world.log line'
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'
