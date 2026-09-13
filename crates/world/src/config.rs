@@ -990,7 +990,7 @@ pub fn spawn_capacity(spawn_points: usize, players: usize) -> usize {
 /// of forty spawn points are used, a decision with no security property and one caller. What
 /// it does need is to be **seedable**, so a test can pin an exact selection and so two runs of
 /// the same map do not lay the mobs out identically.
-fn splitmix64(state: &mut u64) -> u64 {
+pub(crate) fn splitmix64(state: &mut u64) -> u64 {
     *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
     let mut z = *state;
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);

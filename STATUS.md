@@ -179,6 +179,28 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13: the spawn audit, and a kill now refills the map rather than its own point.** The owner:
+*"the monster spawn seems to be at the maximum map cap every time even while being the only person
+in the map."* Measured first, from the two latest runs: A Split Road (66 points) got **49**, map 50
+(42 points) got **31** - exactly `spawn_capacity`'s 75%, and the distinct object ids over each
+session never exceeded that, so the cap holds and does not creep. The fan site the rule came from
+gives Split Road as 49.5 solo / 66 full party, so the count agrees with its own source. Three things
+the audit found and left as they are: field occupancy is still untracked (`players` is always 1);
+the site's +5%-per-player gradient is not the adopted 75/100 step; `mobRate` (1.3 on Split Road,
+1.5 on map 50, 1.0 on map 40 - read off `Map0_000.wz`) is read by nothing here, and the site only
+*speculates* it multiplies capacity upward. What made the field feel pinned: **a dead mob came back
+after 7 s on the same point**, so the same 49 of 66 points stood forever and 17 were never used.
+The owner: *"once the mob is dead, a completely random spawn point should be chosen that's not
+necessarily the dead mob's spawn point."* `Fields` now books a `Refill::Anywhere` on a kill; when it
+comes due, one free **ordinary** point (`mobTime 0`) is drawn uniformly from the whole map and that
+point's mob stands up, whatever its type - one death, one refill, cap unchanged, and each type's
+expected share stays its share of the map (`research/mob-spawn-selection.md` §3). A timed point
+(`mobTime > 0`) still returns at its own place on its own clock (`Refill::Point`); `-1` never; a
+summoned mob's death books nothing (that gate was implicit before and is explicit now, because a
+stray booking would now put a random mob up). `fields::tests::
+a_kill_refills_a_random_free_point_rather_than_the_one_that_emptied` and two siblings. Plan step
+TO(s).
+
 **2026-09-13: the HP ceiling counts worn items' `incMHP` / `incMMP`.** The owner, with `194 / 199` on
 screen: *"There are rare instances of when the server and the player does not agree what is the max
 HP for the user ... passive recovery only recovers up to 194 and stops."* The database held

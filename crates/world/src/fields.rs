@@ -26,6 +26,25 @@
 //! ordinary respawn tick fills them in over the following seconds exactly as it does after
 //! a kill. One mechanism, used twice.
 //!
+//! # A refill is a refill of the MAP, not of the point that emptied
+//!
+//! The owner, 2026-09-13: *"once the mob is dead, a completely random spawn point should be chosen
+//! that's not necessarily the dead mob's spawn point. Once a mob is dead, the same one
+//! shouldn't necessarily always come back alive."*
+//!
+//! Until then a kill booked the dead mob's own point, so a solo map was 49 mobs standing on
+//! the same 49 of 66 points forever and the other 17 were never visited - the population sat
+//! pinned at the cap and never moved. Now a kill books a [`Refill::Anywhere`]: when it comes
+//! due, one **free, ordinary** spawn point is drawn uniformly from the whole map and that
+//! point's mob stands up, which may or may not be the type that died. The cap is untouched -
+//! one death, one refill - and drawing uniformly from the free points keeps each type's
+//! expected share equal to its share of the map (`research/mob-spawn-selection.md` §3).
+//!
+//! Two kinds of point stay out of the draw. A point with a WZ `mobTime > 0` is **timed** - a
+//! boss or a rare spawn - and comes back at its own place on its own clock, as
+//! [`Refill::Point`], because that is what the delay in the data is attached to. A point with
+//! `mobTime -1` never refills at all.
+//!
 //! # Positions come from the client, because only the client has them
 //!
 //! The server grants control of a mob and the client simulates it, reporting each path back
@@ -161,12 +180,25 @@ impl LiveMob {
     }
 }
 
+/// What a booked refill puts back when it comes due.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Refill {
+    /// This exact spawn point: the first fill of a field, and a timed point (WZ `mobTime > 0`)
+    /// that returns at its own place on its own clock.
+    Point(u32),
+    /// Any free ordinary spawn point on the map, drawn at random when due. What a kill books.
+    Anywhere,
+}
+
 /// One map's live contents.
 #[derive(Debug, Default)]
 struct FieldState {
     mobs: HashMap<u32, LiveMob>,
-    /// Spawn points waiting to refill: `(due_ms, objectId)`.
-    pending: Vec<(u64, u32)>,
+    /// Refills waiting to come due: `(due_ms, what)`.
+    pending: Vec<(u64, Refill)>,
+    /// The splitmix state the random refills draw from. Seeded with the field, so a test can
+    /// reproduce a sequence exactly and two fields never draw in lockstep.
+    rng: u64,
     /// Set once the spawn points have been registered, so entering twice does not double
     /// the field.
     seeded: bool,
@@ -341,10 +373,11 @@ impl Fields {
         // Seeded from the map and the clock so two fresh spawns of the same field do not
         // lay the mobs out identically, and so a test can reproduce one exactly.
         let seed = (map as u64) << 32 ^ now_ms.wrapping_mul(0x9E37_79B9);
+        field.rng = seed;
         for mob in crate::config::share_balanced(points, alive, seed) {
             let wz = config.mob_respawn_s.get(&(map, mob.object_id)).copied().unwrap_or(0);
             if let Some(delay) = crate::config::respawn_delay_ms(wz) {
-                field.pending.push((now_ms.saturating_add(delay), mob.object_id));
+                field.pending.push((now_ms.saturating_add(delay), Refill::Point(mob.object_id)));
             }
         }
     }
@@ -575,9 +608,21 @@ impl Fields {
             return Hurt::Alive(m.hp);
         }
         let dead = field.mobs.remove(&object_id);
-        let wz = config.mob_respawn_s.get(&(map, object_id)).copied().unwrap_or(0);
-        if let Some(delay) = crate::config::respawn_delay_ms(wz) {
-            field.pending.push((now_ms.saturating_add(delay), object_id));
+        // **Only a spawn point's death books a refill.** A summoned mob (`summon_mob`) has no
+        // point behind it and stays dead; before refills could land anywhere, its stray
+        // booking was harmless because `due_respawns` could not find it - now it would put a
+        // random map mob up in its place, so the gate is explicit here.
+        let is_spawn_point = config
+            .mobs
+            .get(&map)
+            .is_some_and(|list| list.iter().any(|m| m.object_id == object_id));
+        if is_spawn_point {
+            let wz = config.mob_respawn_s.get(&(map, object_id)).copied().unwrap_or(0);
+            if let Some(delay) = crate::config::respawn_delay_ms(wz) {
+                // A timed point keeps its own place and clock; an ordinary one refills the map.
+                let what = if wz > 0 { Refill::Point(object_id) } else { Refill::Anywhere };
+                field.pending.push((now_ms.saturating_add(delay), what));
+            }
         }
         Hurt::Died(dead.map(|m| m.shares()).unwrap_or_default())
     }
@@ -597,7 +642,48 @@ impl Fields {
         field.pending = waiting;
 
         let mut out = Vec::new();
-        for (_, object_id) in due {
+        for (was_due, what) in due {
+            let object_id = match what {
+                Refill::Point(id) => id,
+                Refill::Anywhere => {
+                    // The free ordinary points: not standing, not held for a timed return,
+                    // and not `mobTime -1` or `> 0`. Drawn uniformly, so no point on the map
+                    // is favoured and the type that died has no claim on the slot.
+                    let reserved: Vec<u32> = field
+                        .pending
+                        .iter()
+                        .filter_map(|(_, w)| match w {
+                            Refill::Point(id) => Some(*id),
+                            Refill::Anywhere => None,
+                        })
+                        .collect();
+                    let free: Vec<u32> = config
+                        .mobs
+                        .get(&map)
+                        .map(|list| {
+                            list.iter()
+                                .map(|m| m.object_id)
+                                .filter(|id| !field.mobs.contains_key(id))
+                                .filter(|id| !reserved.contains(id))
+                                .filter(|id| {
+                                    config.mob_respawn_s.get(&(map, *id)).copied().unwrap_or(0) == 0
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if free.is_empty() {
+                        // Every ordinary point is standing. Keep the booking rather than lose
+                        // a mob from the cap; it is tried again one interval on.
+                        field.pending.push((
+                            was_due.saturating_add(crate::config::DEFAULT_RESPAWN_MS),
+                            Refill::Anywhere,
+                        ));
+                        continue;
+                    }
+                    let draw = crate::config::splitmix64(&mut field.rng) as usize % free.len();
+                    free[draw]
+                }
+            };
             let Some(spawn) = config
                 .mobs
                 .get(&map)
@@ -605,6 +691,9 @@ impl Fields {
             else {
                 continue;
             };
+            if field.mobs.contains_key(&object_id) {
+                continue; // already standing - a timed return racing a random draw
+            }
             let live = LiveMob { spawn: *spawn, hp: spawn.hp, at: None, damage_by: Vec::new() };
             field.mobs.insert(object_id, live.clone());
             out.push(live);
@@ -817,7 +906,77 @@ mod tests {
         let back = f.due_respawns(7, &c, 1_000 + crate::config::DEFAULT_RESPAWN_MS);
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].hp, 30, "at full HP");
-        assert_eq!(back[0].at, None, "and at its spawn point, not where it died");
+        assert_eq!(back[0].at, None, "and at a spawn point, not where it died");
+        assert_eq!(f.mob_count(7), alive, "one death, one refill - the cap is kept");
+    }
+
+    /// **A kill refills the map, not the point.** The owner, 2026-09-13: *"once the mob is dead, a
+    /// completely random spawn point should be chosen that's not necessarily the dead mob's
+    /// spawn point."* Four points, three standing: kill the same standing mob over and over
+    /// and the refill must (a) sometimes land on the one point that was empty, i.e. not the
+    /// victim's, (b) never land on a point that is already standing, and (c) never move the
+    /// live count off the cap.
+    #[test]
+    fn a_kill_refills_a_random_free_point_rather_than_the_one_that_emptied() {
+        let f = Fields::new();
+        let c = config_with_one_map();
+        f.seed(7, &c, 0);
+        f.due_respawns(7, &c, 999_999);
+        let cap = f.mob_count(7);
+        assert_eq!(cap, 3, "75% of four points");
+
+        let mut elsewhere = 0;
+        let mut t = 1_000_000u64;
+        for _ in 0..40 {
+            let standing: Vec<u32> = f.mobs_on(7).iter().map(|m| m.spawn.object_id).collect();
+            let victim = standing[0];
+            assert!(matches!(f.hurt(7, victim, 1_000, 204, &c, t), Hurt::Died(_)));
+            let back = f.due_respawns(7, &c, t + crate::config::DEFAULT_RESPAWN_MS);
+            assert_eq!(back.len(), 1, "one death, one refill");
+            let came = back[0].spawn.object_id;
+            let others: Vec<u32> = standing.iter().copied().filter(|id| *id != victim).collect();
+            assert!(!others.contains(&came), "never on a point that is already standing");
+            if came != victim {
+                elsewhere += 1;
+            }
+            assert_eq!(f.mob_count(7), cap, "the cap holds");
+            t += 100_000;
+        }
+        assert!(elsewhere > 0, "in 40 kills the refill never left the victim's point - the draw is not random");
+        assert!(elsewhere < 40, "and it never came back to the victim's point either - the draw excludes it, which it must not");
+    }
+
+    /// **A timed point comes back at its own place.** A WZ `mobTime > 0` is attached to a
+    /// point, so its return is that point on that clock, not a random draw at the field rate.
+    #[test]
+    fn a_timed_spawn_point_returns_where_and_when_its_own_data_says() {
+        let f = Fields::new();
+        // One point, so the 75% draw cannot leave it out and the test always runs its kill.
+        let mut mobs = HashMap::new();
+        mobs.insert(7u32, vec![net::mob::FieldMob::new(2000, 2, 100, 395, 1, 30)]);
+        let mut c = Config { mobs, send_mobs: true, ..Config::default() };
+        c.mob_respawn_s.insert((7, 2000), 60); // a minute, at point 2000
+        f.seed(7, &c, 0);
+        assert_eq!(f.due_respawns(7, &c, 999_999).len(), 1, "the one point stands");
+        assert!(matches!(f.hurt(7, 2000, 1_000, 204, &c, 1_000_000), Hurt::Died(_)));
+        assert!(f.due_respawns(7, &c, 1_000_000 + crate::config::DEFAULT_RESPAWN_MS).is_empty(), "not at the field rate");
+        let back = f.due_respawns(7, &c, 1_000_000 + 60_000);
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].spawn.object_id, 2000, "at its own point");
+    }
+
+    /// **A summoned mob's death books nothing.** It has no spawn point, so there is nothing
+    /// to refill - and a random refill in its place would grow the field past the cap.
+    #[test]
+    fn a_summoned_mobs_death_does_not_book_a_refill() {
+        let f = Fields::new();
+        let c = config_with_one_map();
+        f.seed(7, &c, 0);
+        f.due_respawns(7, &c, 999_999);
+        let sack = f.summon_mob(7, 2, (500, 395), 1, 10);
+        assert_eq!(f.pending_count(7), 0);
+        assert!(matches!(f.hurt(7, sack.spawn.object_id, 1_000, 204, &c, 5_000), Hurt::Died(_)));
+        assert_eq!(f.pending_count(7), 0, "nothing booked for a mob with no point");
     }
 
     /// Two maps do not share anything.
