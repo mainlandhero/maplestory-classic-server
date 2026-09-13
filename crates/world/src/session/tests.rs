@@ -8245,6 +8245,7 @@ fn an_expired_drop_fades_for_its_owner_and_not_for_the_session_that_swept_it() {
 
     let (drop_id, _) = fields.with_drops(SHARED_MAP, |d| {
         d.drop_from_mob(crate::drops::DropFromMob {
+            from_mob: true,
             map_id: SHARED_MAP,
             owner_id,
             item: store::Item::bundle(4_000_001, 1),
@@ -8295,6 +8296,7 @@ fn walking_into_a_field_does_not_re_send_another_players_drops() {
 
     fields.with_drops(SHARED_MAP, |d| {
         d.drop_from_mob(crate::drops::DropFromMob {
+            from_mob: true,
             map_id: SHARED_MAP,
             owner_id,
             item: store::Item::bundle(4_000_001, 1),
@@ -10819,6 +10821,89 @@ fn a_double_click_on_the_husky_summons_it_and_a_second_puts_it_away() {
     assert_eq!(out.len(), 1);
     assert_eq!((out[0].opcode, out[0].body[0]), (net::inventory::INVENTORY_OPERATION, 1));
     assert!(!s.pet_is_active(5_000_006));
+}
+
+/// **A pet takes a mob's drop and nothing else.** The owner, 2026-09-13: *"turn every pet into a
+/// vacuum pet ... provided that they are from a mob death drop ... offload most of the pet
+/// driven operations on the client."* The client decides what the pet reaches for (the pet
+/// image's `sweepForDrop`/`longRange`, patched in by the installer) and asks with a pet-shaped
+/// request; the server's half is here. A mob's drop goes out with `canBePickedUpByPet` set and
+/// a pet's request for it is answered with the type-5 leave and the bag write, no chat line. A
+/// player's own ground drop goes out with the byte clear, and a pet's request for it gets the
+/// unlock alone and the drop stays. With no pet out, a pet-shaped body names nothing.
+#[test]
+fn a_summoned_pet_picks_up_a_mob_drop_but_not_a_players_own_drop() {
+    let (mut s, store, id) = gm_session();
+    let map = net::opcode::START_MAP_ID;
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+    s.last_position = Some((520, 395));
+
+    // A mob's drop on the floor: the enter packet says a pet may take it.
+    let (mob_drop, enter) = s.fields.with_drops(map, |d| {
+        d.drop_from_mob(crate::drops::DropFromMob {
+            from_mob: true,
+            map_id: map,
+            owner_id: id,
+            item: store::Item::bundle(4_000_019, 1),
+            inv_type: store::InventoryType::Etc,
+            meso: 0,
+            x: 540,
+            y: 395,
+            source_x: 540,
+            source_y: 380,
+            now_ms: 1_000,
+            party_id: 0,
+        })
+    });
+    assert_eq!(enter.body[102], 1, "canBePickedUpByPet for a mob's drop");
+
+    // A pet-shaped request (the reference's shape: id at byte 17) on a sibling opcode.
+    let pet_request = |object_id: u32| {
+        let mut body = 0x032Du16.to_le_bytes().to_vec();
+        body.extend_from_slice(&[0u8; net::drops::PET_PICK_UP_OBJECT_ID_AT]);
+        body.extend_from_slice(&object_id.to_le_bytes());
+        body.extend_from_slice(&[0u8; 4]);
+        body
+    };
+
+    // No pet out: the pet shape names nothing, the gate is cleared, the drop stays.
+    let out = s.handle(&pet_request(mob_drop));
+    assert_eq!(out[0].opcode, net::inventory::INVENTORY_OPERATION);
+    assert!(out.iter().all(|r| r.opcode != net::drops::DROP_LEAVE_FIELD));
+    assert_eq!(s.fields.with_drops(map, |d| d.len()), 1);
+
+    // Summon the Husky, then the same request: taken by the pet.
+    s.on_pet_activate(&hex("509a18140100"));
+    assert!(s.pet_is_active(5_000_006));
+    let out = s.handle(&pet_request(mob_drop));
+    let leave = out.iter().find(|r| r.opcode == net::drops::DROP_LEAVE_FIELD).expect("a leave");
+    assert_eq!(leave.body[4], net::drops::leave_type::PET_PICKUP, "type 5 - it flies into the pet");
+    assert_eq!(&leave.body[5..9], &id.to_le_bytes());
+    assert_eq!(&leave.body[9..13], &net::pet::PET_INDEX.to_le_bytes());
+    assert!(out.iter().any(|r| r.opcode == net::message::MESSAGE), "the earned line");
+    assert!(out.iter().all(|r| r.opcode != net::notice::CHAT_NOTICE), "nothing in the chat log");
+    let etc: Vec<u32> = store.bag(id).unwrap().items_in(store::InventoryType::Etc).map(|i| i.item.item_id).collect();
+    assert_eq!(etc, vec![4_000_019], "in the bag");
+    assert_eq!(s.fields.with_drops(map, |d| d.len()), 0, "off the floor");
+
+    // A player's own ground drop: the byte is clear, and the pet is refused without a word.
+    s.handle(&gm_chat("!item 1302000"));
+    let out = s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, 1, 0, 1));
+    let enter = out.iter().find(|r| r.opcode == net::drops::DROP_ENTER_FIELD).expect("the ground drop");
+    assert_eq!(enter.body[102], 0, "a player's drop is not for pets");
+    let own_drop = s.fields.with_drops(map, |d| d.on_field(map).map(|x| x.object_id).next().unwrap());
+    let out = s.handle(&pet_request(own_drop));
+    assert_eq!(out.len(), 1, "the unlock and nothing else: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert_eq!((out[0].opcode, out[0].body[0]), (net::inventory::INVENTORY_OPERATION, 1));
+    assert_eq!(s.fields.with_drops(map, |d| d.len()), 1, "still on the floor");
+    // And the player can still pick their own drop up by hand.
+    let mut by_hand = crate::drops::CLIENT_DROP_PICK_UP.to_le_bytes().to_vec();
+    by_hand.extend_from_slice(&[0u8; crate::drops::PICK_UP_OBJECT_ID_AT]);
+    by_hand.extend_from_slice(&own_drop.to_le_bytes());
+    by_hand.extend_from_slice(&[0u8; 17]);
+    let out = s.handle(&by_hand);
+    let leave = out.iter().find(|r| r.opcode == net::drops::DROP_LEAVE_FIELD).expect("a leave");
+    assert_eq!(leave.body[4], net::drops::leave_type::CHAR_PICKUP);
 }
 
 /// **The Wooden Boxes stand, break in four hits, drop, and come back.** The owner, 2026-09-13:

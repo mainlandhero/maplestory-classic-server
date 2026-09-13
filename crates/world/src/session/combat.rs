@@ -1236,6 +1236,7 @@ impl Session {
             };
             let (drop_id, first_reply) = self.fields.with_drops(map, |d| {
                 d.drop_from_mob(crate::drops::DropFromMob {
+                    from_mob: true,
                     map_id: map,
                     owner_id,
                     item,

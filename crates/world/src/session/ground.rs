@@ -301,8 +301,24 @@ impl Session {
         // go. The body is `u8 0 | u32 tick | u32 0 | i16 x | i16 y | u32 dropObjectId | ...`,
         // and the builder can never be read - it lives in `.themida`, whose `SizeOfRawData`
         // is zero, so those bytes are not on disk at all. `research/pick-up-latch.md` §3.
-        let found = crate::drops::pick_up_object_id(payload)
+        let by_character = crate::drops::pick_up_object_id(payload)
             .filter(|id| self.fields.with_drops(map, |d| d.get(*id).is_some()));
+        // **A pet's request, if a pet is out and the player's shape named nothing.** The
+        // reference's pet request carries the drop id four bytes later than the player's
+        // (`net::drops::PET_PICK_UP_OBJECT_ID_AT`, [R]); this client's builder is in .themida
+        // like the player's, so the first capture of a pet reaching a drop is what settles the
+        // offset and the opcode - the log line below names both.
+        let by_pet = match (by_character, self.active_pet) {
+            (None, Some(_)) => net::drops::pet_pick_up_object_id(payload)
+                .filter(|id| self.fields.with_drops(map, |d| d.get(*id).is_some())),
+            _ => None,
+        };
+        if let Some(id) = by_pet {
+            crate::server::log(&format!(
+                "   pet pick-up: 0x{opcode:04X} names live drop {id} at the pet offset - this opcode is the pet's request"
+            ));
+        }
+        let found = by_character.or(by_pet);
 
         let Some(object_id) = found else {
             // No drop by that id on this field: it expired, someone else took it, or this is
@@ -332,7 +348,12 @@ impl Session {
             Some(p) => self.fields.parties().party(p).map(|party| party.members.clone()).unwrap_or_default(),
             None => Vec::new(),
         };
-        let outcome = self.fields.with_drops(map, |d| d.take(object_id, chr.id, now, &party_members));
+        let outcome = match by_pet {
+            Some(_) => self.fields.with_drops(map, |d| {
+                d.take_by_pet(object_id, chr.id, net::pet::PET_INDEX, now, &party_members)
+            }),
+            None => self.fields.with_drops(map, |d| d.take(object_id, chr.id, now, &party_members)),
+        };
         // The log line is the deliverable. It is written to be greppable on one line,
         // because the run that produces it is read by eye.
         let mut out: Vec<Reply> = Vec::new();
@@ -438,6 +459,15 @@ impl Session {
         // to remove something it can still see is how an item disappears from the world.
         // `outcome.replies()` is empty for the three refusals, which is what makes that safe.
         out.extend(outcome.replies());
+        if outcome.is_silent_refusal() {
+            // A pet asked for a drop no mob dropped: the unlock, and nothing on screen.
+            out.push(Reply {
+                opcode: net::inventory::INVENTORY_OPERATION,
+                body: net::inventory::inventory_rejected(),
+                what: format!("InventoryOperation: refusing the pet's pick-up with nCount 0 - {}.", outcome.what()),
+            });
+            return out;
+        }
         if let Some(line) = outcome.notice() {
             out.push(Reply {
                 opcode: net::inventory::INVENTORY_OPERATION,

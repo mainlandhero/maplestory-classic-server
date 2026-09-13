@@ -420,6 +420,16 @@ def main():
             fh.write("# %s: permanent - life 0 and permanent 1, as the modern client's permanent pet carries\n" % pet_name)
             fh.write("info/life\tint\t0\n")
             fh.write("info/permanent\tint\t1\n")
+            # A vacuum pet. The owner, 2026-09-13: "turn every pet into a vacuum pet, similar to a
+            # modern maple Luna Petite pet, which sucks up loot in a radius around them ...
+            # offload most of the pet driven operations on the client." The client names all
+            # three keys (utf-16, one copy each; read by the pet loader FUN_1403e54e0 and the
+            # pet itself FUN_141ed4490), and 370 of the modern client's 1561 pets carry exactly
+            # this trio - the sweep pets. What "sweep" and "long range" do on screen is the
+            # client's own code; the server's half is answering the pet's pick-up request.
+            fh.write("info/pickupItem\tint\t1\n")
+            fh.write("info/sweepForDrop\tint\t1\n")
+            fh.write("info/longRange\tint\t1\n")
         add("Item/Pet", "patch\t%07d.img\t%s" % (pet_id, tsv))
     shipped_pet_rows = {5000001, 5000008, 5000009}  # SN 160000000..2 in the classic Commodity.img
     pet_rows_patch = os.path.join(args.build_dir, "patch-Commodity-pets.tsv")
