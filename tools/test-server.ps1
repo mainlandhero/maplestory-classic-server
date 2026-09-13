@@ -1125,6 +1125,19 @@
             scripted quest has no local text. Nothing to test as a step; take any quest and it
             is covered. If a line still repeats anywhere, name the quest and WHICH line (the
             opening, the yes branch, the completion) - the audit test is where it gets pinned.
+         r) NEW 2026-09-13 - THE CEILING COUNTS WORN HP. "Currently the character the owner has
+            199 max, but passive recovery only recovers up to 194 and stops." The database
+            said 194; the five is the Red Headband (incMHP 5), which the client adds to the
+            bar itself. The server's ceiling counted Max HP Increase's percent and not a worn
+            item's flat, so it called 194 "full". Every ceiling (regen, potions, level-up
+            refill, !heal, party bar) now adds the worn items' incMHP / incMMP, flat before
+            percent [R on the order; nobody here has both]. Stand still on the owner with the
+            headband on, HP below 199:
+              ticks up to 199 and stops                     -> fixed
+              stops at 194 again                            -> the client adds something else
+                         too; say the hat's tooltip and whether a scrolled item is worn
+              overshoots or the bar jumps to a new maximum   -> the flat was folded into the
+                         record; paste the 0x007C line
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3166,6 +3179,12 @@ function Show-TestPlan {
         Write-Host '         own opening and never opens two boxes. One more found and fixed (1002''s' -ForegroundColor DarkGray
         Write-Host '         turn-in said the NPC''s greeting). If a line still repeats, name the' -ForegroundColor DarkGray
         Write-Host '         quest and WHICH line.' -ForegroundColor DarkGray
+        Write-Host '      r) NEW - THE CEILING COUNTS WORN HP: 194/199 was the Red Headband''s' -ForegroundColor Yellow
+        Write-Host '         incMHP 5, which the client adds and the server''s ceiling did not.'
+        Write-Host '         Stand still on the owner below 199:'
+        Write-Host '           ticks to 199 and stops -> fixed'
+        Write-Host '           stops at 194 -> something else adds too; say the tooltip'
+        Write-Host '           bar jumps to a new max -> folded into the record; paste 0x007C' -ForegroundColor Yellow
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'

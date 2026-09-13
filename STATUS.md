@@ -179,6 +179,19 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13: the HP ceiling counts worn items' `incMHP` / `incMMP`.** The owner, with `194 / 199` on
+screen: *"There are rare instances of when the server and the player does not agree what is the max
+HP for the user ... passive recovery only recovers up to 194 and stops."* The database held
+`194 / 194`; the five is the Red Headband (`1002003`, template `incMHP 5`), which the record sends
+on the worn item and **the client adds to the bar itself** - the same shape as the 2026-09-06 Max HP
+Increase finding, at a flat rate. `Session::pools` counted the percent and not the flat, so every
+ceiling it feeds (regen, potions, the level-up refill, `!heal`, the party bar) called 194 full. It
+now sums the worn items' flats off the same stats the record sends (`Session::dressed`, so a missing
+`equips.txt` leaves both at zero together), flat before percent - the reference server's order
+**[R]**; unmeasured here, and the one character with a percent wears nothing with HP on it.
+`pools::tests::wisps_ceiling_is_199_from_a_base_of_194_and_a_red_headband`,
+`regen::tests::a_red_headbands_five_hp_is_regenerated_up_to`. Plan step TO(r).
+
 **2026-09-13: the repeat-dialogue audit, every quest.** The owner: *"Please audit all of the questline
 and make sure repeat dialogue is no longer a concern."* The rule the day's three fixes converge on:
 **the client shows a quest's opening (`Say.0`) itself, so the server must never answer that quest's
