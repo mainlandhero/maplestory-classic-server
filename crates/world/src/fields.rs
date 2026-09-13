@@ -1095,6 +1095,7 @@ mod tests {
 
         f.with_drops(7, |d| {
             d.drop_from_mob(crate::drops::DropFromMob {
+                from_mob: true,
                 map_id: 7,
                 owner_id: 200,
                 item: store::Item::bundle(4_000_001, 1),

@@ -141,6 +141,7 @@ impl Session {
             let now = self.clock_ms;
             let (drop_id, reply) = self.fields.with_drops(map, |d| {
                 d.drop_from_mob(crate::drops::DropFromMob {
+                    from_mob: false,
                     map_id: map,
                     owner_id: chr.id,
                     item,

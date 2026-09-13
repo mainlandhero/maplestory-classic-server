@@ -371,6 +371,13 @@ pub struct LiveDrop {
     pub source_y: i16,
     /// The `u32 delay` of `0x046E`'s source block, in milliseconds.
     pub delay_ms: u32,
+    /// **Did a mob's death put this here?** The owner, 2026-09-13: every pet is a vacuum pet
+    /// *"provided that they are from a mob death drop"*. True only for [`DropTable::drop_from_mob`]
+    /// called with [`DropFromMob::from_mob`] set - the kill path; a reactor's drop, a player's
+    /// ground drop and a coin drop are false. It is sent to the client as the drop's
+    /// `canBePickedUpByPet` byte, so the pet does not try, and [`DropTable::take_by_pet`]
+    /// refuses if it does anyway.
+    pub from_mob: bool,
 }
 
 /// How long a mob's drop takes to arc from the corpse to where it lands.
@@ -462,6 +469,7 @@ impl LiveDrop {
             source_x: self.source_x,
             source_y: self.source_y,
             delay: self.delay_ms,
+            pet_may_take: self.from_mob,
             ..base
         }
     }
@@ -526,6 +534,9 @@ pub struct DropFromMob {
     /// The killer's party, or `0`. When set, every current member of it may take the drop
     /// (and the caller shows it to them) - see [`LiveDrop::party_id`].
     pub party_id: u32,
+    /// Whether a mob's death is what dropped this (the kill path) rather than a reactor.
+    /// See [`LiveDrop::from_mob`].
+    pub from_mob: bool,
 }
 
 /// The result of a player dropping an item on the floor: the inventory `0x0070` for the
@@ -706,6 +717,13 @@ pub enum PickUp {
         /// The only character who may take it.
         owner_id: u32,
     },
+    /// A pet asked, and the drop is not a mob's. The drop went out with `canBePickedUpByPet`
+    /// clear, so a well-behaved client never sends this; the answer is the unlock alone, with
+    /// no line on screen - a pet brushing past a coin should not be a chat message each time.
+    NotForPets {
+        /// What was asked for.
+        object_id: u32,
+    },
     /// It was past its lifetime. It has been swept, and `leave` says so.
     Expired {
         /// What was asked for.
@@ -753,8 +771,14 @@ impl PickUp {
             PickUp::Untradeable { .. } => {
                 Some("That item cannot be picked up by anyone but its owner.".to_string())
             }
+            PickUp::NotForPets { .. } => None,
             PickUp::Expired { .. } => Some("That item is no longer there.".to_string()),
         }
+    }
+
+    /// A refusal that owes the client the unlock and nothing to read: the pet case.
+    pub fn is_silent_refusal(&self) -> bool {
+        matches!(self, PickUp::NotForPets { .. })
     }
 
     /// A log line naming the outcome, for `world.log`.
@@ -774,6 +798,9 @@ impl PickUp {
             ),
             PickUp::Untradeable { object_id, owner_id } => format!(
                 "pick-up: drop {object_id} is trade-blocked, so only character {owner_id} may take it"
+            ),
+            PickUp::NotForPets { object_id } => format!(
+                "pick-up: drop {object_id} did not come from a mob, so a pet may not take it"
             ),
             PickUp::Expired { object_id, .. } => {
                 format!("pick-up: drop {object_id} had already expired and has been swept")
@@ -987,6 +1014,7 @@ impl DropTable {
             source_x: d.source_x,
             source_y: d.source_y,
             delay_ms: DROP_FLIGHT_MS,
+            from_mob: d.from_mob,
         };
         let enter = drop.enter_reply(net::drops::ENTER_FLOATING);
         self.live.insert(object_id, drop);
@@ -1042,6 +1070,7 @@ impl DropTable {
             source_x: source.0,
             source_y: source.1,
             delay_ms: delay,
+            from_mob: false,
         };
         debug_assert!(
             d.remaining_in_slot != Some(0),
@@ -1134,6 +1163,7 @@ impl DropTable {
             source_x: source.0,
             source_y: source.1,
             delay_ms: delay,
+            from_mob: false,
         };
         debug_assert!(drop.is_meso(), "meso > 0 is what selects the money class");
         let enter = drop.enter_reply(net::drops::ENTER_FLOATING);
@@ -1156,6 +1186,30 @@ impl DropTable {
         now_ms: u64,
         party_members: &[u32],
     ) -> PickUp {
+        self.take_as(object_id, character_id, now_ms, party_members, None)
+    }
+
+    /// [`DropTable::take`] for a character's **pet**: the same ownership rules, plus the drop
+    /// must be a mob's ([`LiveDrop::from_mob`]), and the leave is type 5 - "flies into the pet".
+    pub fn take_by_pet(
+        &mut self,
+        object_id: u32,
+        character_id: u32,
+        pet_index: u32,
+        now_ms: u64,
+        party_members: &[u32],
+    ) -> PickUp {
+        self.take_as(object_id, character_id, now_ms, party_members, Some(pet_index))
+    }
+
+    fn take_as(
+        &mut self,
+        object_id: u32,
+        character_id: u32,
+        now_ms: u64,
+        party_members: &[u32],
+        pet_index: Option<u32>,
+    ) -> PickUp {
         let Some(drop) = self.live.get(&object_id).copied() else {
             return PickUp::Unknown { object_id };
         };
@@ -1174,18 +1228,34 @@ impl DropTable {
                 opens_in_ms: opens_at.saturating_sub(now_ms),
             };
         }
+        if pet_index.is_some() && !drop.from_mob {
+            return PickUp::NotForPets { object_id };
+        }
         self.live.remove(&object_id);
-        let leave = Reply {
-            opcode: net::drops::DROP_LEAVE_FIELD,
-            body: net::drops::drop_picked_up_by_character(object_id, character_id),
-            what: format!(
-                "DropLeaveField leaveType 2: character {character_id} picked up drop \
-                 {object_id} = item {} x{}. The character id is read into drop+0xec and aims \
-                 the pick-up animation, so it has to be the real one. Broadcast this to the \
-                 field INCLUDING the picker.",
-                drop.item_id(),
-                drop.quantity()
-            ),
+        let leave = match pet_index {
+            Some(pet) => Reply {
+                opcode: net::drops::DROP_LEAVE_FIELD,
+                body: net::drops::drop_picked_up_by_pet(object_id, character_id, pet),
+                what: format!(
+                    "DropLeaveField leaveType 5: character {character_id}'s pet {pet} picked up \
+                     drop {object_id} = item {} x{}. Broadcast this to the field INCLUDING the \
+                     owner.",
+                    drop.item_id(),
+                    drop.quantity()
+                ),
+            },
+            None => Reply {
+                opcode: net::drops::DROP_LEAVE_FIELD,
+                body: net::drops::drop_picked_up_by_character(object_id, character_id),
+                what: format!(
+                    "DropLeaveField leaveType 2: character {character_id} picked up drop \
+                     {object_id} = item {} x{}. The character id is read into drop+0xec and aims \
+                     the pick-up animation, so it has to be the real one. Broadcast this to the \
+                     field INCLUDING the picker.",
+                    drop.item_id(),
+                    drop.quantity()
+                ),
+            },
         };
         PickUp::Taken { drop, leave }
     }
@@ -1358,6 +1428,7 @@ mod tests {
     /// no lock at all (the owner, 2026-09-05).
     fn from_mob_owned(item: Item, now_ms: u64) -> DropFromMob {
         DropFromMob {
+            from_mob: true,
             map_id: MAP,
             owner_id: WISP,
             item,
@@ -2016,6 +2087,7 @@ mod tests {
     fn a_mob_drop_can_be_re_addressed_before_anybody_has_been_told() {
         let mut t = DropTable::with_lifetime(100_000, 15_000);
         let (id, first) = t.drop_from_mob(DropFromMob {
+            from_mob: true,
             map_id: MAP,
             owner_id: WISP,
             item: Item::equip(SWORD),

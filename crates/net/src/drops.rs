@@ -237,6 +237,12 @@ pub struct FieldDrop {
     pub is_money: bool,
     /// See [`OWN_TYPE_USER`].
     pub own_type: u8,
+    /// `canBePickedUpByPet`, `drop+0x160`. **A pet takes only what a mob dropped.** The owner,
+    /// 2026-09-13: every pet is a vacuum pet *"provided that they are from a mob death drop"*.
+    /// The client reads this byte per drop, so a player's own ground drop, a coin drop and a
+    /// reactor's drop go out with it clear and the pet leaves them; `world::drops` sets it
+    /// from the drop's origin. The server refuses a pet pick-up of such a drop as well.
+    pub pet_may_take: bool,
 }
 
 impl FieldDrop {
@@ -265,6 +271,7 @@ impl FieldDrop {
             delay: 0,
             is_money: false,
             own_type: OWN_TYPE_USER,
+            pet_may_take: true,
         }
     }
 
@@ -386,7 +393,7 @@ pub fn drop_enter_field(d: &FieldDrop, enter_type: u8) -> Vec<u8> {
     if !d.is_money {
         w.u64(0); // expire FILETIME, read as 8 raw bytes at 0x1417a9bab
     }
-    w.u8(1); // canBePickedUpByPet
+    w.u8(u8::from(d.pet_may_take)); // canBePickedUpByPet -> drop+0x160
     w.u8(0); // a non-zero here fires an effect we have not decoded - keep it zero
     w.i16(0); // fallingVY
     w.u8(0); // fadeInEffect
@@ -527,6 +534,40 @@ pub fn drop_picked_up_by_character(object_id: u32, character_id: u32) -> Vec<u8>
     w.into_vec()
 }
 
+/// Build **`0x046F` DropLeaveField** for "character N's pet picked it up".
+///
+/// ```text
+/// u32 objectId
+/// u8  leaveType = 5
+/// u32 pickUpCharacterId    the three-way at 0x1417ad8e5 funnels types 2, 3 and 5 into this read
+/// u32 petId                the jump-table arm 0x1417b0d2c, type 5 only
+/// ```
+///
+/// The pet id is the pet index, which this client only ever has as `0` (`crate::pet::PET_INDEX`).
+pub fn drop_picked_up_by_pet(object_id: u32, character_id: u32, pet_index: u32) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(object_id);
+    w.u8(leave_type::PET_PICKUP);
+    w.u32(character_id);
+    w.u32(pet_index);
+    w.into_vec()
+}
+
+/// Where the drop's object id sits in a **pet's** pick-up request.
+///
+/// The reference server's `PET_DROP_PICK_UP_REQUEST` reads `u32 petIdx, u8 fieldKey, u32 tick,
+/// u32, i16 x, i16 y, u32 dropId, u32` - the id at byte 17 **[R]**. This client's builder is in
+/// `.themida` like the player's, so the shape cannot be read off the file; the first capture of a
+/// pet reaching a drop settles it. Until then the server tries the player's offset first and this
+/// one second, and only while a pet is out.
+pub const PET_PICK_UP_OBJECT_ID_AT: usize = 17;
+
+/// The drop's object id out of a pet-shaped pick-up body, if it is long enough.
+pub fn pet_pick_up_object_id(body: &[u8]) -> Option<u32> {
+    let at = PET_PICK_UP_OBJECT_ID_AT;
+    Some(u32::from_le_bytes(body.get(at..at + 4)?.try_into().ok()?))
+}
+
 /// Whether this leave type makes the client read a trailing `u32` character id.
 pub fn leave_type_carries_a_character(leave_type: u8) -> bool {
     matches!(
@@ -611,6 +652,7 @@ mod tests {
             delay: 0,
             is_money: false,
             own_type: OWN_TYPE_USER,
+            pet_may_take: true,
         }
     }
 
@@ -660,6 +702,20 @@ mod tests {
         // The long tail: an eight-byte expiry of zero, then the seven fields, then two u32.
         assert_eq!(&b[94..102], &[0u8; 8], "the expiry MUST be zero - see the doc comment");
         assert_eq!(b[102], 1, "canBePickedUpByPet");
+        let mut kept = sample();
+        kept.pet_may_take = false;
+        let k = drop_enter_field(&kept, ENTER_FLOATING);
+        assert_eq!(k[102], 0, "a drop no pet may take clears drop+0x160 and nothing else");
+        assert_eq!(k.len(), b.len());
+        assert_eq!(&k[..102], &b[..102]);
+        assert_eq!(&k[103..], &b[103..]);
+        let pet = drop_picked_up_by_pet(0x3039, 215, 0);
+        assert_eq!(pet, [0x39, 0x30, 0, 0, 5, 0xd7, 0, 0, 0, 0, 0, 0, 0], "type 5: charId then petId");
+        let mut req = vec![0u8; PET_PICK_UP_OBJECT_ID_AT];
+        req.extend_from_slice(&0x3039u32.to_le_bytes());
+        req.extend_from_slice(&[0; 4]);
+        assert_eq!(pet_pick_up_object_id(&req), Some(0x3039));
+        assert_eq!(pet_pick_up_object_id(&req[..20]), None, "short bodies name nothing");
         assert_eq!(b[103], 0, "the byte that fires 0xc0041f15 when non-zero");
         assert_eq!(i16::from_le_bytes([b[104], b[105]]), 0, "fallingVY");
         assert_eq!(b[106], 0, "fadeInEffect");

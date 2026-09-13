@@ -1185,6 +1185,20 @@
                          the 0x0277 line; one of the six tail fields is wrong
               nothing at all                                 -> paste the lines after 0x0147
               double-click again: it goes away               -> the toggle works
+            AND THE VACUUM (needs the REBUILT client package - tools/make-installer.ps1 - the
+            pet keys sweepForDrop/longRange live in the WZ). The client decides what the pet
+            reaches for; the server answers its request and refuses anything that is not a
+            mob's drop (a player's own drop, a coin, a box's drop go out marked not-for-pets).
+            Kill a mob near the pet, then drop something from your own bag:
+              the pet goes to the mob's drop, it lands in the bag, no click -> works; say
+                         roughly how far away a drop can be and still get taken
+              the pet goes to it and nothing happens; world.log shows an inbound
+                         0x0329..0x032E "named no live drop"                -> the request's
+                         shape is not the reference's; paste that body
+              the pet never moves toward drops                              -> the keys are
+                         not what this pet code reads; say so
+              the pet takes your OWN dropped item                           -> the byte is
+                         ignored; paste the pet pick-up line
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3254,6 +3268,13 @@ function Show-TestPlan {
         Write-Host '           appears, item not summoned -> the pairing serial; say so'
         Write-Host '           client dies at the click -> paste client-exit.log + the 0x0277 line' -ForegroundColor Yellow
         Write-Host '           nothing -> paste the lines after 0x0147;  click again -> it goes away'
+        Write-Host '         VACUUM (REBUILT client package needed): kill a mob near the pet,' -ForegroundColor Yellow
+        Write-Host '         then drop something of your own:'
+        Write-Host '           pet takes the mob drop, no click -> works; say how far it reaches'
+        Write-Host '           pet reaches it, nothing happens, log says "named no live drop"' -ForegroundColor Yellow
+        Write-Host '                         -> paste that inbound body'
+        Write-Host '           pet never goes for drops -> keys not read; say so'
+        Write-Host '           pet takes YOUR OWN drop -> paste the pet pick-up line' -ForegroundColor Yellow
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'

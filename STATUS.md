@@ -179,6 +179,24 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13: every pet is a vacuum pet, client-driven.** The owner: *"turn every pet into a vacuum pet
+... which sucks up loot in a radius around them provided that they are from a mob death drop"*, and
+*"offload most of the pet driven operations on the client."* The client owns the reaching and the
+asking; the server owns the pick-up. **Data:** this client names the pet keys `sweepForDrop`,
+`longRange`, `pickupItem` (UTF-16, read by the pet loader `FUN_1403e54e0` and the pet
+`FUN_141ed4490`), and 370 of the modern archive's 1561 pets carry exactly that trio - so the
+installer's step 4c now writes `sweepForDrop 1, longRange 1` onto all eleven pets (they had
+`pickupItem 1`). What the radius is on screen is Nexon's code, unread, measured by the launch.
+**Server:** `LiveDrop::from_mob` (kill path only; reactors, ground drops and coins are false) goes
+out as the drop's `canBePickedUpByPet` byte so the pet ignores them; `DropTable::take_by_pet`
+adds the `from_mob` rule and the **type-5 leave** (`charId, petId`); `on_pick_up` tries the pet's
+request shape (id at byte 17, the reference's `PET_DROP_PICK_UP_REQUEST` **[R]**) when the
+player's names nothing and a pet is out, and logs the opcode that matched - the client's builder is
+in `.themida`, so the capture settles the shape. A pet asking for a non-mob drop gets the unlock
+alone. `research/pet-vacuum-2026-09-13.md`; test
+`a_summoned_pet_picks_up_a_mob_drop_but_not_a_players_own_drop`. **The client package must be
+rebuilt** (`tools/make-installer.ps1`) for the pet keys to reach the client. Plan step TO(u).
+
 **2026-09-13: summoning a pet - built to the client's read order, unverified on screen.** The owner: *"I
 tried summoning the Husky pet, but the pet does not come out."* The double-click is **`0x0147`,
 `u32 tick, u16 Cash-tab slot`** (`tools/encodes.py 0x142d4ced0`; world.log 18:02:29 twice,
