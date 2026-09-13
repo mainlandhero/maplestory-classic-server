@@ -831,6 +831,10 @@ impl Session {
             net::pet::CLIENT_PET_ACTIVATE => {
                 return self.on_pet_activate(body.get(2..).unwrap_or(&[]))
             }
+            // The pet walked. Forwarded to the map so other players see it. session/pet.rs.
+            net::pet::CLIENT_PET_MOVE => {
+                return self.on_pet_move(body.get(2..).unwrap_or(&[]))
+            }
             op if net::combat::is_attack_opcode(op) => {
                 return self.on_attack(op, body.get(2..).unwrap_or(&[]))
             }

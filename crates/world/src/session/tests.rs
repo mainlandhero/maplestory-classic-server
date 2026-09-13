@@ -10906,6 +10906,63 @@ fn a_summoned_pet_picks_up_a_mob_drop_but_not_a_players_own_drop() {
     assert_eq!(leave.body[4], net::drops::leave_type::CHAR_PICKUP);
 }
 
+/// **A pet walks and answers to its name.** The owner, 2026-09-13: *"broadcast player pet movement
+/// so other people can see pets moving even if it is not their own"* and *"if those messages
+/// match as one of the pet commands, then the pet should respond accordingly."*
+///
+/// The move is forwarded to the map and NOT echoed to the owner, whose client drew the walk
+/// itself. The chat line still goes out as chat, with the pet's answer beside it; a sentence
+/// that merely contains a command word is only chat.
+#[test]
+fn a_summoned_pet_walks_for_the_map_and_answers_its_command_words() {
+    let (mut s, store, id) = gm_session();
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+    let mut cfg = (*s.config).clone();
+    cfg.pet_commands = crate::petcommands::PetCommands::parse(
+        "5000006\t0\tsit\t100\t1\t9\t1\ts\trest0\tBark bark!\n\
+         5000006\t4\tbad|no\t0\t1\t9\t1\tf\tangry\tHeh... heh...\n",
+    );
+    s.config = std::sync::Arc::new(cfg);
+    s.last_position = Some((300, -50));
+
+    // Nothing answers until a pet is out.
+    let body = hex("000000000000000000360112010000000001000036011201000000002a0000000000000004fe010000");
+    assert!(s.on_pet_move(&body).is_empty());
+    assert!(s.pet_command_replies("sit").is_empty(), "no pet, no trick");
+
+    s.on_pet_activate(&hex("509a18140100"));
+    assert!(s.pet_is_active(5_000_006));
+
+    // The move: nothing back to the owner, one PetMove on the map with the path untouched.
+    assert!(s.on_pet_move(&body).is_empty(), "the owner's own client already drew it");
+
+    // The command: the chat line AND the pet's answer, both out.
+    let out = s.handle(&gm_chat("sit"));
+    assert!(out.iter().any(|r| r.opcode == net::userchat::USER_CHAT), "it is still chat: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    let act = out.iter().find(|r| r.opcode == net::pet::PET_ACTION).expect("the pet answers");
+    assert_eq!(&act.body[0..4], &id.to_le_bytes());
+    assert_eq!(act.body[8], 0, "interact entry 0");
+    assert_eq!(act.body[9], 1, "prob 100 always succeeds");
+    assert!(String::from_utf8_lossy(&act.body).contains("Bark bark!"), "{}", act.what);
+
+    // A word whose entry always fails still acts, with the fail line.
+    let out = s.handle(&gm_chat("no"));
+    let act = out.iter().find(|r| r.opcode == net::pet::PET_ACTION).expect("a failed trick is still a trick");
+    assert_eq!((act.body[8], act.body[9]), (4, 0), "entry 4, failed");
+    assert!(String::from_utf8_lossy(&act.body).contains("Heh"), "{}", act.what);
+
+    // An ordinary sentence is only chat, even when it contains a command word.
+    let out = s.handle(&gm_chat("sit down over there"));
+    assert!(out.iter().any(|r| r.opcode == net::userchat::USER_CHAT));
+    assert!(out.iter().all(|r| r.opcode != net::pet::PET_ACTION), "a sentence is not a command");
+
+    // Put the pet away and the words go quiet again.
+    s.on_pet_activate(&hex("f29d18140100"));
+    assert!(!s.pet_is_active(5_000_006));
+    let out = s.handle(&gm_chat("sit"));
+    assert!(out.iter().all(|r| r.opcode != net::pet::PET_ACTION));
+}
+
 /// **The Wooden Boxes stand, break in four hits, drop, and come back.** The owner, 2026-09-13:
 /// *"the items come out of breakable wooden boxes which we do not spawn right now. We need to
 /// spawn them and provide the drops for the Wooden Box."* The shape is the client's reactor

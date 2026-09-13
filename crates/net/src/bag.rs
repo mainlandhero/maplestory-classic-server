@@ -284,9 +284,16 @@ pub const PET_SKILL_ITEM_PICKUP: u16 = 0x0001;
 pub const PET_SKILL_EXPANDED_AUTO_MOVE: u16 = 0x0002;
 /// See [`PET_SKILL_ITEM_PICKUP`].
 pub const PET_SKILL_AUTO_MOVE: u16 = 0x0004;
-/// Every skill this server grants a pet: it picks things up and it follows you about.
-pub const PET_SKILLS_GRANTED: u16 =
-    PET_SKILL_ITEM_PICKUP | PET_SKILL_EXPANDED_AUTO_MOVE | PET_SKILL_AUTO_MOVE;
+/// **What a pet has learned when it is bought: nothing.** The owner, 2026-09-13: *"The pets start
+/// with nothing learned, and the player has to purchase those skills in the Cash Shop and
+/// choose the pet as a target for it to learn those skills."*
+///
+/// So the mask is `0`, and the installer no longer writes the skill keys into the pet's WZ
+/// either - a pet that advertises a skill it has not learned is what produced the
+/// *"This is an unregistered pet."* lines the owner asked to be rid of. The Cash Shop side (a pet
+/// skill item that targets a pet and sets a bit here, stored per pet item) is **not built**;
+/// when it is, this constant becomes a column and the bits above are its values.
+pub const PET_SKILLS_LEARNED_AT_START: u16 = 0;
 
 /// A pet (item type 3) - what `FUN_140304550` reads after the shared base. The owner,
 /// 2026-09-13: *"They should also be permanent duration. They should never need to be
@@ -304,7 +311,7 @@ pub const PET_SKILLS_GRANTED: u16 =
 /// u8       fullness        1403045cc   100 - fed
 /// raw[8]   dateDead        14030460f   ITEM_NEVER_EXPIRES: it never dies, never needs reviving
 /// u16      petAttribute    140304617   0
-/// u16      petSkill        14030462e   PET_SKILLS_GRANTED - or every skill reads "unregistered"
+/// u16      petSkill        14030462e   PET_SKILLS_LEARNED_AT_START - nothing, until the shop sells one
 /// u32      remainLife      140304645   0 - not a limited-life pet
 /// u16      attribute       14030467e   0
 /// u8       active          14030469b   0
@@ -349,7 +356,7 @@ pub fn pet_item_with_state(item_id: u32, name: &str, cash_sn: Option<std::num::N
     b.push(100); //                                             1403045cc  u8   fullness
     b.extend_from_slice(&ITEM_NEVER_EXPIRES.to_le_bytes()); //  14030460f  raw[8] dateDead
     b.extend_from_slice(&0u16.to_le_bytes()); //                140304617  u16  petAttribute
-    b.extend_from_slice(&PET_SKILLS_GRANTED.to_le_bytes()); //  14030462e  u16  petSkill
+    b.extend_from_slice(&PET_SKILLS_LEARNED_AT_START.to_le_bytes()); // 14030462e u16 petSkill
     b.extend_from_slice(&0u32.to_le_bytes()); //                140304645  u32  remainLife
     b.extend_from_slice(&0u16.to_le_bytes()); //                14030467e  u16  attribute
     b.push(active); //                                          14030469b  u8   active
@@ -680,7 +687,7 @@ mod pet_tests {
         assert_eq!(&b[44..46], &0u16.to_le_bytes(), "petAttribute");
         // The two fields the tooltip reads. A zero skill mask makes every skill the WZ grants
         // read "This is an unregistered pet."; a zero hue makes it read "Your pet has been dyed!".
-        assert_eq!(&b[46..48], &PET_SKILLS_GRANTED.to_le_bytes(), "petSkill: the pet may pick up and follow");
+        assert_eq!(&b[46..48], &0u16.to_le_bytes(), "petSkill: nothing is learned until the shop sells it");
         assert_eq!(&b[48..52], &0u32.to_le_bytes(), "remainLife");
         assert_eq!(&b[52..54], &0u16.to_le_bytes(), "attribute");
         assert_eq!(b[54], 0, "active");

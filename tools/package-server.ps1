@@ -115,7 +115,8 @@ it has to be staged from this machine. Regenerate first:
 # installed client data ships a server that names and prices things the client no longer has.
 foreach ($needed in @('maps.txt', 'mobtemplates.txt', 'skills.txt', 'footholds.txt', 'reactors.txt',
                       'portals.txt', 'npcs.txt', 'fields.txt', 'consumables.txt',
-                      'commodity.txt', 'items.txt', 'equips.txt', 'itemdata.txt')) {
+                      'commodity.txt', 'items.txt', 'equips.txt', 'itemdata.txt',
+                      'petcommands.txt')) {
     if (-not (Test-Path (Join-Path $handbook $needed))) {
         Fail "gm-handbook\$needed is missing - regenerate the handbook before packaging"
     }

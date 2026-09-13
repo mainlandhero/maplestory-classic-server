@@ -62,6 +62,37 @@ pub const CLIENT_PET_ACTIVATE: u16 = 0x0147;
 /// Server -> client, per user: a pet appears beside (or vanishes from) a character.
 pub const PET_ACTIVATED: u16 = 0x0277;
 
+/// **Client -> server: the pet walked.** The owner, 2026-09-13: *"broadcast player pet movement so
+/// other people can see pets moving even if it is not their own."*
+///
+/// Measured: `0x0202` arrives **504 times after a summon and 0 times before it**, and the first
+/// point in its body is the exact spot the server placed the pet. Its head is `u32 petIdx,
+/// u32 tick, u8` and then the movement path block - the same shape as the character's own
+/// `0x00D9` (`usermove::USER_MOVE_HEAD_LEN` is 10; this one is 9 because the pet index replaces
+/// two of its fields). **[L]** on the position, **[D]** on the head length.
+pub const CLIENT_PET_MOVE: u16 = 0x0202;
+
+/// Server -> client, per user: **that character's pet moved.** `FUN_141ec3f20` hands everything
+/// after the pet index straight to `FUN_141d598b0`, the movement-path applier that
+/// `research/user-pool-tables.md` identifies for remote players - so the body is
+/// `u32 charId, u32 petIdx` and then **the path block verbatim**, exactly as `0x0293` is for a
+/// remote character. **[L]**
+pub const PET_MOVE: u16 = 0x0278;
+
+/// Server -> client, per user: **the pet does something and says a line.** `FUN_141ec3fa0`
+/// reads `u8, u8, str` and calls `FUN_141ec6680(pet, command1, command2, message, 0)`, whose
+/// first act is `test r8d, r8d` on `command2` - so that byte is a flag. **[L]**
+///
+/// `command1` is the `interact` entry's index and `command2` is success/fail: the client owns
+/// the animation, looking `interact/<index>/<success|fail>/0/act` up in the pet's own image, so
+/// the server sends the index and the outcome rather than an animation name. **[I]**, and the
+/// screen is the test - a wrong index plays the wrong trick, not a crash, because the client
+/// indexes its own node list.
+pub const PET_ACTION: u16 = 0x0279;
+
+/// The bytes of `0x0202` before the movement path: `u32 petIdx, u32 tick, u8`.
+pub const CLIENT_PET_MOVE_HEAD_LEN: usize = 9;
+
 /// The one pet index this client accepts (`FUN_1429d6150`: `if (petIdx == 0)`).
 pub const PET_INDEX: u32 = 0;
 
@@ -124,6 +155,36 @@ pub fn pet_deactivated(character_id: u32) -> Vec<u8> {
     w.u32(character_id);
     w.u32(PET_INDEX);
     w.u8(0); // activated = 0: FUN_1427707e0(user, 0, null) and nothing more is read
+    w.into_vec()
+}
+
+/// **`0x0278`**: rebroadcast a pet's movement to everyone on the map.
+///
+/// `body` is the `0x0202` the client sent. The path block is copied byte for byte - the same
+/// rule `0x0293` follows for a remote character, and for the same reason: the client that owns
+/// the pet has already decided where it walked, and re-encoding the path could only lose
+/// something. `None` when the body is too short to hold a head and a path.
+pub fn pet_move_broadcast(character_id: u32, body: &[u8]) -> Option<Vec<u8>> {
+    let pet_index = u32::from_le_bytes(body.get(0..4)?.try_into().ok()?);
+    let path = body.get(CLIENT_PET_MOVE_HEAD_LEN..)?;
+    if path.is_empty() {
+        return None;
+    }
+    let mut w = PacketWriter::new();
+    w.u32(character_id);
+    w.u32(pet_index);
+    w.bytes(path);
+    Some(w.into_vec())
+}
+
+/// **`0x0279`**: the pet plays `interact` entry `index` and says `message`.
+pub fn pet_action(character_id: u32, index: u8, success: bool, message: &str) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(character_id);
+    w.u32(PET_INDEX);
+    w.u8(index); //           141ec3fa0's first u8  -> FUN_141ec6680's command1
+    w.u8(u8::from(success)); // its second          -> command2, tested as a flag
+    w.str(message);
     w.into_vec()
 }
 
@@ -190,6 +251,37 @@ mod tests {
     fn putting_a_pet_away_reads_nothing_past_the_activated_byte() {
         let b = pet_deactivated(215);
         assert_eq!(b, [0xd7, 0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    /// The captured `0x0202`, 41 bytes: the head is nine and the path starts at the pet's own
+    /// position (0x0136, 0x0112 = 310, 274 - where the server put it).
+    #[test]
+    fn a_pet_move_is_rebroadcast_with_its_path_untouched() {
+        let hex = "000000000000000000360112010000000001000036011201000000002a0000000000000004fe010000";
+        let body: Vec<u8> =
+            (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap()).collect();
+        assert_eq!(body.len(), 41);
+        assert_eq!(&body[9..11], &310i16.to_le_bytes(), "the path starts at the pet's x");
+        assert_eq!(&body[11..13], &274i16.to_le_bytes(), "and its y");
+        let out = pet_move_broadcast(215, &body).unwrap();
+        assert_eq!(&out[0..4], &215u32.to_le_bytes(), "charId");
+        assert_eq!(&out[4..8], &0u32.to_le_bytes(), "petIdx, copied from the request");
+        assert_eq!(&out[8..], &body[9..], "the path block, byte for byte");
+        assert_eq!(out.len(), 8 + (41 - 9));
+        assert!(pet_move_broadcast(215, &body[..9]).is_none(), "a head with no path is nothing to send");
+        assert!(pet_move_broadcast(215, &body[..3]).is_none());
+    }
+
+    #[test]
+    fn a_pet_action_carries_the_interact_index_the_outcome_and_the_line() {
+        let b = pet_action(215, 3, true, "Bark bark!");
+        assert_eq!(&b[0..4], &215u32.to_le_bytes());
+        assert_eq!(&b[4..8], &PET_INDEX.to_le_bytes());
+        assert_eq!(b[8], 3, "the interact entry");
+        assert_eq!(b[9], 1, "success");
+        assert_eq!(&b[10..12], &10u16.to_le_bytes(), "the line's length");
+        assert_eq!(&b[12..22], b"Bark bark!");
+        assert_eq!(pet_action(215, 3, false, "x")[9], 0, "fail");
     }
 
     #[test]

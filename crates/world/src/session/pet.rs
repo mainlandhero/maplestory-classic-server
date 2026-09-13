@@ -26,12 +26,24 @@
 //! `0x0070` with `bExclRequestSent = 1` (`net::inventory::inventory_rejected`), so every path
 //! out of here - summoned, put away, or refused - ends with one. **Always answer.**
 //!
+//! # Movement and commands
+//!
+//! * The client walks the pet itself and reports it as `0x0202`; [`Session::on_pet_move`]
+//!   forwards the path to the map as `0x0278` so other players see it too.
+//! * A chat line that is one of the pet's own command words makes the pet act and speak -
+//!   [`Session::pet_command_replies`], reading `crate::petcommands`.
+//!
 //! # Not built, and said so
 //!
-//! Pet movement, feeding, naming and the rest of the `0x0278..0x027E` family. The client
-//! moves the pet itself; whatever it sends about that is logged and not yet answered.
+//! Feeding, naming, dyeing, closeness and levelling, and the Cash Shop pet-skill items that
+//! would set the item body's `petSkill` mask (`net::bag::PET_SKILLS_LEARNED_AT_START`). A pet
+//! is level 1 for as long as closeness does not exist, and that is what picks the command band.
 
 use super::*;
+
+/// The level every pet is at, because this server keeps no closeness yet. It selects which
+/// band of an `interact` command answers. See `Session::pet_command_replies`.
+const PET_LEVEL: u32 = 1;
 
 /// The pet this session has out, if any.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +54,69 @@ pub(super) struct ActivePet {
 }
 
 impl Session {
+    /// **`0x0202`: the pet walked, so everyone on the map is told.** The owner, 2026-09-13:
+    /// *"broadcast player pet movement so other people can see pets moving even if it is not
+    /// their own."*
+    ///
+    /// The path block is forwarded byte for byte inside `0x0278` - `net::pet::pet_move_broadcast`
+    /// - which is the same rule a remote character's move follows: the client that owns the pet
+    /// has already decided where it walked.
+    ///
+    /// **It is published to the map and NOT returned to the sender.** The owner's client drew
+    /// the walk itself; sending it back would fight its own simulation, exactly as
+    /// `MOB_CHANGE_CONTROLLER` must not be doubled. The client expects no answer either - it is
+    /// a report, like `0x00D9`.
+    pub(super) fn on_pet_move(&mut self, body: &[u8]) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        if self.active_pet.is_none() {
+            return Vec::new();
+        }
+        let Some(out) = net::pet::pet_move_broadcast(chr.id, body) else { return Vec::new() };
+        let reply = Reply {
+            opcode: net::pet::PET_MOVE,
+            body: out,
+            what: format!("PetMove: {}'s pet walked; the path forwarded to the map", chr.name),
+        };
+        self.bus().publish(self.subscriber, chr.map_id, reply, None);
+        Vec::new()
+    }
+
+    /// **A chat line that is one of the pet's commands.** The owner, 2026-09-13: *"They will still
+    /// happen as regular chat messages in the game, but if those messages match as one of the
+    /// pet commands, then the pet should respond accordingly."*
+    ///
+    /// So this does not replace the chat line - `say_out_loud` has already built it - it adds
+    /// the pet's answer beside it. Nothing when no pet is out, or when the text is not one of
+    /// that pet's words, which is every ordinary sentence.
+    ///
+    /// **The pet is always level 1** here: this server keeps no closeness, so the level band the
+    /// table picks is always the first. `crate::petcommands` records the `inc` the entry would
+    /// have earned so that adding closeness later is a change in one place.
+    pub(super) fn pet_command_replies(&mut self, text: &str) -> Vec<Reply> {
+        let Some(active) = self.active_pet else { return Vec::new() };
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let roll = self.rng.next();
+        let Some(r) = self.config.pet_commands.respond(active.item_id, PET_LEVEL, text, roll)
+        else {
+            return Vec::new();
+        };
+        let reply = Reply {
+            opcode: net::pet::PET_ACTION,
+            body: net::pet::pet_action(chr.id, r.index, r.success, &r.text),
+            what: format!(
+                "PetAction: {:?} -> pet {} interact {} {} ({}) says {:?}",
+                text.trim(),
+                active.item_id,
+                r.index,
+                if r.success { "succeeds" } else { "fails" },
+                r.act,
+                r.text
+            ),
+        };
+        self.bus().publish(self.subscriber, chr.map_id, reply.clone(), None);
+        vec![reply]
+    }
+
     /// `0x0147`: a double-click on a pet in the Cash tab.
     pub(super) fn on_pet_activate(&mut self, body: &[u8]) -> Vec<Reply> {
         let Some(chr) = self.claimed_character() else { return Vec::new() };

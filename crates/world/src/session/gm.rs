@@ -72,7 +72,13 @@ impl Session {
         // against `!map`, found nothing, and returned an empty reply. The balloon and the
         // chat-log line both come from `0x0231` coming back - see net::userchat.
         let Some(command) = text.strip_prefix('!') else {
-            return self.say_out_loud(text);
+            // **The line goes out as chat either way**, and if it happens to be one of the
+            // summoned pet's commands the pet answers beside it. The owner, 2026-09-13, measured:
+            // typing `bad` sends an ordinary `0x00E7` and no pet packet, so the pet's response
+            // is the server's to add. `session/pet.rs`.
+            let mut out = self.say_out_loud(text);
+            out.extend(self.pet_command_replies(text));
+            return out;
         };
         let (name, arg) = match command.split_once(char::is_whitespace) {
             Some((n, a)) => (n, a.trim()),

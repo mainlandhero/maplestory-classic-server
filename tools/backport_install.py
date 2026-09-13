@@ -420,16 +420,22 @@ def main():
             fh.write("# %s: permanent - life 0 and permanent 1, as the modern client's permanent pet carries\n" % pet_name)
             fh.write("info/life\tint\t0\n")
             fh.write("info/permanent\tint\t1\n")
-            # A vacuum pet. The owner, 2026-09-13: "turn every pet into a vacuum pet, similar to a
-            # modern maple Luna Petite pet, which sucks up loot in a radius around them ...
-            # offload most of the pet driven operations on the client." The client names all
-            # three keys (utf-16, one copy each; read by the pet loader FUN_1403e54e0 and the
-            # pet itself FUN_141ed4490), and 370 of the modern client's 1561 pets carry exactly
-            # this trio - the sweep pets. What "sweep" and "long range" do on screen is the
-            # client's own code; the server's half is answering the pet's pick-up request.
-            fh.write("info/pickupItem\tint\t1\n")
-            fh.write("info/sweepForDrop\tint\t1\n")
-            fh.write("info/longRange\tint\t1\n")
+            # **A pet advertises no skill it has not learned.** The owner, 2026-09-13: "If those
+            # skills are not yet active, make sure that the pet do not have those lines ...
+            # The pets start with nothing learned, and the player has to purchase those
+            # skills in the Cash Shop and choose the pet as a target for it to learn those
+            # skills."
+            #
+            # The tooltip prints a line per skill the pet IMAGE declares, and the
+            # "(Learned)" / "This is an unregistered pet." half of it is the item body's
+            # petSkill mask - FUN_14266f2d0 ANDs the two (research/pet-tooltip-and-commands-
+            # 2026-09-13.md). An earlier build wrote sweepForDrop and longRange here to make
+            # every pet a vacuum pet, and Nexon's own data declares pickupItem; all three
+            # produced "unregistered" lines for skills nothing could use. So every skill key
+            # is cleared, and learning one becomes a Cash Shop purchase that sets the mask.
+            fh.write("info/pickupItem\tint\t0\n")
+            fh.write("info/sweepForDrop\tint\t0\n")
+            fh.write("info/longRange\tint\t0\n")
         add("Item/Pet", "patch\t%07d.img\t%s" % (pet_id, tsv))
     shipped_pet_rows = {5000001, 5000008, 5000009}  # SN 160000000..2 in the classic Commodity.img
     pet_rows_patch = os.path.join(args.build_dir, "patch-Commodity-pets.tsv")
@@ -565,7 +571,8 @@ def main():
     # client's Commodity.img AND in gm-handbook/commodity.txt, which the world server debits
     # from; names in String.wz AND items.txt. Regenerating here, after the copy, is what keeps
     # "the tab says 2,000" and "the server charged 3,900" from ever both being true.
-    for tool in ["dump_names.py", "dump_equips.py", "dump_itemdata.py", "dump_commodity.py", "gen_item_rules.py"]:
+    for tool in ["dump_names.py", "dump_equips.py", "dump_itemdata.py", "dump_commodity.py",
+                 "dump_pets.py", "gen_item_rules.py"]:
         p = subprocess.run([sys.executable, os.path.join(REPO, "tools", tool)], capture_output=True,
                            text=True, encoding="utf-8", errors="replace")
         tail = (p.stdout.strip().splitlines() or [""])[-1]

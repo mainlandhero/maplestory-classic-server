@@ -88,6 +88,7 @@ fn main() -> ExitCode {
     let mut chairs_path = PathBuf::from("gm-handbook/chairs.txt");
     let mut mob_templates_path = PathBuf::from("gm-handbook/mobtemplates.txt");
     let mut npc_strings_path = PathBuf::from("gm-handbook/npcstrings.txt");
+    let mut pet_commands_path = PathBuf::from("gm-handbook/petcommands.txt");
     // Authored source like data/shops.txt: hand-written, committed, and NOT in gm-handbook/,
     // which is generated and would be overwritten by the next dump_npcstrings.py run.
     let mut npc_dialogue_path = PathBuf::from("data/npc-dialogue.txt");
@@ -161,6 +162,7 @@ fn main() -> ExitCode {
             "--chairs" => value().map(|v| chairs_path = PathBuf::from(v)),
             "--mob-templates" => value().map(|v| mob_templates_path = PathBuf::from(v)),
             "--npc-strings" => value().map(|v| npc_strings_path = PathBuf::from(v)),
+            "--pet-commands" => value().map(|v| pet_commands_path = PathBuf::from(v)),
             "--npc-dialogue" => value().map(|v| npc_dialogue_path = PathBuf::from(v)),
             "--quests" => value().map(|v| quests_path = PathBuf::from(v)),
             "--quest-scripts" => value().map(|v| quest_scripts_path = PathBuf::from(v)),
@@ -396,6 +398,13 @@ fn main() -> ExitCode {
     // `shop_by_template` below is derived from these NPC *names* and sits behind no lock, so
     // a name that changed mid-session would silently re-point a shop. See
     // `world::config::NpcStringTable`.
+    config.pet_commands = world::petcommands::PetCommands::load(&pet_commands_path);
+    println!(
+        "pet commands: {} entries across {} pets from {}",
+        config.pet_commands.entries(),
+        config.pet_commands.pets(),
+        pet_commands_path.display()
+    );
     config.npc_strings = world::config::load_npc_strings(&npc_strings_path).into();
     config.npc_strings_path = npc_strings_path.clone();
     config.npc_dialogue_path = npc_dialogue_path.clone();
