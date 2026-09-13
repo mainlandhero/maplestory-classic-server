@@ -767,7 +767,21 @@ pub(crate) fn create_tables(conn: &Connection) -> Result<()> {
 ///   the box under 5681599 (`tools/backport_install.py` `BOX_ID`,
 ///   `world::signaturestyle::COLLECTION`). A box bought before that sat in a bag as 5222221 -
 ///   an item the client can no longer name or open.
-pub const ITEM_ID_RENAMES: &[(u32, u32)] = &[(5_222_221, 5_681_599)];
+pub const ITEM_ID_RENAMES: &[(u32, u32)] = &[
+    (5_222_221, 5_681_599),
+    // The eight face coupons, 2026-09-12: the classic client's Beauty Coupon dialog opens for
+    // hair coupons in 2540000..2549999 and face coupons in 2890000..2890999 (six other
+    // thousand-wide ranges are androids and skins), never for 2897xxx - so a face coupon
+    // sat in the Use tab and its double-click sent nothing. They wear 2890907..2890914 now.
+    (2_897_007, 2_890_907),
+    (2_897_008, 2_890_908),
+    (2_897_009, 2_890_909),
+    (2_897_010, 2_890_910),
+    (2_897_011, 2_890_911),
+    (2_897_012, 2_890_912),
+    (2_897_013, 2_890_913),
+    (2_897_014, 2_890_914),
+];
 
 /// The tables that carry an item id, all of which [`rename_item_ids`] visits. `equipment`
 /// (worn items) is here because the invariant is "every table with the column", not

@@ -27,14 +27,14 @@ pub const COUPONS: [(u32, Kind, u32); 15] = [
     (2_543_141, Kind::Hair, 42_580), // Stark Hair
     (2_543_142, Kind::Hair, 42_590), // Himmel Hair
     (2_543_143, Kind::Hair, 42_600), // Übel Hair
-    (2_897_007, Kind::Face, 22_035), // Frieren Face
-    (2_897_008, Kind::Face, 22_036), // Fern Face
-    (2_897_009, Kind::Face, 22_037), // Stark Face
-    (2_897_010, Kind::Face, 22_038), // Himmel Face
-    (2_897_011, Kind::Face, 22_039), // Übel Face
-    (2_897_012, Kind::Face, 22_040), // Aura Face
-    (2_897_013, Kind::Face, 22_041), // Linie Face
-    (2_897_014, Kind::Face, 22_042), // Lügner Face
+    (2_890_907, Kind::Face, 22_035), // Frieren Face
+    (2_890_908, Kind::Face, 22_036), // Fern Face
+    (2_890_909, Kind::Face, 22_037), // Stark Face
+    (2_890_910, Kind::Face, 22_038), // Himmel Face
+    (2_890_911, Kind::Face, 22_039), // Übel Face
+    (2_890_912, Kind::Face, 22_040), // Aura Face
+    (2_890_913, Kind::Face, 22_041), // Linie Face
+    (2_890_914, Kind::Face, 22_042), // Lügner Face
 ];
 
 /// What `item_id` applies, if it is a beauty coupon this server knows.
@@ -61,7 +61,7 @@ mod tests {
             assert_eq!(for_coupon(coupon), Some((kind, id)));
         }
         assert_eq!(for_coupon(2_543_143), Some((Kind::Hair, 42_600)), "Übel Hair Coupon");
-        assert_eq!(for_coupon(2_897_011), Some((Kind::Face, 22_039)), "Übel Face Coupon");
+        assert_eq!(for_coupon(2_890_911), Some((Kind::Face, 22_039)), "Übel Face Coupon");
         assert_eq!(for_coupon(2_000_000), None, "a potion is not a coupon");
         assert_eq!(for_coupon(2_543_136), None, "one below the first hair coupon");
     }

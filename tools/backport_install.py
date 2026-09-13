@@ -51,6 +51,18 @@ CLASSIC_VERSION = "779"
 # this script regenerates after an install, so a mismatch fails the suite rather than a run.
 BOX_MODERN_ID = 5222221
 BOX_ID = 5681599
+# The eight face coupons, 2026-09-12: "The face coupons from the backported collaboration
+# items still does not work." The classic client opens its Beauty Coupon dialog
+# (FUN_142dc8100, the 0x0165 CONFIRM) only for ids in seven ranges read off the opener at
+# 0x141785d90: 2540000..2549999 (hair coupons - ours work), 2890000..2890999 (the modern
+# client's own "Face Coupon" family), 2889000, 2893000 (skins), 2894000/2895000 (android
+# faces), 2900168 (a thousand more). 2897xxx is in none of them, so a double-click on a face
+# coupon opened nothing and sent nothing - world.log has no packet for it in any run. [L]
+# So they wear 2890907..2890914: same 0289.img, same canvas nodes, a free stretch of the
+# family (the modern client uses 2890000..2890054).
+FACE_COUPON_RENAMES = {2897000 + n: 2890900 + n for n in range(7, 15)}
+# Every id that changes family or number on the way into the classic client, old -> new.
+RENAMES = {BOX_MODERN_ID: BOX_ID, **FACE_COUPON_RENAMES}
 
 
 def modern_part(source, tree_rel, image):
@@ -271,16 +283,20 @@ def main():
         pkey = (tree_rel, image, "prop")
         if pkey not in part_cache:
             part_cache[pkey] = modern_part(source, tree_rel, image)
-        if (tree_rel, image) == ("Item/Cash", "%04d.img" % (BOX_MODERN_ID // 10000)):
-            box_key = "%08d" % BOX_MODERN_ID
-            rest = [k for k in keys if k != box_key]
-            if rest:
-                add(tree_rel, "merge\t%s\t%s\t%s\t%s" % (image, part_cache[pkey], image, ",".join(rest)))
-            if box_key in keys:
-                home = "%04d.img" % (BOX_ID // 10000)
-                add(tree_rel, "merge\t%s\t%s\t%s\t%s=%08d" % (home, part_cache[pkey], image, box_key, BOX_ID))
-            continue
-        add(tree_rel, "merge\t%s\t%s\t%s\t%s" % (image, part_cache[pkey], image, ",".join(keys)))
+        # Keys that keep their id merge onto the classic image of the same name; a renamed
+        # one merges onto the image its NEW id belongs to (the box moves 0522 -> 0568; a face
+        # coupon stays in 0289), under `old=new`. The icon outlinks inside the node still name
+        # the old id's canvas node, which step 2 merges untouched.
+        plain = [k for k in keys if int(k) not in RENAMES]
+        if plain:
+            add(tree_rel, "merge	%s	%s	%s	%s" % (image, part_cache[pkey], image, ",".join(plain)))
+        homes = {}
+        for k in keys:
+            if int(k) in RENAMES:
+                new_id = RENAMES[int(k)]
+                homes.setdefault("%04d.img" % (new_id // 10000), []).append("%s=%08d" % (k, new_id))
+        for home, pairs in sorted(homes.items()):
+            add(tree_rel, "merge	%s	%s	%s	%s" % (home, part_cache[pkey], image, ",".join(pairs)))
 
     # 4. Strings: one TSV per image, `path<TAB>value`.
     os.makedirs(args.build_dir, exist_ok=True)
@@ -293,12 +309,14 @@ def main():
     for image, root in [("Eqp.img", strings["ClassicWorld"]), ("Cash.img", strings["Cash"]),
                         ("Consume.img", strings["Consume"]), ("Npc.img", npc_strings)]:
         tsv = os.path.join(args.build_dir, "strings-" + image + ".tsv")
+        if image in ("Cash.img", "Consume.img"):
+            # Renamed ids (RENAMES) carry their strings to the new id.
+            root = {("%d" % RENAMES[int(k)]) if k.isdigit() and int(k) in RENAMES else k: v
+                    for k, v in root.items()}
         if image == "Cash.img":
             # The modern text says "obtain 1 item according to set probability rates". Ours
             # gives every set (the owner, 2026-09-10), and the tooltip is the one place a player
             # reads the rule.
-            root = dict(root)
-            root.pop("%d" % BOX_MODERN_ID, None)  # the box lives under BOX_ID now (step 3)
             root["%d" % BOX_ID] = {
                 "name": "Signature Style Collection",
                 "desc": "A collection of every Signature Style outfit. #cDouble-click# to receive "

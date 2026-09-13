@@ -96,21 +96,21 @@ pub const FRIEREN_VERSIONS: [OutfitSet; 3] = [
         coupon: 5_681_543,
         name: "Frieren",
         hair_coupons: &[2_543_137],
-        face_coupon: 2_897_007,
+        face_coupon: 2_890_907,
         equips: &[1_054_555, 1_054_556, 1_074_234, 1_032_360, 1_703_722],
     },
     OutfitSet {
         coupon: 5_681_544,
         name: "Frieren (Ringlets)",
         hair_coupons: &[2_543_138],
-        face_coupon: 2_897_007,
+        face_coupon: 2_890_907,
         equips: &[1_054_555, 1_054_556, 1_074_234, 1_032_360, 1_703_722],
     },
     OutfitSet {
         coupon: 5_681_545,
         name: "Frieren (Sleep)",
         hair_coupons: &[2_543_139],
-        face_coupon: 2_897_007,
+        face_coupon: 2_890_907,
         equips: &[1_054_557, 1_032_360],
     },
 ];
@@ -170,7 +170,7 @@ pub const SETS: [OutfitSet; 8] = [
         coupon: 5_681_543,
         name: "Frieren",
         hair_coupons: &[2_543_137, 2_543_138, 2_543_139], // Hair, Hair (Ringlets), Hair (Sleep)
-        face_coupon: 2_897_007,
+        face_coupon: 2_890_907,
         // Clothes, Winter Clothes, Sleep Clothes, Shoes, Earrings, Staff
         equips: &[1_054_555, 1_054_556, 1_054_557, 1_074_234, 1_032_360, 1_703_722],
     },
@@ -178,7 +178,7 @@ pub const SETS: [OutfitSet; 8] = [
         coupon: 5_681_547,
         name: "Fern",
         hair_coupons: &[2_543_140],
-        face_coupon: 2_897_008,
+        face_coupon: 2_890_908,
         // Clothes, Winter Clothes, Shoes, Staff
         equips: &[1_054_558, 1_054_559, 1_074_235, 1_703_723],
     },
@@ -186,7 +186,7 @@ pub const SETS: [OutfitSet; 8] = [
         coupon: 5_681_549,
         name: "Stark",
         hair_coupons: &[2_543_141],
-        face_coupon: 2_897_009,
+        face_coupon: 2_890_909,
         // Clothes, Winter Clothes, Shoes, Winter Shoes, Gloves, Winter Gloves, Axe
         equips: &[1_054_560, 1_054_595, 1_074_236, 1_074_263, 1_082_877, 1_082_882, 1_703_724],
     },
@@ -194,7 +194,7 @@ pub const SETS: [OutfitSet; 8] = [
         coupon: 5_681_548,
         name: "\u{dc}bel",
         hair_coupons: &[2_543_143],
-        face_coupon: 2_897_011,
+        face_coupon: 2_890_911,
         // Clothes, Shoes, Gloves, Staff
         equips: &[1_054_562, 1_074_238, 1_082_878, 1_703_726],
     },
@@ -202,7 +202,7 @@ pub const SETS: [OutfitSet; 8] = [
         coupon: 5_681_546,
         name: "Himmel",
         hair_coupons: &[2_543_142],
-        face_coupon: 2_897_010,
+        face_coupon: 2_890_910,
         // Clothes, Shoes, Sword, Himmel's Blessing (cape)
         equips: &[1_054_561, 1_074_237, 1_703_725, 1_103_918],
     },
@@ -210,7 +210,7 @@ pub const SETS: [OutfitSet; 8] = [
         coupon: 5_681_550,
         name: "Aura",
         hair_coupons: &[],
-        face_coupon: 2_897_012,
+        face_coupon: 2_890_912,
         // Hair (Hat), Clothes, Shoes, Gloves, Scales of Obedience
         equips: &[1_006_910, 1_054_563, 1_074_239, 1_082_879, 1_703_727],
     },
@@ -218,7 +218,7 @@ pub const SETS: [OutfitSet; 8] = [
         coupon: 5_681_552,
         name: "L\u{fc}gner",
         hair_coupons: &[],
-        face_coupon: 2_897_014,
+        face_coupon: 2_890_914,
         // Hair (Hat), Clothes, Shoes
         equips: &[1_006_912, 1_054_565, 1_074_241],
     },
@@ -226,7 +226,7 @@ pub const SETS: [OutfitSet; 8] = [
         coupon: 5_681_551,
         name: "Linie",
         hair_coupons: &[],
-        face_coupon: 2_897_013,
+        face_coupon: 2_890_913,
         // Hair (Hat), Clothes, Shoes
         equips: &[1_006_911, 1_054_564, 1_074_240],
     },

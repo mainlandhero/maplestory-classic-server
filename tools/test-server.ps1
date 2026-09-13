@@ -984,36 +984,41 @@
             2026-09-12: "Ubel's weapon is fine in game and on character select"). The cover
             rides in the look's weapon-sticker u32 (look+0x2d) and the real weapon keeps
             slot 11. Nothing to test here any more.
-         h) HIMMEL'S CAPE - THE EFFECT DRAWS (confirmed 2026-09-12, screenshot), but IN
-            FRONT: "Himmel's cape should have an offset and appear behind the player's
-            character, currently it blocks the character when idle." Nexon's node says z 10
-            on effect and on effect/stand1 and this client put that in front of the body;
-            the same modern image gives its plain behind-the-body auras z -2 (1103988, the
-            first key), so every z leaf under 1103918/effect is rewritten to -2 by the
-            installer (itemeff-z.tsv, one patch line each). The frame's origin is untouched -
-            it is centred on the body, which from the front is the "offset" once the draw is
-            behind. [I: the sign convention comes from the sibling entries, not the client.]
-            Installed once the client was closed. Put the cape on and stand still:
-              the glow is BEHIND Cobalt, body fully visible -> done
-              still in front -> negative z is not "behind" here; say so, and I try the
-                         frame's own z (stand1/0/z, currently 0) next - one variant at a time
-              behind, but shifted off the body -> the origin needs a change; say which way
-                         and by roughly how much (a body width, half a body...)
-              gone entirely -> a negative z hides it in this client; say so
-         i) NEW 2026-09-12 - THE HAIR-HATS GO ON. "The Aura, Lugner and Linie hair does not
-            wear when double clicked on." world.log has NO 0x0107 for 1006910/11/12 in any
-            run - the client never sent the move, it refused locally. Their info/islot is
-            HrCp, the modern two-slot type (hair slot + cap slot); every classic cap says
-            Cp, and the client reads the type in two-letter tokens, so the first token - Hr,
-            hair - gave the double-click no destination. [Absent packet and the data are L;
-            the token reading is I.] Installed: islot -> Cp on all three; vslot (which hair
-            parts the hat hides) left as Nexon wrote it. Double-click one from the Deco tab:
-              it goes on, your own hair is hidden under it -> done
-              it goes on but your hair shows through / clips -> vslot tokens the classic
-                         client does not know are being ignored; say which parts show
-              still nothing, and world.log still has no 0x0107 for it -> the type was not
-                         the gate; say so, I read the double-click dispatch for caps
-              0x0107 arrives, server refuses -> paste the world.log line
+         h) HIMMEL'S CAPE - DONE (the owner, 2026-09-12: "Himmel's cape now looks fine"): the
+            effect draws behind the body at z -2. Nothing to test here.
+         i) THE HAIR-HATS STILL DO NOT GO ON (the owner, 2026-09-12: "equipping the hair caps
+            still does not work") - and world.log again has NO 0x0107 for them, so the islot
+            change was not the gate. The double-click equip path is FUN_1417dd7e0 (it ends in
+            the 0x0107 builder FUN_142cc5b00) and it has a dozen exits before the send; the
+            slot validator FUN_140253980 is category-only and would pass a cap, so the gate
+            is one of the others (FUN_140397db0 is the level/stat/job check). Static reading
+            is not going to settle which one, so this run MEASURES it - launch with:
+              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,1417dd7e0:hits=12,140397db0:hits=12,142cc5b00:hits=12"
+            then double-click ONE hair-hat in the Deco tab, once, and say when. I read
+            client-patched\maplecw-hook.log:
+              WATCH 1417dd7e0 and 140397db0 fire, 142cc5b00 does not -> the requirement
+                         check refused it; I read that function for what it wants
+              WATCH 1417dd7e0 fires, 140397db0 does not -> an exit before the requirement
+                         check (the worn-slot / conflict path); I read from there
+              no WATCH at all -> the Deco tab's double-click never reaches the equip path
+                         for this item; the gate is in the inventory window itself
+              a message box appears -> say its text; it names the branch
+            (The three diagnostic watches the default probe carries are dropped for this
+            run; the two that keep the client alive are kept.)
+         j) NEW 2026-09-12 - THE FACE COUPONS OPEN THE DIALOG. "The face coupons from the
+            backported collaboration items still does not work." No packet in any run: the
+            Beauty Coupon dialog (the 0x0165 CONFIRM) opens only for ids in seven ranges read
+            off its opener - 2540000..2549999 (hair coupons, which work), 2890000..2890999
+            (the modern client's own Face Coupon family), plus skins and android faces - and
+            2897xxx is in none of them [L]. So the eight face coupons now wear 2890907..914
+            (node, canvas, string, server table, and a rename of any already in a bag on the
+            next server start). Double-click a face coupon in the Use tab:
+              the Beauty Coupon dialog opens with the face previewed, CONFIRM changes your
+                         face, coupon gone -> done
+              the dialog opens but previews nothing / a hairstyle -> the dialog keys hair
+                         vs face on something else; say what it shows
+              still nothing -> the range reading is wrong; say so
+              the coupon in your bag has no name/icon -> the rename on start did not run
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -2991,23 +2996,24 @@ function Show-TestPlan {
         Write-Host '           box in bag has no name/icon -> rename did not run; say so'
         Write-Host '      g) CASH EQUIPS + THE WEAPON COVER SURVIVE A RELOG - CONFIRMED on select' -ForegroundColor DarkGray
         Write-Host '         and in the field (2026-09-12). Nothing to test here.' -ForegroundColor DarkGray
-        Write-Host '      h) HIMMEL''S CAPE: the effect DRAWS (confirmed) but IN FRONT of the' -ForegroundColor Yellow
-        Write-Host '         body. Nexon''s node says z 10; the same image''s plain auras say'
-        Write-Host '         z -2, so every z under 1103918/effect is now -2 (installed after'
-        Write-Host '         the client closed). Put the cape on, stand still:'
-        Write-Host '           glow BEHIND Cobalt, body fully visible -> done'
-        Write-Host '           still in front -> negative z is not behind here; say so, I' -ForegroundColor Yellow
-        Write-Host '             try the frame''s own z next' -ForegroundColor Yellow
-        Write-Host '           behind but shifted off the body -> origin; say which way, how far'
-        Write-Host '           gone entirely -> negative z hides it; say so'
-        Write-Host '      i) NEW - THE HAIR-HATS GO ON: Aura/Lugner/Linie hair sent NO 0x0107' -ForegroundColor Yellow
-        Write-Host '         on double-click. Their islot is HrCp (modern two-slot type); the'
-        Write-Host '         client reads two-letter tokens and Hr is hair, no destination.'
-        Write-Host '         Installed: islot -> Cp. Double-click one from the Deco tab:'
-        Write-Host '           goes on, own hair hidden under it -> done'
-        Write-Host '           goes on, hair shows through/clips -> vslot tokens; say which'
-        Write-Host '           still nothing, no 0x0107 -> type was not the gate; say so' -ForegroundColor Yellow
-        Write-Host '           0x0107 arrives, server refuses -> paste the world.log line'
+        Write-Host '      h) HIMMEL''S CAPE - DONE (behind the body at z -2). Nothing to test.' -ForegroundColor DarkGray
+        Write-Host '      i) THE HAIR-HATS STILL DO NOT GO ON, and still NO 0x0107 - islot was' -ForegroundColor Yellow
+        Write-Host '         not the gate. The equip path FUN_1417dd7e0 has a dozen exits before'
+        Write-Host '         the 0x0107 builder; this run MEASURES which. Launch with:'
+        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,1417dd7e0:hits=12,140397db0:hits=12,142cc5b00:hits=12"' -ForegroundColor White
+        Write-Host '         then double-click ONE hair-hat in the Deco tab, once; say when.'
+        Write-Host '           1417dd7e0 + 140397db0 fire, 142cc5b00 not -> requirement check'
+        Write-Host '           1417dd7e0 fires, 140397db0 not -> an earlier exit; I read it'
+        Write-Host '           no WATCH at all -> the inventory window never reaches the path'
+        Write-Host '           a message box -> say its text; it names the branch'
+        Write-Host '      j) NEW - FACE COUPONS: no packet ever; the Beauty dialog opens only for' -ForegroundColor Yellow
+        Write-Host '         2540xxxx (hair) and 2890xxx (face) + skins/androids, never 2897xxx.'
+        Write-Host '         They wear 2890907..914 now (node, string, server, bag rename).'
+        Write-Host '         Double-click one in the Use tab:'
+        Write-Host '           dialog opens, face previewed, CONFIRM changes it -> done'
+        Write-Host '           dialog opens, wrong/no preview -> say what it shows'
+        Write-Host '           still nothing -> range reading wrong; say so' -ForegroundColor Yellow
+        Write-Host '           coupon has no name/icon -> rename on start did not run'
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'
