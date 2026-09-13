@@ -980,21 +980,10 @@
               0x0114 arrives but the server refuses -> world.log names why; paste it
               the box in your bag shows no name / a blank icon -> the rename on open did
                          not run; grep world.log for "rename" and paste
-         g) CASH EQUIPS SURVIVE A RELOG - CONFIRMED 2026-09-12 (the owner: "I do see the cash
-            equips on my character upon login"), with one miss: "for Ubel's weapon, I do not
-            see the proper rendering of it on character select. (It does show up fine in the
-            game world)". The field dresses from the worn list itself; the select screen
-            reads the compact look, and the look had put the weapon COVER (1703726, family
-            170) in slot 11 of the drawn map with the real weapon demoted to the covered
-            map - a cover is not a weapon and carries no stance. Now the real weapon keeps
-            slot 11 and the cover rides in the u32 straight after the two maps, the weapon
-            STICKER field (look+0x2d; the reference's field order, I). Log in as Cobalt:
-              select screen shows the cane over the weapon, like the field -> done
-              select screen shows the bare weapon, no cane -> the sticker field is not
-                         +0x2d or the cover needs to be in the map too; say so
-              select screen shows the cane but no weapon stance / floating -> the sticker
-                         is drawn and slot 11 is being ignored; say so
-              anything else changed on select (a garment gone) -> say which
+         g) CASH EQUIPS SURVIVE A RELOG - CONFIRMED, and the weapon cover too (the owner,
+            2026-09-12: "Ubel's weapon is fine in game and on character select"). The cover
+            rides in the look's weapon-sticker u32 (look+0x2d) and the real weapon keeps
+            slot 11. Nothing to test here any more.
          h) NEW 2026-09-12 - HIMMEL'S CAPE HAS ITS EFFECT. "Himmel's cape should actually
             have an effect, but this effect currently does not appear." The cape's own image
             is 1x1 frames - the garment IS its effect - and worn-item effects live in
@@ -2987,15 +2976,8 @@ function Show-TestPlan {
         Write-Host '             wrong; say so' -ForegroundColor Yellow
         Write-Host '           0x0114 arrives, server refuses -> paste world.log line'
         Write-Host '           box in bag has no name/icon -> rename did not run; say so'
-        Write-Host '      g) CASH EQUIPS SURVIVE A RELOG - CONFIRMED. One miss: Ubel''s' -ForegroundColor Yellow
-        Write-Host '         weapon drew wrong on SELECT (fine in the field). The look had'
-        Write-Host '         the cover in slot 11 with the weapon demoted; a cover is not a'
-        Write-Host '         weapon. Now the weapon keeps slot 11 and the cover rides in the'
-        Write-Host '         weapon STICKER u32 after the two maps (look+0x2d, I). Cobalt:'
-        Write-Host '           select shows the cane over the weapon, like the field -> done'
-        Write-Host '           bare weapon, no cane -> sticker is not +0x2d; say so' -ForegroundColor Yellow
-        Write-Host '           cane but no stance / floating -> slot 11 ignored; say so'
-        Write-Host '           any other garment gone on select -> say which'
+        Write-Host '      g) CASH EQUIPS + THE WEAPON COVER SURVIVE A RELOG - CONFIRMED on select' -ForegroundColor DarkGray
+        Write-Host '         and in the field (2026-09-12). Nothing to test here.' -ForegroundColor DarkGray
         Write-Host '      h) NEW - HIMMEL''S CAPE EFFECT: the cape image is 1x1 frames; the' -ForegroundColor Yellow
         Write-Host '         effect lives in Effect/ItemEff.img, which the classic archive'
         Write-Host '         did not contain at all. Installed: ItemEff.img with 1103918'

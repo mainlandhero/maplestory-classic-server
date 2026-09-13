@@ -194,7 +194,7 @@ canvas image; 46 KB lands) onto a new `_Canvas/ItemEff.img`. Both verify. Plan s
 `research/himmel-cape-effect-2026-09-12.md`.
 
 **2026-09-12, night: cash equips survive a relog - CONFIRMED on screen** (the owner: *"I do see the
-cash equips on my character upon login"*), **with one miss fixed after it, unverified:** *"for
+cash equips on my character upon login"*), **and the weapon-sticker fix below is CONFIRMED too** (the owner, later: *"Ubel's weapon is fine in game and on character select"*) - so `look+0x2d` IS the weapon sticker, now **[L]** on screen. **The miss, as it was found:** *"for
 Ubel's weapon, I do not see the proper rendering of it on character select. (It does show up fine
 in the game world)"*. The field dresses from the worn list; the select screen reads the compact
 look, and `look_maps` had put the weapon COVER (1703726, family 170) in slot 11 of the drawn map
