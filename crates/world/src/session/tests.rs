@@ -10868,3 +10868,64 @@ fn a_wooden_box_stands_on_entry_breaks_on_the_fourth_hit_drops_and_comes_back() 
         assert_eq!(table[&1010][0].break_at, 4, "Reactor.wz 0000001: events on states 0..3");
     }
 }
+
+/// **A `prop`-marked reward is one draw from the pool, not the whole pool.** The owner, 2026-09-13:
+/// *"When I finished 'Please bring this letter to Lucas', Maria gave me one of every single
+/// Headband item when it's suppose to be choose 1 randomly from the pool."* Quest 1008 (Lucas's
+/// Reply) takes the letter back and offers seven headbands at `prop 1` each.
+#[test]
+fn lucas_reply_gives_one_headband_from_the_pool_and_takes_the_letter() {
+    let path = std::path::Path::new("../../gm-handbook/questlines.txt");
+    if !path.exists() {
+        return; // generated data, gitignored
+    }
+    let quests = crate::config::load_quests(path);
+    let q = &quests[&1008];
+    let pool: Vec<u32> = q.complete_rewards.iter().filter(|r| r.prop > 0).map(|r| r.id).collect();
+    assert_eq!(pool, vec![1002000, 1002001, 1002003, 1002004, 1002005, 1002006, 1002007], "the seven hats, prop 1");
+    assert_eq!(q.complete_rewards.iter().filter(|r| r.prop == 0).map(|r| (r.id, r.count)).collect::<Vec<_>>(), vec![(4031002, -1)], "the letter back, unconditional");
+    // The rule, on the data: every roll gives the letter-take and exactly one hat; every hat
+    // is reachable.
+    let mut seen = std::collections::BTreeSet::new();
+    for roll in 0..70u64 {
+        let chosen = crate::config::choose_rewards(&q.complete_rewards, 0, roll);
+        assert_eq!(chosen.len(), 2, "{chosen:?}");
+        assert_eq!(chosen[0].id, 4031002);
+        assert!(pool.contains(&chosen[1].id));
+        seen.insert(chosen[1].id);
+    }
+    assert_eq!(seen.len(), 7, "all seven hats come up across the rolls");
+
+    // Through the turn-in itself: the letter in the bag, the quest started, then completed.
+    let (mut s, store, id) = claimed_session();
+    s.config = Arc::new(Config { quests, set_field_probe: true, ..(*s.config).clone() });
+    store.add_item(id, store::InventoryType::Etc, &store::Item::bundle(4031002, 1), 1).unwrap();
+    store.start_quest(id, 1008).unwrap();
+    let out = s.record_quest_complete(1008, 1008);
+    assert!(out.iter().any(|r| r.opcode == net::quest::MESSAGE), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    let bag = store.bag(id).unwrap();
+    let hats: Vec<u32> = bag.items_in(store::InventoryType::Equip).map(|i| i.item.item_id).filter(|i| pool.contains(i)).collect();
+    assert_eq!(hats.len(), 1, "ONE headband, not seven: {hats:?}");
+    assert_eq!(bag.items_in(store::InventoryType::Etc).filter(|i| i.item.item_id == 4031002).count(), 0, "the letter went back");
+}
+
+/// The gender half of the same rule: a `gender 0` reward is for male characters, `gender 1`
+/// for female, absent or 2 for anyone.
+#[test]
+fn a_gendered_reward_goes_only_to_the_gender_it_names() {
+    use crate::config::{choose_rewards, RewardItem};
+    let rewards = vec![
+        RewardItem { id: 1, count: 1, prop: 0, gender: Some(0) },
+        RewardItem { id: 2, count: 1, prop: 0, gender: Some(1) },
+        RewardItem { id: 3, count: 1, prop: 0, gender: None },
+        RewardItem { id: 4, count: 1, prop: 0, gender: Some(2) },
+        RewardItem { id: 5, count: 1, prop: 3, gender: Some(0) },
+        RewardItem { id: 6, count: 1, prop: 3, gender: Some(1) },
+    ];
+    let male: Vec<u32> = choose_rewards(&rewards, 0, 0).iter().map(|r| r.id).collect();
+    assert_eq!(male, vec![1, 3, 4, 5]);
+    let female: Vec<u32> = choose_rewards(&rewards, 1, 0).iter().map(|r| r.id).collect();
+    assert_eq!(female, vec![2, 3, 4, 6]);
+    // A pool with nothing eligible draws nothing rather than panicking.
+    assert!(choose_rewards(&[RewardItem { id: 9, count: 1, prop: 1, gender: Some(1) }], 0, 5).is_empty());
+}

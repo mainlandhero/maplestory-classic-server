@@ -419,12 +419,28 @@ impl Session {
     /// item is reported and the completion stands.
     fn apply_quest_completion_rewards(&mut self, quest_id: u32) -> Vec<Reply> {
         let Some(quest) = self.config.quests.get(&quest_id) else { return Vec::new() };
-        let items = quest.complete_items.clone();
+        let rewards = quest.complete_rewards.clone();
         let exp = quest.complete_exp;
         let Some(chr) = self.claimed_character() else { return Vec::new() };
         let mut out = Vec::new();
 
-        for (item_id, count) in items {
+        // **One of the `prop`-marked items, not all of them.** The owner, 2026-09-13: *"Maria gave
+        // me one of every single Headband item when it's suppose to be choose 1 randomly from
+        // the pool."* `crate::config::choose_rewards` applies the rule; the roll is the
+        // session's, so a test can seed it.
+        let roll = self.rng.next();
+        let chosen = crate::config::choose_rewards(&rewards, chr.gender, roll);
+        if chosen.len() != rewards.len() {
+            crate::server::log(&format!(
+                "   quest {quest_id}: {} of {} reward rows handed over - {} prop-marked item(s) form a pool and ONE was drawn ({:?}); gender {} filtered the rest",
+                chosen.len(),
+                rewards.len(),
+                rewards.iter().filter(|r| r.prop > 0).count(),
+                chosen.iter().filter(|r| r.prop > 0).map(|r| r.id).collect::<Vec<_>>(),
+                chr.gender
+            ));
+        }
+        for crate::config::RewardItem { id: item_id, count, .. } in chosen {
             let Some(inv) = store::InventoryType::for_item(item_id) else { continue };
             if count > 0 {
                 let max_stack = self.config.shops.max_stack(item_id);

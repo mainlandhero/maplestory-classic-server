@@ -1352,6 +1352,11 @@ pub struct Quest {
     /// A positive count is a reward and a negative one is the quest taking its item back.
     /// Quest 1001's is `(4031000, -1)`: Heena keeps the mirror.
     pub complete_items: Vec<(u32, i32)>,
+    /// [`Quest::start_items`] and [`Quest::complete_items`] with their rules: `prop` and
+    /// `gender`. The hand-out reads THESE through [`choose_rewards`]; the pairs above are the
+    /// whole list, kept for the readers that count it.
+    pub start_rewards: Vec<RewardItem>,
+    pub complete_rewards: Vec<RewardItem>,
     /// `Act.1.exp` - experience for turning it in. Quest 1001's is 2.
     pub complete_exp: u64,
     /// The conversation, keyed by the `Say` path with the line index removed.
@@ -1396,7 +1401,64 @@ pub struct Quest {
 ///
 /// The id and the count are separate rows in `questlines.txt` and nothing promises which
 /// arrives first, so both sides are optional until the file is exhausted.
-type HalfItem = (Option<u32>, Option<i32>);
+/// One `Act.<state>.item.<n>` while its rows are being stitched together: `.id`, `.count`,
+/// and the two the random-reward rule reads, `.prop` and `.gender`.
+#[derive(Debug, Clone, Default)]
+struct HalfItem {
+    id: Option<u32>,
+    count: Option<i32>,
+    prop: u32,
+    gender: Option<u8>,
+}
+
+/// One item a quest hands over or takes, with the rule that decides whether it does.
+///
+/// The owner, 2026-09-13: *"When I finished 'Please bring this letter to Lucas', Maria gave me one of
+/// every single Headband item when it's suppose to be choose 1 randomly from the pool."* Quest
+/// 1008's `Act.1.item.1..7` are seven headbands, each with **`prop 1`** - the WZ's mark for
+/// "one of these, at random, weighted by prop". `Act.1.item.0` (the letter back, `count -1`)
+/// carries no `prop` and is unconditional. 39 quests use the mark. **[L]** for the data;
+/// the weighted-pick reading of `prop` is the one every server has used and the only one that
+/// makes seven `prop 1` hats a reward rather than a wardrobe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RewardItem {
+    pub id: u32,
+    /// Positive gives, negative takes.
+    pub count: i32,
+    /// `0`: unconditional. `> 0`: one item is chosen from all the `prop > 0` items of the same
+    /// state, each with weight `prop`.
+    pub prop: u32,
+    /// `Some(0)` male only, `Some(1)` female only, `None` (or 2) anyone.
+    pub gender: Option<u8>,
+}
+
+impl RewardItem {
+    /// Whether this character may receive it at all.
+    pub fn fits_gender(&self, gender: u8) -> bool {
+        !matches!(self.gender, Some(g) if g < 2 && g != gender)
+    }
+}
+
+/// Which of `rewards` a turn-in actually hands over: every unconditional one, and ONE of the
+/// `prop`-marked ones, drawn with weight `prop`, after the gender filter. `roll` is the
+/// caller's random number; the same number always picks the same item.
+pub fn choose_rewards(rewards: &[RewardItem], gender: u8, roll: u64) -> Vec<RewardItem> {
+    let eligible: Vec<&RewardItem> = rewards.iter().filter(|r| r.fits_gender(gender)).collect();
+    let mut out: Vec<RewardItem> = eligible.iter().filter(|r| r.prop == 0).map(|r| (*r).clone()).collect();
+    let pool: Vec<&RewardItem> = eligible.iter().copied().filter(|r| r.prop > 0).collect();
+    let total: u64 = pool.iter().map(|r| u64::from(r.prop)).sum();
+    if total > 0 {
+        let mut pick = roll % total;
+        for r in pool {
+            if pick < u64::from(r.prop) {
+                out.push(r.clone());
+                break;
+            }
+            pick -= u64::from(r.prop);
+        }
+    }
+    out
+}
 
 /// The `<n>` out of `<state>.item.<n>.id`.
 fn act_item_index(dotted: &str) -> Option<usize> {
@@ -1514,14 +1576,28 @@ fn read_quest_rows(text: &str, out: &mut HashMap<u32, Quest>, mode: Overlay) -> 
                 if let (Some(st), Some(n), Some(id)) =
                     (act_state(dotted), act_item_index(dotted), value.parse::<u32>().ok())
                 {
-                    act_items.entry((qid, st)).or_default().entry(n).or_default().0 = Some(id);
+                    act_items.entry((qid, st)).or_default().entry(n).or_default().id = Some(id);
                 }
             }
             "Act" if dotted.ends_with(".count") && act_state(dotted).is_some() => {
                 if let (Some(st), Some(n), Some(c)) =
                     (act_state(dotted), act_item_index(dotted), value.parse::<i32>().ok())
                 {
-                    act_items.entry((qid, st)).or_default().entry(n).or_default().1 = Some(c);
+                    act_items.entry((qid, st)).or_default().entry(n).or_default().count = Some(c);
+                }
+            }
+            "Act" if dotted.ends_with(".prop") && act_state(dotted).is_some() => {
+                if let (Some(st), Some(n), Some(p)) =
+                    (act_state(dotted), act_item_index(dotted), value.parse::<i64>().ok())
+                {
+                    act_items.entry((qid, st)).or_default().entry(n).or_default().prop = u32::try_from(p.max(0)).unwrap_or(0);
+                }
+            }
+            "Act" if dotted.ends_with(".gender") && act_state(dotted).is_some() => {
+                if let (Some(st), Some(n), Some(g)) =
+                    (act_state(dotted), act_item_index(dotted), value.parse::<u8>().ok())
+                {
+                    act_items.entry((qid, st)).or_default().entry(n).or_default().gender = Some(g);
                 }
             }
             "Act" if dotted == "1.exp" && (fill || quest.complete_exp == 0) => {
@@ -1579,11 +1655,18 @@ fn read_quest_rows(text: &str, out: &mut HashMap<u32, Quest>, mode: Overlay) -> 
             continue;
         }
         // BTreeMap: index order, so a two-item reward is handed over the same way twice.
-        for (_, (id, count)) in indexed {
-            if let (Some(id), Some(count)) = (id, count) {
+        for (_, half) in indexed {
+            if let (Some(id), Some(count)) = (half.id, half.count) {
+                let reward = RewardItem { id, count, prop: half.prop, gender: half.gender };
                 match state {
-                    0 => quest.start_items.push((id, count)),
-                    _ => quest.complete_items.push((id, count)),
+                    0 => {
+                        quest.start_items.push((id, count));
+                        quest.start_rewards.push(reward);
+                    }
+                    _ => {
+                        quest.complete_items.push((id, count));
+                        quest.complete_rewards.push(reward);
+                    }
                 }
             }
         }
