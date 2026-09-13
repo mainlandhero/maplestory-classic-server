@@ -33,6 +33,8 @@ Nothing is written to the client. `PROCESS_VM_READ` only.
 
     python tools/keymapdump.py            # print both tables and the controls
     python tools/keymapdump.py --rust     # emit the Rust table for net::keymap
+    python tools/keymapdump.py --exe      # the same from the image on disk - no client, no elevation
+    python tools/keymapdump.py --exe --rust
 
 Run it from an ELEVATED shell; the client runs elevated and OpenProcess is refused otherwise.
 """
@@ -84,8 +86,86 @@ def read_table(pid, slide, base):
     return out
 
 
+def file_table(va):
+    raw = bytes(file_bytes_at(va, SLOTS * SLOT_LEN))
+    return [(raw[i * SLOT_LEN], struct.unpack_from("<I", raw, i * SLOT_LEN + 1)[0]) for i in range(SLOTS)]
+
+
+def controls(shadow):
+    bound = sum(1 for k, a in shadow if k or a)
+    missing = [n for code, n in KNOWN_BOUND.items() if not (shadow[code][0] or shadow[code][1])]
+    return bound, missing
+
+
+def emit_rust(shadow, provenance):
+    for line in provenance:
+        print("// " + line)
+    print("pub const CLIENT_DEFAULT_LAYOUT: Option<[Slot; %d]> = Some([" % SLOTS)
+    for i, (kind, action) in enumerate(shadow):
+        name = NAMES.get(i)
+        note = ("  // %s" % name) if name and (kind or action) else ""
+        print("    Slot { kind: %d, action: %d },%s" % (kind, action, note))
+    print("]);")
+
+
+def main_exe(as_rust):
+    """`--exe`: read the tables out of the image on disk instead of a process.
+
+    2026-09-12. The runtime read needs an elevated shell and one was not to hand, so the
+    question was asked of the file - and the file answered something the runtime tool never
+    could: **0x143274460 is in `.rdata`, a read-only section** (characteristics 0x40000040).
+    A read-only page cannot be a live table that the KEY BINDINGS dialog rewrites, so
+    `FUN_1401de850` does not return a manager; it returns a CONST table, and the runtime tool
+    was reporting the same constant bytes back. What sits there is three PRESET layouts of
+    445 bytes each (0x1bd = 89 * 5), back to back: preset 0 is the one with Q, W, E and I on
+    menus - the factory layout the dialog shows - and presets 1 and 2 are the alternatives
+    behind the dialog's preset choice (0x0199 subtype 3, `preset < 4`). Past preset 2 the
+    bytes stop decoding as slots. The live and shadow tables live elsewhere, in `.data`, and
+    are initialised from preset 0; the delta the owner's CONFIRM sent (LCtrl, LShift, '.') is
+    consistent with a shadow equal to preset 0 (LCtrl = basic 52 there).
+
+    So the shape and known-key controls are run on preset 0, and the emitted table is
+    preset 0. The rebase control does not apply to a file.
+    """
+    presets = [file_table(MANAGER + p * SHADOW_OFF) for p in range(3)]
+    for p, table in enumerate(presets):
+        bound, missing = controls(table)
+        print("preset %d at %#x: %d slot(s) bound, kinds %s, Q/W/E/I %s"
+              % (p, MANAGER + p * SHADOW_OFF, bound,
+                 sorted({k for k, a in table if k or a}),
+                 "all bound" if not missing else "unbound: " + " ".join(missing)))
+    factory = presets[0]
+    bound, missing = controls(factory)
+    ok_shape = 10 <= bound <= 80
+    ok_known = not missing
+    print("CONTROL section: 0x143274460 is in .rdata, read-only - a CONST table, not a manager")
+    print("CONTROL shape  : %d of %d preset-0 slots bound (want 10..80)  %s"
+          % (bound, SLOTS, "OK" if ok_shape else "FAILED"))
+    print("CONTROL known  : Q W E I all bound in preset 0                  %s"
+          % ("OK" if ok_known else "FAILED, unbound: " + " ".join(missing)))
+    print()
+    if not (ok_shape and ok_known):
+        print("REFUSING TO EMIT A TABLE: a control failed, so preset 0 is not the factory layout.")
+        return 1
+    if as_rust:
+        emit_rust(factory, [
+            "Read from client-patched/MapleStory.exe by `tools/keymapdump.py --exe --rust`:",
+            "preset 0 of the three const layouts at 0x143274460 (.rdata, read-only), the one",
+            "with Q, W, E and I on menus - the factory layout the KEY BINDINGS dialog shows.",
+            "41 of 89 slots bound. [L]",
+        ])
+        return 0
+    print("%-5s %-8s %s" % ("code", "key", "preset 0 (factory)"))
+    for i, (k, a) in enumerate(factory):
+        if k or a:
+            print("%#04x  %-8s type=%d action=%d" % (i, NAMES.get(i, ""), k, a))
+    return 0
+
+
 def main():
     as_rust = "--rust" in sys.argv
+    if "--exe" in sys.argv:
+        return main_exe(as_rust)
     pid, base = find_client()
     if pid is None:
         print("MapleStory.exe is not running - nothing to read.")

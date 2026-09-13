@@ -150,6 +150,20 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-12, night: the key layout comes back on login - unverified on screen.** The owner: *"Saving
+keyboard layout still does not work. I tried putting both Power Strike on control and Slash Blast on
+shift. It did not survive a re-login."* The save was fine (world.log 23:56:57: three bindings
+merged, three rows); the restore had been switched off since 2026-09-08 behind
+`CLIENT_DEFAULT_LAYOUT = None`, waiting on a runtime dump that needs an elevated shell. Asked of the
+file instead, and the file said more: **`0x143274460` is in `.rdata`, read-only** (characteristics
+`0x40000040`), so it was never a live manager - it is a const table, and `0x1bd` is the stride of a
+preset array: three 89-slot layouts, 41 bound each, kinds 4/5/6 only; preset 0 alone has Q, W, E and
+I on menus, with LCtrl = basic 52 and Space = 54, and the owner's delta (LCtrl, LShift, '.') is
+consistent with it. That is the factory layout, **[L]** from the bytes; `tools/keymapdump.py --exe`
+re-derives it under the shape and known-key controls. Pasted in; `restore` now builds the READ-gate
+`0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
+`research/keyboard-layout-2026-09-08.md` section 7.
+
 **2026-09-12, night: Himmel's cape has its effect - installed, unverified on screen.** The owner:
 *"Himmel's cape should actually have an effect, but this effect currently does not appear in our
 version of the game."* The cape (Himmel's Blessing, 1103918) is 1x1 frames in its own image - the
@@ -1363,7 +1377,7 @@ which on screen is indistinguishable from absent.
 | ~~dropping mesos (old)~~ | **NOT blocked, and NOT implemented - the server refuses on purpose.** The opcode row above was stale: this was the second of the two absence claims flagged on 2026-09-09, and it is now retracted. `0x0143` is known, the body is 8 bytes, `net::dropmoney::parse_drop_money` decodes it and a test decodes **two captured drops** as ten mesos. What `world::mesodrop::on_drop_money` does is *refuse*: it answers the exclusive-request unlock and a chat line, `"Mesos cannot be dropped on this server."` That fix was about the **freeze** - a meso drop used to leave `+0x2330` latched and kill every later inventory action - and it was never about making the drop work. The owner, 2026-09-09: *"I still cannot drop mesos"*, which is exactly what this code does. The pieces to finish it are present: `Field::drop_item` places a player's bag drop and `net::drops::FieldDrop::money` is the money object mobs already use |
 | `0x0183` accept/decline | **settled from the listing, 2026-09-05 evening**, not blocked. The answer byte is the `0x1B` outcome numbering: the `0x03` handler itself sends 0 (dialog opening), 1 (blocking), 2 (busy) or 3 (already invited) before any click, and the buttons send 4 Decline / 5 Accept. The slot order is [L] from the first capture. `net::party::invite_answer`. Unwatched on a screen: a click of each button, and a faded dialog followed by a re-invite (invites lapse server-side after 60 s) |
 | second-job skill casts | none of the 66 has a cast handler. `firstjob.rs` is the shape it wants |
-| the keyboard layout | **HALF DONE, and the half that is missing is the half the owner can see.** The row used to say *"nothing has ever tried - neither opcode is known"*; both are known now (`0x0199` in, `0x05F1` out) and the save is stored per character. **The RESTORE does not run**: `0x0199` carries a *delta* against the client's own default table, so replaying it needs that table, and `net::keymap::CLIENT_DEFAULT_LAYOUT` is `None`. The owner, 2026-09-08, on a fresh client: *"The keyboard layout is back to default"* - that is this gap, not a save failure. One command against a running client fills it: `python tools\keymapdump.py --rust` |
+| the keyboard layout | **DONE on both halves as of 2026-09-12, restore unverified on screen.** `0x0199` in, `0x05F1` out; the save stores one row per key (`character_keymap`). The restore needed the client's factory table because `0x0199` is a delta; it is measured now, off the image: `0x143274460` is a **read-only const table** in `.rdata` - three 89-slot presets, stride `0x1bd` - and preset 0 (Q/W/E/I on menus, LCtrl attack, Space jump, 41 bound) is `net::keymap::CLIENT_DEFAULT_LAYOUT`. `tools/keymapdump.py --exe` re-derives it with the controls. After every SetField the READ gate and all 89 slots go out. Plan step 6 says what each screen outcome means |
 
 ### What to do next, in order
 

@@ -10557,3 +10557,40 @@ fn a_cash_equip_worn_at_105_is_drawn_and_listed_on_the_next_field_entry() {
         .iter().find(|r| r.opcode == net::opcode::SET_FIELD).expect("a SetField").body.clone();
     assert_eq!(sf.len() - without.len(), block.len(), "one block with one entry, and nothing else moved");
 }
+
+/// **A saved key layout comes back on the next field entry.** The owner, 2026-09-12: *"Saving
+/// keyboard layout still does not work. I tried putting both Power Strike on control and Slash
+/// Blast on shift. It did not survive a re-login."* The rows were in the database; the
+/// restore was switched off behind an unmeasured factory table. Now the SetField is followed
+/// by a 0x05F1 with the READ gate and all 89 slots, the saved two on top of the factory 41.
+#[test]
+fn a_saved_key_layout_is_restored_right_after_the_setfield() {
+    let (mut s, store, id) = claimed_session();
+    // The owner's delta from world.log 23:56:57: LCtrl -> Power Strike, LShift -> Slash Blast,
+    // '.' -> basic 52 (the attack the client moved off LCtrl).
+    let body: Vec<u8> = {
+        let mut b = vec![0u8, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 3];
+        for (key, kind, action) in [(0x1Du8, 1u8, 1_001_002u32), (0x2A, 1, 1_001_001), (0x34, 5, 52)] {
+            b.push(key);
+            b.push(kind);
+            b.extend_from_slice(&action.to_le_bytes());
+        }
+        b
+    };
+    s.on_keymap_change(&body);
+    assert_eq!(store.keymap(id).unwrap().len(), 3, "the save half, as before");
+
+    let mut chr = s.claimed_character().expect("the claim resolves");
+    let replies = s.go_to_map(&mut chr, 40, 0, "a relog, as far as the keymap is concerned".to_string());
+    let sf = replies.iter().position(|r| r.opcode == net::opcode::SET_FIELD).expect("a SetField");
+    let km = replies.iter().position(|r| r.opcode == net::keymap::KEYMAP_INIT).expect("a FuncKeyMappedInit");
+    assert!(km > sf, "the keymap rides AFTER the SetField that builds the stage it belongs to");
+    let b = &replies[km].body;
+    assert_eq!(b[0], 0, "READ gate");
+    assert_eq!(b.len(), 1 + net::keymap::SLOT_COUNT * 5);
+    let slot = |code: usize| (b[1 + code * 5], u32::from_le_bytes(b[2 + code * 5..6 + code * 5].try_into().unwrap()));
+    assert_eq!(slot(0x1D), (1, 1_001_002), "Power Strike on LCtrl");
+    assert_eq!(slot(0x2A), (1, 1_001_001), "Slash Blast on LShift");
+    assert_eq!(slot(0x34), (5, 52));
+    assert_eq!(slot(0x10), (4, 8), "and Q is still the factory menu, not a zero");
+}
