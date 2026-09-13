@@ -529,9 +529,103 @@ impl Session {
         out
     }
 
+    /// `itemCon` / `itemConNo`: the item a cast throws. **Three Snails** is the case that
+    /// exists in this client - `Skill.wz` level 1 throws a Snail Shell (4000001), level 2 a
+    /// Blue Snail Shell (4000002), level 3 a Red Snail Shell (4000004), one a cast. **[L]**
+    ///
+    /// The owner, 2026-09-13: *"Three Snails is a skill that takes 1 Red Snail Shell to cast. If
+    /// the user does not have red snail shells in their inventory, the skill should output a
+    /// red error text in chat saying you do not have enough Red Snail Shell to cast this
+    /// skill. Casting it should decrease the client's Red Snail Shell inventory count by 1."*
+    ///
+    /// Unlike the MP and the arrows, **this one refuses**: `Err` carries the red line and the
+    /// caller returns it alone - no MP spent, no damage applied, no broadcast. The client
+    /// let the swing out (its own `itemCon` check does not fire in this build, or the owner would
+    /// never have seen it cast), so the server is the only thing that can say no. The line is
+    /// the client's own system category (11, `0xFFFFAFAF` - the colour of every "You cannot"
+    /// it prints itself), through `net::message::chat_line_system`.
+    ///
+    /// `Ok` carries the stack updates: the lowest matching stack first, `0x0070` per stack
+    /// touched, the same shape `spend_attack_arrows` uses.
+    fn spend_attack_item(&mut self, opcode: u16, payload: &[u8]) -> Result<Vec<Reply>, Vec<Reply>> {
+        let Some(chr) = self.claimed_character() else { return Ok(Vec::new()) };
+        let Ok(parsed) = net::attack::parse(opcode, payload) else { return Ok(Vec::new()) };
+        let Some((skill_id, claimed_level)) = parsed.skill() else { return Ok(Vec::new()) };
+        let level = self
+            .store
+            .skill_level(chr.id, skill_id)
+            .ok()
+            .filter(|l| *l > 0)
+            .unwrap_or(u32::from(claimed_level));
+        let Some(row) = self.config.firstjob.level(skill_id, level) else { return Ok(Vec::new()) };
+        let Some(item_id) = row.item_con.filter(|id| *id != 0) else { return Ok(Vec::new()) };
+        let need = row.item_con_no.unwrap_or(1).max(1);
+        // The tab is the id's first digit: 2 is Use, 4 is Etc - the shells' tab.
+        let inv = match item_id / 1_000_000 {
+            2 => store::InventoryType::Use,
+            _ => store::InventoryType::Etc,
+        };
+        let stacks = self.store.bag_items(chr.id, inv).unwrap_or_default();
+        let held: u32 = stacks
+            .iter()
+            .filter(|r| r.item.item_id == item_id)
+            .map(|r| u32::from(r.item.kind.quantity()))
+            .sum();
+        let name = self
+            .config
+            .item_names
+            .get(&item_id)
+            .cloned()
+            .unwrap_or_else(|| format!("item {item_id}"));
+        if held < need {
+            let text = format!("You do not have enough {name} to cast this skill.");
+            crate::server::log(&format!(
+                "   itemCon: skill {skill_id} level {level} needs {need} x {item_id} ({name}); the {inv:?} tab holds {held} - REFUSED, nothing spent, no damage"
+            ));
+            return Err(vec![Reply {
+                opcode: net::message::MESSAGE,
+                body: net::message::chat_line_system(&text),
+                what: format!("Message chat line (system, category 11): {text:?} - skill {skill_id} refused for want of {need} x {item_id}"),
+            }]);
+        }
+        let mut remaining = need;
+        let mut out = Vec::new();
+        let mut taken_from = Vec::new();
+        for r in stacks.iter().filter(|r| r.item.item_id == item_id) {
+            if remaining == 0 {
+                break;
+            }
+            let have = u32::from(r.item.kind.quantity());
+            if have == 0 {
+                continue;
+            }
+            let take = remaining.min(have);
+            if let Err(e) = self.store.remove_item(chr.id, inv, r.slot, Some(u16::try_from(take).unwrap_or(u16::MAX))) {
+                crate::server::log(&format!("   itemCon: could not take {take} x {item_id} from {inv:?} slot {}: {e}", r.slot));
+                break;
+            }
+            let left = u16::try_from(have - take).unwrap_or(0);
+            out.extend(self.stack_change_replies(inv, r.slot, left));
+            taken_from.push(format!("slot {} ({have} -> {left})", r.slot));
+            remaining -= take;
+        }
+        crate::server::log(&format!(
+            "   itemCon: skill {skill_id} level {level} threw {} x {item_id} ({name}) - {}",
+            need - remaining,
+            taken_from.join(", ")
+        ));
+        Ok(out)
+    }
+
     pub(super) fn on_attack(&mut self, opcode: u16, payload: &[u8]) -> Vec<Reply> {
         let Ok(attack) = net::combat::parse_attack(payload) else {
             return Vec::new();
+        };
+        // **The item the cast throws, before anything else - and the one cost that refuses.**
+        // Three Snails without a shell: the red line, and nothing else this swing would do.
+        let thrown = match self.spend_attack_item(opcode, payload) {
+            Ok(replies) => replies,
+            Err(refusal) => return refusal,
         };
         // **The MP the skill cost, before anything else this swing does.**
         //
@@ -553,7 +647,8 @@ impl Session {
         // **Log only, never refuse.** The client has already played the animation and
         // computed its damage; rejecting the swing here would desynchronise the very thing
         // this is fixing. If the MP does not cover it we spend what there is and say so.
-        let mut out = self.spend_attack_costs(opcode, payload);
+        let mut out = thrown;
+        out.extend(self.spend_attack_costs(opcode, payload));
         // **And the arrows or stars it cost.** Same rule as the MP: the shot has already
         // left the weapon on screen, so the server takes what it owes and never refuses.
         out.extend(self.spend_attack_arrows(opcode, payload));

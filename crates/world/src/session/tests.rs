@@ -10637,3 +10637,73 @@ fn accepting_a_quest_with_no_yes_branch_sends_the_record_and_no_dialogue() {
     assert_eq!(heena.len(), 2, "record + the yes branch, unchanged");
     assert!(heena[1].what.contains("0.yes"), "{}", heena[1].what);
 }
+
+/// **Three Snails throws a shell, and without one it is refused with a red line.** The owner,
+/// 2026-09-13: *"Three Snails is a skill that takes 1 Red Snail Shell to cast. If the user does
+/// not have red snail shells in their inventory, the skill should output a red error text in
+/// chat saying you do not have enough Red Snail Shell to cast this skill. Casting it should
+/// decrease the client's Red Snail Shell inventory count by 1."* Level 3 throws 4000004; the
+/// rows come from the client's own Skill.wz.
+#[test]
+fn three_snails_throws_a_red_snail_shell_and_is_refused_in_red_without_one() {
+    let skills = std::path::Path::new("../../gm-handbook/skills.txt");
+    if !skills.exists() {
+        return; // generated, gitignored
+    }
+    const THREE_SNAILS: u32 = 1_000;
+    const RED_SNAIL_SHELL: u32 = 4_000_004;
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    store.set_gm("maplecw", true).unwrap();
+    let chr = net::opcode::Character { name: "Beginner".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &chr).unwrap();
+    made.mp = 50;
+    made.max_mp = 50;
+    store.save_character_progress(&made).unwrap();
+    store.set_skill_level(made.id, THREE_SNAILS, 3).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let mut config = Config {
+        set_field_probe: true,
+        firstjob: crate::firstjob::CombatTable::load(skills),
+        ..Config::default()
+    };
+    config.item_names.insert(RED_SNAIL_SHELL, "Red Snail Shell".to_string());
+    let row = config.firstjob.level(THREE_SNAILS, 3).expect("Three Snails level 3");
+    assert_eq!(row.item_con, Some(RED_SNAIL_SHELL), "the premise, from Skill.wz");
+    assert_eq!(row.item_con_no.unwrap_or(1), 1);
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    s.claim_for_character(made.id);
+    let shells = |store: &Arc<Store>| -> u16 {
+        store.bag_items(made.id, store::InventoryType::Etc).unwrap().iter()
+            .filter(|r| r.item.item_id == RED_SNAIL_SHELL).map(|r| r.item.kind.quantity()).sum()
+    };
+
+    // Two shells in the Etc tab.
+    store.add_item(made.id, store::InventoryType::Etc, &store::Item::bundle(RED_SNAIL_SHELL, 2), 2).unwrap();
+    assert_eq!(shells(&store), 2);
+
+    // First cast: one shell gone, the client told (an InventoryOperation), MP still spent.
+    let out = s.handle(&swing_packet(net::combat::USER_MELEE_ATTACK, THREE_SNAILS));
+    assert_eq!(shells(&store), 1, "one shell thrown");
+    assert!(out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "the count change reaches the client: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED), "and the MP is still charged");
+    assert!(!out.iter().any(|r| r.opcode == net::message::MESSAGE), "no complaint with a shell in hand");
+
+    // Second cast: the last shell, and the stack disappears.
+    s.handle(&swing_packet(net::combat::USER_MELEE_ATTACK, THREE_SNAILS));
+    assert_eq!(shells(&store), 0);
+
+    // Third cast: refused. The red system line, and NOTHING else - no MP, no inventory op.
+    let mp_before = s.claimed_character().unwrap().mp;
+    let out = s.handle(&swing_packet(net::combat::USER_MELEE_ATTACK, THREE_SNAILS));
+    assert_eq!(out.len(), 1, "the line alone: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert_eq!(out[0].opcode, net::message::MESSAGE);
+    assert_eq!(out[0].body[0], net::message::kind::CHAT_LINE_SYSTEM, "the client's own red system category");
+    let text = String::from_utf8_lossy(&out[0].body[3..]).into_owned();
+    assert!(text.contains("not have enough Red Snail Shell"), "{text}");
+    assert_eq!(s.claimed_character().unwrap().mp, mp_before, "a refused cast costs no MP");
+
+    // The control: an ordinary swing with no skill is untouched by any of this.
+    let plain = s.handle(&swing_packet(net::combat::USER_MELEE_ATTACK, 0));
+    assert!(!plain.iter().any(|r| r.opcode == net::message::MESSAGE));
+}
