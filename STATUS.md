@@ -179,6 +179,26 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13: the box after Rain's OK is the client's, and a launch with watches names it.**
+The owner: *"Rain still repeats their dialogue when I select the right answer and then press OK. I believe
+the quest should be immediately completed when I select the right answer, and then the following
+OK dialogue should be the end of the conversation."* The completion IS immediate now (`c161593`):
+`world.log` 16:37:14 shows the right answer -> `0x0089` complete, +300 exp, QuestClear, one Say
+(*"That's right! ..."*); the OK's `0x00F3` at 16:37:15.698; and **nothing sent after it** - no Say,
+no menu, and no `0x0151` until 16:57. So the box the owner saw after OK is drawn by the client from the
+completion record, exactly as the fixture of 04:59 showed. What the client does with a state-2
+record is now read rather than guessed: `FUN_142d59e20` (`research/msexe-quest-record-handler.c`,
+`-tail.c`, `-next.c`, `-available.c`) writes the record (`FUN_142d5b750`), and on the way walks
+every quest whose prerequisite is the one just completed, checks its requirements
+(`FUN_140711d70`) and raises a fade pop-up for a newly available one (`FUN_14180d7f0`,
+`UI/FadeYesNo.img/FadeYesNo/icon6`); a separate path (`FUN_142ce6750`) can open a quest's own
+dialogue through `FUN_142d9ac30`, the opener every NPC click uses. **Which of those the owner saw, and
+for which quest, is not established** - the server cannot see it and the hook has never watched
+those functions. Plan step TO(t) is a launch with `watch@` on all four (each logs its quest id and
+return address) and asks for the exact text of the box. No server change until then: the two
+plausible answers need opposite work (send the record after the OK, or leave the chain's auto-offer
+alone), and the third needs none.
+
 **2026-09-13: the spawn audit, and a kill now refills the map rather than its own point.** The owner:
 *"the monster spawn seems to be at the maximum map cap every time even while being the only person
 in the map."* Measured first, from the two latest runs: A Split Road (66 points) got **49**, map 50
