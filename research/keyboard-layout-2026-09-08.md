@@ -247,3 +247,40 @@ rather than to correct one we are already sending.
 
 Nothing here is wired yet - `grep -rn "keymap|key_map|func_key|quickslot" --include=*.rs crates/`
 still returns nothing.
+
+
+## 7. The factory table, measured from the file - 2026-09-12
+
+The owner: *"Saving keyboard layout still does not work. I tried putting both Power Strike on control
+and Slash Blast on shift. It did not survive a re-login."* The save had worked; the restore was
+off behind the unmeasured table above, and the runtime dump needs an elevated shell that the
+agent's shell is not. So the image was read instead, at the address `FUN_1401de850` returns.
+
+**`0x143274460` is in `.rdata`, characteristics `0x40000040` - read-only.** **[L]** A live
+table the KEY BINDINGS dialog rewrites cannot be on a read-only page, so the "static manager"
+reading above and in the tool's docstring was wrong: the getter returns a **const** table, and
+the runtime tool, had it run, would have reported the file's own bytes back. `0x1bd` is not a
+shadow offset. It is the stride of a preset array:
+
+| preset | at | bound | kinds | Q / W / E / I | LCtrl | Space |
+|---:|---|---:|---|---|---|---|
+| 0 | `0x143274460` | 41 | 4, 5, 6 | menus 8 / 5 / 0 / 1 | basic 52 | basic 54 |
+| 1 | `0x14327461d` | 41 | 4, 5, 6 | I only | basic 52 | basic 54 |
+| 2 | `0x1432747da` | 41 | 4, 5, 6 | I only | basic 52 | basic 54 |
+| 3.. | `0x143274997` | - | garbage | - | - | - |
+
+All **[L]**, `tools/keymapdump.py --exe`. Preset 0 is the only one that passes the tool's own
+known-keys control (Q, W, E, I visibly bound in the dialog), and its shape matches the layout
+every MapleStory client has shipped - number row and Q..P on menus, Z pick-up, X sit, LCtrl
+attack, LAlt/Space jump, F1..F7 macros. It is the factory layout, and the live and shadow tables
+(wherever in `.data` they are) start as copies of it. The owner's one CONFIRM delta - LCtrl, LShift
+and '.' - is consistent: LCtrl held basic 52 in preset 0, which is why dropping a skill there
+displaced attack onto '.'.
+
+`0x0199` subtype 3 selects `preset < 4`; three tables decode, so the fourth value is either a
+"custom" marker or unused. Not established, and not needed yet: a character who picked preset 1
+or 2 would restore onto preset 0 with their deltas applied, which is wrong for the keys those
+presets differ on. Nothing has picked one; the store keeps the preset byte if it ever arrives.
+
+`net::keymap::CLIENT_DEFAULT_LAYOUT` is preset 0 now. `restore` sends the READ gate and all 89
+slots after every SetField. Unverified on screen; plan step 6.

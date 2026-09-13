@@ -94,12 +94,115 @@ impl Slot {
     }
 }
 
-/// The client's factory layout, measured off a running client.
+/// The client's factory layout - preset 0 of the three const tables in the image.
 ///
-/// `None` until `tools/keymapdump.py --rust` fills it in from the shadow table at
-/// `0x143274460 + 0x1bd`. See the module docs for why this is not guessed. While it is `None`,
-/// [`restore`] returns [`keymap_init_keep`] and the client keeps its own defaults.
-pub const CLIENT_DEFAULT_LAYOUT: Option<[Slot; SLOT_COUNT]> = None;
+/// The owner, 2026-09-12: *"Saving keyboard layout still does not work. I tried putting both Power
+/// Strike on control and Slash Blast on shift. It did not survive a re-login."* The save had
+/// worked (three rows in `character_keymap`); this was `None`, so [`restore`] sent nothing.
+///
+/// Measured from the file rather than a process, and the file said more than the process
+/// would have: `0x143274460` is in **`.rdata`, read-only** (characteristics `0x40000040`), so
+/// it cannot be a live table the dialog rewrites - it is a CONST table, and `0x1bd` is not a
+/// shadow offset but the stride of a preset array: three 89-slot layouts back to back, 41
+/// slots bound each, kinds 4/5/6 only, and only preset 0 has Q, W, E and I on menus - the
+/// layout the KEY BINDINGS dialog shows. The live and shadow tables are initialised from it,
+/// which the one CONFIRM delta seen agrees with (LCtrl was basic 52 there). **[L]** for the
+/// bytes; `tools/keymapdump.py --exe` re-derives them with the shape and known-key controls.
+// Read from client-patched/MapleStory.exe by `tools/keymapdump.py --exe --rust`:
+// preset 0 of the three const layouts at 0x143274460 (.rdata, read-only), the one
+// with Q, W, E and I on menus - the factory layout the KEY BINDINGS dialog shows.
+// 41 of 89 slots bound. [L]
+pub const CLIENT_DEFAULT_LAYOUT: Option<[Slot; 89]> = Some([
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 4, action: 46 },  // Esc
+    Slot { kind: 4, action: 10 },  // 1
+    Slot { kind: 4, action: 12 },  // 2
+    Slot { kind: 4, action: 13 },  // 3
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 4, action: 8 },  // Q
+    Slot { kind: 4, action: 5 },  // W
+    Slot { kind: 4, action: 0 },  // E
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 4, action: 1 },  // I
+    Slot { kind: 4, action: 4 },  // O
+    Slot { kind: 4, action: 19 },  // P
+    Slot { kind: 4, action: 6 },  // [
+    Slot { kind: 4, action: 15 },  // ]
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 5, action: 52 },  // LCtrl
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 4, action: 2 },  // S
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 4, action: 11 },  // H
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 4, action: 3 },  // K
+    Slot { kind: 4, action: 55 },  // L
+    Slot { kind: 4, action: 58 },  // ;
+    Slot { kind: 4, action: 16 },  // '
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 4, action: 9 },
+    Slot { kind: 5, action: 50 },  // Z
+    Slot { kind: 5, action: 51 },  // X
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 4, action: 7 },  // M
+    Slot { kind: 4, action: 45 },  // ,
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 5, action: 53 },  // LAlt
+    Slot { kind: 5, action: 54 },  // Space
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 6, action: 100 },  // F1
+    Slot { kind: 6, action: 101 },  // F2
+    Slot { kind: 6, action: 102 },  // F3
+    Slot { kind: 6, action: 103 },  // F4
+    Slot { kind: 6, action: 104 },  // F5
+    Slot { kind: 6, action: 105 },  // F6
+    Slot { kind: 6, action: 106 },  // F7
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 4, action: 22 },  // F9
+    Slot { kind: 4, action: 14 },  // F10
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 4, action: 47 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 5, action: 302 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 5, action: 300 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 5, action: 301 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 5, action: 303 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 4, action: 48 },
+    Slot { kind: 0, action: 0 },
+]);
 
 /// One binding out of a `0x0199` subtype 0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -322,6 +425,34 @@ mod tests {
         }
         assert_eq!(restore(None), None, "never saved means send nothing");
         assert_eq!(restore(Some(&[])), None, "an empty layout means send nothing");
+    }
+
+    /// The table is preset 0 of the image, not a guess: 41 bound, menus on Q/W/E/I, attack
+    /// on LCtrl - and the owner's CONFIRM merges onto it with everything else untouched.
+    #[test]
+    fn the_factory_table_is_preset_0_and_a_saved_delta_restores_onto_it() {
+        let factory = CLIENT_DEFAULT_LAYOUT.expect("measured 2026-09-12");
+        assert_eq!(factory.iter().filter(|s| s.kind != 0 || s.action != 0).count(), 41);
+        for (code, (kind, action)) in [(0x10, (4, 8)), (0x11, (4, 5)), (0x12, (4, 0)), (0x17, (4, 1))] {
+            assert_eq!(factory[code], Slot { kind, action }, "key {code:#x}");
+        }
+        assert_eq!(factory[0x1D], Slot { kind: 5, action: 52 }, "LCtrl is the basic attack");
+        assert_eq!(factory[0x39], Slot { kind: 5, action: 54 }, "Space is the jump");
+        assert!(factory.iter().all(|s| matches!(s.kind, 0 | 4 | 5 | 6)), "no skill or item is factory-bound");
+
+        let Some(Change::Bindings(b)) = parse_change(WISP_CONFIRM) else { unreachable!() };
+        let body = restore(Some(&b)).expect("a saved layout now goes out");
+        assert_eq!(body[0], 0, "the READ gate");
+        assert_eq!(body.len(), 1 + SLOT_COUNT * 5);
+        let slot = |code: usize| {
+            (body[1 + code * 5], u32::from_le_bytes(body[2 + code * 5..6 + code * 5].try_into().unwrap()))
+        };
+        assert_eq!(slot(0x1D), (1, 1_001_002), "LCtrl carries the saved skill");
+        assert_eq!(slot(0x2A), (1, 1_001_001));
+        assert_eq!(slot(0x10), (4, 8), "Q keeps its factory menu");
+        assert_eq!(slot(0x39), (5, 54), "Space keeps the jump");
+        let bound = (0..SLOT_COUNT).filter(|&c| slot(c) != (0, 0)).count();
+        assert_eq!(bound, 41 + 2, "A and LShift were unbound in the factory table; LCtrl was already bound");
     }
 
     /// Once the factory table IS measured, a stored layout must actually go out, with the

@@ -469,7 +469,7 @@ impl Session {
         // byte, so the record stays byte-identical to what this server sent before skills
         // existed. Only a character that has raised something gets the new block.
         let skills = self.store.skills(chr.id).unwrap_or_default();
-        vec![Reply {
+        let mut out = vec![Reply {
             opcode: net::opcode::SET_FIELD,
             body: net::opcode::set_field_with_character_dressed_quests(
                 chr,
@@ -484,7 +484,13 @@ impl Session {
                 "SetField, {why}, for character {} ({}){warn}{quest_note}",
                 chr.id, chr.name
             ),
-        }]
+        }];
+        // The saved key layout rides AFTER every SetField, this one included: a SetField
+        // rebuilds the stage the keymap manager belongs to, and the login-time SetField in
+        // `dispatch` already does this. The owner, 2026-09-12: "It did not survive a re-login" -
+        // and a portal walk must not be the second way to lose it. session/keymap.rs.
+        out.extend(self.keymap_replies());
+        out
     }
 
 
