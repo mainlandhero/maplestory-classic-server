@@ -111,6 +111,24 @@ if (-not $NoClient) {
     if (-not (Test-Path (Join-Path $clientSrc 'Data'))) {
         Fail "$clientSrc has no Data\ - the WZ archives are the point of the payload"
     }
+    # **The Data\ that ships is the HYBRID one** - the classic archives with the Signature
+    # Style Collection merged in (tools\backport_install.py: the 206 items, the box under its
+    # classic id, the weapon-cover links, Himmel's ItemEff, the hair-hats' slot type, the face
+    # coupons' family). robocopy takes whatever sits there, and nothing else proves that what
+    # sits there is the CURRENT build of that script rather than an earlier install. So the
+    # script rebuilds into a scratch directory and requires every installed archive to hash
+    # equal to the fresh build, and gm-handbook to have been regenerated after the install.
+    # The owner, 2026-09-12: "Make sure everything we worked on is release-able to the server and
+    # client packages." Two minutes; it is the one check that catches a stale client payload.
+    Write-Host 'release check: the installed hybrid archives against a fresh build...' -ForegroundColor Cyan
+    & python (Join-Path $here 'backport_install.py') --check
+    if ($LASTEXITCODE -ne 0) {
+        Fail @"
+the installed Data\ is not the current backport build (see the lines above). With the client
+closed:
+  python "$repo\tools\backport_install.py" --install
+"@
+    }
 }
 
 # **The handbook and data\ are the WORLD SERVER's, so a -ClientOnly payload needs neither**
@@ -325,9 +343,11 @@ if ($NoClient) {
     # size, and /XF and /XD let the exclusions be stated once rather than filtered after.
     # Exit codes 0-7 are success (8+ is a real failure), which is why $LASTEXITCODE is
     # tested against 8 rather than 0.
+    # `*.bak` are the pristine classic archives backport_install.py keeps beside each hybrid
+    # one - the dev box's undo, 60 MB of it, and nothing the client or the launcher reads.
     $excludeFiles = @(
         'maplecw-hook.*', 'grap64.dll.orig', 'maplecw.toml',
-        'Maple_A_*.jpg', 'grap-stub.log', '*.dmp'
+        'Maple_A_*.jpg', 'grap-stub.log', '*.dmp', '*.bak', '*.bak.bak'
     )
     $excludeDirs = @('previous-runs', 'dumps')
     & robocopy $clientSrc $clientDst /E /NFL /NDL /NJH /NJS /NP /R:1 /W:1 `

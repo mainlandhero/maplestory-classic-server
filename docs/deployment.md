@@ -205,6 +205,33 @@ The server should never need to know which patches are in force. It does need to
 when a result is only reachable *because* of one - that is a reporting rule for us, not a
 protocol feature.
 
+## The client payload carries the hybrid WZ archives
+
+Since 2026-09-10 the client's `Data\` is not Nexon's classic data as shipped: 26 archives
+are rebuilt by `tools\backport_install.py` from the pristine originals (kept beside each as
+`.bak`) with the Signature Style Collection merged in - 206 modern items, the box under a
+classic id family, the weapon covers' type links, Himmel's worn-item effect (a new
+`Effect/ItemEff.img`), the hair-hats' slot type and the face coupons' id family. **Every one
+of those is client data, not server code**, so a server release without the matching client
+release, or the reverse, is a mismatch the wire cannot detect: the server hands out an item id
+the client has no node for, or prices a row the client's Cash Shop does not show.
+
+What keeps the two halves together:
+
+* `make-installer.ps1` runs `backport_install.py --check` before it copies the client: a
+  fresh build into a scratch directory, and every installed archive must hash equal to it.
+  A stale install fails the packaging, on the dev box, in two minutes.
+* `--install` regenerates `gm-handbook\` (items, equips, item data, commodity, the store's
+  item rules) after the copy, and both packagers refuse a handbook older than the installed
+  `String_000.wz`. The world server debits and names from those tables.
+* The `.bak` originals are excluded from the client payload; they are the dev box's undo.
+* Anything that renumbers an item (`RENAMES` in the installer) has a twin in
+  `store::inventory::ITEM_ID_RENAMES`, run on every database open - so a server upgrade
+  renumbers what players already hold, on the homelab box too.
+
+So the release order is: install the backport (client closed), package the server, package
+the client, ship both. Shipping one of them is not a release.
+
 ## A checklist for the first off-box run
 
 Cheap to do, and each one has failed for someone before:

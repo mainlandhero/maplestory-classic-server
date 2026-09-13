@@ -4,7 +4,10 @@
 Testing only. This runs a MapleStory client against a server written from scratch, on
 machines you own. It is not connected to Nexon and must never be pointed at their servers.
 The client and its WZ data in client\ are Nexon's; this payload exists so a machine you own
-can run files you own, not as a way to hand them to anyone else.
+can run files you own, not as a way to hand them to anyone else. Twenty-six of the archives
+under client\Data have the modern client's Signature Style Collection merged into them
+(tools\backport_install.py on the dev box); the server in the matching server package
+expects exactly that data, so install both from the same build.
 
 
 BEFORE YOU START
