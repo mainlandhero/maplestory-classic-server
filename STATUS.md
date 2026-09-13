@@ -150,6 +150,21 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-12, later: the first key-layout restore KILLED THE CLIENT, and the packet is four
+tables, not one.** The owner: *"Client exited immediately upon logging into the game world."* The client
+named the packet: `0x009E CLIENT_PACKET_REJECTED` reason `0x26`, position `0x1c4`, then our `0x05F1`
+verbatim (448 bytes with the opcode; the position is 4 past it), and `CLIENT FAULT 0xc0000005` at
+`0x140ce89d6` 3 ms later. Fixture `research/fixtures/keymap-0x05F1-one-preset-rejected-0x009E-then-
+fault-{world,hook}.log`. The 2026-09-08 read of `FUN_1419ffc00` stopped at the 89-slot loop;
+`tools/reads.py 0x1419ffc00 2` lists four read sites and the listing says the shape: an outer loop
+`cmp r15d, 4` - **one gated table per preset**, each first reset to the const preset 0 and then
+copied to its shadow - followed by a `u8` quickslot gate and, if set, 32 `u32`s. One table ended
+exactly where the second gate was expected. `keymap_init` now sends preset 0 (factory + the saved
+keys), presets 1 and 2 as the image ships them (`CLIENT_PRESETS_1_AND_2`, `--exe --rust` emits
+them), preset 3 as keep (no const table exists for it) and the quickslot gate 0 - **1340 bytes**.
+The quickslot values are unmeasured; 0 takes `FUN_1401de860`, unread. Plan step 6 re-cut with the
+0x009E reading. The entry below stands for the table itself, which was right.
+
 **2026-09-12, night: the key layout comes back on login - unverified on screen.** The owner: *"Saving
 keyboard layout still does not work. I tried putting both Power Strike on control and Slash Blast on
 shift. It did not survive a re-login."* The save was fine (world.log 23:56:57: three bindings

@@ -284,3 +284,49 @@ presets differ on. Nothing has picked one; the store keeps the preset byte if it
 
 `net::keymap::CLIENT_DEFAULT_LAYOUT` is preset 0 now. `restore` sends the READ gate and all 89
 slots after every SetField. Unverified on screen; plan step 6.
+
+
+## 8. Section 3 stopped one loop too early: `0x05F1` is FOUR tables and a quickslot gate
+
+The first `0x05F1` ever sent (2026-09-12, one gate and one table, 446 bytes) was rejected by
+the client at field entry and the client died 3 ms later. The owner: *"Client exited immediately
+upon logging into the game world."*
+
+```text
+world.log 00:09:52.168  <- 0x009E CLIENT_PACKET_REJECTED
+   01 00 | 26 00 00 00 | c4 01 | ad d2 6d d3 | f1 05 00 00 00 00 00 00 04 2e 00 00 00 ...
+           reason 0x26   pos 452              our packet, verbatim: opcode, gate 0, slot 0, slot 1 ...
+hook     20:09:52.168  CLIENT FAULT #1 0xc0000005 at 0x140ce89d6, 16 C++ throws before it
+```
+
+Reason `0x26` is the read-past-end throw the party work already met (`party-result-0x00A5.md`);
+position 452 is four past the 448-byte packet. **[L]** Fixture:
+`research/fixtures/keymap-0x05F1-one-preset-rejected-0x009E-then-fault-{world,hook}.log`.
+
+`tools/reads.py 0x1419ffc00 2` - which section 3 never ran - lists **four** read sites, not
+two, and `tools/dis_at.py 0x1419ffc00 0x400` around them reads **[L]**:
+
+```text
+1419ffc29  call FUN_1401de850            ; r12 = the const preset 0 (section 7)
+1419ffc50  loop head, r15d = preset      ; dest = 0x143ad0... + preset*0x37a, or a separate
+                                         ;   static for preset 3
+1419ffc73  copy 0x1bd bytes r12 -> dest  ; every table is RESET to const preset 0 first
+1419ffcf4  u8 gate                       ; 0 = read, non-zero = keep the reset
+1419ffd0b  89 x FUN_1401de920            ; u8 kind, u32 action
+1419ffd21  copy 0x1bd bytes dest -> dest+0x1bd   ; the shadow, the thing 0x0199 diffs against
+1419ffdb1  cmp r15d, 4 / jl loop head    ; FOUR presets
+1419ffdbe  u8 quickslots                 ; non-zero = read
+1419ffdec  32 x raw 4 -> 0x143ad13f0..0x143ad1470    ; the quickslot keys
+1419ffe34  FUN_1401de860                 ; the quickslot gate-0 path - NOT read
+```
+
+So `0x37a = 2 * 0x1bd`: each preset owns a live table and a shadow, back to back, in `.data`,
+and section 7's three const tables are what preset 0 is reset to before any gate is read.
+The shadow the CONFIRM delta is diffed against is therefore whatever the last `0x05F1` put in
+the selected preset's table - const preset 0, for a client that never received one.
+
+`net::keymap::keymap_init` now emits, in order: preset 0 = the factory table with the saved
+keys merged, gate 0; presets 1 and 2 = the image's, gate 0 (`CLIENT_PRESETS_1_AND_2`); preset 3
+= gate 1 (no const table exists for it - section 7's "garbage" past preset 2); quickslot gate
+0. **1340 bytes.** The quickslot values and the gate-0 path are unmeasured; that is the one
+open reading on the next launch.

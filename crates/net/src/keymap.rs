@@ -204,6 +204,195 @@ pub const CLIENT_DEFAULT_LAYOUT: Option<[Slot; 89]> = Some([
     Slot { kind: 0, action: 0 },
 ]);
 
+// Presets 1 and 2, the same way. The 0x05F1 handler reads FOUR gated tables
+// (`cmp r15d, 4` at 0x1419ffdb1), one per preset; these two go out as read
+// so the dialog's alternatives stay what the client shipped, and preset 3 -
+// which has no const table in the image - goes out as keep. [L]
+pub const CLIENT_PRESETS_1_AND_2: [[Slot; 89]; 2] = [
+    [
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 4, action: 46 },  // Esc
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 4, action: 2 },  // Y
+        Slot { kind: 4, action: 0 },  // U
+        Slot { kind: 4, action: 1 },  // I
+        Slot { kind: 4, action: 4 },  // O
+        Slot { kind: 4, action: 19 },  // P
+        Slot { kind: 4, action: 6 },  // [
+        Slot { kind: 4, action: 15 },  // ]
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 5, action: 52 },  // LCtrl
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 4, action: 11 },  // H
+        Slot { kind: 4, action: 8 },  // J
+        Slot { kind: 4, action: 3 },  // K
+        Slot { kind: 4, action: 55 },  // L
+        Slot { kind: 4, action: 58 },  // ;
+        Slot { kind: 4, action: 16 },  // '
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 4, action: 9 },
+        Slot { kind: 5, action: 50 },  // Z
+        Slot { kind: 5, action: 51 },  // X
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 4, action: 5 },  // N
+        Slot { kind: 4, action: 7 },  // M
+        Slot { kind: 4, action: 45 },  // ,
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 5, action: 53 },  // LAlt
+        Slot { kind: 5, action: 54 },  // Space
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 6, action: 100 },  // F1
+        Slot { kind: 6, action: 101 },  // F2
+        Slot { kind: 6, action: 102 },  // F3
+        Slot { kind: 6, action: 103 },  // F4
+        Slot { kind: 6, action: 104 },  // F5
+        Slot { kind: 6, action: 105 },  // F6
+        Slot { kind: 6, action: 106 },  // F7
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 4, action: 22 },  // F9
+        Slot { kind: 4, action: 14 },  // F10
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 4, action: 47 },
+        Slot { kind: 4, action: 12 },
+        Slot { kind: 5, action: 302 },
+        Slot { kind: 4, action: 13 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 5, action: 300 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 5, action: 301 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 5, action: 303 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 4, action: 10 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 4, action: 48 },
+        Slot { kind: 0, action: 0 },
+    ],
+    [
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 4, action: 46 },  // Esc
+        Slot { kind: 4, action: 10 },  // 1
+        Slot { kind: 4, action: 12 },  // 2
+        Slot { kind: 4, action: 13 },  // 3
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 4, action: 2 },  // Y
+        Slot { kind: 4, action: 0 },  // U
+        Slot { kind: 4, action: 1 },  // I
+        Slot { kind: 4, action: 4 },  // O
+        Slot { kind: 4, action: 19 },  // P
+        Slot { kind: 4, action: 6 },  // [
+        Slot { kind: 4, action: 15 },  // ]
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 5, action: 52 },  // LCtrl
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 4, action: 11 },  // H
+        Slot { kind: 4, action: 8 },  // J
+        Slot { kind: 4, action: 3 },  // K
+        Slot { kind: 4, action: 55 },  // L
+        Slot { kind: 4, action: 58 },  // ;
+        Slot { kind: 4, action: 16 },  // '
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 4, action: 9 },
+        Slot { kind: 5, action: 50 },  // Z
+        Slot { kind: 5, action: 51 },  // X
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 4, action: 5 },  // N
+        Slot { kind: 4, action: 7 },  // M
+        Slot { kind: 4, action: 45 },  // ,
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 5, action: 53 },  // LAlt
+        Slot { kind: 5, action: 54 },  // Space
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 6, action: 100 },  // F1
+        Slot { kind: 6, action: 101 },  // F2
+        Slot { kind: 6, action: 102 },  // F3
+        Slot { kind: 6, action: 103 },  // F4
+        Slot { kind: 6, action: 104 },  // F5
+        Slot { kind: 6, action: 105 },  // F6
+        Slot { kind: 6, action: 106 },  // F7
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 4, action: 22 },  // F9
+        Slot { kind: 4, action: 14 },  // F10
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 5, action: 302 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 5, action: 300 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 5, action: 301 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 5, action: 303 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 0, action: 0 },
+        Slot { kind: 4, action: 48 },
+        Slot { kind: 4, action: 47 },
+    ],
+];
+
 /// One binding out of a `0x0199` subtype 0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Binding {
@@ -281,24 +470,66 @@ pub fn apply(layout: &mut [Slot; SLOT_COUNT], bindings: &[Binding]) {
     }
 }
 
-/// `0x05F1` carrying the full layout. Gate byte zero, then 89 slots.
+/// How many preset tables `0x05F1` carries. The handler's outer loop is `cmp r15d, 4 / jl`
+/// at `0x1419ffdb1`; `0x0199` subtype 3 bounds the selected preset by the same 4. **[L]**
+pub const PRESET_COUNT: usize = 4;
+
+/// `0x05F1`: **four** gated tables, one per preset, then the quickslot gate.
+///
+/// # This was one table on 2026-09-12 and it killed the client at field entry
+///
+/// The owner: *"Client exited immediately upon logging into the game world."* The client named
+/// the packet - `0x009E CLIENT_PACKET_REJECTED`, reason `0x26`, then the whole `0x05F1`
+/// verbatim - and faulted 3 ms later (`research/fixtures/keymap-0x05F1-one-preset-rejected-
+/// 0x009E-then-fault-*.log`). `research/keyboard-layout-2026-09-08.md` §3 had read the slot
+/// loop and stopped; `tools/reads.py 0x1419ffc00 2` lists FOUR read sites and the listing
+/// around them says what the packet is (`tools/dis_at.py 0x1419ffc00 0x400`) **[L]**:
+///
+/// ```text
+/// for preset in 0..4:                      0x1419ffc50  loop head, r15d = preset
+///     (the table is first reset to the const preset 0 the image carries)
+///     u8  gate                             0x1419ffcf4  0 = READ, non-zero = keep the reset
+///     if gate == 0: 89 x { u8 kind; u32 action }        0x1419ffd0b, FUN_1401de920
+///     (the table is then copied to its shadow at +0x1bd)
+/// u8  quickslots                           0x1419ffdbe  non-zero = READ 32 x u32
+/// if quickslots != 0: 32 x raw 4           0x1419ffdec, 0x143ad13f0..0x143ad1470
+/// ```
+///
+/// So a body of one gate and one table ends where the client expects the second gate, and
+/// the read past the end is what it rejected. What goes out now: preset 0 as `layout` (the
+/// factory table with the player's saved keys merged), presets 1 and 2 as the image ships
+/// them ([`CLIENT_PRESETS_1_AND_2`]), preset 3 - which has no const table in the image - as
+/// keep, and the quickslot gate as 0. `3 * 446 + 1 + 1 = 1340` bytes.
+///
+/// **The quickslot gate is 0 because its 32 values are unmeasured**, not because 0 is known
+/// to be right: 0 skips to `FUN_1401de860` at `0x1419ffe34`, which has not been read. If the
+/// quickslot bar comes up wrong, that call is where to look.
 pub fn keymap_init(layout: &[Slot; SLOT_COUNT]) -> Vec<u8> {
     let mut w = PacketWriter::new();
-    w.u8(GATE_READ);
-    for slot in layout.iter() {
-        w.u8(slot.kind);
-        w.u32(slot.action);
+    for table in [layout, &CLIENT_PRESETS_1_AND_2[0], &CLIENT_PRESETS_1_AND_2[1]] {
+        w.u8(GATE_READ);
+        for slot in table.iter() {
+            w.u8(slot.kind);
+            w.u32(slot.action);
+        }
     }
+    w.u8(GATE_KEEP); // preset 3: no const table in the image; the client keeps its reset
+    w.u8(0); // quickslots: unmeasured, so not sent
     w.into_vec()
 }
 
-/// `0x05F1` that tells the client to keep the layout it already has.
-///
-/// The gate byte is **non-zero**, which is the skip. Sent to a character with nothing stored,
-/// and whenever [`CLIENT_DEFAULT_LAYOUT`] has not been measured.
+/// The length of [`keymap_init`]'s body: three read tables, one keep gate, the quickslot gate.
+pub const KEYMAP_INIT_LEN: usize = 3 * (1 + SLOT_COUNT * 5) + 1 + 1;
+
+/// `0x05F1` that tells the client to keep every preset as its reset copy of the factory
+/// table. Four keep gates and a zero quickslot gate - the same shape as [`keymap_init`],
+/// with nothing read. Nothing sends it; see [`restore`].
 pub fn keymap_init_keep() -> Vec<u8> {
     let mut w = PacketWriter::new();
-    w.u8(GATE_KEEP);
+    for _ in 0..PRESET_COUNT {
+        w.u8(GATE_KEEP);
+    }
+    w.u8(0);
     w.into_vec()
 }
 
@@ -392,7 +623,26 @@ mod tests {
     fn the_init_body_is_the_length_the_client_reads() {
         let layout = [Slot::EMPTY; SLOT_COUNT];
         // 1 gate byte + 89 * (u8 + u32).
-        assert_eq!(keymap_init(&layout).len(), 1 + SLOT_COUNT * 5);
+        assert_eq!(keymap_init(&layout).len(), KEYMAP_INIT_LEN);
+        assert_eq!(KEYMAP_INIT_LEN, 1340);
+        // Four gates where the handler reads them, then the quickslot gate. The one-table
+        // form (446 bytes) put the second gate past the end and the client rejected it.
+        let b = keymap_init(&layout);
+        let table = 1 + SLOT_COUNT * 5;
+        assert_eq!(b[0], 0, "preset 0: READ");
+        assert_eq!(b[table], 0, "preset 1: READ");
+        assert_eq!(b[2 * table], 0, "preset 2: READ");
+        assert_ne!(b[3 * table], 0, "preset 3: keep - no const table in the image");
+        assert_eq!(b[3 * table + 1], 0, "quickslots: not sent");
+        assert_eq!(b.len(), 3 * table + 2);
+        // Presets 1 and 2 are the image's, byte for byte.
+        for (n, preset) in CLIENT_PRESETS_1_AND_2.iter().enumerate() {
+            let at = (n + 1) * table + 1;
+            for (i, slot) in preset.iter().enumerate() {
+                assert_eq!(b[at + i * 5], slot.kind);
+                assert_eq!(&b[at + i * 5 + 1..at + i * 5 + 5], &slot.action.to_le_bytes());
+            }
+        }
     }
 
     /// The gate is inverted and this is the test that says so out loud. If someone ever
@@ -400,8 +650,10 @@ mod tests {
     #[test]
     fn zero_means_read_and_nonzero_means_keep() {
         assert_eq!(keymap_init(&[Slot::EMPTY; SLOT_COUNT])[0], 0);
-        assert_ne!(keymap_init_keep()[0], 0);
-        assert_eq!(keymap_init_keep().len(), 1, "the keep form carries no table at all");
+        let keep = keymap_init_keep();
+        assert_eq!(keep.len(), PRESET_COUNT + 1, "four keep gates and the quickslot gate");
+        assert!(keep[..PRESET_COUNT].iter().all(|&g| g != 0));
+        assert_eq!(keep[PRESET_COUNT], 0);
     }
 
     #[test]
@@ -443,7 +695,7 @@ mod tests {
         let Some(Change::Bindings(b)) = parse_change(WISP_CONFIRM) else { unreachable!() };
         let body = restore(Some(&b)).expect("a saved layout now goes out");
         assert_eq!(body[0], 0, "the READ gate");
-        assert_eq!(body.len(), 1 + SLOT_COUNT * 5);
+        assert_eq!(body.len(), KEYMAP_INIT_LEN);
         let slot = |code: usize| {
             (body[1 + code * 5], u32::from_le_bytes(body[2 + code * 5..6 + code * 5].try_into().unwrap()))
         };
@@ -466,7 +718,7 @@ mod tests {
         apply(&mut factory, &b);
         let body = keymap_init(&factory);
         assert_eq!(body[0], 0, "the read gate");
-        assert_eq!(body.len(), 1 + SLOT_COUNT * 5);
+        assert_eq!(body.len(), KEYMAP_INIT_LEN);
         // Q keeps its factory binding; LCtrl carries Slash Blast.
         assert_eq!(body[1 + 0x10 * 5], 4);
         assert_eq!(body[1 + 0x1D * 5], 1);
