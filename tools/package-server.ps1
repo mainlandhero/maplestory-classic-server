@@ -108,9 +108,29 @@ it has to be staged from this machine. Regenerate first:
   python "$repo\tools\dump_itemdata.py"
 "@
 }
-foreach ($needed in @('maps.txt', 'mobtemplates.txt', 'skills.txt', 'footholds.txt')) {
+# Every table a server opens by name: crates\world\src\bin\world_server.rs (portals, npcs,
+# fields, footholds, consumables, commodity, ...) and crates\login\src\bin\login_server.rs
+# (equips). items.txt and commodity.txt are the ones the Signature Style work regenerates on
+# every install - the box's classic id, the face coupons' family - so a handbook older than the
+# installed client data ships a server that names and prices things the client no longer has.
+foreach ($needed in @('maps.txt', 'mobtemplates.txt', 'skills.txt', 'footholds.txt',
+                      'portals.txt', 'npcs.txt', 'fields.txt', 'consumables.txt',
+                      'commodity.txt', 'items.txt', 'equips.txt', 'itemdata.txt')) {
     if (-not (Test-Path (Join-Path $handbook $needed))) {
         Fail "gm-handbook\$needed is missing - regenerate the handbook before packaging"
+    }
+}
+$strings = Join-Path $repo 'client-patched\Data\String\String_000.wz'
+if (Test-Path $strings) {
+    foreach ($fresh in @('items.txt', 'commodity.txt', 'equips.txt', 'itemdata.txt')) {
+        $t = Join-Path $handbook $fresh
+        if ((Get-Item $t).LastWriteTime -lt (Get-Item $strings).LastWriteTime) {
+            Fail @"
+gm-handbook\$fresh is older than the installed client data ($strings).
+The server would name and price items the client no longer has. Regenerate:
+  python "$repo\tools\backport_install.py" --check
+"@
+        }
     }
 }
 if (-not (Test-Path (Join-Path $repo 'data'))) { Fail "no data\ in $repo" }

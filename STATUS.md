@@ -179,6 +179,18 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-12, release readiness.** The owner: *"Make sure everything we worked on is release-able to the
+server and client packages."* Everything this week is either server code (built by the packagers)
+or client data under `client-patched\Data` (copied by `make-installer.ps1`), and the gap was that
+nothing proved the copied data is the *current* backport build. Now: `backport_install.py --check`
+rebuilds into a scratch dir and requires every installed archive to hash equal to it and the
+handbook to postdate the install; `make-installer.ps1` runs it before copying the client and
+excludes the `.bak` originals; `package-server.ps1` requires every table the servers open by name
+and refuses a handbook older than the installed `String_000.wz`. `docs/deployment.md` has the
+release order. Item renumbers (`RENAMES`) are mirrored in `store::ITEM_ID_RENAMES`, so the homelab
+database catches up on its next open. Both packagers need the servers and the launcher stopped
+(they rebuild); run them from an elevated window after `-Stop`.
+
 **2026-09-12, latest: cape CONFIRMED; hats still refused, now instrumented; face coupons re-numbered.**
 The owner: *"Nope, equipping the hair caps still does not work. Himmel's cape now looks fine. The face
 coupons from the backported collaboration items still does not work."*
