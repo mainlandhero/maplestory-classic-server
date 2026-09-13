@@ -1168,6 +1168,23 @@
               the same question again                        -> paste the turn-in lines
               the UI freezes after the OK                    -> the record alone was not an
                          answer; the fix becomes a closing Say instead of silence
+         u) NEW 2026-09-13 - SUMMONING A PET. "I tried summoning the Husky pet, but the pet
+            does not come out." The double-click was 0x0147 (u32 tick, u16 Cash-tab slot),
+            unanswered. Now it is answered with 0x0277 PetActivated, read off the client's
+            own pet decoder (CPet::Init - itemId, name, serial, x, y, moveAction, foothold,
+            then six tail fields whose MEANINGS are the reference's), the Cash-tab item is
+            re-sent as active with a pairing serial, and the request is closed. A second
+            double-click puts it away; a map change brings it back. Movement is the
+            client's; nothing about it is answered yet. Double-click the Husky:
+              it appears beside you and follows/idles        -> the shape is right; say
+                         whether the item in the Cash tab draws as summoned, and paste any
+                         UNKNOWN inbound opcodes that start arriving (its moves)
+              it appears, the item does not look summoned   -> the pairing serial is not
+                         what the item holds; say so
+              the client dies at the click                   -> paste client-exit.log and
+                         the 0x0277 line; one of the six tail fields is wrong
+              nothing at all                                 -> paste the lines after 0x0147
+              double-click again: it goes away               -> the toggle works
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3230,6 +3247,13 @@ function Show-TestPlan {
         Write-Host '           nothing else appears, exp lands at once -> fixed'
         Write-Host '           same question again -> paste the turn-in lines' -ForegroundColor Yellow
         Write-Host '           UI freezes after OK -> record alone is not an answer; say so' -ForegroundColor Yellow
+        Write-Host '      u) NEW - SUMMONING A PET: the double-click (0x0147) is answered with' -ForegroundColor Yellow
+        Write-Host '         0x0277, read off the client''s own pet decoder. Double-click the Husky:'
+        Write-Host '           appears beside you -> right; say if the item draws as summoned,'
+        Write-Host '                         and paste any new UNKNOWN inbound opcodes (its moves)'
+        Write-Host '           appears, item not summoned -> the pairing serial; say so'
+        Write-Host '           client dies at the click -> paste client-exit.log + the 0x0277 line' -ForegroundColor Yellow
+        Write-Host '           nothing -> paste the lines after 0x0147;  click again -> it goes away'
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'

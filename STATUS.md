@@ -179,6 +179,23 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13: summoning a pet - built to the client's read order, unverified on screen.** The owner: *"I
+tried summoning the Husky pet, but the pet does not come out."* The double-click is **`0x0147`,
+`u32 tick, u16 Cash-tab slot`** (`tools/encodes.py 0x142d4ced0`; world.log 18:02:29 twice,
+unanswered). The answer is **`0x0277 PetActivated`**, a per-user packet the user pool hands to the
+user's vtable slot `+0x98` - found by walking table A's out-of-table range `0x277..0x27E`
+(`FUN_142795b20`, the pet family) rather than its dense rows, and the pet decoder `CPet::Init`
+(`FUN_141eb9760`) by a rip-relative scan for the `Item/Pet/` pointer slots that `xref.py` cannot see.
+Body **[L]**: `u32 charId, u32 petIdx 0, u8 activated, u8 init, u32 itemId, str name, raw8 serial,
+i16 x, i16 y, u8 moveAction, u16 foothold, u32 hue, u32 itemId, u16, u16, u8, u8`; `activated 0`
+reads nothing more. `net::pet`, `session/pet.rs`: the pet at that slot is summoned beside the
+character (last reported position, foothold under it) to this client and the map, the Cash-tab item
+is re-sent with `active = 1` and a pairing serial, the request is closed with the empty `0x0070`
+unlock; the same click puts it away; every field entry re-sends it; a relog puts it away (session
+state; the store has no column). **Not built:** pet movement and the rest of `0x0278..0x027E`; the
+client's own `0x0148`/`0x0149` are named but not decoded. `research/pet-summon-2026-09-13.md`,
+`research/msexe-pet-*.c`. Plan step TO(u).
+
 **2026-09-13: Rain's quiz - the CLIENT conducts it, so the server must not re-ask.** The owner, with
 five timestamped screenshots of quest 1016 and the clock in shot: *"Rain still repeats their dialogue
 when I select the right answer and then press OK ... the quest should be immediately completed when I
