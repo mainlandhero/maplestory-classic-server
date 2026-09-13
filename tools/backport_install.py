@@ -145,6 +145,31 @@ def main():
                         fh.write("%d\tuol\t%d\n" % (t, anchor))
             add("Character/Weapon", "patch\t%s\t%s" % (image, tsv))
 
+    # 1d. The hair-hats' slot type. The owner, 2026-09-12: "The Aura, Lugner and Linie hair does
+    # not wear when double clicked on." world.log has NO 0x0107 for 1006910/11/12 across
+    # every run they were in a bag - the client never sent the move, so it refused locally.
+    # Their `info/islot` is `HrCp`, the modern two-slot type (takes the hair slot and the
+    # cap slot); every classic cap says `Cp`. The client reads islot in two-letter tokens,
+    # and the first token here is `Hr` - hair, which is not an equip a bag can put on - so
+    # the double-click had no destination. [L on the data and the absent packet; the token
+    # reading is I: `MaPn` also has no whole-string match in the image and the overalls
+    # equip fine.] So islot becomes `Cp` for every cap whose type starts with `Hr`. vslot
+    # (which hair parts the hat hides) is left as Nexon wrote it - one variant at a time.
+    for set_name, items in manifest["sets"].items():
+        for it in items:
+            if it["type"] != "Cap":
+                continue
+            prop = json.load(open(os.path.join(EXTRACT, "wz", "Cap", "%08d" % it["id"], "prop.json"), encoding="utf-8"))
+            islot = prop.get("info", {}).get("islot", "")
+            if not islot.startswith("Hr"):
+                continue
+            tsv = os.path.join(args.build_dir, "islot-%08d.tsv" % it["id"])
+            with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write("# %s: islot %s -> Cp, the classic cap type; the client took Hr for hair\n" % (it["id"], islot))
+                fh.write("info/islot\tstr\tCp\n")
+            add("Character/Cap", "patch\t%08d.img\t%s" % (it["id"], tsv))
+            print("  islot    %-8s %8d  %s -> Cp" % (set_name, it["id"], islot))
+
     # 1c. Worn-item effects. The owner, 2026-09-12: "Himmel's cape should actually have an effect,
     # but this effect currently does not appear in our version of the game."
     #
