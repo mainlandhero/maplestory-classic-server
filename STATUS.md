@@ -179,6 +179,26 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13: Rain's quiz - the CLIENT conducts it, so the server must not re-ask.** The owner, with
+five timestamped screenshots of quest 1016 and the clock in shot: *"Rain still repeats their dialogue
+when I select the right answer and then press OK ... the quest should be immediately completed when I
+select the right answer, and then the following OK dialogue should be the end of the conversation."*
+`world.log` settles it (this supersedes the 2026-09-13 "box after OK" entry below, which watched the
+wrong end): for **41 s** the client drew the offer, the question and the "that's correct" box with
+**zero inbound quest/script packets** (17:20:14..55, only toggles and telemetry), then sent the
+turn-in - which the server answered by asking the same question **again** (17:20:55 menu, 17:21:06
+answer, +350 exp, level 11). The client has the `#L` choices and `stop.0.answer` in `Quest.wz`, runs
+and grades the quiz itself, and sends the turn-in only on a right answer (a wrong one shows the
+`stop` line and re-asks locally; a redundant server menu it dismisses with `06 00`, 16:58:34). So a
+quiz turn-in now records the completion and **says nothing** - `on_quest_request`'s `quiz_turn_in`
+arm, the same shape as `silent_accept`. The whole server-side quiz driver (`quiz_menu_answer`,
+`quiz_answer_key`, `.quiz.retry`, `quiz_completion_pending`, the `quiz` branch in `say_line`) is
+**removed** - it was built on the theory that the server asks the quiz, which the screenshots
+disprove, and it was unreachable once the menu stopped. `research/quiz-client-driven-2026-09-13.md`;
+tests `a_quiz_turn_in_completes_silently_because_the_client_conducts_the_quiz` and the all-quests
+audit (11 quiz turn-ins now complete silently). Plan step TO(t) is settled - no launch needed to
+name the box; it was the client's own quiz.
+
 **2026-09-13: the box after Rain's OK is the client's, and a launch with watches names it.**
 The owner: *"Rain still repeats their dialogue when I select the right answer and then press OK. I believe
 the quest should be immediately completed when I select the right answer, and then the following

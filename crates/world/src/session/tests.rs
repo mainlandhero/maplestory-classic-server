@@ -10708,24 +10708,24 @@ fn three_snails_throws_a_red_snail_shell_and_is_refused_in_red_without_one() {
     assert!(!plain.iter().any(|r| r.opcode == net::message::MESSAGE));
 }
 
-/// **Rain's quiz question is a menu, and the answer is graded.** The owner, 2026-09-13: *"I just
-/// tried taking Rain's quiz, and after finishing question one, the client exited."* Quest
-/// 1013's `Say.1.0` carries four `#L<n>#` choices and `ask 1`; sent as a Say (type 0) the
-/// client faulted 22 ms later. Now it goes out as type 6, a wrong choice gets its `stop.0.<n>`
-/// line and then the question again, and the right one (`answer 3`, 1-based: the up arrow)
-/// gets *"That's right!"*.
+/// **A quiz turn-in finalises a quiz the CLIENT conducted; it does not re-ask.** The owner,
+/// 2026-09-13, with five timestamped screenshots of quest 1016: the client drew the offer,
+/// the question and a "Yes, that's correct!" box entirely on its own - `world.log` had no
+/// inbound quest/script packet for the 41 s those boxes were up - and only then sent the
+/// turn-in, which the server answered by asking the same question again. The client has the
+/// `#L` choices and `stop.0.answer` in `Quest.wz` and grades them itself, sending the turn-in
+/// only on a right answer. So the server records the completion - the record, the exp, the
+/// fanfare - and says nothing. Quest 1013 is the shape: `Say.1.0` is the question with `ask`.
 #[test]
-fn rains_quiz_question_is_a_menu_and_a_wrong_answer_is_corrected_then_asked_again() {
+fn a_quiz_turn_in_completes_silently_because_the_client_conducts_the_quiz() {
     let path = std::path::Path::new("../../gm-handbook/questlines.txt");
     if !path.exists() {
         return; // generated data, gitignored
     }
     let config = Config { quests: crate::config::load_quests(path), ..Config::default() };
     let rain = &config.quests[&1013];
-    assert!(rain.say["1"][0].contains("#L0#"), "the premise: a menu in the completion line");
-    assert_eq!(rain.say["1.ask"], vec!["1"]);
-    assert_eq!(rain.say["1.stop.0.answer"], vec!["3"]);
-    assert_eq!(rain.say_indices["1.stop.0"], vec![0, 1, 3], "the wrong choices, by menu index");
+    assert!(rain.say["1"][0].contains("#L0#"), "the premise: the question is a menu the client renders itself");
+    assert_eq!(rain.say["1.ask"], vec!["1"], "and `ask` marks the completion path as a quiz");
 
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
@@ -10737,53 +10737,19 @@ fn rains_quiz_question_is_a_menu_and_a_wrong_answer_is_corrected_then_asked_agai
     let mut s = Session::new(store, Arc::new(config));
     s.claim_for_character(id);
 
-    // world.log 04:17:14.988: action 2 (complete), quest 1013, NPC 19 (Rain).
+    // world.log 17:20:55: action 2 (complete), quest 1013's shape, NPC 19 (Rain). The client
+    // has already run the quiz; this is the turn-in it sends on the right answer.
     let out = s.on_quest_request(&hex("02f503000013000000caff1201ffffffff"));
-    let boxes: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::script::SCRIPT_MESSAGE).collect();
-    assert_eq!(boxes.len(), 1, "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
-    // **Not complete yet.** The owner, 2026-09-13: the completion before the question made the
-    // client offer the next quiz under the menu, and the offer came back after the answer -
-    // "the quiz dialogue repeats". The turn-in waits for the right choice.
-    assert!(!out.iter().any(|r| r.opcode == net::quest::MESSAGE), "no record before the answer: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
-    assert_eq!(out.len(), 1, "the question alone");
-    let rows = s.store.quest_rows(id).unwrap();
-    assert!(rows.iter().any(|r| r.quest_id == 1013 && r.state == store::QuestState::InProgress), "{rows:?}");
-    assert_eq!(boxes[0].body[10], net::script::SCRIPT_TYPE_MENU, "type 6, not a Say: {}", boxes[0].what);
-    assert!(String::from_utf8_lossy(&boxes[0].body).contains("#L2# up arrow key"));
 
-    // Wrong: the left arrow (choice 0). Them `stop.0.0` line, with Next.
-    let out = s.on_script_reply(&menu_reply(Some(0)));
-    assert_eq!(out.len(), 1);
-    assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_SAY);
-    assert!(String::from_utf8_lossy(&out[0].body).contains("left arrow key is for moving left"), "{}", out[0].what);
-    // Next: the question again, as a menu again.
-    let out = s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_YES));
-    assert_eq!(out.len(), 1);
-    assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_MENU, "{}", out[0].what);
+    // The completion record rides with the turn-in - no second question, no closing box.
+    assert!(out.iter().any(|r| r.opcode == net::quest::MESSAGE), "the turn-in records the completion: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(!out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE), "the server must NOT re-ask or repeat the closing line: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(s.store.quest_rows(id).unwrap().iter().any(|r| r.quest_id == 1013 && r.state == store::QuestState::Complete), "completed by the turn-in");
+    assert!(s.conversation.is_none(), "the conversation ends on the turn-in");
 
-    // Wrong again: the down arrow (choice 3) - the line whose WZ index is 3, not the third.
-    let out = s.on_script_reply(&menu_reply(Some(3)));
-    assert!(String::from_utf8_lossy(&out[0].body).contains("down arrow key is used to crouch"), "{}", out[0].what);
-    s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_YES));
-
-    // Right: the up arrow (choice 2). NOW the turn-in - record first - then "That's right!",
-    // the last line, and OK closes it.
-    let out = s.on_script_reply(&menu_reply(Some(2)));
-    assert!(out.iter().any(|r| r.opcode == net::quest::MESSAGE), "the completion record rides with the right answer: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
-    let last = out.last().unwrap();
-    assert_eq!(last.body[10], net::script::SCRIPT_TYPE_SAY);
-    assert!(String::from_utf8_lossy(&last.body).contains("That's right"), "{}", last.what);
-    assert!(s.store.quest_rows(id).unwrap().iter().any(|r| r.quest_id == 1013 && r.state == store::QuestState::Complete), "completed by the answer");
-    let out = vec![last.clone()];
-    let out = s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_YES));
-    assert!(out.is_empty(), "the last box; OK closes it: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
-    assert!(s.conversation.is_none());
-
-    // Closing the menu instead of choosing ends it quietly.
-    let mut s2 = s;
-    s2.on_quest_request(&hex("02f503000013000000caff1201ffffffff"));
-    assert!(s2.on_script_reply(&menu_reply(None)).is_empty());
-    assert!(s2.conversation.is_none());
+    // A repeat click on a finished quest is silent - no payout, no box.
+    let again = s.on_quest_request(&hex("02f503000013000000caff1201ffffffff"));
+    assert!(!again.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE), "a finished quiz says nothing on a second click: {:?}", again.iter().map(|r| &r.what).collect::<Vec<_>>());
 }
 
 /// **The Wooden Boxes stand, break in four hits, drop, and come back.** The owner, 2026-09-13:
@@ -11042,7 +11008,6 @@ fn no_quest_answers_its_accept_or_turn_in_with_its_own_opening_lines() {
 
         // Accept.
         s.conversation = None;
-        s.quiz_completion_pending = None;
         let out = s.on_quest_request(&request(1, qid, npc));
         assert!(own_opening(&out, qid).is_none(), "quest {qid}: Accept answered with its own opening: {:?}", own_opening(&out, qid));
         assert!(boxes(&out) <= 1, "quest {qid}: Accept opened {} boxes at once", boxes(&out));
@@ -11056,7 +11021,6 @@ fn no_quest_answers_its_accept_or_turn_in_with_its_own_opening_lines() {
 
         // Turn-in. The accept above started it (or the store has it started).
         s.conversation = None;
-        s.quiz_completion_pending = None;
         let _ = s.store.start_quest(id2, qid);
         let end_npc = q.end_npc.unwrap_or(npc);
         let out = s.on_quest_request(&request(2, qid, end_npc));
@@ -11064,8 +11028,10 @@ fn no_quest_answers_its_accept_or_turn_in_with_its_own_opening_lines() {
         assert!(boxes(&out) <= 1, "quest {qid}: turn-in opened {} boxes at once", boxes(&out));
         let is_quiz = q.say.contains_key("1.ask");
         if is_quiz {
-            assert!(out.iter().any(|r| r.what.contains("quiz MENU")), "quest {qid}: a quiz whose question is not a menu: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
-            assert!(!out.iter().any(|r| r.opcode == net::quest::MESSAGE), "quest {qid}: a quiz completed before its answer");
+            // The client conducts the quiz and sends the turn-in on a right answer; the server
+            // records the completion and says nothing, so it never re-asks or repeats the line.
+            assert!(out.iter().any(|r| r.opcode == net::quest::MESSAGE), "quest {qid}: a quiz turn-in must record the completion: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+            assert_eq!(boxes(&out), 0, "quest {qid}: a quiz turn-in must not open a box - the client drew the quiz: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
             turned_in_with_quiz += 1;
         } else if q.say.contains_key("1") {
             assert!(out.iter().any(|r| r.what.contains(&format!("for quest {qid}, line 1 of")) && r.what.contains("on path \"1\"")), "quest {qid}: has Say.1 and did not say it: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
@@ -11083,7 +11049,7 @@ fn no_quest_answers_its_accept_or_turn_in_with_its_own_opening_lines() {
         }
     }
     eprintln!(
-        "audited {audited} quests: accept -> {accepted_with_yes} spoke the yes branch, {accepted_silently} sent the record alone; turn-in -> {turned_in_with_line} spoke Say.1, {turned_in_with_quiz} asked a quiz, {turned_in_chained} chained, {turned_in_silently} sent the record alone"
+        "audited {audited} quests: accept -> {accepted_with_yes} spoke the yes branch, {accepted_silently} sent the record alone; turn-in -> {turned_in_with_line} spoke Say.1, {turned_in_with_quiz} completed a quiz silently, {turned_in_chained} chained, {turned_in_silently} sent the record alone"
     );
     assert!(audited > 300, "the client ships 322 quests; {audited} audited");
     assert_eq!(turned_in_with_quiz, 11, "the quiz nodes on path 1: Rain's seven, Stan, I'm Bored 1, Flying Medicine, Animal Fossils (the other seven ask nodes are openings, which the client shows itself)");
