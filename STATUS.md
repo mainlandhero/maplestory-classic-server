@@ -179,6 +179,19 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13: the WZ change ledger - `docs/wz-changes.md`.** The owner: *"Eventually we'll need to
+reconciliate with the actual Classic World WZ and make all of the custom changes again. Please prepare
+a documentation on all of the changes to the WZ we did so we can reproduce it."* Derived from
+`tools/backport_install.py`, not from memory: the pipeline (extract -> build -> verify -> install ->
+handbook -> `--check`), the ledger archive by archive (206 collaboration items across 27 archives;
+the box and face-coupon renames; the cover links, the hair-hat islot, the new `ItemEff.img` and its
+`z`; Commodity rows 159..175 and the Special tab; the pets' five keys), the server-side twins that
+move with it (`ITEM_ID_RENAMES`, `signaturestyle::COLLECTION`, `cosmetics`, the 176-row commodity
+test), the runtime client patches that are NOT WZ (43 distinct executable addresses in `grap-stub`),
+and the reconciliation procedure - replace the `.bak` bases with the new originals, re-run, and
+re-measure the eleven numbers the script read off the old data (each with the command that
+re-measures it). Linked from `docs/deployment.md`.
+
 **2026-09-13: every pet is a vacuum pet, client-driven.** The owner: *"turn every pet into a vacuum pet
 ... which sucks up loot in a radius around them provided that they are from a mob death drop"*, and
 *"offload most of the pet driven operations on the client."* The client owns the reaching and the
