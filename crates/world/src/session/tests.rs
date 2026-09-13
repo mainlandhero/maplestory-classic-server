@@ -10707,3 +10707,70 @@ fn three_snails_throws_a_red_snail_shell_and_is_refused_in_red_without_one() {
     let plain = s.handle(&swing_packet(net::combat::USER_MELEE_ATTACK, 0));
     assert!(!plain.iter().any(|r| r.opcode == net::message::MESSAGE));
 }
+
+/// **Rain's quiz question is a menu, and the answer is graded.** The owner, 2026-09-13: *"I just
+/// tried taking Rain's quiz, and after finishing question one, the client exited."* Quest
+/// 1013's `Say.1.0` carries four `#L<n>#` choices and `ask 1`; sent as a Say (type 0) the
+/// client faulted 22 ms later. Now it goes out as type 6, a wrong choice gets its `stop.0.<n>`
+/// line and then the question again, and the right one (`answer 3`, 1-based: the up arrow)
+/// gets *"That's right!"*.
+#[test]
+fn rains_quiz_question_is_a_menu_and_a_wrong_answer_is_corrected_then_asked_again() {
+    let path = std::path::Path::new("../../gm-handbook/questlines.txt");
+    if !path.exists() {
+        return; // generated data, gitignored
+    }
+    let config = Config { quests: crate::config::load_quests(path), ..Config::default() };
+    let rain = &config.quests[&1013];
+    assert!(rain.say["1"][0].contains("#L0#"), "the premise: a menu in the completion line");
+    assert_eq!(rain.say["1.ask"], vec!["1"]);
+    assert_eq!(rain.say["1.stop.0.answer"], vec!["3"]);
+    assert_eq!(rain.say_indices["1.stop.0"], vec![0, 1, 3], "the wrong choices, by menu index");
+
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    store.set_gm("maplecw", true).unwrap();
+    let chr = net::opcode::Character { name: "Pupil".to_string(), ..Default::default() };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    store.start_quest(id, 1013).unwrap();
+    let mut s = Session::new(store, Arc::new(config));
+    s.claim_for_character(id);
+
+    // world.log 04:17:14.988: action 2 (complete), quest 1013, NPC 19 (Rain).
+    let out = s.on_quest_request(&hex("02f503000013000000caff1201ffffffff"));
+    let boxes: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::script::SCRIPT_MESSAGE).collect();
+    assert_eq!(boxes.len(), 1, "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert_eq!(boxes[0].body[10], net::script::SCRIPT_TYPE_MENU, "type 6, not a Say: {}", boxes[0].what);
+    assert!(String::from_utf8_lossy(&boxes[0].body).contains("#L2# up arrow key"));
+
+    // Wrong: the left arrow (choice 0). Them `stop.0.0` line, with Next.
+    let out = s.on_script_reply(&menu_reply(Some(0)));
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_SAY);
+    assert!(String::from_utf8_lossy(&out[0].body).contains("left arrow key is for moving left"), "{}", out[0].what);
+    // Next: the question again, as a menu again.
+    let out = s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_YES));
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_MENU, "{}", out[0].what);
+
+    // Wrong again: the down arrow (choice 3) - the line whose WZ index is 3, not the third.
+    let out = s.on_script_reply(&menu_reply(Some(3)));
+    assert!(String::from_utf8_lossy(&out[0].body).contains("down arrow key is used to crouch"), "{}", out[0].what);
+    s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_YES));
+
+    // Right: the up arrow (choice 2). "That's right!", the last line, and OK closes it.
+    let out = s.on_script_reply(&menu_reply(Some(2)));
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_SAY);
+    assert!(String::from_utf8_lossy(&out[0].body).contains("That's right"), "{}", out[0].what);
+    let out = s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_YES));
+    assert!(out.is_empty(), "the last box; OK closes it: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(s.conversation.is_none());
+
+    // Closing the menu instead of choosing ends it quietly.
+    let mut s2 = s;
+    s2.on_quest_request(&hex("02f503000013000000caff1201ffffffff"));
+    assert!(s2.on_script_reply(&menu_reply(None)).is_empty());
+    assert!(s2.conversation.is_none());
+}
