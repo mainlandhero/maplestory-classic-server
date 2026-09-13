@@ -1199,6 +1199,27 @@
                          not what this pet code reads; say so
               the pet takes your OWN dropped item                           -> the byte is
                          ignored; paste the pet pick-up line
+         v) NEW 2026-09-13 - THE SUMMONED PET DOES NOT DRAW; NAME THE GATE. The owner: "I have the
+            Husky summoned, but my client does not render it." The name tag "Husky" IS drawn
+            beside "Wisp", which proves the packet was accepted, the object built and placed -
+            the server's half is right. The art is there too (22 actions, a real 41x37 bitmap).
+            What hides it is the client's own pet show/hide, FUN_141ecde00: a verdict that
+            starts at 0 and only reaches 1 through ~8 gates on the USER's and the FIELD's
+            state. The chain short-circuits, so the LAST watch that fires names the gate.
+            Launch with these and summon the Husky:
+              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,141ecde00:hits=40,1409bd2f0:hits=40,142cc1e40:hits=40,14159b0a0:hits=40"
+            Then read client-patched\maplecw-hook.log:
+              14159b0a0 fires with rdx=1   -> the client DID show it; the fault is downstream
+                         (animation or draw order), a different hunt
+              14159b0a0 never fires        -> it never left hidden; say which of 141ecde00 /
+                         1409bd2f0 / 142cc1e40 was the last to fire - that names the gate
+              141ecde00 never fires        -> the evaluator is not reached at all; paste the
+                         0x0277 line and the hook log around it
+            AND FREE IN THE SAME RUN: walk through a portal with the pet out. The server
+            re-sends the activation on every field entry, so the evaluator runs again against
+            a fresh field:
+              the pet appears after the map change -> the verdict was state-dependent at
+                         summon time; the fix is WHEN we send it, not what is in it
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3275,6 +3296,16 @@ function Show-TestPlan {
         Write-Host '                         -> paste that inbound body'
         Write-Host '           pet never goes for drops -> keys not read; say so'
         Write-Host '           pet takes YOUR OWN drop -> paste the pet pick-up line' -ForegroundColor Yellow
+        Write-Host '      v) NEW - THE SUMMONED PET DOES NOT DRAW; NAME THE GATE. The name tag' -ForegroundColor Yellow
+        Write-Host '         draws, so the packet and the art are right - the client hides it.'
+        Write-Host '         The chain short-circuits: the LAST watch that fires names the gate.'
+        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,141ecde00:hits=40,1409bd2f0:hits=40,142cc1e40:hits=40,14159b0a0:hits=40"' -ForegroundColor Cyan
+        Write-Host '         Summon the Husky, then read maplecw-hook.log:'
+        Write-Host '           14159b0a0 rdx=1 -> it WAS shown; fault is downstream'
+        Write-Host '           14159b0a0 absent -> say the last of 141ecde00 / 1409bd2f0 /' -ForegroundColor Yellow
+        Write-Host '                         142cc1e40 to fire - that names the gate'
+        Write-Host '         FREE: walk a portal with the pet out - if it appears, the verdict'
+        Write-Host '         was state-dependent at summon time.'
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'
