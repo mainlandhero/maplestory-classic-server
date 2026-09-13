@@ -112,8 +112,11 @@ impl Session {
                 opcode: net::keymap::KEYMAP_INIT,
                 body,
                 what: format!(
-                    "FuncKeyMappedInit: READ gate (zero) and all {} slots, {} of them from \
-                     this character's saved layout. Nothing authenticates.",
+                    "FuncKeyMappedInit: four gated preset tables - preset 0 READ with all {} \
+                     slots, {} of them from this character's saved layout; presets 1 and 2 \
+                     READ as the image ships them; preset 3 keep; quickslots not sent. One \
+                     table alone was rejected by the client (0x009E) on 2026-09-12. Nothing \
+                     authenticates.",
                     net::keymap::SLOT_COUNT,
                     bindings.len()
                 ),

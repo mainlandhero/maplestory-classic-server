@@ -1582,26 +1582,26 @@
         Making a character here also exercises the create path on a fresh account, which
         nothing has done since the name check went in.
 
-     6. THE KEYBOARD LAYOUT NOW COMES BACK - 2026-09-12. "Saving keyboard layout still
-        does not work. I tried putting both Power Strike on control and Slash Blast on
-        shift. It did not survive a re-login." The SAVE was fine (three rows landed on
-        CONFIRM, world.log 23:56:57); the RESTORE was switched off behind the client's
-        unmeasured factory table. Measured now, from the image itself: 0x143274460 is a
-        read-only CONST table - three 89-slot presets back to back - and preset 0 (Q, W, E,
-        I on menus, LCtrl = attack, Space = jump, 41 bound) is the factory layout
-        (tools/keymapdump.py --exe, with the shape and known-key controls). So after every
-        SetField a 0x05F1 goes out with the READ gate and all 89 slots: your saved keys
-        over the factory 41. Log in as Cobalt and open KEY BINDINGS:
-          Power Strike on Ctrl, Slash Blast on Shift, Q/W/E/I still menus, Space still
-                     jumps -> done, and the layout survives relogs from here on
-          your two keys are back, but OTHER keys moved or went blank -> preset 0 is not
-                     the shadow the client diffed against; say WHICH keys, and I compare
-                     them against presets 1 and 2
-          every key blank -> the gate byte is backwards; STOP using the keyboard, say so
-          keys are right in the dialog but do nothing -> the table took, the live copy
-                     did not; say so
-          the '.' key now attacks -> that is in your saved delta (the client moved attack
-                     off Ctrl when you put a skill there); rebind or ignore
+     6. THE KEYBOARD LAYOUT - second try, 2026-09-12. The first try KILLED THE CLIENT at
+        field entry ("Client exited immediately upon logging into the game world"): the
+        client named the packet in a 0x009E CLIENT_PACKET_REJECTED - our 0x05F1, verbatim -
+        and faulted 3 ms later. The 2026-09-08 read of the handler stopped at the slot loop;
+        the handler reads FOUR gated tables (one per preset, cmp r15d,4) and then a quickslot
+        gate, so one table ended where the second gate was expected and the read ran off the
+        end. Now 0x05F1 is 1340 bytes: preset 0 = the factory table (measured off the image,
+        41 bound, Q/W/E/I menus, Ctrl attack, Space jump) with your saved keys on top;
+        presets 1 and 2 as the image ships them; preset 3 keep; quickslots not sent. The
+        save was always fine (three rows on CONFIRM). Log in as Cobalt:
+          you reach the field -> the shape is right; then open KEY BINDINGS:
+            Power Strike on Ctrl, Slash Blast on Shift, Q/W/E/I menus, Space jumps -> done
+            your keys back, OTHER keys moved/blank -> say WHICH; I compare presets
+            every key blank -> gate byte backwards; STOP, say so
+            right in the dialog but keys do nothing -> live copy not taken; say so
+            the QUICKSLOT bar changed -> the quickslot gate 0 path (FUN_1401de860) does
+                       not keep; say what it shows
+          client exits at field entry AGAIN -> paste world.log's 0x009E line; the reason
+                       and position bytes after "01 00" say which read failed
+          the '.' key attacks -> in your saved delta (attack moved off Ctrl); rebind
 
      7. THE CRASH - a question, not a test.
         A 1.36 GB dump was written at 00:08 from a fault at 0x14090a6f0, an address that
@@ -3788,19 +3788,20 @@ function Show-TestPlan {
         Write-Host '     Making a character here also exercises the create path on a fresh'
         Write-Host '     account, which nothing has done since the name check went in.'
         Write-Host ''
-        Write-Host '  6. THE KEYBOARD LAYOUT NOW COMES BACK (2026-09-12). The save was fine;' -ForegroundColor White
-        Write-Host '     the restore waited on the client''s factory table, now read off the'
-        Write-Host '     image itself (three const presets at 0x143274460; preset 0 has Q/W/E/I'
-        Write-Host '     on menus, Ctrl = attack, Space = jump, 41 bound). After every SetField'
-        Write-Host '     a 0x05F1 sends all 89 slots: your keys over the factory 41. Cobalt,'
-        Write-Host '     open KEY BINDINGS:'
-        Write-Host '       Power Strike on Ctrl, Slash Blast on Shift, Q/W/E/I menus, Space'
-        Write-Host '         jumps -> done; it survives relogs from here on'
-        Write-Host '       your keys back but OTHER keys moved/blank -> preset 0 is not the' -ForegroundColor Yellow
-        Write-Host '         shadow; say WHICH keys, I compare with presets 1 and 2' -ForegroundColor Yellow
-        Write-Host '       every key blank -> gate byte backwards; STOP, say so' -ForegroundColor Yellow
-        Write-Host '       right in the dialog, keys do nothing -> live copy not taken; say so'
-        Write-Host '       "." attacks -> in your saved delta (attack moved off Ctrl); rebind'
+        Write-Host '  6. THE KEYBOARD LAYOUT - second try. The first KILLED THE CLIENT at' -ForegroundColor White
+        Write-Host '     field entry: it named our 0x05F1 in a 0x009E and faulted. The handler'
+        Write-Host '     reads FOUR gated preset tables + a quickslot gate; we sent one table.'
+        Write-Host '     Now 1340 bytes: preset 0 = factory (Q/W/E/I menus, Ctrl attack, Space'
+        Write-Host '     jump) + your saved keys; presets 1/2 from the image; 3 keep; no'
+        Write-Host '     quickslots. Log in as Cobalt:'
+        Write-Host '       you reach the field -> shape right; open KEY BINDINGS:'
+        Write-Host '         Ctrl Power Strike, Shift Slash Blast, Q/W/E/I menus -> done'
+        Write-Host '         other keys moved/blank -> say WHICH; I compare presets' -ForegroundColor Yellow
+        Write-Host '         every key blank -> gate backwards; STOP, say so' -ForegroundColor Yellow
+        Write-Host '         right in dialog, keys dead -> live copy not taken; say so'
+        Write-Host '         QUICKSLOT bar changed -> the gate-0 path does not keep; say what'
+        Write-Host '       client exits at field entry AGAIN -> paste the 0x009E line' -ForegroundColor Yellow
+        Write-Host '       "." attacks -> in your saved delta; rebind'
         Write-Host ''
         Write-Host '  7. THE CRASH - a question, not a test.' -ForegroundColor White
         Write-Host '     A 1.36 GB dump at 00:08, fault 0x14090a6f0 - an address that'

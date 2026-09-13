@@ -154,6 +154,20 @@ def main_exe(as_rust):
             "with Q, W, E and I on menus - the factory layout the KEY BINDINGS dialog shows.",
             "41 of 89 slots bound. [L]",
         ])
+        print()
+        print("// Presets 1 and 2, the same way. The 0x05F1 handler reads FOUR gated tables")
+        print("// (`cmp r15d, 4` at 0x1419ffdb1), one per preset; these two go out as read")
+        print("// so the dialog's alternatives stay what the client shipped, and preset 3 -")
+        print("// which has no const table in the image - goes out as keep. [L]")
+        print("pub const CLIENT_PRESETS_1_AND_2: [[Slot; %d]; 2] = [" % SLOTS)
+        for table in presets[1:]:
+            print("    [")
+            for i, (kind, action) in enumerate(table):
+                name = NAMES.get(i)
+                note = ("  // %s" % name) if name and (kind or action) else ""
+                print("        Slot { kind: %d, action: %d },%s" % (kind, action, note))
+            print("    ],")
+        print("];")
         return 0
     print("%-5s %-8s %s" % ("code", "key", "preset 0 (factory)"))
     for i, (k, a) in enumerate(factory):

@@ -10587,7 +10587,7 @@ fn a_saved_key_layout_is_restored_right_after_the_setfield() {
     assert!(km > sf, "the keymap rides AFTER the SetField that builds the stage it belongs to");
     let b = &replies[km].body;
     assert_eq!(b[0], 0, "READ gate");
-    assert_eq!(b.len(), 1 + net::keymap::SLOT_COUNT * 5);
+    assert_eq!(b.len(), net::keymap::KEYMAP_INIT_LEN, "four gated tables and the quickslot gate - one table was rejected on screen");
     let slot = |code: usize| (b[1 + code * 5], u32::from_le_bytes(b[2 + code * 5..6 + code * 5].try_into().unwrap()));
     assert_eq!(slot(0x1D), (1, 1_001_002), "Power Strike on LCtrl");
     assert_eq!(slot(0x2A), (1, 1_001_001), "Slash Blast on LShift");
