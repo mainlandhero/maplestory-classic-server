@@ -253,6 +253,41 @@ pub const PET_NAME_LEN: usize = 13;
 /// dateExpire, u32, u8) and the 48-byte pet tail (13 + 1 + 2 + 1 + 8 + 2 + 2 + 4 + 2 + 1 + 4 + 2 + 2 + 4).
 pub const PET_ITEM_LEN: usize = 1 + 18 + 48;
 
+/// **`petHue` when the pet has NOT been dyed.** The owner, 2026-09-13, with the Husky's tooltip:
+/// *"My pet is not dyed, the pet should not have that line."*
+///
+/// The tooltip prints *"Your pet has been dyed!"* (string `0x102A`) under
+/// `if (-1 < FUN_1401ba9d0(item+0xa6, item+0xae))` - and `FUN_1401ba9d0` is the client's
+/// ordinary obfuscated-int reader (two dwords, `rol 5`, `xor 0xBAADF00D`), so the value it
+/// returns is the hue itself. `0` is therefore "dyed, colour 0"; **only a negative hue is
+/// undyed**, which is exactly what the reference server annotates on its own field
+/// (`Pet.encode`: `encodeInt(getHue()); // -1`). **[L]** for the test, **[R]** for the value.
+pub const PET_HUE_UNDYED: u32 = 0xFFFF_FFFF;
+
+/// **`petSkill`: the bitmask of skills this pet has REGISTERED.** The owner, same tooltip: the
+/// Husky lists Item Pouch, Expanded Auto Move and Auto Move and says *"This is an
+/// unregistered pet."* under each, and it picks nothing up.
+///
+/// The WZ keys the installer writes (`pickupItem`, `sweepForDrop`, `longRange`) are what makes
+/// the client *list* the skills; whether each is usable is a separate per-pet mask, and the
+/// tooltip's own code is unambiguous **[L]**: it takes a `u16` from the item, ANDs it with the
+/// skill's bit, and prints `(Learned)` (`0x9E5`) when the result is zero-flagged and
+/// *"This is an unregistered pet."* (`0x9E6`) otherwise. We sent `0`, so every skill was
+/// unregistered.
+///
+/// The bit values are the reference server's `PetSkill` enum - `ITEM_PICKUP 0x1`,
+/// `EXPANDED_AUTO_MOVE 0x2`, `AUTO_MOVE 0x4` - and are **[R]/[I]**: that they live in this
+/// `u16` is measured, their numbering is not. The tooltip is the test: the three lines become
+/// `(Learned)` if the numbering is right.
+pub const PET_SKILL_ITEM_PICKUP: u16 = 0x0001;
+/// See [`PET_SKILL_ITEM_PICKUP`].
+pub const PET_SKILL_EXPANDED_AUTO_MOVE: u16 = 0x0002;
+/// See [`PET_SKILL_ITEM_PICKUP`].
+pub const PET_SKILL_AUTO_MOVE: u16 = 0x0004;
+/// Every skill this server grants a pet: it picks things up and it follows you about.
+pub const PET_SKILLS_GRANTED: u16 =
+    PET_SKILL_ITEM_PICKUP | PET_SKILL_EXPANDED_AUTO_MOVE | PET_SKILL_AUTO_MOVE;
+
 /// A pet (item type 3) - what `FUN_140304550` reads after the shared base. The owner,
 /// 2026-09-13: *"They should also be permanent duration. They should never need to be
 /// revived."*
@@ -269,11 +304,11 @@ pub const PET_ITEM_LEN: usize = 1 + 18 + 48;
 /// u8       fullness        1403045cc   100 - fed
 /// raw[8]   dateDead        14030460f   ITEM_NEVER_EXPIRES: it never dies, never needs reviving
 /// u16      petAttribute    140304617   0
-/// u16      petSkill        14030462e   0
+/// u16      petSkill        14030462e   PET_SKILLS_GRANTED - or every skill reads "unregistered"
 /// u32      remainLife      140304645   0 - not a limited-life pet
 /// u16      attribute       14030467e   0
 /// u8       active          14030469b   0
-/// u32      petHue          1403046da   0
+/// u32      petHue          1403046da   PET_HUE_UNDYED - 0 is "dyed with colour 0"
 /// u16      giantRate       140304713   0
 /// u16                      140304730   0
 /// u32                      14030474d   0
@@ -314,11 +349,11 @@ pub fn pet_item_with_state(item_id: u32, name: &str, cash_sn: Option<std::num::N
     b.push(100); //                                             1403045cc  u8   fullness
     b.extend_from_slice(&ITEM_NEVER_EXPIRES.to_le_bytes()); //  14030460f  raw[8] dateDead
     b.extend_from_slice(&0u16.to_le_bytes()); //                140304617  u16  petAttribute
-    b.extend_from_slice(&0u16.to_le_bytes()); //                14030462e  u16  petSkill
+    b.extend_from_slice(&PET_SKILLS_GRANTED.to_le_bytes()); //  14030462e  u16  petSkill
     b.extend_from_slice(&0u32.to_le_bytes()); //                140304645  u32  remainLife
     b.extend_from_slice(&0u16.to_le_bytes()); //                14030467e  u16  attribute
     b.push(active); //                                          14030469b  u8   active
-    b.extend_from_slice(&0u32.to_le_bytes()); //                1403046da  u32  petHue
+    b.extend_from_slice(&PET_HUE_UNDYED.to_le_bytes()); //      1403046da  u32  petHue
     b.extend_from_slice(&0u16.to_le_bytes()); //                140304713  u16  giantRate
     b.extend_from_slice(&0u16.to_le_bytes()); //                140304730  u16
     b.extend_from_slice(&0u32.to_le_bytes()); //                14030474d  u32
@@ -641,8 +676,16 @@ mod pet_tests {
         assert_eq!(&b[33..35], &0u16.to_le_bytes(), "closeness");
         assert_eq!(b[35], 100, "fullness");
         assert_eq!(&b[36..44], &ITEM_NEVER_EXPIRES.to_le_bytes(), "dateDead: never - never revived");
-        assert!(b[44..].iter().all(|&x| x == 0), "attributes, skill, life, hue, giant: zero");
         assert_eq!(b[44..].len(), 2 + 2 + 4 + 2 + 1 + 4 + 2 + 2 + 4);
+        assert_eq!(&b[44..46], &0u16.to_le_bytes(), "petAttribute");
+        // The two fields the tooltip reads. A zero skill mask makes every skill the WZ grants
+        // read "This is an unregistered pet."; a zero hue makes it read "Your pet has been dyed!".
+        assert_eq!(&b[46..48], &PET_SKILLS_GRANTED.to_le_bytes(), "petSkill: the pet may pick up and follow");
+        assert_eq!(&b[48..52], &0u32.to_le_bytes(), "remainLife");
+        assert_eq!(&b[52..54], &0u16.to_le_bytes(), "attribute");
+        assert_eq!(b[54], 0, "active");
+        assert_eq!(&b[55..59], &PET_HUE_UNDYED.to_le_bytes(), "petHue: undyed, not colour 0");
+        assert!(b[59..].iter().all(|&x| x == 0), "giantRate and the tail: zero");
 
         // With a serial: eight more bytes after the flag, everything else in place.
         let sn = std::num::NonZeroU64::new(0x1122_3344_5566_7788).unwrap();
