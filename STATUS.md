@@ -179,6 +179,22 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13 (run 2): the pet is hidden thirty times a second, and three of the eleven gates are
+settled.** The four watches came back clean. `FUN_141ecde00`'s **first** hit is the instant of the
+summon and it ran **40 times** - twice from the activation path (`0x1428a027e` the handler,
+`0x142770819` SetPet) and **38 times from a periodic updater** (`0x141ec1ce8`, ~30 ms apart) - and on
+none of them did it call `FUN_14159b0a0`, which only happens when the verdict *changes*. So the
+verdict is "hidden" at the summon and on every frame after: **a steady-state refusal, not a race**,
+and a portal cannot help because the client is already re-asking continuously. The two mid-ladder
+watches had burned their 40-hit caps on unrelated callers **before** the summon, so they said
+nothing - the instrument's fault, fixed by raising the caps. Settled without a launch, by
+`tools/dis_at.py` on each gate: **gate 6 always passes** (`FUN_140f80860` is literally
+`xor al,al; ret`), and the user vtable slot the ladder consults twice (`FUN_142889020`) is
+`mov eax,1; ret`, so **gates 7 and 10 always take the proceed branch** and the local-user flag they
+compute is dead. Five suspects remain (1, 4, 5, 8, 11); gate 11 is two flags on the field object at
+`+0x24ac` / `+0x24b0`. Plan step TO(v) is now four watches chosen so the `called-from` inside the
+ladder names the depth, with large caps.
+
 **2026-09-13: the summoned Husky does not draw - the packet is right, the client hides it.** The owner,
 with a screenshot showing the name tag **"Husky"** beside "Wisp" and no sprite. The tag is the pet
 object's own, so the packet was accepted, the object built, registered and positioned - everything
