@@ -232,6 +232,9 @@ What keeps the two halves together:
 So the release order is: install the backport (client closed), package the server, package
 the client, ship both. Shipping one of them is not a release.
 
+**Every change the installer makes, and how to make them again on a new Classic World version,
+is `docs/wz-changes.md`.**
+
 ## A checklist for the first off-box run
 
 Cheap to do, and each one has failed for someone before:
