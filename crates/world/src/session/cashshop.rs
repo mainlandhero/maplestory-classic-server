@@ -351,10 +351,6 @@ impl Session {
                 format!("{head} - {inv:?} slot {slot} holds {}, the packet says {}; nothing moved", item.item_id, req.item_id),
             );
         }
-        if net::inventory::is_pet(item.item_id) {
-            return no(self, format!("{head} - {} is a PET and no type-3 body exists to draw it in the locker; nothing moved", item.item_id));
-        }
-
         // Out of the bag, into the locker; back into the bag if the locker refuses.
         match self.store.clear_inventory_slot(chr.id, inv, slot) {
             Ok(true) => {}
@@ -485,16 +481,7 @@ impl Session {
         };
         let serial = locker_serial(account_id, slot);
         let sn = sn.unwrap_or_else(|| self.config.commodity.serial_for_item(item.item_id).unwrap_or(0));
-        if net::inventory::is_pet(item.item_id) {
-            return net::cashshop::cash_item_record_owned(
-                serial,
-                item.item_id,
-                sn,
-                quantity.max(1),
-                0,
-                character_id,
-            );
-        }
+        // A pet rides with its type-3 body like everything else now - `item_blob` builds it.
         net::cashshop::cash_item_record_with_item(
             serial,
             item.item_id,
@@ -742,16 +729,9 @@ impl Session {
     ) -> Vec<Reply> {
         use net::cashshop::reason;
 
-        if net::inventory::is_pet(row.item_id) {
-            return self.refuse_cash_shop(
-                reason::UNKNOWN_ERROR,
-                format!(
-                    "{what} - REFUSED: {} is a PET and this server cannot build a type-3 item \
-                     body yet. Sending one as a bundle killed the client on 2026-08-26",
-                    row.item_id
-                ),
-            );
-        }
+        // Pets used to be refused here: no type-3 body existed and a bundle sent for one had
+        // killed the client (2026-08-26). `net::bag::pet_item_with_cash_sn` is that body now,
+        // read off FUN_140304550; the eleven pets are bought like anything else.
         // **Into the LOCKER, which is the shop's Cash Inventory panel** - not the bag.
         // `store::buy_cash_item` checks the balance, debits Leaf Points and places the item in
         // one transaction, which is what it was written to do before the wrong packet sent the

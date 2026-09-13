@@ -34,6 +34,13 @@ impl Session {
         item: &store::Item,
         cash_sn: Option<std::num::NonZeroU64>,
     ) -> Vec<u8> {
+        // **A pet is item type 3**, whatever the store calls it (a bundle of one in the Cash
+        // tab). The owner, 2026-09-13: the eleven pets, permanent, never revived. The body is
+        // `net::bag::pet_item_with_cash_sn`; its name is the item's until the player renames it.
+        if net::inventory::is_pet(item.item_id) {
+            let name = self.config.item_names.get(&item.item_id).cloned().unwrap_or_default();
+            return net::bag::pet_item_with_cash_sn(item.item_id, &name, cash_sn);
+        }
         match item.kind {
             store::ItemKind::Equip(stored) => net::opcode::equipped_item_with_cash_sn(
                 item.item_id,

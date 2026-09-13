@@ -1086,6 +1086,30 @@
               still all seven -> the running server predates the fix; say so
               no headband at all -> the draw picked nothing; paste world.log's "reward rows"
                          line
+         p) NEW 2026-09-13 - THE ELEVEN PETS, PERMANENT, IN THE SHOP. "Brown Puppy, Panda and
+            Dino Boy all have 3 day duration ... change all of them to permanent duration.
+            Also please add all of the other pets into the Cash Shop ... They should never
+            need to be revived." The duration the shop showed was each pet's own
+            Item/Pet/<id>.img info/life (3, 7 or 90 days) - the three rows already said
+            Period 0. Every pet now carries life 0 and permanent 1, the shape of the modern
+            client's one permanent pet [L on the modern data; that the classic client honours
+            `permanent` is I]. The eight pets with no row have one under the Pets tab (SN
+            160000003..10, 100 LP). And the PURCHASE: a pet was REFUSED until today because
+            no type-3 item body existed (a bundle sent for one killed the client on 08-26);
+            the body is built now off the client's own pet decoder - name, level 1, fullness
+            100, dateDead never - so buying works and the pet never dies. Summoning a pet to
+            follow you is NOT built yet; this run is about the shop and the bag.
+            Open the Cash Shop, Pets tab:
+              eleven pets, each "permanent" (or no duration line) -> the data half is done
+              still "3 days" on the three -> the classic client reads a different node; say
+                         what the tooltip says exactly
+              buy one: it lands in the Cash Inventory panel with its icon, moves to the Cash
+                         tab, and double-clicking it does whatever it does (probably nothing
+                         yet) WITHOUT the client dying -> the body is right; say what the
+                         double-click did
+              client dies at purchase or at the move -> paste client-exit.log and the last
+                         0x03E1 / 0x0070 line in world.log; the pet body is I on meanings
+              only three pets listed -> the Pets tab does not list by SN prefix; say so
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3112,6 +3136,16 @@ function Show-TestPlan {
         Write-Host '           ONE headband, letter gone -> done'
         Write-Host '           still seven -> old server; say so'
         Write-Host '           none -> paste world.log "reward rows" line' -ForegroundColor Yellow
+        Write-Host '      p) NEW - ELEVEN PETS, PERMANENT, IN THE SHOP: the "3 days" was each' -ForegroundColor Yellow
+        Write-Host '         pet''s own info/life; all eleven now life 0 + permanent 1, the eight'
+        Write-Host '         missing ones have Pets-tab rows, and a pet is BOUGHT as a type-3'
+        Write-Host '         body (dateDead never) instead of refused. No summoning yet.'
+        Write-Host '         Cash Shop, Pets tab:'
+        Write-Host '           eleven pets, no duration / permanent -> data half done'
+        Write-Host '           still "3 days" -> say the tooltip text exactly'
+        Write-Host '           buy one: locker icon, moves to Cash tab, no death -> body right'
+        Write-Host '           client dies at buy/move -> paste client-exit.log + last 0x03E1' -ForegroundColor Yellow
+        Write-Host '           only three listed -> tab does not list by SN prefix; say so'
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'
