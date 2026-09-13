@@ -179,6 +179,23 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13: the summoned Husky does not draw - the packet is right, the client hides it.** The owner,
+with a screenshot showing the name tag **"Husky"** beside "Wisp" and no sprite. The tag is the pet
+object's own, so the packet was accepted, the object built, registered and positioned - everything
+the server sends is correct. Eliminated on the file: the parse (the name and position render), the
+art (`5000006.img` has 22 actions and a real 41x37 `stand0/0` bitmap in the untouched canvas
+archive), the templates (`CPet::Init` returns 0 unless both load, and then there is no tag), the
+foothold (43 exists on map 1010; NPCs share the convention), the character record (the 108-byte stat
+block is fully enumerated and has no pet-serial array), and the `init` byte (its branch only builds
+a message). **What decides it is `FUN_141ecde00`, the pet's show/hide** (`research/msexe-pet-setpet.c`):
+a verdict that starts at 0 and reaches 1 only through a chain of ~8 gates on the **user's and the
+field's** runtime state (morph test, two user-state tests, a COM interface, the local-user test, two
+field tests), then `FUN_14159b0a0(pet[8], verdict)` carries it in `rdx`. None is readable from the
+file. Plan step TO(v) is four watches: the chain short-circuits, so the last predicate entered names
+the gate, and `14159b0a0`'s `rdx` is the verdict (absent = never left hidden). No code changed - the
+one known deviation from the reference (hue 0 where it annotates -1) is a guess and costs the same
+launch as the measurement. `research/pet-not-drawn-2026-09-13.md`.
+
 **2026-09-13: the WZ change ledger - `docs/wz-changes.md`.** The owner: *"Eventually we'll need to
 reconciliate with the actual Classic World WZ and make all of the custom changes again. Please prepare
 a documentation on all of the changes to the WZ we did so we can reproduce it."* Derived from
