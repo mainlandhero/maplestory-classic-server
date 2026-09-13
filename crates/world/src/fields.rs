@@ -178,6 +178,54 @@ struct FieldState {
     /// collision would make a kill resurrect the wrong thing.
     next_summon_id: u32,
     drops: crate::drops::DropTable,
+    /// The reactors standing on the map, by object id. A broken one is not here; it sits in
+    /// `reactor_pending` until its `reactorTime` runs out.
+    reactors: HashMap<u32, LiveReactor>,
+    /// Broken reactors waiting to come back: `(due_ms, objectId)`.
+    reactor_pending: Vec<(u64, u32)>,
+    /// The placements this field was seeded from, so a respawn can rebuild a fresh reactor
+    /// without the config in hand.
+    reactor_spawns: Vec<crate::config::ReactorSpawn>,
+}
+
+/// One reactor standing on a field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveReactor {
+    /// As `0x0484` describes it - the current state is in here.
+    pub seen: net::reactor::FieldReactor,
+    /// The state a hit on the last live state produces.
+    pub broken_state: u8,
+    /// Seconds from breaking to standing again.
+    pub respawn_s: u32,
+}
+
+/// What a hit did. `state` is the state the reactor is now in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReactorHitOutcome {
+    pub template_id: u32,
+    pub state: u8,
+    pub x: i16,
+    pub y: i16,
+    pub broken: bool,
+    pub respawn_s: u32,
+}
+
+impl LiveReactor {
+    fn fresh(spawn: &crate::config::ReactorSpawn) -> Self {
+        LiveReactor {
+            seen: net::reactor::FieldReactor {
+                object_id: spawn.object_id,
+                template_id: spawn.template_id,
+                state: 0,
+                x: spawn.x,
+                y: spawn.y,
+                flip: spawn.flip,
+                name: spawn.name.clone(),
+            },
+            broken_state: spawn.break_at,
+            respawn_s: spawn.respawn_s,
+        }
+    }
 }
 
 /// Where summoned-mob object ids start.
@@ -273,6 +321,14 @@ impl Fields {
             return;
         }
         field.seeded = true;
+        // The reactors stand from the first entry, whatever the mob switch says: they are
+        // scenery with a drop table, not monsters.
+        if let Some(spawns) = config.reactors.get(&map) {
+            for spawn in spawns {
+                field.reactors.insert(spawn.object_id, LiveReactor::fresh(spawn));
+            }
+            field.reactor_spawns = spawns.clone();
+        }
         if !config.send_mobs {
             return;
         }
@@ -349,6 +405,56 @@ impl Fields {
 
     /// Every mob currently alive on a map, at its current position - what an arriving player
     /// must be sent.
+    /// Every reactor standing on `map` now - the broken ones are not standing.
+    pub fn reactors_on(&self, map: u32) -> Vec<LiveReactor> {
+        let maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
+        maps.get(&map).map(|f| f.reactors.values().cloned().collect()).unwrap_or_default()
+    }
+
+    /// A hit on a standing reactor: the state advances by one. On the hit that reaches the
+    /// broken state the reactor leaves the standing set and is scheduled to come back
+    /// `respawn_s` later. `None` when no reactor by that id is standing on the map.
+    pub fn hit_reactor(&self, map: u32, object_id: u32, now_ms: u64) -> Option<ReactorHitOutcome> {
+        let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
+        let field = maps.get_mut(&map)?;
+        let live = field.reactors.get_mut(&object_id)?;
+        live.seen.state = live.seen.state.saturating_add(1);
+        let broken = live.seen.state >= live.broken_state;
+        let outcome = ReactorHitOutcome {
+            template_id: live.seen.template_id,
+            state: live.seen.state,
+            x: live.seen.x,
+            y: live.seen.y,
+            broken,
+            respawn_s: live.respawn_s,
+        };
+        if broken {
+            let due = now_ms.saturating_add(u64::from(live.respawn_s) * 1000);
+            field.reactors.remove(&object_id);
+            field.reactor_pending.push((due, object_id));
+        }
+        Some(outcome)
+    }
+
+    /// Broken reactors whose time has come: put back standing, state 0, and returned so the
+    /// caller can announce them. Drains the due entries; the not-yet-due stay.
+    pub fn due_reactor_respawns(&self, map: u32, now_ms: u64) -> Vec<LiveReactor> {
+        let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(field) = maps.get_mut(&map) else { return Vec::new() };
+        let (due, later): (Vec<_>, Vec<_>) = field.reactor_pending.drain(..).partition(|(t, _)| *t <= now_ms);
+        field.reactor_pending = later;
+        let mut out = Vec::new();
+        for (_, object_id) in due {
+            // The spawn row is not kept on the field; rebuild the fresh reactor from what the
+            // broken one was, which carries everything but the state.
+            let Some(spawn) = field.reactor_spawns.iter().find(|s| s.object_id == object_id).cloned() else { continue };
+            let fresh = LiveReactor::fresh(&spawn);
+            field.reactors.insert(object_id, fresh.clone());
+            out.push(fresh);
+        }
+        out
+    }
+
     pub fn mobs_on(&self, map: u32) -> Vec<LiveMob> {
         let maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
         maps.get(&map).map(|f| f.mobs.values().cloned().collect()).unwrap_or_default()

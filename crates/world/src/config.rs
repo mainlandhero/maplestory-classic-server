@@ -147,6 +147,15 @@ pub struct Config {
     /// field: the client never respawns anything, it renders what it is sent. See
     /// [`respawn_delay_ms`] for what the three cases mean.
     pub mob_respawn_s: HashMap<(u32, u32), i32>,
+    /// Every map's reactors - the breakable boxes - keyed by map id, from
+    /// `gm-handbook/reactors.txt`. Server-sent like NPCs and mobs: the client's field loader
+    /// walks the WZ `reactor` node only to preload `Reactor/%07d.img`. The owner, 2026-09-13:
+    /// Pio's quest items come out of Wooden Boxes nobody was placing. 19 on the six Amherst
+    /// maps. `crate::session::reactor`.
+    pub reactors: HashMap<u32, Vec<ReactorSpawn>>,
+    /// What a reactor gives when it breaks, keyed by `Reactor.wz` id - `data/reactor-drops.txt`,
+    /// the same shape as `drops.txt`.
+    pub reactor_drops: crate::droptables::DropTables,
     /// How many mobs to send per field, whatever the capacity says. `None` is no limit.
     ///
     /// **A blast-radius control, not game behaviour.** The mob body killed the client on
@@ -825,6 +834,67 @@ impl Config {
 /// map, one by `(map, objectId)` - and a caller that mixes them up gets a compiling program
 /// that respawns nothing.
 pub type LoadedMobs = (HashMap<u32, Vec<net::mob::FieldMob>>, HashMap<(u32, u32), i32>);
+
+/// One reactor placement: a row of `gm-handbook/reactors.txt`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReactorSpawn {
+    /// Per-map, from [`REACTOR_OBJECT_ID_BASE`] up, in file order. Its own range so it can
+    /// never collide with a mob's spawn-point id or a summon's.
+    pub object_id: u32,
+    /// The `Reactor.wz` image id: 1 is the Wooden Box.
+    pub template_id: u32,
+    pub x: i16,
+    pub y: i16,
+    /// Seconds from breaking to standing again - the WZ `reactorTime`.
+    pub respawn_s: u32,
+    pub flip: bool,
+    /// The state a hit on state `break_at - 1` produces: the broken one. The Wooden Box has
+    /// events on states 0..3 and none on 4, so 4. Counted from `Reactor.wz` by the dumper.
+    pub break_at: u8,
+    pub name: String,
+}
+
+/// Where reactor object ids start on every map. Mobs' spawn points are 2000.., summons have
+/// their own base; a distinct range means a reactor id can never be mistaken for either.
+pub const REACTOR_OBJECT_ID_BASE: u32 = 6000;
+
+impl Config {
+    /// `gm-handbook/reactors.txt`: `map, index, reactorId, x, y, reactorTime, f, breakAt, name`.
+    /// A missing file is an empty table - no boxes anywhere - and the server says so at
+    /// start; see `world_server.rs`.
+    pub fn load_reactors(path: &std::path::Path) -> HashMap<u32, Vec<ReactorSpawn>> {
+        let mut out: HashMap<u32, Vec<ReactorSpawn>> = HashMap::new();
+        let Ok(text) = std::fs::read_to_string(path) else { return out };
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let f: Vec<&str> = line.splitn(9, ',').map(str::trim).collect();
+            if f.len() < 8 {
+                continue;
+            }
+            let n = |i: usize| f[i].parse::<i64>().ok();
+            let (Some(map), Some(template), Some(x), Some(y), Some(time), Some(flip), Some(break_at)) =
+                (n(0), n(2), n(3), n(4), n(5), n(6), n(7))
+            else {
+                continue;
+            };
+            let list = out.entry(map as u32).or_default();
+            list.push(ReactorSpawn {
+                object_id: REACTOR_OBJECT_ID_BASE + list.len() as u32,
+                template_id: template as u32,
+                x: x as i16,
+                y: y as i16,
+                respawn_s: u32::try_from(time).unwrap_or(120).max(1),
+                flip: flip != 0,
+                break_at: u8::try_from(break_at).unwrap_or(1).max(1),
+                name: f.get(8).map(|s| s.to_string()).unwrap_or_default(),
+            });
+        }
+        out
+    }
+}
 
 /// The ordinary field respawn rate, for a spawn point whose WZ node has no `mobTime`.
 ///
@@ -2145,6 +2215,8 @@ impl Default for Config {
             npcs: HashMap::new(),
             mobs: HashMap::new(),
             mob_respawn_s: HashMap::new(),
+            reactors: HashMap::new(),
+            reactor_drops: crate::droptables::DropTables::default(),
             mob_limit: None,
             shop_rows: None,
             drops: crate::droptables::DropTables::default(),

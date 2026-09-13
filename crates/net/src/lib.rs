@@ -55,6 +55,7 @@ pub mod packet;
 pub mod party;
 pub mod portalscript;
 pub mod quest;
+pub mod reactor;
 pub mod revive;
 pub mod abilityup;
 pub mod questeffect;

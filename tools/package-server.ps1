@@ -113,7 +113,7 @@ it has to be staged from this machine. Regenerate first:
 # (equips). items.txt and commodity.txt are the ones the Signature Style work regenerates on
 # every install - the box's classic id, the face coupons' family - so a handbook older than the
 # installed client data ships a server that names and prices things the client no longer has.
-foreach ($needed in @('maps.txt', 'mobtemplates.txt', 'skills.txt', 'footholds.txt',
+foreach ($needed in @('maps.txt', 'mobtemplates.txt', 'skills.txt', 'footholds.txt', 'reactors.txt',
                       'portals.txt', 'npcs.txt', 'fields.txt', 'consumables.txt',
                       'commodity.txt', 'items.txt', 'equips.txt', 'itemdata.txt')) {
     if (-not (Test-Path (Join-Path $handbook $needed))) {

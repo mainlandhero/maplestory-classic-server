@@ -171,6 +171,8 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         0x0104 => "CLIENT_SHOP_REQUEST (the Shop2 window; a different body from 0x00F5)",
         0x010E => "CLIENT_USE_ITEM (u32 tick, u16 slot, u32 itemId; the Use tab)",
         0x0111 => "CLIENT_SUMMON_SACK (the summoning sack in this slot)",
+        0x032F => "CLIENT_REACTOR_HIT (u32 objectId, u32 hitOption, u16 delay, u32 skillId - a breakable box struck; net::reactor)",
+        0x0330 => "CLIENT_REACTOR_TOUCH (u32 objectId, ...; a reactor walked into; not answered)",
         0x0125 => "CLIENT_ITEM_UPGRADE (u32 tick, u16 scroll slot, u16 dst slot, ...) - a scroll",
         0x0138 => "CLIENT_ABILITY_UP (inbound; the OUTBOUND 0x0138 is USER_AVATAR_MODIFIED)",
         0x0139 => "CLIENT_ABILITY_MASS_UP (inbound)",
@@ -212,6 +214,9 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         // Outbound, so that a run's log does not read as if the server were guessing.
         0x007C => "STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order)",
         0x01A0 => "SET_FIELD",
+        0x0478 => "REACTOR_CHANGE_STATE (outbound; u32 objectId, u8 state, pos, u16 delay, u8 eventIdx, u32 stateLength, u32 owner)",
+        0x0484 => "REACTOR_ENTER_FIELD (outbound; u8 0, u32 objectId, u32 templateId, u8 state, pos, u8 flip, str name)",
+        0x0485 => "REACTOR_LEAVE_FIELD (outbound; u32 objectId)",
         0x05F1 => "FUNC_KEY_MAPPED_INIT (outbound; four gated 89-slot preset tables, then a quickslot flag - net::keymap)",
         0x05F2 => "KEYMAP_OPT_A (outbound; one u32 - net::keymap)",
         0x05F3 => "KEYMAP_OPT_B (outbound; one u32 - net::keymap)",
@@ -335,7 +340,7 @@ mod tests {
             0x00BB, 0x00D2, 0x00D5, 0x00D9, 0x00DA, 0x00DB, 0x00E5, 0x00E7, 0x00F2, 0x00F3,
             0x00F5, 0x00F6, 0x0104, 0x0107, 0x010E, 0x0111, 0x0114, 0x0116, 0x0125, 0x0138,
             0x0139, 0x013B, 0x013C, 0x013F, 0x0143, 0x014A, 0x0151, 0x0165, 0x017E, 0x0182,
-            0x0183, 0x0199, 0x01A0, 0x01BE, 0x01E7, 0x02FF, 0x03E0, 0x03E1, 0x0453,
+            0x0183, 0x0199, 0x01A0, 0x01BE, 0x01E7, 0x02FF, 0x032F, 0x03E0, 0x03E1, 0x0453,
         ] {
             assert!(opcode_name(op).is_some(), "0x{op:04X} is dispatched but has no name");
         }
