@@ -55,6 +55,8 @@ impl Session {
         // in one call, because half of a mutual sighting is invisible on one
         // screen. `crate::session::multiplayer`.
         out.extend(self.announce_field_entry());
+        // The summoned pet, if any - the pools it lived in were just rebuilt. session/pet.rs.
+        out.extend(self.pet_entry_replies(&chr));
         let empty: Vec<net::opcode::FieldNpc> = Vec::new();
         out.extend(self.config.npcs.get(&chr.map_id).unwrap_or(&empty)
             .iter()

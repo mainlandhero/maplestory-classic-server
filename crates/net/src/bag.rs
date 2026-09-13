@@ -283,6 +283,13 @@ pub const PET_ITEM_LEN: usize = 1 + 18 + 48;
 /// the client on 2026-08-26, which is the whole reason the type byte and the tail are read
 /// off the client rather than assumed.
 pub fn pet_item_with_cash_sn(item_id: u32, name: &str, cash_sn: Option<std::num::NonZeroU64>) -> Vec<u8> {
+    pet_item_with_state(item_id, name, cash_sn, 0)
+}
+
+/// [`pet_item_with_cash_sn`] with the `active` byte set: `0` in the bag, `1` while the pet is
+/// summoned (`crate::pet`). The reference's `PetItem.activeState` is `petIdx + 1`, and this
+/// client accepts one pet, so the only live value is `1`.
+pub fn pet_item_with_state(item_id: u32, name: &str, cash_sn: Option<std::num::NonZeroU64>, active: u8) -> Vec<u8> {
     let mut b = Vec::with_capacity(PET_ITEM_LEN + 8);
     b.push(PET_ITEM_TYPE); //                                   1403095fb  u8   item type
     b.extend_from_slice(&item_id.to_le_bytes()); //             1403035c5  u32  itemId
@@ -310,7 +317,7 @@ pub fn pet_item_with_cash_sn(item_id: u32, name: &str, cash_sn: Option<std::num:
     b.extend_from_slice(&0u16.to_le_bytes()); //                14030462e  u16  petSkill
     b.extend_from_slice(&0u32.to_le_bytes()); //                140304645  u32  remainLife
     b.extend_from_slice(&0u16.to_le_bytes()); //                14030467e  u16  attribute
-    b.push(0); //                                               14030469b  u8   active
+    b.push(active); //                                          14030469b  u8   active
     b.extend_from_slice(&0u32.to_le_bytes()); //                1403046da  u32  petHue
     b.extend_from_slice(&0u16.to_le_bytes()); //                140304713  u16  giantRate
     b.extend_from_slice(&0u16.to_le_bytes()); //                140304730  u16

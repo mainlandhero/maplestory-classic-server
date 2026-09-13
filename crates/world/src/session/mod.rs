@@ -330,6 +330,9 @@ pub struct Session {
     /// a value this client never sends, and announcing it is why every remote player faced
     /// right. `net::userpool::MOVE_ACTION_STANDING` is the fallback instead.
     last_move_action: Option<u8>,
+    /// The pet this session has summoned, if any - session-only, put away by a relog.
+    /// `session/pet.rs`.
+    active_pet: Option<pet::ActivePet>,
 
     /// Session milliseconds of the last thing the player did: moved, attacked, or was hit.
     ///
@@ -511,6 +514,7 @@ mod reactor;
 mod multiplayer;
 mod npc;
 mod party;
+mod pet;
 mod pools;
 mod rates;
 mod recovery;
@@ -571,6 +575,7 @@ impl Session {
             skill_ready_ms: std::collections::HashMap::new(),
             last_position: None,
             last_move_action: None,
+            active_pet: None,
             banner_shown: None,
             last_activity_ms: 0,
             next_regen_ms: None,
@@ -821,6 +826,10 @@ impl Session {
             // A breakable box struck. session/reactor.rs.
             net::reactor::CLIENT_REACTOR_HIT => {
                 return self.on_reactor_hit(body.get(2..).unwrap_or(&[]))
+            }
+            // A double-click on a pet in the Cash tab. session/pet.rs.
+            net::pet::CLIENT_PET_ACTIVATE => {
+                return self.on_pet_activate(body.get(2..).unwrap_or(&[]))
             }
             op if net::combat::is_attack_opcode(op) => {
                 return self.on_attack(op, body.get(2..).unwrap_or(&[]))

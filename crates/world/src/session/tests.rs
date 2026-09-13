@@ -10752,6 +10752,75 @@ fn a_quiz_turn_in_completes_silently_because_the_client_conducts_the_quiz() {
     assert!(!again.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE), "a finished quiz says nothing on a second click: {:?}", again.iter().map(|r| &r.what).collect::<Vec<_>>());
 }
 
+/// **A double-click on the Husky summons it; a second puts it away.** The owner, 2026-09-13:
+/// *"I tried summoning the Husky pet, but the pet does not come out."* `world.log` 18:02:29 -
+/// `0x0147`, `u32 tick, u16 slot 1`, twice, unanswered. Now the click is answered with the
+/// `0x0277` the local user's vtable slot `+0x98` decodes, the Cash-tab item re-sent with
+/// `active = 1` and the pairing serial, and the empty `0x0070` that closes the request; the
+/// same click again puts the pet away; a slot with nothing on it gets the unlock alone.
+#[test]
+fn a_double_click_on_the_husky_summons_it_and_a_second_puts_it_away() {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Wisp".to_string(), ..Default::default() };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    // The Husky, in Cash slot 1 - where the click said it was.
+    let placed = store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+    assert_eq!(placed[0].slot, 1);
+    let mut item_names = std::collections::HashMap::new();
+    item_names.insert(5_000_006u32, "Husky".to_string());
+    let config = Config { item_names, set_field_probe: true, ..Config::default() };
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    s.claim_for_character(id);
+    s.last_position = Some((300, -50));
+
+    // The captured body: tick 0x14189a50, slot 1.
+    let out = s.on_pet_activate(&hex("509a18140100"));
+    let up = out.iter().find(|r| r.opcode == net::pet::PET_ACTIVATED).expect("a PetActivated");
+    assert_eq!(&up.body[0..4], &id.to_le_bytes(), "the user pool's charId");
+    assert_eq!(up.body[8], 1, "activated");
+    assert_eq!(&up.body[10..14], &5_000_006u32.to_le_bytes(), "the Husky");
+    assert_eq!(&up.body[16..21], b"Husky");
+    assert_eq!(&up.body[29..31], &300i16.to_le_bytes(), "beside the character");
+    assert!(s.pet_is_active(5_000_006));
+    let add = out
+        .iter()
+        .find(|r| r.opcode == net::inventory::INVENTORY_OPERATION && r.what.contains("active=1"))
+        .expect("the Cash-tab item re-sent as summoned");
+    let at = add.body.windows(5).position(|w| w[0] == net::bag::PET_ITEM_TYPE && w[1..5] == 5_000_006u32.to_le_bytes()).expect("a pet body in the Add");
+    // type 1, itemId 4, hasCashSN 1 + serial 8, dateExpire 8, u32 4, u8 1 = 27 to the tail;
+    // then name 13, level 1, closeness 2, fullness 1, dateDead 8, attr 2, skill 2, life 4, attribute 2 = 35.
+    assert_eq!(add.body[at + 27 + 35], 1, "the active byte");
+    assert_eq!(&add.body[at + 6..at + 14], &net::pet::pet_serial(id, 5_000_006).get().to_le_bytes(), "the pairing serial on the item");
+    let last = out.last().unwrap();
+    assert_eq!((last.opcode, last.body[0]), (net::inventory::INVENTORY_OPERATION, 1), "the request is closed last");
+
+    // A field entry sends the pet again, because the client rebuilt its pools.
+    let chr = s.claimed_character().unwrap();
+    let again = s.pet_entry_replies(&chr);
+    assert_eq!(again.len(), 1);
+    assert_eq!(again[0].opcode, net::pet::PET_ACTIVATED);
+    // And the record's own pet body now says active.
+    let blob = s.item_blob(&store::Item::bundle(5_000_006, 1));
+    assert_eq!(blob[1 + 18 + 35], 1, "the bag body agrees the pet is out");
+
+    // The same click again: put away - nine bytes, activated 0 - and the item back to 0.
+    let out = s.on_pet_activate(&hex("f29d18140100"));
+    let down = out.iter().find(|r| r.opcode == net::pet::PET_ACTIVATED).expect("a PetActivated");
+    assert_eq!(down.body.len(), 9);
+    assert_eq!(down.body[8], 0, "activated = 0");
+    assert!(!s.pet_is_active(5_000_006));
+    assert!(out.iter().any(|r| r.what.contains("active=0")));
+    assert!(s.pet_entry_replies(&chr).is_empty(), "nothing to re-send once it is away");
+
+    // A slot with nothing on it: the unlock and nothing else - always answer.
+    let out = s.on_pet_activate(&hex("509a18140700"));
+    assert_eq!(out.len(), 1);
+    assert_eq!((out[0].opcode, out[0].body[0]), (net::inventory::INVENTORY_OPERATION, 1));
+    assert!(!s.pet_is_active(5_000_006));
+}
+
 /// **The Wooden Boxes stand, break in four hits, drop, and come back.** The owner, 2026-09-13:
 /// *"the items come out of breakable wooden boxes which we do not spawn right now. We need to
 /// spawn them and provide the drops for the Wooden Box."* The shape is the client's reactor

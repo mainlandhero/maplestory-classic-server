@@ -104,6 +104,10 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         0x00DC => "CLIENT_FIELD_ENTERED (once per SetField, ~420 ms after; empty body)",
         0x00E7 => "CLIENT_CHAT (u32 tick, u16-length text, u8 tab)",
         0x0231 => "USER_CHAT (balloon over the head, and the chat log line)",
+        0x0147 => "CLIENT_PET_ACTIVATE (u32 tick, u16 Cash-tab slot) - a double-click on a pet; a second one puts it away",
+        0x0148 => "CLIENT_PET_0148 (u32, u32, u32, u8; builders FUN_142d4d340 / FUN_142d4d470; a pet request not yet decoded)",
+        0x0149 => "CLIENT_PET_0149 (empty; builder FUN_142d993d0; a pet request not yet decoded)",
+        0x0277 => "PET_ACTIVATED (u32 charId, u32 petIdx 0, u8 activated, [u8 init, pet body]) - CUser vtable +0x98; research/msexe-pet-activated.c",
         0x02B2 => "USER_HP_REMOTE (u32 charId, u32 hp, u32 maxHp) - a party member's HUD gauge and over-head bar",
         0x0107 => "CLIENT_INVENTORY_MOVE (u32 tick, u8 invType, i16 src, i16 dst, i16 count)",
         0x00F2 => "CLIENT_NPC_CLICK (u32 npcObjectId, i16 charX, i16 charY, u32; the NO-QUEST click path)",
@@ -339,7 +343,7 @@ mod tests {
         for op in [
             0x00BB, 0x00D2, 0x00D5, 0x00D9, 0x00DA, 0x00DB, 0x00E5, 0x00E7, 0x00F2, 0x00F3,
             0x00F5, 0x00F6, 0x0104, 0x0107, 0x010E, 0x0111, 0x0114, 0x0116, 0x0125, 0x0138,
-            0x0139, 0x013B, 0x013C, 0x013F, 0x0143, 0x014A, 0x0151, 0x0165, 0x017E, 0x0182,
+            0x0139, 0x013B, 0x013C, 0x013F, 0x0143, 0x0147, 0x014A, 0x0151, 0x0165, 0x017E, 0x0182,
             0x0183, 0x0199, 0x01A0, 0x01BE, 0x01E7, 0x02FF, 0x032F, 0x03E0, 0x03E1, 0x0453,
         ] {
             assert!(opcode_name(op).is_some(), "0x{op:04X} is dispatched but has no name");

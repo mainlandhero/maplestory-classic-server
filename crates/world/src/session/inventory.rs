@@ -39,7 +39,14 @@ impl Session {
         // `net::bag::pet_item_with_cash_sn`; its name is the item's until the player renames it.
         if net::inventory::is_pet(item.item_id) {
             let name = self.config.item_names.get(&item.item_id).cloned().unwrap_or_default();
-            return net::bag::pet_item_with_cash_sn(item.item_id, &name, cash_sn);
+            // `active` is this session's word: 1 while the pet is summoned, 0 otherwise -
+            // and 0 again on the next login, which is what puts it away. session/pet.rs.
+            return net::bag::pet_item_with_state(
+                item.item_id,
+                &name,
+                cash_sn,
+                u8::from(self.pet_is_active(item.item_id)),
+            );
         }
         match item.kind {
             store::ItemKind::Equip(stored) => net::opcode::equipped_item_with_cash_sn(
