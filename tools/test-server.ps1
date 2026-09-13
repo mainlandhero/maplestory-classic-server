@@ -1161,8 +1161,13 @@
             quiz - offer, question, "that's correct" - with ZERO inbound quest/script packets,
             then sent the turn-in, which the server answered by asking the question AGAIN. The
             client grades the quiz from its own Quest.wz and sends the turn-in only on a right
-            answer, so the server now records the completion and says nothing. If a quiz EVER
-            repeats again, say which quest and paste the world.log lines around the turn-in.
+            answer, so the server now records the completion and says nothing. NOT YET SEEN
+            on screen: a turn-in answered by the record alone (the silent accept is the
+            precedent). Take Rain's next question, answer right, press OK:
+              nothing else appears, exp lands at once, journal shows it done -> fixed
+              the same question again                        -> paste the turn-in lines
+              the UI freezes after the OK                    -> the record alone was not an
+                         answer; the fix becomes a closing Say instead of silence
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3217,11 +3222,14 @@ function Show-TestPlan {
         Write-Host '           stands up elsewhere, maybe another type, count stays 49 -> designed'
         Write-Host '           always back on the same spot -> paste SPAWN lines around a kill' -ForegroundColor Yellow
         Write-Host '           map thins out, or more than 49 -> paste world.log' -ForegroundColor Yellow
-        Write-Host '      t) DONE - RAIN''S QUIZ: THE CLIENT CONDUCTS IT. The screenshots +' -ForegroundColor DarkGray
+        Write-Host '      t) RAIN''S QUIZ: THE CLIENT CONDUCTS IT. The screenshots +' -ForegroundColor Yellow
         Write-Host '         world.log showed the client draws the whole quiz with no packets,' -ForegroundColor DarkGray
         Write-Host '         then sends the turn-in - which the server used to re-ask. Fixed: a' -ForegroundColor DarkGray
-        Write-Host '         quiz turn-in records the completion and says nothing. If it ever' -ForegroundColor DarkGray
-        Write-Host '         repeats again, name the quest and paste the turn-in lines.' -ForegroundColor DarkGray
+        Write-Host '         quiz turn-in records the completion and says nothing - NOT YET' -ForegroundColor Yellow
+        Write-Host '         seen on screen. Rain''s next question, answer right, press OK:'
+        Write-Host '           nothing else appears, exp lands at once -> fixed'
+        Write-Host '           same question again -> paste the turn-in lines' -ForegroundColor Yellow
+        Write-Host '           UI freezes after OK -> record alone is not an answer; say so' -ForegroundColor Yellow
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'
