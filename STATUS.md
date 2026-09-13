@@ -179,6 +179,26 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13: pet movement broadcast, pet chat commands, and a pet that advertises nothing.** Four
+of the owner's asks, all built off the client's own data. **(1) The WZ has the whole command system** and
+`tools/dump_pets.py` now joins its three parts into `gm-handbook/petcommands.txt` (**2405 rows, 12
+pets**): `Item/Pet/<id>.img/interact/<n>` gives the command, the percent, the pet-level band, the
+closeness and an `act` plus line KEYS per outcome; `String/PetCommand.img` gives the words
+(`bad|no|badgirl|badboy`); `String/PetDialog.img` gives the text. The `act` is a node of the pet's
+own image, so the **client** owns the animation. **(2) Commands are ordinary chat** - measured, the
+client sends only `0x00E7` - so the chat line is untouched and `Session::pet_command_replies` adds
+the pet's answer beside it, matching the **whole** message case-insensitively. The packet is
+**`0x0279`** (`u8 interact index, u8 success, str line`; `FUN_141ec6680`'s first act is
+`test r8d,r8d`, so the second byte is the flag **[L]**, the index is **[I]**). Pets are level 1
+until closeness exists, so the first band answers. **(3) `0x0202` is the pet's move report** and
+`Session::on_pet_move` forwards its path byte for byte as **`0x0278`** to the map, not to the owner.
+**(4) No skill lines**: the tooltip prints a line per skill the pet IMAGE declares, so the installer
+now writes `pickupItem/sweepForDrop/longRange = 0` on every pet and `PET_SKILLS_LEARNED_AT_START` is
+`0` - pets start with nothing, and learning becomes a Cash Shop purchase (**not built**, and the
+vacuum is inert until it is). `research/pet-commands-and-movement-2026-09-13.md`;
+`crates/world/src/petcommands.rs`; test
+`a_summoned_pet_walks_for_the_map_and_answers_its_command_words`.
+
 **2026-09-13 (run 3): the pet DRAWS; its tooltip's two wrong lines are two fields we zeroed.** The
 visibility hunt is closed by the log rather than by the watches: **`0x0202` arrives 504 times after
 the summon and 0 times before it**, its body a movement block starting at the exact position we

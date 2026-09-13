@@ -1199,28 +1199,33 @@
                          not what this pet code reads; say so
               the pet takes your OWN dropped item                           -> the byte is
                          ignored; paste the pet pick-up line
-         v) 2026-09-13 - THE PET'S TOOLTIP: TWO FIELDS WE ZEROED. The pet DRAWS now - proven
-            by world.log, not by eye: opcode 0x0202 (the pet's own move report) arrives 504
-            times after the summon and 0 times before it, starting at the exact spot we
-            placed it. The gate hunt is closed. Two tooltip lines were wrong and both were
-            fields this server sent as 0, each confirmed against the client's tooltip code:
-              * "This is an unregistered pet." under every skill - the tooltip ANDs a u16
-                from the ITEM with each skill's bit; that is the pet body's petSkill and we
-                sent 0, so nothing was usable and nothing was picked up. Now set.
-              * "Your pet has been dyed!" - printed when the hue is >= 0, so 0 means "dyed
-                with colour 0". Only a negative hue is undyed. Now -1.
-            Summon the Husky and hover it in the Cash tab:
-              the three skill lines now say "(Learned)"      -> the mask bits are right
-              they still say "unregistered"                  -> the u16 is right but the BIT
-                         NUMBERING is the reference's guess; say which skills still complain
-              "Your pet has been dyed!" is gone              -> the hue is right
-              it is still there                              -> say so; the field is measured,
-                         the sentinel would then be something other than -1
-              and with a mob killed nearby: does it now VACUUM the drop? That is the whole
-                         point of the skill mask - say yes or no and how far it reaches
-            NOT BUILT, and measured this run: pet chat commands (bad, sit, ...) go out as
-            ORDINARY CHAT (0x00E7) - the client sends no pet packet - so the server has to
-            recognise the word and broadcast the pet action. Do not retest that yet.
+         v) NEW 2026-09-13 - PETS: MOVEMENT, COMMANDS, AND A CLEAN TOOLTIP. Four changes,
+            all from the client's own WZ, none verified on screen:
+              * the pet's move report (0x0202) is now forwarded to the map as 0x0278, so a
+                SECOND player sees your pet walk. Not echoed to you - your client drew it.
+              * pet commands are ORDINARY CHAT (measured: typing "bad" sends only 0x00E7), so
+                the chat line is unchanged and the pet's trick is sent beside it. The words,
+                the odds, the animation and the lines are all read out of the WZ -
+                tools/dump_pets.py, 2405 rows for 12 pets. The Husky knows: sit, bad/no/
+                badgirl/badboy, stupid/ihateyou/baddog/dummy, poop, talk/chat/say/bark,
+                up/stand/rise, down, hand, iloveyou. Whole message only - "sit down over
+                there" is a sentence, not a command.
+              * every pet now declares NO skills (pickupItem/sweepForDrop/longRange all 0) and
+                has learned none, so the "unregistered" lines are gone. The vacuum is inert
+                until the Cash Shop can sell a pet skill - that is not built.
+              * the dye line should be gone (hue -1).
+            Summon the Husky, then:
+              hover it in the Cash tab: NO skill lines and NO "dyed" line -> both fixed; if
+                         either is still there, paste the tooltip text
+              type sit, then bad, then poop: the pet plays a trick and says a line, and your
+                         message still appears as normal chat -> commands work. Say which
+                         words did nothing, if any
+              type "sit down over there": it must NOT react -> the whole-message rule holds
+              type sit ten times: sometimes it succeeds and sometimes it sulks (the odds are
+                         the WZ's - 40% at level 1 for sit) -> the roll works
+              if the client DIES on a command, paste client-exit.log and the 0x0279 line -
+                         the interact index is the one inferred field
+              second client on the same map: does the pet walk on the other screen?
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3297,16 +3302,17 @@ function Show-TestPlan {
         Write-Host '                         -> paste that inbound body'
         Write-Host '           pet never goes for drops -> keys not read; say so'
         Write-Host '           pet takes YOUR OWN drop -> paste the pet pick-up line' -ForegroundColor Yellow
-        Write-Host '      v) THE PET''S TOOLTIP - TWO FIELDS WE ZEROED. The pet DRAWS (proved by' -ForegroundColor Yellow
-        Write-Host '         0x0202, its move report: 504 after the summon, 0 before). Fixed:'
-        Write-Host '         petSkill (0 = every skill "unregistered", so no pickup) and the'
-        Write-Host '         hue (0 = "dyed with colour 0"; only negative is undyed).'
-        Write-Host '         Summon the Husky, hover it in the Cash tab:'
-        Write-Host '           skills say "(Learned)" -> mask right;  still "unregistered" ->' -ForegroundColor Yellow
-        Write-Host '                         say WHICH ones (the bit numbering is a guess)'
-        Write-Host '           "dyed" line gone -> hue right;  still there -> say so'
-        Write-Host '           kill a mob nearby: does it VACUUM the drop now? how far?' -ForegroundColor Yellow
-        Write-Host '         NOT BUILT: pet chat commands go out as ordinary chat - do not retest.'
+        Write-Host '      v) NEW - PETS: MOVEMENT, COMMANDS, CLEAN TOOLTIP. Pet moves are now' -ForegroundColor Yellow
+        Write-Host '         forwarded to the map (0x0278); pet commands are ordinary chat and the'
+        Write-Host '         trick is sent beside the line (words/odds/lines all from the WZ);'
+        Write-Host '         pets declare and know NO skills, so no "unregistered" lines; hue -1.'
+        Write-Host '         Summon the Husky, then:'
+        Write-Host '           hover it: no skill lines, no "dyed" line -> fixed; else paste it' -ForegroundColor Yellow
+        Write-Host '           type sit / bad / poop: it acts AND your chat still shows -> works'
+        Write-Host '           type "sit down over there": it must NOT react'
+        Write-Host '           type sit x10: it should sometimes sulk (40% at level 1)'
+        Write-Host '           client dies on a command -> paste client-exit.log + the 0x0279' -ForegroundColor Yellow
+        Write-Host '           second client on the map: does the pet walk on their screen?'
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'

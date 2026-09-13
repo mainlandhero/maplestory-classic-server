@@ -272,6 +272,8 @@ pub struct Config {
     /// session on a channel shares one `Arc<Config>`, taken at accept time - replacing the
     /// server's `Arc` would do nothing for anybody already playing. See [`NpcStringTable`].
     pub npc_strings: NpcStringTable,
+    /// Every pet's chat commands, from `gm-handbook/petcommands.txt`. `crate::petcommands`.
+    pub pet_commands: crate::petcommands::PetCommands,
 
     /// Where [`NpcStringTable::base`] was read from. **Reported, not re-read.**
     ///
@@ -2314,6 +2316,7 @@ impl Default for Config {
             scrolls: HashMap::new(),
             summon_sacks: HashMap::new(),
             npc_strings: NpcStringTable::default(),
+            pet_commands: crate::petcommands::PetCommands::default(),
             npc_strings_path: PathBuf::from("gm-handbook/npcstrings.txt"),
             npc_dialogue_path: PathBuf::from("data/npc-dialogue.txt"),
             quests: HashMap::new(),
