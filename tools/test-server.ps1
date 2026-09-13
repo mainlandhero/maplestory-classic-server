@@ -1138,6 +1138,24 @@
                          too; say the hat's tooltip and whether a scrolled item is worn
               overshoots or the bar jumps to a new maximum   -> the flat was folded into the
                          record; paste the 0x007C line
+         s) NEW 2026-09-13 - A KILL REFILLS THE MAP, NOT THE POINT. Audit first: the solo cap
+            IS applied - the last two runs sent 49 of 66 on A Split Road and 31 of 42 on map
+            50, exactly 75%, never more over a session, and the fan site's own figure for
+            Split Road is 49.5. What made it feel pinned at the cap: a dead mob came back
+            after 7 s on the SAME point, so the same 49 points held forever and 17 were never
+            used. The owner: "once the mob is dead, a completely random spawn point should be
+            chosen that's not necessarily the dead mob's spawn point." Now a kill books a
+            refill of the map: when due, one free ORDINARY point is drawn uniformly from all
+            of them and that point's mob stands up - possibly a different type. Timed points
+            (WZ mobTime > 0) still return at their own place on their own clock; mobTime -1
+            never. The cap is unchanged: one death, one refill. Kill a few on Split Road:
+              a mob stands up somewhere else on the map, sometimes a different type,
+                         and the count stays 49                        -> as designed
+              it always comes back on the spot it died                 -> the draw is not
+                         reaching the field; paste the SPAWN lines around one kill
+              the map thins out over time (fewer than 49 standing)      -> a refill is being
+                         dropped; paste world.log
+              two mobs on one point, or more than 49                    -> paste world.log
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3185,6 +3203,13 @@ function Show-TestPlan {
         Write-Host '           ticks to 199 and stops -> fixed'
         Write-Host '           stops at 194 -> something else adds too; say the tooltip'
         Write-Host '           bar jumps to a new max -> folded into the record; paste 0x007C' -ForegroundColor Yellow
+        Write-Host '      s) NEW - A KILL REFILLS THE MAP, NOT THE POINT: the solo cap was' -ForegroundColor Yellow
+        Write-Host '         already 75% (49 of 66 on Split Road, measured); what felt pinned'
+        Write-Host '         was the dead mob returning on its own point. A refill now draws a'
+        Write-Host '         random free point across the whole map. Kill a few on Split Road:'
+        Write-Host '           stands up elsewhere, maybe another type, count stays 49 -> designed'
+        Write-Host '           always back on the same spot -> paste SPAWN lines around a kill' -ForegroundColor Yellow
+        Write-Host '           map thins out, or more than 49 -> paste world.log' -ForegroundColor Yellow
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'
