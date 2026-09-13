@@ -1053,6 +1053,24 @@
                          locally; say so (then the refusal has to also revert HP)
               nothing at all with no shell -> the line was refused; paste world.log's
                          "itemCon" line
+         m) NEW 2026-09-13 - RAIN'S QUIZ IS A MENU. "I just tried taking Rain's quiz, and after
+            finishing question one, the client exited." The question (quest 1013, Say.1.0)
+            carries four #L<n># choices and Say.1.ask = 1, and it went out as a Say (type 0);
+            the client faulted 22 ms after the box arrived (fixture rain-quiz-say-with-menu-
+            tags-client-fault-*). A #L list only renders in message type 6, so a path whose
+            node has `ask` now sends its first line as a MENU, grades the choice against
+            stop.0.answer (1-based), answers a wrong choice with its stop.0.<n> line and then
+            asks again, and a right one with the next line ("That's right!"). 18 such nodes
+            in the client's quests, all this shape - Rain's seven, Stan, Icarus, Hella...
+            Turn in Rain's Maple Quiz 1 (talk to them again if it is already complete - the
+            question is their completion line):
+              a four-choice box; a wrong pick gets their correction, Next re-asks; up arrow
+                         gets "That's right!" -> done; then try Quiz 2 the same way
+              the box shows the choices but picking does nothing -> the type-6 reply is not
+                         reaching quiz_menu_answer; say so and paste world.log's 0x00F3 line
+              client exits again -> paste the last 0x055B line in world.log; the shape of
+                         the text is the suspect (#b inside #L, or the \n)
+              the correction line comes with no Next / closes -> say so
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3064,6 +3082,15 @@ function Show-TestPlan {
         Write-Host '           line in an odd colour -> say which; category 11 is the guess'
         Write-Host '           mob still hurt with no shell -> client-local damage; say so'
         Write-Host '           nothing at all -> paste world.log "itemCon" line' -ForegroundColor Yellow
+        Write-Host '      m) NEW - RAIN''S QUIZ IS A MENU: the question carried #L choices in a' -ForegroundColor Yellow
+        Write-Host '         Say box and the client faulted. A node with `ask` now sends line 0'
+        Write-Host '         as type 6, grades against stop.0.answer, corrects + re-asks a wrong'
+        Write-Host '         pick, "That''s right!" on the right one. 18 quiz nodes, all fixed.'
+        Write-Host '         Turn in Rain''s Maple Quiz 1 (talk to them again):'
+        Write-Host '           four choices; wrong -> correction, Next re-asks; up arrow ->'
+        Write-Host '             "That''s right!" -> done; then Quiz 2'
+        Write-Host '           choices shown, picking does nothing -> paste the 0x00F3 line'
+        Write-Host '           client exits again -> paste the last 0x055B line' -ForegroundColor Yellow
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'

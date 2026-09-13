@@ -179,6 +179,19 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13: Rain's quiz killed the client - the question is a MENU, now sent as one.** The owner: *"I
+just tried taking Rain's quiz, and after finishing question one, the client exited."* Quest 1013's
+`Say.1.0` is the question with four `#L<n>#` choices and `Say.1.ask = 1`; `say_line` sent it as type
+0 and the client faulted (`0xc0000005` at `0x142a5ce2f`) 22 ms after the box - no throws, no
+`0x009E`, the renderer itself. Fixture `research/fixtures/rain-quiz-say-with-menu-tags-client-fault-*`.
+A `#L` list renders only inside message type 6. Now: a path whose node has `ask` sends its first line
+as `npc_menu`; `quiz_menu_answer` claims the type-6 reply (same precondition shape as the taxi's),
+grades the choice against `<path>.stop.0.answer` - **1-based**, **[D]** from all 18 quiz nodes in the
+client's data, where the answer index is never among the `stop.0.<n>` wrong-choice keys - answers a
+wrong choice with its `stop.0.<n>` line (by WZ index, which `Quest::say_indices` now keeps; the
+positions alone would say `0,1,2` for `0,1,3`) and re-asks on Next, and a right one with the next
+line. Rain's seven quizzes, Stan, Icarus, Hella and the rest are the same shape. Plan step TO(m).
+
 **2026-09-13: Three Snails throws its shell, and refuses in red without one - unverified on
 screen.** The owner: *"Three Snails is a skill that takes 1 Red Snail Shell to cast ... red error text
 in chat ... Casting it should decrease the client's Red Snail Shell inventory count by 1."* The

@@ -1291,6 +1291,11 @@ pub struct Quest {
     /// numbered lines **in index order**, which is not the same as string order once a
     /// conversation reaches ten lines.
     pub say: HashMap<String, Vec<String>>,
+    /// The WZ line indices behind each [`Quest::say`] node, in the same order. Most nodes
+    /// are `0, 1, 2 ...`; a quiz's wrong-answer node is not - Rain's `1.stop.0` has lines
+    /// `0`, `1` and `3` (the missing `2` is the right answer), and the index is the menu
+    /// choice it answers. Without this the vector's positions would say `0, 1, 2`.
+    pub say_indices: HashMap<String, Vec<usize>>,
 
     /// `Act.<state>.hp` - **an AUTHORED key, not a WZ one.**
     ///
@@ -1519,15 +1524,18 @@ fn read_quest_rows(text: &str, out: &mut HashMap<u32, Quest>, mode: Overlay) -> 
         for (key, indexed) in nodes {
             // BTreeMap keyed on the parsed index, so line 10 follows line 9 rather than
             // line 1 - which a string sort would get wrong and nothing would catch.
+            let indices: Vec<usize> = indexed.keys().copied().collect();
             let node: Vec<String> = indexed.into_values().collect();
             match mode {
                 Overlay::No => {
-                    quest.say.insert(key, node);
+                    quest.say.insert(key.clone(), node);
+                    quest.say_indices.insert(key, indices);
                 }
                 // A shipped node is never replaced. Quest 1002's `Say."0"` is `{}` in the
                 // WZ, so there is nothing to lose - but 1002 is not the only script quest.
                 Overlay::Yes => {
-                    quest.say.entry(key).or_insert(node);
+                    quest.say.entry(key.clone()).or_insert(node);
+                    quest.say_indices.entry(key).or_insert(indices);
                 }
             }
         }

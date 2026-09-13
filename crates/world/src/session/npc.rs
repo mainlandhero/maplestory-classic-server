@@ -1989,14 +1989,26 @@ impl Session {
             last && !on_branch && convo.quest_id.is_some() && self.has_branch(&convo, "yes");
         let has_next = !last;
 
-        let body = if branches {
+        // **A quiz question is a MENU, not a Say.** The owner, 2026-09-13: *"I just tried taking
+        // Rain's quiz, and after finishing question one, the client exited."* Quest 1013's
+        // `Say.1.0` is the question with its four `#L<n>#` choices and `Say.1.ask = 1`, and
+        // it went out as type 0; the client faulted (0xc0000005 at 0x142a5ce2f) 22 ms after
+        // the box arrived - `research/fixtures/rain-quiz-say-with-menu-tags-client-fault-*`.
+        // A `#L` list only renders inside message type 6, so a path whose node carries `ask`
+        // sends its first line as `npc_menu`, and `quiz_menu_answer` grades the reply.
+        let quiz = index == 0 && !has_next_quiz_retry(&convo.path) && self.quiz_answer_key(&convo).is_some();
+        let has_next = has_next && !quiz;
+
+        let body = if quiz {
+            net::script::npc_menu(convo.npc_template, &text)
+        } else if branches {
             net::script::npc_ask(convo.npc_template, &text, true)
         } else {
             net::script::npc_say(convo.npc_template, &text, false, has_next)
         };
         let what = format!(
             "ScriptMessage {} from NPC template {}{}, line {} of {} on path \"{}\"",
-            if branches { "yes/no prompt" } else { "Say" },
+            if quiz { "quiz MENU (type 6; the #L choices are graded by quiz_menu_answer)" } else if branches { "yes/no prompt" } else { "Say" },
             convo.npc_template,
             convo.quest_id.map(|q| format!(" for quest {q}")).unwrap_or_default(),
             index + 1,
@@ -2012,6 +2024,84 @@ impl Session {
         vec![Reply { opcode: net::script::SCRIPT_MESSAGE, body, what }]
     }
 
+
+    /// The `<path>.stop.0.answer` key of a quiz path, when the path is one - i.e. when the
+    /// quest's `Say` tree has `<path>.ask`. Rain's quizzes (1013..) are the shape: the
+    /// question is line 0 with `#L<n>#` choices, `stop.0.answer` is the right choice
+    /// **1-based**, and `stop.0.<n>` is what they say to wrong choice `n` (0-based). **[L]**
+    /// off `questlines.txt`; the 1-based reading of `answer` is **[D]** from the one quiz
+    /// whose `stop.0` lines are 0, 1 and 3 with `answer 3`: up arrow, the third choice.
+    fn quiz_answer_key(&self, convo: &Conversation) -> Option<String> {
+        let q = self.config.quests.get(&convo.quest_id?)?;
+        q.say.contains_key(&format!("{}.ask", convo.path)).then(|| format!("{}.stop.0.answer", convo.path))
+    }
+
+    /// The client's answer to a quiz MENU. Same precondition shape as the taxi's and the
+    /// Administrator's: it claims the packet only when this session's conversation is
+    /// parked on a quiz question, so a type-6 body never reaches the Say-shaped decoder.
+    ///
+    /// Right: the path's next line (*"That's right! ..."*) and the conversation carries on
+    /// as an ordinary Say. Wrong: the `stop.0.<n>` line as a Say with Next, on the retry
+    /// path, and the Next re-asks the question. Closed: nothing, as everywhere.
+    fn quiz_menu_answer(&mut self, body: &[u8]) -> Option<Vec<Reply>> {
+        let convo = self.conversation.clone()?;
+        if convo.sent != 0 || has_next_quiz_retry(&convo.path) {
+            return None;
+        }
+        let answer_key = self.quiz_answer_key(&convo)?;
+        let reply = net::script::parse_menu_reply(body)?;
+        let Some(selection) = reply.selection else {
+            self.conversation = None;
+            return Some(Vec::new());
+        };
+        let quest = self.config.quests.get(&convo.quest_id?)?.clone();
+        let answer = quest
+            .say
+            .get(&answer_key)
+            .and_then(|v| v.first())
+            .and_then(|v| v.trim().parse::<u32>().ok());
+        let chosen = u32::try_from(selection).unwrap_or(u32::MAX);
+        let right = answer.is_some_and(|a| a == chosen + 1);
+        if right {
+            crate::server::log(&format!(
+                "   quiz: quest {} path {} choice {chosen} is the answer ({}) - on to the next line",
+                quest_id_of(&convo), convo.path, answer.unwrap_or(0)
+            ));
+            return Some(self.say_line(1));
+        }
+        let stop_key = format!("{}.stop.0", convo.path);
+        let text = quest
+            .say_indices
+            .get(&stop_key)
+            .and_then(|idx| idx.iter().position(|&i| i == chosen as usize))
+            .and_then(|pos| quest.say.get(&stop_key).and_then(|lines| lines.get(pos)).cloned());
+        let Some(text) = text else {
+            // A choice the data has no line for (or a crafted number): ask again.
+            crate::server::log(&format!(
+                "   quiz: quest {} path {} choice {chosen} is wrong and has no stop line - asking again",
+                quest_id_of(&convo), convo.path
+            ));
+            return Some(self.say_line(0));
+        };
+        crate::server::log(&format!(
+            "   quiz: quest {} path {} choice {chosen} is wrong (answer {}) - the stop line, then the question again",
+            quest_id_of(&convo), convo.path, answer.unwrap_or(0)
+        ));
+        if let Some(c) = self.conversation.as_mut() {
+            c.path = format!("{}{QUIZ_RETRY_SUFFIX}", convo.path);
+            c.sent = 0;
+            c.awaiting_yes_no = false;
+            c.sent_with_next = true;
+        }
+        Some(vec![Reply {
+            opcode: net::script::SCRIPT_MESSAGE,
+            body: net::script::npc_say(convo.npc_template, &text, false, true),
+            what: format!(
+                "ScriptMessage Say from NPC template {} for quest {}: wrong quiz answer {chosen} on path \"{}\" - Next re-asks",
+                convo.npc_template, quest_id_of(&convo), convo.path
+            ),
+        }])
+    }
 
     /// The lines of the path the conversation is currently on.
     pub(super) fn say_lines(&self, convo: &Conversation) -> Option<Vec<String>> {
@@ -2080,12 +2170,27 @@ impl Session {
         if let Some(replies) = self.frieren_menu_answer(body) {
             return replies;
         }
+        // A quiz question's choice (Rain, quest 1013..): type 6, claimed only while the
+        // conversation is parked on one.
+        if let Some(replies) = self.quiz_menu_answer(body) {
+            return replies;
+        }
         let Some(reply) = net::script::parse_script_reply(body) else { return Vec::new() };
         let Some(convo) = self.conversation.clone() else { return Vec::new() };
 
         if reply.action == net::script::SCRIPT_ACTION_CLOSED {
             self.conversation = None;
             return Vec::new();
+        }
+
+        // Next on a wrong quiz answer's line: back to the question, as a menu again.
+        if let Some(base) = convo.path.strip_suffix(QUIZ_RETRY_SUFFIX) {
+            if let Some(c) = self.conversation.as_mut() {
+                c.path = base.to_string();
+                c.sent = 0;
+                c.sent_with_next = false;
+            }
+            return self.say_line(0);
         }
 
         // **Phil's job guide holds its place in `Conversation::path`.** This must come BEFORE
@@ -2217,4 +2322,17 @@ impl Session {
             ),
         }
     }
+}
+
+/// The path suffix a conversation carries while a wrong quiz answer's line is on screen.
+/// Next strips it and re-asks; `say_lines` has no node by this name, which is deliberate -
+/// nothing walks it as a line list.
+const QUIZ_RETRY_SUFFIX: &str = ".quiz.retry";
+
+fn has_next_quiz_retry(path: &str) -> bool {
+    path.ends_with(QUIZ_RETRY_SUFFIX)
+}
+
+fn quest_id_of(convo: &Conversation) -> u32 {
+    convo.quest_id.unwrap_or(0)
 }
