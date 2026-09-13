@@ -653,6 +653,42 @@ mod tests {
         assert!(!ticked(&s.regen_tick(60_000)), "and 125/125 is full");
     }
 
+    /// **A worn item's `incMHP` raises the ceiling too.** The owner, 2026-09-13: 194/199 on screen,
+    /// the Red Headband's five, and *"passive recovery only recovers up to 194 and stops."*
+    /// At the base maximum with the hat on they are NOT full; one tick lands at 199 (the flat 10
+    /// capped at the bar the client draws), the next sends nothing, and the record's base is
+    /// still 194 because the client adds the hat itself.
+    #[test]
+    fn a_red_headbands_five_hp_is_regenerated_up_to() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character {
+            name: "Wisp".to_string(),
+            equips: vec![(1, 1_002_003)],
+            ..Default::default()
+        };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        store.create_migration(account, id, 0, 0).unwrap();
+        let mut config = Config { set_field_probe: true, ..Config::default() };
+        config.equips.insert(1_002_003, crate::config::EquipTemplate { inc_mhp: 5, ..Default::default() });
+        let mut s = Session::new(store.clone(), Arc::new(config));
+        assert!(s.claim_for_character(id).contains("claimed the migration"));
+        let mut chr = s.claimed_character().unwrap();
+        chr.max_hp = 194;
+        chr.max_mp = 113;
+        chr.hp = 194;
+        chr.mp = 113;
+        store.save_character_progress(&chr).unwrap();
+        let rec = |store: &Arc<Store>| store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
+
+        s.clock_ms = 10_000;
+        let out = s.regen_tick(20_000);
+        assert!(ticked(&out), "194 of 199 is not full - {out:?}");
+        assert_eq!(rec(&store).hp, 199, "capped at the bar the client draws, not at the base");
+        assert_eq!(rec(&store).max_hp, 194, "the base is untouched - the client adds the hat");
+        assert!(!ticked(&s.regen_tick(30_000)), "and 199/199 is full");
+    }
+
     /// **An unlearned character regenerates exactly the flat amount, unchanged.**
     ///
     /// The regression guard for the whole change: folding a skill lookup into this path must
