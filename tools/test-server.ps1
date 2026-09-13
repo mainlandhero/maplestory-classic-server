@@ -1199,25 +1199,28 @@
                          not what this pet code reads; say so
               the pet takes your OWN dropped item                           -> the byte is
                          ignored; paste the pet pick-up line
-         v) 2026-09-13 RUN 2 - WHICH GATE HIDES THE PET. Run 1 settled the shape: the
-            client's pet show/hide (FUN_141ecde00) runs at the summon AND ~30 times a second
-            after it, and every single time it decides "hidden". So this is steady state, not
-            a race - do NOT bother walking a portal, the client is already re-asking. Three
-            gates are now proven to pass on their own (one is literally "xor al,al; ret"), so
-            five remain. The ladder short-circuits, so the LAST watch that fires WITH ITS
-            LADDER called-from names how far it got.
-            LAST TIME THE CAPS BURNED BEFORE THE SUMMON - they are large now, and the pet
-            must be summoned within a few seconds of entering the field:
-              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,1409d6150:hits=4000,142826340:hits=4000,1409bd2f0:hits=4000,142cc1e40:hits=4000"
-            Summon the Husky at once, stand still ten seconds, then quit and paste the four
-            counts from client-patched\maplecw-hook.log. Only the hits whose called-from is
-            one of these four count - the rest are other callers:
-              1409d6150 called-from=0x141ecde27   gate 1 reached
-              142826340 called-from=0x141ecde63   gates 1..3 passed
-              1409bd2f0 called-from=0x141ecdec6   gates 4..7 passed
-              142cc1e40 called-from=0x141ecdf10   gates 8..10 passed -> gate 11 is the blocker
-            If NONE of the four ladder called-froms appear, gate 1 itself refuses and the pet
-            object carries the reason at +0x630 - say so and paste the counts anyway.
+         v) 2026-09-13 - THE PET'S TOOLTIP: TWO FIELDS WE ZEROED. The pet DRAWS now - proven
+            by world.log, not by eye: opcode 0x0202 (the pet's own move report) arrives 504
+            times after the summon and 0 times before it, starting at the exact spot we
+            placed it. The gate hunt is closed. Two tooltip lines were wrong and both were
+            fields this server sent as 0, each confirmed against the client's tooltip code:
+              * "This is an unregistered pet." under every skill - the tooltip ANDs a u16
+                from the ITEM with each skill's bit; that is the pet body's petSkill and we
+                sent 0, so nothing was usable and nothing was picked up. Now set.
+              * "Your pet has been dyed!" - printed when the hue is >= 0, so 0 means "dyed
+                with colour 0". Only a negative hue is undyed. Now -1.
+            Summon the Husky and hover it in the Cash tab:
+              the three skill lines now say "(Learned)"      -> the mask bits are right
+              they still say "unregistered"                  -> the u16 is right but the BIT
+                         NUMBERING is the reference's guess; say which skills still complain
+              "Your pet has been dyed!" is gone              -> the hue is right
+              it is still there                              -> say so; the field is measured,
+                         the sentinel would then be something other than -1
+              and with a mob killed nearby: does it now VACUUM the drop? That is the whole
+                         point of the skill mask - say yes or no and how far it reaches
+            NOT BUILT, and measured this run: pet chat commands (bad, sit, ...) go out as
+            ORDINARY CHAT (0x00E7) - the client sends no pet packet - so the server has to
+            recognise the word and broadcast the pet action. Do not retest that yet.
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3294,13 +3297,16 @@ function Show-TestPlan {
         Write-Host '                         -> paste that inbound body'
         Write-Host '           pet never goes for drops -> keys not read; say so'
         Write-Host '           pet takes YOUR OWN drop -> paste the pet pick-up line' -ForegroundColor Yellow
-        Write-Host '      v) RUN 2 - WHICH GATE HIDES THE PET: run 1 proved the client decides' -ForegroundColor Yellow
-        Write-Host '         "hidden" ~30x a second, steady state (no portal needed). 3 of 11'
-        Write-Host '         gates now proven to pass. CAPS BURNED LAST TIME - summon at once:'
-        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,1409d6150:hits=4000,142826340:hits=4000,1409bd2f0:hits=4000,142cc1e40:hits=4000"' -ForegroundColor Cyan
-        Write-Host '         Stand still 10s, quit, paste the counts. Only these called-froms count:'
-        Write-Host '           1409d6150 from 0x141ecde27 | 142826340 from 0x141ecde63'
-        Write-Host '           1409bd2f0 from 0x141ecdec6 | 142cc1e40 from 0x141ecdf10 (= gate 11)' -ForegroundColor Yellow
+        Write-Host '      v) THE PET''S TOOLTIP - TWO FIELDS WE ZEROED. The pet DRAWS (proved by' -ForegroundColor Yellow
+        Write-Host '         0x0202, its move report: 504 after the summon, 0 before). Fixed:'
+        Write-Host '         petSkill (0 = every skill "unregistered", so no pickup) and the'
+        Write-Host '         hue (0 = "dyed with colour 0"; only negative is undyed).'
+        Write-Host '         Summon the Husky, hover it in the Cash tab:'
+        Write-Host '           skills say "(Learned)" -> mask right;  still "unregistered" ->' -ForegroundColor Yellow
+        Write-Host '                         say WHICH ones (the bit numbering is a guess)'
+        Write-Host '           "dyed" line gone -> hue right;  still there -> say so'
+        Write-Host '           kill a mob nearby: does it VACUUM the drop now? how far?' -ForegroundColor Yellow
+        Write-Host '         NOT BUILT: pet chat commands go out as ordinary chat - do not retest.'
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'

@@ -179,6 +179,25 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13 (run 3): the pet DRAWS; its tooltip's two wrong lines are two fields we zeroed.** The
+visibility hunt is closed by the log rather than by the watches: **`0x0202` arrives 504 times after
+the summon and 0 times before it**, its body a movement block starting at the exact position we
+placed the pet, so `0x0202` is the **pet's move report** and the pet is alive and on screen. (It is
+unanswered, so other players are not told the pet moved - unbuilt, noted.) the owner's three new points:
+(1) *"does not pick up items ... the skill is applied but unregistered"* - the tooltip builder
+`FUN_14266f2d0` takes a **`u16` from the item**, ANDs it with each skill's bit and prints
+`(Learned)` (`0x9E5`) or *"This is an unregistered pet."* (`0x9E6`) **[L]**; that `u16` is the pet
+body's `petSkill` and we sent `0`, so nothing was usable. Now `PET_SKILLS_GRANTED`
+(`ITEM_PICKUP|EXPANDED_AUTO_MOVE|AUTO_MOVE`; the field is **[D]**, the bit numbering **[R]**).
+(2) *"My pet is not dyed"* - the dyed line is printed when `-1 < FUN_1401ba9d0(item+0xa6, +0xae)`,
+and that callee is the client's obfuscated-int reader, so **hue 0 is "dyed with colour 0" and only
+a negative hue is undyed** - exactly the reference's `// -1`. Now `PET_HUE_UNDYED` in the body and
+in `0x0277`. (3) *"chat commands does not work"* - **measured**: typing `bad` sent ordinary
+`0x00E7 CLIENT_CHAT` and we echoed a balloon; the client sends no pet packet, so the server must
+recognise the word and broadcast the pet action (`0x0279`, `u8 + str` after charId and petIdx;
+`FUN_141ec3fa0`). **Not built** - it needs the word-to-action table and one capture to settle
+whether the command is one byte or two. `research/pet-tooltip-and-commands-2026-09-13.md`.
+
 **2026-09-13 (run 2): the pet is hidden thirty times a second, and three of the eleven gates are
 settled.** The four watches came back clean. `FUN_141ecde00`'s **first** hit is the instant of the
 summon and it ran **40 times** - twice from the activation path (`0x1428a027e` the handler,

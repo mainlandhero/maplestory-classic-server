@@ -33,7 +33,7 @@
 //! u16  y
 //! u8   moveAction
 //! u16  foothold      looked up in the field's foothold tree (FUN_142df6c50)
-//! u32  hue
+//! u32  hue           -1 when undyed; 0 reads as "dyed with colour 0" - `bag::PET_HUE_UNDYED`
 //! u32  itemId again
 //! u16  wonderGrade
 //! u16  giantRate
@@ -109,7 +109,7 @@ pub fn pet_activated(character_id: u32, pet: &FieldPet) -> Vec<u8> {
     w.i16(pet.y); //                141eba594
     w.u8(pet.move_action); //       141eba77b
     w.u16(pet.foothold); //         141eba959
-    w.u32(0); //                    141eba974  hue
+    w.u32(crate::bag::PET_HUE_UNDYED); // 141eba974  hue: -1 is undyed - see PET_HUE_UNDYED
     w.u32(pet.item_id); //          141ebab65
     w.u16(0); //                    141ebab71  wonderGrade
     w.u16(0); //                    141ebacbb  giantRate
@@ -181,7 +181,7 @@ mod tests {
         assert_eq!(&b[31..33], &85i16.to_le_bytes());
         assert_eq!(b[33], 4, "moveAction");
         assert_eq!(&b[34..36], &37u16.to_le_bytes(), "foothold");
-        assert_eq!(&b[36..40], &0u32.to_le_bytes(), "hue");
+        assert_eq!(&b[36..40], &crate::bag::PET_HUE_UNDYED.to_le_bytes(), "hue: -1, or the tooltip says the pet was dyed");
         assert_eq!(&b[40..44], &5_000_006u32.to_le_bytes(), "itemId again");
         assert_eq!(&b[44..50], &[0, 0, 0, 0, 0, 0], "wonderGrade, giantRate, nameTag, chatBalloon");
     }
