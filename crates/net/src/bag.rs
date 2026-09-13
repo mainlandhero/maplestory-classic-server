@@ -244,6 +244,81 @@ pub fn bundle_item_len(item_id: u32) -> usize {
     }
 }
 
+/// The `u8` item type that selects the PET decode: `FUN_1403095e0` dispatches 3 to
+/// `FUN_140304550`. **[L]**
+pub const PET_ITEM_TYPE: u8 = 3;
+/// The pet's name field: a fixed 13-byte string, like a bundle's owner.
+pub const PET_NAME_LEN: usize = 13;
+/// A pet body with no cash serial: the type byte, the 18-byte base (itemId, hasCashSN,
+/// dateExpire, u32, u8) and the 48-byte pet tail (13 + 1 + 2 + 1 + 8 + 2 + 2 + 4 + 2 + 1 + 4 + 2 + 2 + 4).
+pub const PET_ITEM_LEN: usize = 1 + 18 + 48;
+
+/// A pet (item type 3) - what `FUN_140304550` reads after the shared base. The owner,
+/// 2026-09-13: *"They should also be permanent duration. They should never need to be
+/// revived."*
+///
+/// The base is the bundle's (`FUN_1403035a0`: itemId, hasCashSN [+ serial], dateExpire,
+/// u32, u8). Then, in the order `tools/reads.py 0x140304550 2` lists them **[L]**, with the
+/// meanings the reference server's `PetItem.encode` gives the same widths in the same order
+/// **[R]**:
+///
+/// ```text
+/// raw[13]  name            140304577   the pet's name; the item's own name until renamed
+/// u8       level           14030457f   1
+/// u16      closeness       1403045b5   0
+/// u8       fullness        1403045cc   100 - fed
+/// raw[8]   dateDead        14030460f   ITEM_NEVER_EXPIRES: it never dies, never needs reviving
+/// u16      petAttribute    140304617   0
+/// u16      petSkill        14030462e   0
+/// u32      remainLife      140304645   0 - not a limited-life pet
+/// u16      attribute       14030467e   0
+/// u8       active          14030469b   0
+/// u32      petHue          1403046da   0
+/// u16      giantRate       140304713   0
+/// u16                      140304730   0
+/// u32                      14030474d   0
+/// ```
+///
+/// Before this existed a pet was refused at purchase; a bundle body sent for one had killed
+/// the client on 2026-08-26, which is the whole reason the type byte and the tail are read
+/// off the client rather than assumed.
+pub fn pet_item_with_cash_sn(item_id: u32, name: &str, cash_sn: Option<std::num::NonZeroU64>) -> Vec<u8> {
+    let mut b = Vec::with_capacity(PET_ITEM_LEN + 8);
+    b.push(PET_ITEM_TYPE); //                                   1403095fb  u8   item type
+    b.extend_from_slice(&item_id.to_le_bytes()); //             1403035c5  u32  itemId
+    match cash_sn {
+        Some(sn) => {
+            b.push(1); //                                       140303787  u8   hasCashSN
+            b.extend_from_slice(&sn.get().to_le_bytes()); //    14030379d  raw[8]
+        }
+        None => b.push(0),
+    }
+    b.extend_from_slice(&ITEM_NEVER_EXPIRES.to_le_bytes()); //  1403037b9  raw[8] dateExpire
+    b.extend_from_slice(&0u32.to_le_bytes()); //                1403037c1  u32
+    b.push(0); //                                               1403037cc  u8
+    // FUN_140304550.
+    let mut fixed = [0u8; PET_NAME_LEN];
+    let bytes = name.as_bytes();
+    let n = bytes.len().min(PET_NAME_LEN - 1); // a terminator stays
+    fixed[..n].copy_from_slice(&bytes[..n]);
+    b.extend_from_slice(&fixed); //                              140304577  raw[13] name
+    b.push(1); //                                               14030457f  u8   level
+    b.extend_from_slice(&0u16.to_le_bytes()); //                1403045b5  u16  closeness
+    b.push(100); //                                             1403045cc  u8   fullness
+    b.extend_from_slice(&ITEM_NEVER_EXPIRES.to_le_bytes()); //  14030460f  raw[8] dateDead
+    b.extend_from_slice(&0u16.to_le_bytes()); //                140304617  u16  petAttribute
+    b.extend_from_slice(&0u16.to_le_bytes()); //                14030462e  u16  petSkill
+    b.extend_from_slice(&0u32.to_le_bytes()); //                140304645  u32  remainLife
+    b.extend_from_slice(&0u16.to_le_bytes()); //                14030467e  u16  attribute
+    b.push(0); //                                               14030469b  u8   active
+    b.extend_from_slice(&0u32.to_le_bytes()); //                1403046da  u32  petHue
+    b.extend_from_slice(&0u16.to_le_bytes()); //                140304713  u16  giantRate
+    b.extend_from_slice(&0u16.to_le_bytes()); //                140304730  u16
+    b.extend_from_slice(&0u32.to_le_bytes()); //                14030474d  u32
+    debug_assert_eq!(b.len(), PET_ITEM_LEN + if cash_sn.is_some() { 8 } else { 0 });
+    b
+}
+
 /// One stackable item, as `FUN_140304450` - the type-2 `vtable+0x358` decode - reads it.
 ///
 /// Every field below is **[L]**, read off `research/msexe-itemslot-bundle-decode.txt` and
@@ -534,5 +609,45 @@ mod tests {
         assert_eq!(&list[..2], &1u16.to_le_bytes());
         assert_eq!(&list[list.len() - 2..], &0u16.to_le_bytes());
         assert_eq!(bundle_bag_list(&[], DEFAULT_INVENTORY_SLOTS), vec![0u8; 2]);
+    }
+}
+
+#[cfg(test)]
+mod pet_tests {
+    use super::*;
+
+    /// The pet body is the bundle's base followed by the fourteen reads of FUN_140304550, in
+    /// their order and widths; both dates are the never-expires sentinel.
+    #[test]
+    fn a_pet_body_is_type_3_with_the_fourteen_pet_reads_after_the_base() {
+        let b = pet_item_with_cash_sn(5000001, "Brown Puppy", None);
+        assert_eq!(b.len(), PET_ITEM_LEN);
+        assert_eq!(b[0], PET_ITEM_TYPE);
+        assert_eq!(u32::from_le_bytes(b[1..5].try_into().unwrap()), 5000001);
+        assert_eq!(b[5], 0, "no cash serial");
+        assert_eq!(&b[6..14], &ITEM_NEVER_EXPIRES.to_le_bytes(), "dateExpire: never");
+        // 14..18 u32, 18 u8: the base's tail. Then the pet.
+        let name = &b[19..32];
+        assert_eq!(&name[..11], b"Brown Puppy");
+        assert_eq!(name[11], 0, "terminated inside the 13");
+        assert_eq!(b[32], 1, "level");
+        assert_eq!(&b[33..35], &0u16.to_le_bytes(), "closeness");
+        assert_eq!(b[35], 100, "fullness");
+        assert_eq!(&b[36..44], &ITEM_NEVER_EXPIRES.to_le_bytes(), "dateDead: never - never revived");
+        assert!(b[44..].iter().all(|&x| x == 0), "attributes, skill, life, hue, giant: zero");
+        assert_eq!(b[44..].len(), 2 + 2 + 4 + 2 + 1 + 4 + 2 + 2 + 4);
+
+        // With a serial: eight more bytes after the flag, everything else in place.
+        let sn = std::num::NonZeroU64::new(0x1122_3344_5566_7788).unwrap();
+        let c = pet_item_with_cash_sn(5000001, "Brown Puppy", Some(sn));
+        assert_eq!(c.len(), PET_ITEM_LEN + 8);
+        assert_eq!(c[5], 1);
+        assert_eq!(&c[6..14], &sn.get().to_le_bytes());
+        assert_eq!(&c[27..40], &b[19..32], "the name follows the serial");
+
+        // A long name is cut to twelve bytes and a terminator, never thirteen.
+        let d = pet_item_with_cash_sn(5000010, "A name longer than thirteen", None);
+        assert_eq!(d.len(), PET_ITEM_LEN);
+        assert_eq!(d[31], 0);
     }
 }

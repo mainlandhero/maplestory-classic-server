@@ -10929,3 +10929,56 @@ fn a_gendered_reward_goes_only_to_the_gender_it_names() {
     // A pool with nothing eligible draws nothing rather than panicking.
     assert!(choose_rewards(&[RewardItem { id: 9, count: 1, prop: 1, gender: Some(1) }], 0, 5).is_empty());
 }
+
+/// **A pet is bought, sits in the locker with a type-3 body, and moves to the Cash tab as one.**
+/// The owner, 2026-09-13: the eleven pets in the shop, permanent, never revived. Until today a pet
+/// was refused at purchase; the body is `net::bag::pet_item_with_cash_sn`.
+#[test]
+fn a_pet_is_bought_as_a_type_3_item_that_never_dies() {
+    let dir = std::env::temp_dir().join(format!("maplecw-pets-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("commodity.txt");
+    std::fs::write(
+        &path,
+        "# sn, itemId, count, price, ...\n\
+         160000003, 5000000, 1, 100, 100, , 0, 2, 1, , 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 0, 600, Brown Kitty\n",
+    )
+    .unwrap();
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    store.set_gm("maplecw", true).unwrap();
+    let chr = net::opcode::Character { name: "Owner".to_string(), ..Default::default() };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    store.add_maple_points(account_id, 50_000).unwrap();
+    let mut item_names = std::collections::HashMap::new();
+    item_names.insert(5000000u32, "Brown Kitty".to_string());
+    let config = Config {
+        item_names,
+        set_field_probe: true,
+        commodity: crate::commodity::CommodityTable::load(&path),
+        ..Config::default()
+    };
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    s.claim_for_character(id);
+
+    let out = s.handle(&buy_body(160000003));
+    let bought = out.iter().find(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT).expect("a cash shop result");
+    assert!(bought.what.contains("BOUGHT"), "not refused any more: {}", bought.what);
+    // The locker record carries the pet body: type 3, the name, dateDead never.
+    let body = &bought.body;
+    let at = body.windows(1 + 4).position(|w| w[0] == net::bag::PET_ITEM_TYPE && w[1..5] == 5000000u32.to_le_bytes()).expect("a type-3 body for item 5000000 in the record");
+    let pet = &body[at..];
+    // The record's own header carries the serial, so the body inside it has hasCashSN 0 and
+    // the name sits at 19 - the same place as in the bag blob.
+    assert_eq!(pet[5], 0, "no serial inside the record's body");
+    assert_eq!(&pet[19..30], b"Brown Kitty", "named after the item");
+    assert_eq!(&pet[36..44], &net::opcode::ITEM_NEVER_EXPIRES.to_le_bytes(), "dateDead: never revived");
+    // The blob the bag will get for it is the same body, never expiring, never dying.
+    let item = store::Item::bundle(5000000, 1);
+    let blob = s.item_blob(&item);
+    assert_eq!(blob[0], net::bag::PET_ITEM_TYPE);
+    assert_eq!(blob.len(), net::bag::PET_ITEM_LEN);
+    assert_eq!(&blob[36..44], &net::opcode::ITEM_NEVER_EXPIRES.to_le_bytes(), "dateDead: never revived");
+    let _ = std::fs::remove_dir_all(&dir);
+}

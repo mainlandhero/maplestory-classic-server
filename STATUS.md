@@ -179,6 +179,23 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13: the eleven pets - permanent, all in the shop, and buyable as type-3 items;
+unverified on screen.** The owner: *"Brown Puppy, Panda and Dino Boy all have 3 day duration. Please edit
+the WZ if needed to change all of them to permanent duration. Also please add all of the other pets
+into the Cash Shop too ... They should never need to be revived."* Three findings. (1) The duration
+is each pet's own `Item/Pet/<id>.img/info/life` in days - 3 for those three, 7 and 90 for the rest;
+the three Commodity rows already said `Period 0`. The modern client's one permanent pet (5000060)
+carries `life 0, permanent 1` **[L]**, so the installer (step 4c) patches every classic pet to that.
+(2) The eight pets with no row get one under the Pets tab (SN `160000003..10`, category 6 / scope
+600 by the SN arithmetic, 100 LP, Period 0). (3) **A pet purchase was refused outright** - no type-3
+body existed and a bundle sent for one had killed the client (2026-08-26). `tools/reads.py
+0x140304550 2` lists the pet decoder's fourteen reads after the shared base, and the reference's
+`PetItem.encode` gives the same widths in the same order **[L]+[R]**: name[13], level, closeness,
+fullness, dateDead, petAttribute, petSkill, remainLife, attribute, active, hue, giantRate, u16, u32.
+`net::bag::pet_item_with_cash_sn` builds it (name = the item's, level 1, fullness 100, dateDead never -
+the "never revived" half); `item_blob` uses it for every 500xxxx item and the three shop refusals are
+gone. **Summoning a pet is not built** - the shop and the bag are this change. Plan step TO(p).
+
 **2026-09-13: a `prop`-marked quest reward is one draw from the pool.** The owner: *"When I finished
 'Please bring this letter to Lucas', Maria gave me one of every single Headband item when it's
 suppose to be choose 1 randomly from the pool."* Quest 1008 (Lucas's Reply): `Act.1.item.1..7`

@@ -19,6 +19,7 @@ archive as the base. Every existing image is carried over byte for byte; ours ar
 | `Item/Cash/Cash_000.wz`, `Item/Consume/Consume_000.wz` | `merge`: an item image (`0522.img`) holds every item with that prefix, so only OUR nodes are taken from the modern image and laid onto the classic image of the same name (or an empty one) |
 | `Item/<Cash|Consume>/_Canvas/_Canvas_000.wz` | `merge`, the same keys |
 | `String/String_000.wz` | `strings`: `Eqp.img` (under `ClassicWorld/<Type>/<id>`), `Cash.img` and `Consume.img` (flat `<id>`) gain `name` and `desc` leaves |
+| `Item/Pet/Pet_000.wz` | `patch`: every pet's `info/life` -> 0 and `info/permanent` -> 1, the modern permanent pet's shape; the eight pets the classic shop never listed get Commodity rows under the Pets tab |
 | `Effect/Effect_000.wz`, `Effect/_Canvas/_Canvas_000.wz` | `merge`: the classic client has no `ItemEff.img` at all, so a NEW one is made from the set items' worn-effect nodes (Himmel's Blessing, 1103918) and a new canvas `ItemEff.img` from the holders their outlinks name (1103930) |
 
 The modern client is opened read-only as the SOURCE of every copy; nothing there is
@@ -395,7 +396,51 @@ def main():
             ]:
                 fh.write("%d/%s\tint\t%d\n" % (row, field, value))
             ch.write("2/0/commoditySN/%d\tint\t%d\n" % (i, sn))
+    # 4c. The pets. The owner, 2026-09-13: "Current, Brown Puppy, Panda and Dino Boy all have 3 day
+    #     duration. Please edit the WZ if needed to change all of them to permanent duration.
+    #     Also please add all of the other pets into the Cash Shop too ... They should also be
+    #     permanent duration. They should never need to be revived."
+    #
+    #     The duration the shop shows is the pet's own `Item/Pet/<id>.img/info/life`, in DAYS
+    #     (3 for Brown Puppy, Panda and Dino Boy; 7 and 90 for the rest) - the three Commodity
+    #     rows already say Period 0. The modern client's one permanent pet (5000060) carries
+    #     `life 0` and `permanent 1` [L], so every classic pet gets both. The eight pets with
+    #     no row get one in the Pets tab: SN 1600000NN puts a row under category 6 / scope 600
+    #     (tools/dump_commodity.py's arithmetic), Period 0, the shipped rows' price. Whether the
+    #     classic client reads `permanent` is I; `life 0` is what the permanent pet ships with.
+    #     The lifespan the SERVER sends is the pet body's dateDead, which is never
+    #     (net::bag::pet_item_with_cash_sn) - that is the "never revived" half.
+    pets = [(5000000, "Brown Kitty"), (5000001, "Brown Puppy"), (5000002, "Pink Bunny"),
+            (5000003, "Mini Kargo"), (5000004, "Black Kitty"), (5000005, "White Bunny"),
+            (5000006, "Husky"), (5000007, "Black Pig"), (5000008, "Panda"),
+            (5000009, "Dino Boy"), (5000010, "Dino Girl")]
+    for pet_id, pet_name in pets:
+        tsv = os.path.join(args.build_dir, "pet-%07d.tsv" % pet_id)
+        with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("# %s: permanent - life 0 and permanent 1, as the modern client's permanent pet carries\n" % pet_name)
+            fh.write("info/life\tint\t0\n")
+            fh.write("info/permanent\tint\t1\n")
+        add("Item/Pet", "patch\t%07d.img\t%s" % (pet_id, tsv))
+    shipped_pet_rows = {5000001, 5000008, 5000009}  # SN 160000000..2 in the classic Commodity.img
+    pet_rows_patch = os.path.join(args.build_dir, "patch-Commodity-pets.tsv")
+    with open(pet_rows_patch, "w", encoding="utf-8", newline="\n") as fh:
+        n = 0
+        for pet_id, pet_name in pets:
+            if pet_id in shipped_pet_rows:
+                continue
+            sn = 160_000_003 + n
+            row = classic_rows + len(wares) + n
+            n += 1
+            fh.write("# %s\n" % pet_name)
+            for field, value in [
+                ("SN", sn), ("ItemId", pet_id), ("Count", 1), ("Price", 100), ("Bonus", 0),
+                ("Period", 0), ("Priority", 100), ("ReqPOP", 0), ("ReqLEV", 0), ("Gender", 2),
+                ("OnSale", 1), ("originalPrice", 100), ("PbCash", 0), ("PbPoint", 0),
+                ("PbGift", 0), ("Refundable", 0), ("WebShop", 0), ("IsGift", 0),
+            ]:
+                fh.write("%d/%s\tint\t%d\n" % (row, field, value))
     add("Etc", "patch\tCommodity.img\t%s" % commodity_patch)
+    add("Etc", "patch\tCommodity.img\t%s" % pet_rows_patch)
     add("Etc", "patch\tCashShopCategory.img\t%s" % category_patch)
     del rows
 
