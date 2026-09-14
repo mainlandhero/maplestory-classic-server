@@ -6,6 +6,7 @@
 //!
 //! 1. refuse to touch the original install;
 //! 2. check the client executable is there;
+//! 2b. check the folder is complete and self-contained - reported, never refused;
 //! 3. stub GameGuard (back up once, install the stub, disable `grap\`);
 //! 4. make sure the crash-dump directory exists;
 //! 5. **archive** the previous `maplecw-hook.log` - never delete it;
@@ -124,6 +125,18 @@ pub fn prepare(
     let exe = layout.client_exe();
     if !exe.is_file() {
         return Err(format!("no {} at {}", crate::paths::CLIENT_EXE_NAME, exe.display()));
+    }
+
+    // 2b. Is the folder complete, and does it stand on its own?
+    //
+    // Read-only, and before anything is written, so a folder that cannot work says so while
+    // the directory is still untouched. **It reports and does not refuse** - see
+    // `crate::integrity`: a false positive here would block a launch on a machine where the
+    // client runs, and the client is about to fail loudly by itself anyway. What this adds is
+    // a file name next to that failure, in the log the person on the other machine already
+    // knows how to send.
+    for (level, line) in crate::integrity::check(client_dir).lines() {
+        log(level, line);
     }
 
     // 3. GameGuard. The stub is a file on disk when there is one, and otherwise the copy

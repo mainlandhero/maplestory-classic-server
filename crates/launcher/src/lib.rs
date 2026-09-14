@@ -16,6 +16,7 @@
 //! | [`paths`] | resolving the client, database, stub and output directories - **never hard-coded** |
 //! | [`session`] | Login: argon2id verification, then staking the login claim |
 //! | [`client`] | the GameGuard stub, the hook markers, archiving the previous run's log |
+//! | [`integrity`] | is the client folder complete, and does it stand on its own - read from the PE import tables, on every launch |
 //! | [`launch`] | `ShellExecuteW`, because the client has an elevation manifest |
 //! | [`prepare`] | Start Game: the whole sequence, in order |
 //! | [`app`] | the window |
@@ -29,6 +30,7 @@ mod client;
 mod config;
 mod firewall;
 mod http;
+mod integrity;
 mod launch;
 mod paths;
 mod prepare;
@@ -43,10 +45,15 @@ mod testutil;
 mod paths_pin_tests;
 
 const USAGE: &str = "\
-maplecw-launcher [--print-paths]
+maplecw-launcher [--print-paths] [--check-client [folder]]
 
   (no arguments)  open the launcher window
   --print-paths   print the resolved client, database, stub and output paths, then exit
+  --check-client  check that the client folder is complete and self-contained, then exit.
+                  Reads the PE import tables of every module in it; loads nothing and
+                  launches nothing. Takes an optional folder, defaulting to the resolved
+                  client directory. Start Game runs the same check every time and puts the
+                  result in the log, so this flag is only for checking without launching.
   --help          this
 
 The launcher takes no server address on the command line: the window has fields for it, and
@@ -93,6 +100,21 @@ pub fn run() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--print-paths" || a == "--paths") {
         report(&layout.report());
+        return;
+    }
+    // `--check-client` answers "is this copy of the client complete" on a machine with no
+    // console and nobody to run a script on it. Start Game runs the same check and logs the
+    // same lines; this is the way to ask without starting anything.
+    if let Some(i) = args.iter().position(|a| a == "--check-client" || a == "--check") {
+        let dir = match args.get(i + 1) {
+            Some(next) if !next.starts_with("--") => std::path::PathBuf::from(next),
+            _ => layout.client_dir.clone(),
+        };
+        report(&format!(
+            "client folder: {}\n{}",
+            dir.display(),
+            integrity::check(&dir).text()
+        ));
         return;
     }
     if args.iter().any(|a| a == "--help" || a == "-h" || a == "/?") {
