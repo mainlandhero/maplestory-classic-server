@@ -277,6 +277,35 @@ impl Session {
     }
 
 
+    /// **A picked-up (or expired-on-click) drop leaves EVERY screen it was on, not just the
+    /// picker's.**
+    ///
+    /// The owner, 2026-09-14: *"when one person picks up the drops, all other people that see the
+    /// drops also see it being picked up by that person. There should be no duplicates of
+    /// drops, multiple people cannot pick up the same drop."*
+    ///
+    /// The no-duplicate half is already true: [`crate::drops::DropTable::take`] removes the
+    /// drop from the shared table *before* it returns `Taken`, under the field lock, so a
+    /// second player's pick-up of the same id gets `Unknown` and is refused. This is the other
+    /// half - the visual one. The leave packet (`0x046F` leaveType 2) carries the picker's
+    /// character id, which is what every client uses to animate the drop flying into that
+    /// player, so the SAME bytes are what the whole field needs; the drop's own `take` doc
+    /// says as much ("Broadcast this to the field INCLUDING the picker").
+    ///
+    /// The picker's copy goes back to the caller in `out`; this returns those same replies for
+    /// the caller to push, and publishes each to the rest of the field over the bus (which
+    /// excludes the publisher, so the picker is not told twice). A member who never saw the
+    /// drop - a solo drop belongs to one owner - holds no such object id and its client
+    /// ignores the leave, exactly as it ignores a movement packet for an id its pool never
+    /// had. So publishing to the whole field is safe and needs no per-drop audience list.
+    fn take_leaves_to_field(&self, map: u32, outcome: &crate::drops::PickUp) -> Vec<Reply> {
+        let leaves = outcome.replies();
+        for leave in &leaves {
+            self.bus().publish(self.subscriber, map, leave.clone(), None);
+        }
+        leaves
+    }
+
     /// `0x032C` - the player walked over a drop.
     ///
     /// **This handler exists to be read in a log.** Until a run names the opcode it reports
@@ -393,7 +422,7 @@ impl Session {
                     body: net::message::meso_gained(amount.min(i32::MAX as u32) as i32),
                     what: format!("Message: +{amount} mesos, screen message area"),
                 });
-                out.extend(outcome.replies());
+                out.extend(self.take_leaves_to_field(map, &outcome));
                 return out;
             }
 
@@ -418,8 +447,9 @@ impl Session {
                         ),
                     });
                     // Only now is the drop really gone. The leave packet goes last, after
-                    // the bag write it depends on has succeeded.
-                    out.extend(outcome.replies());
+                    // the bag write it depends on has succeeded - and it goes to the whole
+                    // field, not just this picker.
+                    out.extend(self.take_leaves_to_field(map, &outcome));
                 }
                 Err(e) => {
                     // Put it back on the floor and send NO leave. A leave for a drop that is
