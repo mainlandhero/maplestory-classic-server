@@ -1201,40 +1201,43 @@
                          not what this pet code reads; say so
               the pet takes your OWN dropped item                           -> the byte is
                          ignored; paste the pet pick-up line
-         v) NEW 2026-09-14 (round 3) - THE PET'S LAYER IS VISIBLE AND EMPTY.
-            Round 1 (dateDead) and round 2 (-PetSync) are both CLOSED. The -PetSync
-            capture is unambiguous: the ladder ran 4164 times, gate 11 read 0 on all
-            2964 of its ladder calls, and the sync never transitioned - so the client
-            has the pet marked VISIBLE and draws nothing. The 2026-09-13 gate hunt is
-            over; it was chasing a mechanism that had been answering "yes" all along.
-            A Ghidra pass then read the whole draw chain out of CPet::Init, with no
-            launch (research/msexe-pet-init.c, -action.c, -frames.c):
-              pet+0x3b8  the sprite, from the factory DAT_143add050 vtbl+0x1d8
-              pet+0x3c8  the layer, registered by FUN_141b054f0 with 0x3eb - the object
-                         -PetSync measured as visible
-              Init calls FUN_141ec7880(pet, FUN_141ec7e90(pet), 1) = CPet::SetStance
-              SetStance(0) takes the LAND arm FUN_141ec2690 and returns
-              that reaches FUN_141ecaa40, which is where frames go in - and it BAILS AT
-              THE TOP if pet+0x3d8 != 0, inserting nothing and reporting nothing
-            One lead died inside the pass and is written down so nobody re-runs it:
-            moveAction decodes at pet+0x2d8 into a 15-entry stance table (0 and 1 fall
-            off it), but FUN_141ec7e90 returns a BOOL, not that stance - so stance 0 is
-            the normal land path and moveAction 0 is CORRECT. Do not change it.
-            -PetFrames walks the chain; the deepest watch that fires names where it
-            stops. Summon at once, stand still ten seconds, quit:
-              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetFrames
-            Paste the counts, rdx on 141ec7880, and the peek on 141ecaa40:
-              no 141ec7880 at the summon    -> Init never set a stance; the chain never
-                         starts and the question moves back into Init
-              141ec7880 rdx=1               -> the client put a land pet in the FLYING
-                         arm; moveAction becomes worth changing after all
-              rdx=0 but no 141ec2690        -> SetStance returned before the land arm
-              141ec2690 but no 141ecaa40    -> pet+0x3d8 or pet+0x3b8 chose another arm
-              141ecaa40 peek NON-ZERO       -> the bail IS the bug; pet+0x3d8 is the
-                         field, and the next question is who sets it
-              141ecaa40 peek 0              -> frames went into a visible layer and it
-                         still draws nothing. That eliminates this whole chain
-              no 140304100 lines            -> the hook never armed; not evidence
+         v) NEW 2026-09-14 (round 4) - THE LAYER IS VISIBLE AND IT IS NOT EMPTY.
+            -PetFrames came back on the outcome I pre-registered as the one that
+            ELIMINATES the whole draw chain, and it did:
+              141ec7880  1166 hits. The summon call is from Init (0x141ebbe86) with
+                         rdx=0, r8=1 - stance 0, forced. Exactly what the static read
+                         predicted, so moveAction 0 is confirmed correct
+              141ec2690     3 hits, all from inside SetStance
+              141ecaa40    11 hits, and [pet+0x3d8] = 0x00000000 on EVERY one, so the
+                         silent bail never fired: the sprite was reset, given its
+                         frames, and inserted into the layer
+              140304100    36 hits - the hook armed
+            So the sprite exists, has frames, is in a layer that -PetSync measured as
+            visible, which is registered and positioned - and nothing draws. Rounds 1,
+            2 and 3 are all closed and all of them were real.
+            Reading SetStance for that run turned up a SECOND writer, and it is the
+            only lead left. Every periodic call (force 0, stance unchanged - 1163 of
+            them) falls through to:
+              141ec7958  call 140f8abc0        ; ([user+0x100+0x5ac] != 0)
+              141ec795f  je epilogue           ; zero -> nothing happens
+              141ec7970  call [pet->vtbl+0x18] ; pet->vtbl[0x18](pet, 0, 0)
+            and vtbl[0x18] is THE SAME SLOT the visibility sync sets to 1. Two writers,
+            and the periodic one always writes zero; the sync would never correct it
+            because what it reads back is the LAYER's flag, a different object - which
+            is precisely why it kept measuring "already visible".
+            THIS IS A HYPOTHESIS. It only fires if user+0x100+0x5ac is non-zero and
+            nobody has ever read that field. -PetEnable reads it:
+              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetEnable
+            Paste the peek on 140f8abc0 and the counts:
+              peek 0 everywhere            -> the gate is shut, 141ec7970 cannot fire,
+                         and the idea is dead. That is a fine answer - say it
+              peek NON-ZERO + 141ec7970 firing repeatedly
+                                           -> the pet is disabled ~30 times a second by
+                         a writer the sync never sees. That is the bug
+              peek non-zero, 141ec7970 silent -> my read of the fall-through is wrong
+              140eeba60 with rdx=0xffffff  -> something makes the layer TRANSPARENT
+                         (alpha 0). Different bug; paste called-from
+              no 140304100 lines           -> the hook never armed; not evidence
             FREE, same run: every pet test has been on map 1010 - walk to another map
             with the pet out and say whether it appears there.
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
@@ -2165,10 +2168,14 @@ param(
     # nobody CALLED a setter and not what the fields hold. See the block that sets $Probe.
     [Alias('PetFlags')]
     [switch]$PetSync,
-    # **-PetFrames**: the pet's layer is visible (-PetSync settled that) and empty, so this
-    # walks the chain that puts frames INTO it - SetStance, the land arm, and the insert -
-    # and the deepest watch that fires names where it stops. See the $Probe block.
+    # **-PetFrames**: walked the chain that puts frames into the pet's layer. ANSWERED
+    # 2026-09-14: every step ran and the layer is NOT empty, which eliminated the chain.
+    # Kept because it is the control that says the draw path still works.
     [switch]$PetFrames,
+    # **-PetEnable**: the periodic SetStance calls pet->vtbl[0x18](pet, 0, 0) - the same
+    # slot the visibility sync sets to 1 - whenever user+0x100+0x5ac is non-zero. This
+    # reads that field directly and watches the call. See the $Probe block.
+    [switch]$PetEnable,
     [switch]$PetGates,
     # ON BY DEFAULT SINCE 2026-09-14, and accepted only so that every launch line already
     # written down keeps working. It used to be the switch that made the channel answer at
@@ -2519,7 +2526,58 @@ if (-not $SilentChannel) { $SetFieldProbe = $true }
 #
 # So: passing -InventorySlots means the bag is the variable, and the bag gets the watches.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    if ($PetFrames) {
+    if ($PetEnable) {
+        # **THE SECOND WRITER TO THE PET'S ENABLE FLAG.** -PetFrames eliminated the frame
+        # chain: FUN_141ecaa40 ran 11 times with pet+0x3d8 = 0 every time, so the sprite was
+        # reset, given its frames, and inserted into a layer that -PetSync had already
+        # measured as visible. Everything the client needs to draw a pet was done, twice
+        # over, and nothing drew.
+        #
+        # Reading CPet::SetStance for that run turned up a SECOND writer. Every periodic
+        # call - force 0, stance unchanged, and there were 1163 of them - falls through to:
+        #
+        #   141ec794a  rcx = user+0x100
+        #   141ec7958  call 140f8abc0          ; returns ([rcx+0x5ac] != 0)
+        #   141ec795f  je epilogue             ; zero -> do nothing
+        #   141ec7970  call [pet->vtbl + 0x18] ; pet->vtbl[0x18](pet, 0, 0)
+        #
+        # **`vtbl[0x18]` is the same slot the visibility sync sets**: FUN_141ecde00's show
+        # path calls `pet->vtbl[0x18](pet, verdict, 0)`. So two things write that flag, and
+        # the periodic one always writes ZERO. The sync would never correct it, because what
+        # the sync reads back is the LAYER's own flag through vtbl[0x2b0] - a different
+        # object - which is exactly why it measured "already visible" 2964 times.
+        #
+        # **This is a hypothesis, not a measurement.** It only fires when user+0x100+0x5ac is
+        # non-zero, and nothing has ever read that field. If it is zero the whole idea is
+        # dead, and that is what the first watch is for.
+        #
+        # 140f8abc0:peek=5ac    THE GATE, read rather than inferred. rcx is user+0x100, so
+        #                       the peek prints the exact dword the function tests
+        # 141ec7970:hits=6000   the disable call itself. Fires only past that gate
+        # 140eeba60:hits=6000   the layer colour setter, rdx is the value. SetStance can pass
+        #                       0xffffff - alpha 0, fully transparent - to a pet that is not
+        #                       the user's current one. That arm needs stance != 0 so it
+        #                       should be silent here, and this watch is what makes "should"
+        #                       into "is". It is also the NPC bug's shape, which this project
+        #                       has already been caught by once
+        # 140304100:hits=200    positive control
+        #
+        # READ IT LIKE THIS:
+        #   140f8abc0 peek 0 everywhere      -> the gate is shut, 141ec7970 cannot fire, and
+        #                      this whole idea is dead. Say so; it costs nothing to be wrong
+        #                      here and it removes the last lead I have
+        #   peek NON-ZERO and 141ec7970 fires repeatedly
+        #                                    -> the pet is being disabled ~30 times a second
+        #                      by a writer the sync never sees. That is the bug, and the next
+        #                      question is what sets user+0x100+0x5ac
+        #   peek non-zero but 141ec7970 silent
+        #                                    -> the gate is open and the call still does not
+        #                      happen; my read of the fall-through is wrong
+        #   140eeba60 with rdx=0xffffff      -> something IS making the layer transparent.
+        #                      Paste called-from; that is a different bug from the above
+        #   no 140304100 lines               -> the hook never armed; not evidence
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,140f8abc0:peek=5ac:hits=6000,141ec7970:hits=6000,140eeba60:hits=6000,140304100:hits=200:dump=143AC2400/968'
+    } elseif ($PetFrames) {
         # **WHY THE VISIBLE LAYER HAS NOTHING IN IT.** -PetSync proved the pet is marked
         # visible on all 2964 evaluations and never transitions, so the question moved from
         # "is it shown" to "is there anything to show". A Ghidra pass over CPet::Init
@@ -3494,33 +3552,34 @@ function Show-TestPlan {
         Write-Host '                         -> paste that inbound body'
         Write-Host '           pet never goes for drops -> keys not read; say so'
         Write-Host '           pet takes YOUR OWN drop -> paste the pet pick-up line' -ForegroundColor Yellow
-        Write-Host '      v) THE PET LAYER IS VISIBLE AND EMPTY - rounds 1 and 2 CLOSED.' -ForegroundColor Yellow
-        Write-Host '         -PetSync was unambiguous: the ladder ran 4164 times, gate 11'
-        Write-Host '         read 0 on all 2964 ladder calls, and the sync never changed'
-        Write-Host '         anything - so the client HAS the pet visible and draws nothing.'
-        Write-Host '         The 2026-09-13 gate hunt is over. A Ghidra pass then read the'
-        Write-Host '         whole draw chain with no launch: Init makes a sprite (pet+0x3b8)'
-        Write-Host '         and a layer (pet+0x3c8), then SetStance -> the land arm ->'
-        Write-Host '         FUN_141ecaa40, which is where frames go in and which BAILS at'
-        Write-Host '         the top if pet+0x3d8 != 0, silently.' -ForegroundColor Yellow
-        Write-Host '         A lead DIED in that pass, noted so nobody redoes it: moveAction'
-        Write-Host '         decodes into a stance table, but FUN_141ec7e90 returns a BOOL,'
-        Write-Host '         not that stance - moveAction 0 is CORRECT. Do not change it.'
-        Write-Host '         -PetFrames walks the chain. Summon at once, 10s, quit:'
-        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetFrames' -ForegroundColor Cyan
-        Write-Host '         Paste counts, rdx on 141ec7880, and the peek on 141ecaa40:'
-        Write-Host '           no 141ec7880 -> Init never set a stance; back into Init'
-        Write-Host '           141ec7880 rdx=1 -> a land pet went down the FLYING arm;'
-        Write-Host '                         moveAction becomes worth changing after all' -ForegroundColor Yellow
-        Write-Host '           rdx=0, no 141ec2690 -> SetStance left before the land arm'
-        Write-Host '           141ec2690, no 141ecaa40 -> another arm took it'
-        Write-Host '           141ecaa40 peek NON-ZERO -> THE BAIL IS THE BUG. pet+0x3d8,' -ForegroundColor Yellow
-        Write-Host '                         and the next question is who sets it'
-        Write-Host '           141ecaa40 peek 0 -> frames went into a visible layer and it'
-        Write-Host '                         still draws nothing; this whole chain is out'
+        Write-Host '      v) THE LAYER IS VISIBLE AND IT IS NOT EMPTY - chain ELIMINATED.' -ForegroundColor Yellow
+        Write-Host '         -PetFrames came back on the outcome I pre-registered as the one'
+        Write-Host '         that kills the whole draw chain: 141ecaa40 ran 11 times with'
+        Write-Host '         pet+0x3d8 = 0 EVERY time, so the sprite was reset, given its'
+        Write-Host '         frames and inserted into the layer. SetStance ran 1166 times,'
+        Write-Host '         the summon call rdx=0 r8=1 from Init - so moveAction 0 is'
+        Write-Host '         confirmed correct. Rounds 1, 2 and 3 are closed.'
+        Write-Host '         One lead left, found reading SetStance for that run. Every' -ForegroundColor Yellow
+        Write-Host '         periodic call falls through to:'
+        Write-Host '           141ec7958 call 140f8abc0     ; [user+0x100+0x5ac] != 0 ?'
+        Write-Host '           141ec7970 call [pet->vtbl+0x18](pet, 0, 0)'
+        Write-Host '         and vtbl[0x18] is THE SAME SLOT the visibility sync sets to 1.'
+        Write-Host '         Two writers; the periodic one always writes zero, and the sync'
+        Write-Host '         never notices because it reads the LAYER back instead.'
+        Write-Host '         THIS IS A HYPOTHESIS - it needs that field non-zero and nobody' -ForegroundColor Yellow
+        Write-Host '         has read it. -PetEnable reads it. Summon at once, 10s, quit:'
+        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetEnable' -ForegroundColor Cyan
+        Write-Host '         Paste the peek on 140f8abc0 and the counts:'
+        Write-Host '           peek 0 everywhere -> the gate is shut and the idea is DEAD.'
+        Write-Host '                         That is a fine answer; say it'
+        Write-Host '           peek NON-ZERO + 141ec7970 firing -> the pet is disabled ~30x a' -ForegroundColor Yellow
+        Write-Host '                         second by a writer the sync never sees. The bug'
+        Write-Host '           peek non-zero, 141ec7970 silent -> my read is wrong'
+        Write-Host '           140eeba60 rdx=0xffffff -> the layer is being made TRANSPARENT;'
+        Write-Host '                         different bug, paste called-from' -ForegroundColor Yellow
         Write-Host '           NO 140304100 lines -> the hook never armed; not evidence' -ForegroundColor Red
-        Write-Host '         FREE: walk to another map with the pet out (every pet test has'
-        Write-Host '         been on 1010) and say whether it appears there.'
+        Write-Host '         FREE: walk to another map with the pet out and say whether it'
+        Write-Host '         appears there.'
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'

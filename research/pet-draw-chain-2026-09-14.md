@@ -120,3 +120,64 @@ control, and the deepest one that fires names where it stops:
 Two outcomes end this: `141ecaa40` with **peek non-zero** makes `pet+0x3d8` the bug, and
 `141ecaa40` with **peek 0** eliminates the entire chain - frames went into a visible layer and
 it still drew nothing - which would move the hunt to the sprite's own contents.
+
+
+---
+
+# The `-PetFrames` run: the chain executes, and the layer is not empty
+
+`research/fixtures/pet-frames-inserted-and-still-blank-3d8-was-zero-hook.log`, 2026-09-14
+17:07:07. This is the outcome §5 pre-registered as the one that **eliminates the chain**.
+
+```text
+140304100    36 hits   POSITIVE CONTROL - the hook armed
+141ec7880  1166 hits   CPet::SetStance. The summon call is from Init (called-from
+                       0x141ebbe86) with rdx=0, r8=1: stance 0, forced - exactly what
+                       the static read predicted, so moveAction 0 is CONFIRMED correct
+141ec2690     3 hits   the land arm, all from 0x141ec7e65 inside SetStance
+141ecaa40    11 hits   and [pet+0x3d8] = 0x00000000 on EVERY one
+```
+
+The bail never fired. The sprite was reset, given its frames and inserted into the layer -
+eleven times, from three different call sites (`0x141ec29b0` in the land arm, `0x141eca9fc`
+in `FUN_141eca710`, `0x141ec2523` in `FUN_141ec22f0`). Combined with `-PetSync`: **the sprite
+exists, has frames, sits in a registered, positioned, visible layer, and nothing draws.**
+
+Sections 1 and 2 of this note are therefore closed. They were right about the mechanism and
+the mechanism is not the fault.
+
+## 6. The one lead left: a second writer to the pet's enable flag
+
+Found reading `CPet::SetStance` for that run rather than from a new pass. Every periodic call
+- force 0, stance unchanged, and there were 1163 of them - falls through to **[L]**:
+
+```text
+141ec794a  mov  rcx, [rbx+0x120]     ; the owning user
+141ec7951  add  rcx, 0x100
+141ec7958  call 140f8abc0            ; xor eax,eax / cmp [rcx+0x5ac],eax / setne al
+141ec795f  je   epilogue             ; zero -> nothing happens at all
+141ec7965  mov  rax, [rbx]
+141ec7968  xor  r8d, r8d
+141ec796b  xor  edx, edx
+141ec796d  mov  rcx, rbx
+141ec7970  call [rax+0x18]           ; pet->vtbl[0x18](pet, 0, 0)
+```
+
+**`vtbl[0x18]` is the same slot the visibility sync writes.** `FUN_141ecde00`'s show path is
+`pet->vtbl[0x18](pet, verdict, 0)`. So two things write that flag and the periodic one always
+writes **zero** - and the sync can never correct it, because what the sync reads back is the
+**layer's** flag through `[pet+0x3c8]->vtbl[0x2b0]`, a different object. That is exactly why it
+measured "already visible" 2964 times in a row while nothing was on screen.
+
+**This is a hypothesis and it has a cheap way to be wrong.** The call only happens when
+`user+0x100+0x5ac` is non-zero, and no run has ever read that field. `-PetEnable` reads it with
+`140f8abc0:peek=5ac`, watches `141ec7970` for the call itself, and adds `140eeba60` - the
+layer's colour setter, which `SetStance` can hand `0xffffff` (alpha 0, fully transparent) for a
+pet that is not the user's current one. That arm needs `stance != 0` so it should be silent;
+the watch is what turns "should" into "is", and transparency-with-perfect-layout is a shape
+this project has already been caught by once, in the NPCs.
+
+Not established, and deliberately not written as a candidate: what sets `user+0x100+0x5ac`.
+`FUN_140f810e0`, the user-state setter the `-UserState` probe already watches, writes
+`+0x5e4` on the same object - a **different field**, so the two are not the same thing.
+
