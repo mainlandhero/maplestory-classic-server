@@ -238,6 +238,7 @@ mod tests {
             map,
             spawn: Reply { opcode: 0x0224, body: vec![], what: format!("spawn {character}") },
             farewell: Reply { opcode: 0x0225, body: vec![], what: format!("bye {character}") },
+            companions: Vec::new(),
         }
     }
 

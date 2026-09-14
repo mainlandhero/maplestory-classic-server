@@ -146,6 +146,17 @@ pub struct Presence {
     /// character record to build anything from; a farewell that could only be built
     /// on a clean exit would be missing from exactly the case that needs it most.
     pub farewell: Reply,
+    /// **What travels with this player** - packets a later arrival must receive right
+    /// after `spawn`, because they name this character and the client drops a user-pool
+    /// packet whose character it does not yet have. Today that is the summoned pet's
+    /// `0x0277`. Empty for a player with nothing out.
+    ///
+    /// The owner, 2026-09-14: *"The second client does not see the Husky pet."* The summon
+    /// and every walk were already published to the map, and a pet owner walking INTO a
+    /// map already announced pet after player. The one direction nobody had covered was
+    /// the other player walking in while the pet was already out: they got the spawn
+    /// alone, and the pet existed only on its owner's screen.
+    pub companions: Vec<Reply>,
 }
 
 /// One fact that crosses the bus, addressed to one character.
@@ -295,17 +306,20 @@ impl Bus {
             inner.post(id, old.map, old.farewell, None);
         }
 
+        // Spawn first, then whatever travels with them, per player - the order the
+        // receiving client needs, since a companion names a character the spawn creates.
         let here: Vec<Reply> = inner
             .boxes
             .iter()
             .filter(|(other, _)| **other != id)
             .filter_map(|(_, m)| m.presence.as_ref())
             .filter(|p| p.map == presence.map)
-            .map(|p| p.spawn.clone())
+            .flat_map(|p| std::iter::once(p.spawn.clone()).chain(p.companions.iter().cloned()))
             .collect();
 
         let map = presence.map;
         let spawn = presence.spawn.clone();
+        let companions = presence.companions.clone();
         if let Some(mine) = inner.boxes.get_mut(&id) {
             mine.presence = Some(presence);
             // Anything queued for the old field is addressed to objects the client
@@ -331,6 +345,9 @@ impl Bus {
             return Vec::new();
         }
         inner.post(id, map, spawn, None);
+        for c in companions {
+            inner.post(id, map, c, None);
+        }
         here
     }
 
@@ -358,6 +375,16 @@ impl Bus {
         let mut inner = self.lock();
         if let Some(p) = inner.boxes.get_mut(&id).and_then(|m| m.presence.as_mut()) {
             p.spawn = spawn;
+        }
+    }
+
+    /// Replace what travels with this connection's player - see [`Presence::companions`] -
+    /// without announcing anything. The live observers were told by the summon or the
+    /// put-away itself; this is for whoever arrives next.
+    pub fn set_companions(&self, id: SubscriberId, companions: Vec<Reply>) {
+        let mut inner = self.lock();
+        if let Some(p) = inner.boxes.get_mut(&id).and_then(|m| m.presence.as_mut()) {
+            p.companions = companions;
         }
     }
 
@@ -671,6 +698,7 @@ mod tests {
             character,
             map,
             spawn: reply(0x0224, &format!("spawn {character}")),
+            companions: Vec::new(),
             farewell: reply(0x0225, &format!("farewell {character}")),
         }
     }

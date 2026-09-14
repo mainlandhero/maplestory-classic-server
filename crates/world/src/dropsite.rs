@@ -281,6 +281,56 @@ pub fn reported_position(req: &net::mobmove::MobMoveRequest) -> (i16, i16) {
     path_end(&req.path, req.element_count).unwrap_or((req.x, req.y))
 }
 
+/// Where the foothold id sits inside a **21- or 23-byte** element: the fifth `u16` after the
+/// command byte. Those are the two cases at `1404b2755` that read 8 or 9 `u16`s - `x, y, vx,
+/// vy, fh, ...` - and they are the only element shapes that carry one; the shorter cases
+/// inherit position and say nothing about the floor. **[L]** for the element table
+/// (`research/user-move.md` §3), **[D]** for `fh` being the fifth, which is the v83 layout
+/// and is checked on screen by whether a joining client's mobs stop snapping.
+pub const PATH_ELEMENT_FH_AT: usize = 9;
+
+/// **The foothold under the end of the reported path**, or `None` if the last element that
+/// carried a position was one of the short shapes, which say nothing about the floor.
+///
+/// The owner, 2026-09-14: *"the second client also sees mobs that the previous client has control
+/// over snap to their position on their screen, which is jarring."* `Fields::as_seen` was
+/// already sending the current `x, y` to a joining client - but with the **spawn point's**
+/// foothold, so the client placed the mob at the reported position and then dropped it onto
+/// the floor it was told about, wherever that was. The end of the path names the floor the
+/// mob is actually standing on, in the same element as its position.
+pub fn path_end_foothold(path: &[u8], element_count: i16) -> Option<i16> {
+    let count = usize::try_from(element_count).ok()?;
+    if count == 0 {
+        return None;
+    }
+    let mut at = net::mobmove::MOB_PATH_HEAD_LEN;
+    let mut last = None;
+    for _ in 0..count {
+        let command = *path.get(at)?;
+        let len = net::usermove::element_len(command);
+        if net::usermove::element_carries_position(command) {
+            // Only the eight/nine-u16 shapes carry a foothold; a shorter positioned element
+            // (2 x u16, 3 x u16...) has no fifth u16 and must not be read as if it had.
+            last = if len >= net::mobmove::MOB_PATH_ELEMENT_LEN {
+                path.get(at + PATH_ELEMENT_FH_AT..at + PATH_ELEMENT_FH_AT + 2)
+                    .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            } else {
+                None
+            };
+        }
+        at = at.checked_add(len)?;
+    }
+    if at > path.len() {
+        return None;
+    }
+    last
+}
+
+/// [`path_end_foothold`] for one `0x02FF`; `None` when the path says nothing about the floor.
+pub fn reported_foothold(req: &net::mobmove::MobMoveRequest) -> Option<i16> {
+    path_end_foothold(&req.path, req.element_count)
+}
+
 /// **Which point a kill's drops fall from**, in the order the answers are worth trusting.
 ///
 /// 1. `reported` - where the client last said the mob was. After [`reported_position`] this
@@ -420,6 +470,47 @@ cd0000002f0007fe7d00000000000000000000000641000000510050fe7d001c0200000000000000
         let stale = (a.x, a.y);
         let real = reported_position(&a);
         assert_eq!((real.0 - stale.0).abs(), 136, "136 px is what the old code got wrong by");
+    }
+
+    /// **The floor travels with the position.** The owner, 2026-09-14: a joining client saw the
+    /// other client's mobs *"snap to their position on their screen, which is jarring"* -
+    /// `Fields::as_seen` sent the reported `(x, y)` with the SPAWN POINT's foothold, so the
+    /// client placed the mob and then dropped it onto the wrong floor.
+    ///
+    /// On the same captured pair: the last element of `WALK_N` names foothold 44 under
+    /// `(812, -325)`, and `WALK_N1`'s head - where the client says the walk continues from -
+    /// begins on the same floor. A path whose last positioned element is a short shape gives
+    /// `None`, never a garbage fifth `u16`.
+    #[test]
+    fn the_end_of_the_path_names_the_floor_under_it() {
+        let a = req(WALK_N);
+        let b = req(WALK_N1);
+        assert_eq!(path_end_foothold(&a.path, a.element_count), Some(44), "the floor under (812, -325)");
+        assert_eq!(reported_foothold(&a), Some(44));
+        // The next report starts on that floor: its first element is the same shape and the
+        // same fifth u16. Read it the same way, off the first element rather than the last.
+        let first = &b.path[net::mobmove::MOB_PATH_HEAD_LEN..];
+        assert!(net::usermove::element_len(first[0]) >= net::mobmove::MOB_PATH_ELEMENT_LEN);
+        let fh = i16::from_le_bytes([first[PATH_ELEMENT_FH_AT], first[PATH_ELEMENT_FH_AT + 1]]);
+        assert_eq!(fh, 44, "the walk that follows begins on the floor the last one ended on");
+
+        // A path that ends in a short positioned element (a jump, 9 bytes) says nothing
+        // about the floor and must say so.
+        let f = req(FALL_N1);
+        let mut at = net::mobmove::MOB_PATH_HEAD_LEN;
+        let mut last_len = 0;
+        for _ in 0..usize::try_from(f.element_count).unwrap() {
+            let c = f.path[at];
+            if net::usermove::element_carries_position(c) {
+                last_len = net::usermove::element_len(c);
+            }
+            at += net::usermove::element_len(c);
+        }
+        if last_len < net::mobmove::MOB_PATH_ELEMENT_LEN {
+            assert_eq!(path_end_foothold(&f.path, f.element_count), None);
+        } else {
+            assert!(path_end_foothold(&f.path, f.element_count).is_some());
+        }
     }
 
     /// **The vertical half, which is the half that makes a drop uncollectable.**

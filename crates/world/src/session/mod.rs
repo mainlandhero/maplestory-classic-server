@@ -1055,6 +1055,14 @@ impl Session {
         // character we cannot load falls back to the minimal record rather than silence.
         let (body, what) = match self.claimed_character() {
             Some(chr) => {
+                // The first announcement to the field stands at the spawn point the record
+                // names, not at the origin - the same rule as a portal walk in `go_to_map`,
+                // for the same reason: a `0x0224` at `(0, 0)` that self-heals on the first
+                // step is a visible snap on every other screen. `None` when unknown.
+                if self.last_position.is_none() {
+                    self.last_position = self.config.portal_positions.get(&(chr.map_id, chr.portal)).copied();
+                    self.last_move_action = self.last_position.map(|_| net::userpool::MOVE_ACTION_LANDING);
+                }
                 let (quests, quest_note) = self.quest_book(chr.id);
                 let skills = self.store.skills(chr.id).unwrap_or_default();
                 (
