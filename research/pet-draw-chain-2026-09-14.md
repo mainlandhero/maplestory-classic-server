@@ -238,3 +238,70 @@ shared 16 KB function) and again 1166 times over the pet's life through
 If that comes back clean too, the honest next move is a Ghidra pass on `FUN_141b054f0`
 itself, not another launch.
 
+
+
+---
+
+# The `-PetLayer` run and the `FUN_141b054f0` pass: the layer IS drawn
+
+`research/fixtures/pet-layer-attachment-is-fine-name-is-pet0x26-hook.log`, 17:30:11.
+
+```text
+140304100    36 hits   POSITIVE CONTROL
+141b054f0    35 hits   ONE of them from the pet (called-from 0x141ebbe6d), rdx =
+                       0x3fda6968, and the deref shows 0x6b737548 = "Husk"
+141ec7880   690 hits   [pet+0x130] = 0x3fda6968 on every one - steady, never cleared
+141ec87b0    86 hits
+```
+
+`pet[0x26]` is the pet's **name**, not a parent, and the registration happened. Attachment
+is fine, which was the pre-registered "out of structural leads" outcome - so the promised
+Ghidra pass on `FUN_141b054f0` followed, and it changed the picture twice.
+
+## 8. `0x3eb` is the NAME TAG, and that means the layer is drawn
+
+`FUN_141b054f0`'s `param_5` is the `0x3eb` Init passes, and it selects a format string
+**[L]**:
+
+```text
+141b0578x   if (param_5 == 1000 || param_5 == 0x3f2 || param_5 == 0x3eb)
+                puVar28 = PTR_u_UI_NameTag_img_pet__d_143a46ba0    // "UI/NameTag.img/pet/%d"
+            FUN_1401c21c0(&local_178, puVar28, param_6);
+```
+
+so that call **builds the pet's name tag**, and Init hands it `pet+0x3c8` - the pet's own
+layer, AddRef'd into `local_138` first - as the layer to build it in. `param_3` is in/out and
+the function only creates a layer when `*param_3 == 0`, which it is not here **[D]**.
+
+**The tag is on the owner's screen.** So the pet's layer is attached to the render tree, visible,
+and being drawn - proved by its own child rather than by a flag. The missing thing is only
+the sprite inside it. That is a much smaller target than "the pet does not draw", and it
+came out of a screenshot and a decompile with no launch.
+
+## 9. The pet has its own alpha, and nobody has read it
+
+The tail of `CPet::Init`, at `0x141ebc1b2` **[L]**:
+
+```text
+141ebc1a1  mov  eax, 0x51eb851f
+141ebc1a6  imul ecx                       ; ecx = *(int *)(DAT_143ac87a0 + 0x58)
+141ebc1a8  sar  edx, 5                    ; edx = ecx * 255 / 100
+141ebc1b2  mov  dword [rdi + 0x3c0], edx  ; <- the pet's ALPHA
+141ebc1bf  mov  rbx, [rdi + 0x3b8]        ; the sprite
+141ebc1dd  call [rax + 0x68]              ; sprite->vtbl[0x68](table[branch])
+```
+
+`DAT_143ac87a0 + 0x58` is a global config **percentage**; `+0x5c` is the other arm and is
+unreachable, because reaching it needs `user->vtbl[0x50]` to return 0 and that function is
+`mov eax,1; ret`. The whole block is skipped when `DAT_143ac87a0` is null.
+
+**A zero percentage there gives alpha 0: an invisible sprite inside a layer that still draws
+its name-tag child.** That is precisely the screen. It is a *different* mechanism from
+`FUN_140eeba60`, the layer colour, which `-PetEnable` already cleared by pointer. `pet+0x3c0`
+is written once here and read by nothing in any pet function dumped so far, so the render
+consumes it.
+
+**Not established:** what that config is meant to hold, or who fills it. `-PetAlpha` reads
+the value at the instant it is written (`141ebc1b2`, where `rdx` *is* the number) and again
+across the pet's life (`141ec7880:peek=3c0`), and the run can come back `0xff` and kill it.
+
