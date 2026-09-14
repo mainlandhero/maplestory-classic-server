@@ -1201,27 +1201,23 @@
                          not what this pet code reads; say so
               the pet takes your OWN dropped item                           -> the byte is
                          ignored; paste the pet pick-up line
-         v) NEW 2026-09-14 (round 7) - THE SPRITE IS BEING RE-PARENTED ONTO SOMETHING
-            THE USER OWNS. -PetAlpha: 0xff at the write and on all 357 samples. Alpha is
-            fine. Six things measured right now, and the layer is provably DRAWN because
-            the name tag is its child. Only the sprite is missing.
-            The function that places the sprite, FUN_141eca710, has two arms: the normal
-            one, and one taken when user+0x3fd0 is non-zero that hands the sprite the
-            object at user+0x3fd8 with z=1. The -PetFrames capture shows 141ecaa40 called
-            from inside it with rdx=1 - THE SECOND ARM WAS TAKEN. So the client thinks
-            The owner's character owns something the pet should ride on - a vehicle, chair,
-            morph - and the sprite goes there instead of the field. The owner is riding
-            nothing, so if the client believes they are, a packet of ours said so.
-            [D] from one register; -PetParent makes it [L]:
-              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetParent
-            Paste the 142934760 lines (rdx, called-from, and the OPCODE being dispatched)
-            and the two peeks:
-              142934760 fires with rdx non-zero before the summon
-                                        -> the opcode on that line is the packet that told
-                         the client they are riding. That becomes a server fix
-              peek 3ed0 non-zero, setter silent -> the field is the bug, writer unnamed
-              peek 3ed0 = 0 everywhere  -> my read is wrong; paste 3ed8 anyway
-              no 140304100 lines        -> the hook never armed; not evidence
+         v) NEW 2026-09-14 (round 8) - THE RE-PARENT IS REAL, AND IT IS A CLIENT OPTION.
+            -PetParent made it [L]: FUN_142934760(user, 1) fired exactly ONCE, while
+            dispatching 0x01A0 SetField, from 0x142887193 - and the value it stored is
+            read from DAT_143ac87a0+0x70, the client's OWN options object (the same one
+            whose +0x58 gave the alpha). user+0x3fd0 read 0 for the first 39 samples and
+            1 for the next 5961; user+0x3fd8 is a live object. So at SetField the client
+            applies an option that sends the pet's sprite onto a user-owned object, and
+            it is not a byte we sent.
+            What the option means is not yet known. So this run tests CAUSATION first,
+            and it PATCHES THE CLIENT: the probe rewrites the setter's argument to 0.
+              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetParentOff
+            The screen is the reading this time:
+              THE HUSKY DRAWS               -> user+0x3fd0 = 1 was the cause. Then I name
+                         the option and we choose the real fix
+              invisible, peek 3ed0 = 0      -> not it; the re-parent theory is dead
+              invisible, peek 3ed0 = 1      -> the rewrite did not take; nothing measured
+              no 140304100 lines            -> the hook never armed; not evidence
             FREE, same run: walk to another map with the pet out and say whether it
             appears there.
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
@@ -2165,11 +2161,14 @@ param(
     [switch]$PetLayer,
     # **-PetAlpha**: ANSWERED 2026-09-14 - 0xff at the write and on all 357 samples after.
     [switch]$PetAlpha,
-    # **-PetParent**: FUN_141eca710 hands the pet's sprite a USER-owned object at
-    # user+0x3fd8 whenever user+0x3fd0 is non-zero, and the -PetFrames capture shows that
-    # branch WAS taken (rdx=1 from 0x141eca9fc). This reads both fields and watches the
-    # one setter of user+0x3fd0. See the $Probe block.
+    # **-PetParent**: ANSWERED 2026-09-14 [L]. FUN_142934760(user, 1) fires ONCE, during
+    # 0x01A0 SetField, from 0x142887193, with the value read out of DAT_143ac87a0+0x70 -
+    # the client's own options object. user+0x3fd0 then reads 1 on 5961 of 6000 samples
+    # and user+0x3fd8 is a live object. The sprite really is being re-parented.
     [switch]$PetParent,
+    # **-PetParentOff**: THIS PATCHES THE CLIENT. Forces that setter to store 0, so the
+    # sprite takes the normal arm. One variable; the screen is the reading.
+    [switch]$PetParentOff,
     [switch]$PetGates,
     # ON BY DEFAULT SINCE 2026-09-14, and accepted only so that every launch line already
     # written down keeps working. It used to be the switch that made the channel answer at
@@ -2520,7 +2519,35 @@ if (-not $SilentChannel) { $SetFieldProbe = $true }
 #
 # So: passing -InventorySlots means the bag is the variable, and the bag gets the watches.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    if ($PetParent) {
+    if ($PetParentOff) {
+        # **CAUSATION TEST. THIS RUN PATCHES THE CLIENT** - `:rdx=0` rewrites the second
+        # argument of FUN_142934760 on entry, so user+0x3fd0 is stored as 0 instead of the
+        # option's 1, and FUN_141eca710 takes its NORMAL arm for the pet's sprite. Describe
+        # the result as a patched client, not as the client.
+        #
+        # What -PetParent established [L]: the setter runs once, at SetField, with the value
+        # of DAT_143ac87a0+0x70 - a client OPTION, the same options object whose +0x58 gave
+        # the (fine) alpha. So this is not a byte we sent. What that option MEANS is not yet
+        # known; its writer is a generic loader that a displacement grep cannot see. This
+        # run asks the only question that matters first: is that field the reason the
+        # sprite is missing?
+        #
+        # 142934760:rdx=0:hits=50   the patch, and the log records the ORIGINAL rdx first
+        # 140f8abc0:peek=3ed0       proof the field stayed 0 for the whole run
+        # 140304100:hits=200        positive control
+        #
+        # READ IT LIKE THIS - the screen is the instrument this time:
+        #   THE HUSKY DRAWS                -> user+0x3fd0 = 1 is the cause. The next work is
+        #                      naming the option (and its registry/ini key), and deciding
+        #                      whether the fix is the option, a launcher-side setting, or a
+        #                      session patch like the ones the launcher already carries
+        #   still invisible, peek 3ed0 = 0 -> the field was not it; the arm is a symptom of
+        #                      something upstream and the re-parent theory is dead
+        #   still invisible, peek 3ed0 = 1 -> the rewrite did not take; say so, nothing was
+        #                      measured
+        #   no 140304100 lines             -> the hook never armed; not evidence
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142934760:rdx=0:hits=50,140f8abc0:peek=3ed0:hits=6000,140304100:hits=200:dump=143AC2400/968'
+    } elseif ($PetParent) {
         # **THE SPRITE IS BEING RE-PARENTED ONTO SOMETHING THE USER OWNS.**
         #
         # Six things are measured right: alive, sync VISIBLE, frames inserted, enable flag
@@ -3678,27 +3705,20 @@ function Show-TestPlan {
         Write-Host '                         -> paste that inbound body'
         Write-Host '           pet never goes for drops -> keys not read; say so'
         Write-Host '           pet takes YOUR OWN drop -> paste the pet pick-up line' -ForegroundColor Yellow
-        Write-Host '      v) THE SPRITE IS RE-PARENTED ONTO SOMETHING THE USER OWNS.' -ForegroundColor Yellow
-        Write-Host '         -PetAlpha: 0xff at the write and on all 357 samples. Alpha is'
-        Write-Host '         fine. Six things measured right, and the layer is provably DRAWN'
-        Write-Host '         (the name tag is its child). Only the sprite is missing.'
-        Write-Host '         FUN_141eca710 places the sprite and has two arms; the second,'
-        Write-Host '         taken when user+0x3fd0 != 0, hands the sprite the object at'
-        Write-Host '         user+0x3fd8 with z=1. The -PetFrames capture shows exactly that' -ForegroundColor Yellow
-        Write-Host '         call (rdx=1 from 0x141eca9fc). So the client thinks your character'
-        Write-Host '         owns something the pet rides on - vehicle, chair, morph - and the'
-        Write-Host '         sprite goes there instead of the field. You ride nothing, so if'
-        Write-Host '         the client believes you do, one of OUR packets said so.'
-        Write-Host '         Summon at once, 10s, quit:'
-        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetParent' -ForegroundColor Cyan
-        Write-Host '         Paste the 142934760 lines (rdx, called-from AND the opcode on the'
-        Write-Host '         line) and the two peeks:'
-        Write-Host '           142934760 rdx non-zero before the summon -> the OPCODE on that' -ForegroundColor Yellow
-        Write-Host '                         line is the packet that said you are riding.'
-        Write-Host '                         That is a server fix'
-        Write-Host '           peek 3ed0 non-zero, setter silent -> field is the bug, writer'
-        Write-Host '                         unnamed'
-        Write-Host '           peek 3ed0 = 0 everywhere -> my read is wrong; paste 3ed8 anyway'
+        Write-Host '      v) THE RE-PARENT IS REAL, AND IT IS A CLIENT OPTION.' -ForegroundColor Yellow
+        Write-Host '         -PetParent made it [L]: FUN_142934760(user, 1) fired ONCE, during'
+        Write-Host '         0x01A0 SetField, and the value comes from DAT_143ac87a0+0x70 - the'
+        Write-Host '         client''s OWN options object. user+0x3fd0 read 0 for 39 samples,'
+        Write-Host '         then 1 for 5961; user+0x3fd8 is a live object. Not a byte we sent.'
+        Write-Host '         What the option means is not known yet, so this tests CAUSATION' -ForegroundColor Yellow
+        Write-Host '         first - and it PATCHES THE CLIENT: the setter''s argument is'
+        Write-Host '         rewritten to 0. Summon at once, 10s, quit:'
+        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetParentOff' -ForegroundColor Cyan
+        Write-Host '         The SCREEN is the reading this time:'
+        Write-Host '           THE HUSKY DRAWS -> that field was the cause; next I name the' -ForegroundColor Yellow
+        Write-Host '                         option and we pick the real fix'
+        Write-Host '           invisible, peek 3ed0 = 0 -> not it; the theory is dead'
+        Write-Host '           invisible, peek 3ed0 = 1 -> the rewrite did not take'
         Write-Host '           NO 140304100 lines -> the hook never armed; not evidence' -ForegroundColor Red
         Write-Host '         FREE: walk to another map with the pet out and say whether it'
         Write-Host '         appears there.'
