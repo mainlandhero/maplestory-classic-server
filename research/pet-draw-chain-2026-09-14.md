@@ -349,3 +349,53 @@ the plan. If the Husky draws under it, the remaining work is naming the option a
 between fixing the setting, a launcher-side default, and a session patch of the kind the
 launcher already carries.
 
+
+
+---
+
+# `-PetParentOff`, `-PetLoad`, and the Character Info screenshot
+
+**`-PetParentOff`** (`research/fixtures/pet-reparent-forced-off-still-invisible-hook.log`): the
+rewrite took - the setter fired once with its original `rdx=1` and stored 0, `user+0x3fd0`
+read 0 on all 3555 samples - and the Husky stayed invisible. §10's re-parent theory is dead.
+
+**`-PetLoad`** (`research/fixtures/pet-frames-loaded-for-six-actions-no-fallback-hook.log`) **[L]**:
+
+```text
+140cd8da0     6 hits   the lazy frame loader, all from 0x141ec88e3 inside FUN_141ec87b0,
+                       rdx = the template (deref 0x004c4b46 = 5000006), r8 = the action:
+                       5 at the summon, then 1, 2, 0, 8, 3 - each action loaded once
+141ec86c0     0 hits   THE FALLBACK NEVER RAN - every list was non-empty after its load
+141ebdf10   116 hits   all from 0x141ebfec7, the periodic updater, not the fallback path
+```
+
+**The pet has frames**, for six actions. And the owner's screenshot of the same session settles it
+from the other side: the **Character Info window draws the Husky's body** - the `stand0`
+animation, not the icon. The template, the canvas archive and the animation machinery all
+work in this client, for this pet, in this session.
+
+## 11. Two corrections
+
+* **§8 over-claimed.** `FUN_141b054f0` gives the name tag its **own** layer
+  (`plVar16[i+9]`) and positions it *relative to* the pet's layer via `vtbl[0x238]`; it does
+  not put the tag inside the pet's layer. So the tag proves the pet's layer has a valid
+  position, not that the pet's layer is itself composited.
+* **§2 mis-named `FUN_141ecaa40`.** A reset / set-from-VARIANT / insert-into-layer triple whose
+  second arm takes the *user's* object, and which the name tag also uses to hang itself off the
+  pet, is an **`IWzVector2D` position**, not a canvas. The frames go through `FUN_141ec87b0`
+  and `FUN_140cd8da0`, and `-PetLoad` shows they arrive.
+
+## 12. Where it stands
+
+Measured or forced, each on its own capture: alive; sync says VISIBLE; enable flag never
+zeroed; layer opaque; alpha `0xff`; attachment fine; re-parent forced off; frames loaded for
+six actions; canvases proven by the info panel. The field layer still contributes nothing.
+
+The one thing found and not yet run down: `FUN_141eca710` computes a proper field z
+(`(layer*3000 - y)*10 - 0x3fff8ada`, the same base every field object uses at
+`0x140d0ce7d`) and hands it to `FUN_141ecaa40` as `edx` - **which never reads it**
+(`0x141ecaa40..0x141ecac02` touches `rdx` only as scratch). The layer was created by
+`DAT_143add050->vtbl[0x168](0,0,0,0,0, ...)`. Whether z is applied anywhere else - `FUN_141ec87b0`
+calls `layer->vtbl[0x320](8, v)` and `vtbl[0x300](2)` on it - is the open question, and it is a
+vtable-slot question that needs the Gr2D interface layout rather than another launch.
+
