@@ -289,6 +289,7 @@ pub fn prepare_and_launch(
         Some(pin) => {
             let outcome = crate::clientpatch::check_and_patch(
                 &layout.client_dir,
+                &layout.data_root,
                 &plan.ip,
                 layout.auth_port,
                 &pin,

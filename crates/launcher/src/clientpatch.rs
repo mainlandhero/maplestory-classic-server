@@ -69,6 +69,7 @@ impl Outcome {
 /// written for a player reading it in the launcher window.
 pub fn check_and_patch(
     client_dir: &Path,
+    cache_dir: &Path,
     host: &str,
     port: u16,
     pin: &Fingerprint,
@@ -80,12 +81,32 @@ pub fn check_and_patch(
     );
 
     let want = fetch_manifest(host, port, pin)?;
-    let have = Manifest::scan(client_dir).map_err(|e| {
+
+    // **Stat, do not re-read.** The owner, 2026-09-14: *"The launcher took too long to start, make
+    // sure we're only checking for checksums of the file."* A full hash of this client is
+    // 773 MB across 404 files; with a warm cache a launch that changed nothing reads none of
+    // it. The cache lives in the launcher's own output directory and never in the client
+    // folder - `patchset::HASH_CACHE_NAME` says why that matters.
+    let cache_path = cache_dir.join(patchset::HASH_CACHE_NAME);
+    let mut cache = patchset::HashCache::load(&cache_path);
+    let warm = !cache.is_empty();
+    let started = std::time::Instant::now();
+    let have = Manifest::scan_cached(client_dir, &mut cache).map_err(|e| {
         format!(
             "could not read the client folder to check it: {e}\n{}",
             client_dir.display()
         )
     })?;
+    cache.save(&cache_path);
+    log(
+        Level::Info,
+        format!(
+            "checksummed {} file(s) in {:?}{}",
+            have.entries.len(),
+            started.elapsed(),
+            if warm { " (unchanged files came from the hash cache)" } else { " (first run: everything was read)" }
+        ),
+    );
 
     let version = want.short_id();
     let plan = have.plan(&want);
@@ -146,7 +167,11 @@ pub fn check_and_patch(
     // now matches. Without this a file that could not be written - a locked archive, a full
     // disk - would be reported as patched and the player would start a client that is still
     // behind.
-    let after = Manifest::scan(client_dir).map_err(|e| format!("re-reading the client: {e}"))?;
+    // Through the cache as well: the files just written have new mtimes, so they - and only
+    // they - are re-hashed, which is exactly the verification this step is for.
+    let after = Manifest::scan_cached(client_dir, &mut cache)
+        .map_err(|e| format!("re-reading the client: {e}"))?;
+    cache.save(&cache_path);
     let left = after.plan(&want);
     if !left.is_current() {
         return Err(format!(
