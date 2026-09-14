@@ -1209,11 +1209,13 @@
             times - so the object exists, is alive, is positioned beside you (77,65 -
             the same x your last move ended on) and walks. It is simply not drawn, and
             it does not pick up.
-            Ruled out WITHOUT a launch this round: the art (Item/Pet/5000006.img still
-            has all 22 action nodes and their _outlinks), the archive (your inventory
-            icon is the SAME kind of 1x1-plus-outlink node and it draws - that is the
-            positive control), the position, and the packet (all 14 fields of 0x0277
-            decode to exactly what we meant, 50 bytes, nothing shifted).
+            Ruled out WITHOUT a launch: the art and the archive - Pet_000.wz and the
+            UNTOUCHED original .bak are identical at info/icon, stand0/0 and move/0, and
+            the canvas archive (never rewritten) holds the real 41x37 bitmaps; the
+            position; the packet (all 14 fields of 0x0277, 50 bytes, and CPet::Init's
+            read walk counts 13 reads after `init`, which is exactly what we send); and
+            culling - the "Husky" NAME TAG is drawn beside you. The tag does NOT mean the
+            sync ran: FUN_141ecaf00 builds it, and CPet::Init calls that itself.
             What is left is the client's own show/hide sync, FUN_141ecde00 - and the
             reading of it changed when I disassembled the tail properly. It is a SYNC:
             edi starts at 0 (hidden), every failing gate leaves it 0, and only gate 11
@@ -1240,8 +1242,10 @@
                          names who
               no lines at all from 140304100       -> the hook never armed; the run
                          proves nothing and is not evidence either way
-            FREE, same run: every pet test has been on map 1010. Walk to another map with
-            the pet out and say whether it appears there.
+            FREE, same run: every pet test has been on map 1010 - walk to another map
+            with the pet out and say whether it appears there. And say whether the Husky
+            TAG sits at your feet or floats above you: the sprite would be drawn at the
+            tag, so a tag in mid-air is a second, separate clue.
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3457,9 +3461,10 @@ function Show-TestPlan {
         Write-Host '         ITEM_NEVER_EXPIRES sentinel, which the client reads as "this pet'
         Write-Host '         is a doll". The tooltip now says 1/1/2077 and the pet summons,'
         Write-Host '         walks and sends 166 move reports - it just is not drawn.'
-        Write-Host '         Ruled out with NO launch: the art, the archive (your inventory'
-        Write-Host '         icon is the same 1x1+outlink node and it draws - the control),'
-        Write-Host '         the position, and all 14 fields of the 0x0277 packet.'
+        Write-Host '         Ruled out with NO launch: the art and the archive (our file and'
+        Write-Host '         the untouched original are identical), the position, all 14'
+        Write-Host '         fields of 0x0277, and culling - the NAME TAG draws. The tag does'
+        Write-Host '         NOT mean the sync ran; CPet::Init builds it itself.'
         Write-Host '         FUN_141ecde00 is a SYNC, not a verdict: edi starts HIDDEN, only' -ForegroundColor Yellow
         Write-Host '         gate 11 sets it to 1, and it returns untouched when desired =='
         Write-Host '         current. So "nothing happened" has two opposite meanings and the'
@@ -3480,8 +3485,9 @@ function Show-TestPlan {
         Write-Host '           14159b0a0 rdx=0 -> something re-hides it; called-from names who'
         Write-Host '           NO 140304100 lines -> the hook never armed and this run is not' -ForegroundColor Red
         Write-Host '                         evidence either way. Say so and relaunch'
-        Write-Host '         FREE: every pet test has been on map 1010 - walk to another map'
-        Write-Host '         with the pet out and say whether it appears there.'
+        Write-Host '         FREE, same run: walk to another map with the pet out (every pet'
+        Write-Host '         test has been on 1010), and say whether the Husky TAG sits at'
+        Write-Host '         your feet or floats above you - the sprite would be drawn there.'
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'

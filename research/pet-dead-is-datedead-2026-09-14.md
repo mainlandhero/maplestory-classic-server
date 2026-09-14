@@ -114,6 +114,23 @@ is that run.
 | the art | `Item/Pet/5000006.img` still has all 22 action nodes and every frame keeps its `_outlink` |
 | the archive rewrite | **the inventory icon is the control.** It is the same shape of node - a 1x1 placeholder plus `_outlink` into `Item/Pet/_Canvas` - and it draws in the owner's screenshot. So outlink resolution survives `backport_install.py`'s rewrite for this exact image |
 | a client fault | no `CLIENT FAULT` in the hook log, and the one `0x008F` ELog predates the summon |
+| our WZ rewrite, conclusively | `Pet_000.wz` and the **untouched original** `Pet_000.wz.bak` are identical in shape at `info/icon`, `stand0/0` and `move/0` - all three 1x1 placeholders carrying an `_outlink` - and `_Canvas_000.wz` (Aug 11, never rewritten) holds the real 41x37 and 47x40 bitmaps. `backport_install.py` touched no art |
+| culling, and being off-screen | **the "Husky" name tag is drawn**, beside the owner, in the 2026-09-14 round-2 screenshot |
+
+### The name tag is drawn, and what that does *not* mean
+
+It would be easy to read the tag as proof that the visibility sync ran, because
+`FUN_141ecaf00` - which builds it, out of `pet+0x138` and a length check against 12
+characters - is the last call in the show path. **It is not.** `tools/callers.py` gives
+`FUN_141ecaf00` six call sites, and one of them is `CPet::Init` itself
+(`0x141eb9760`, at `0x141ebc162`). The tag is built at construction whether or not the pet is
+ever shown.
+
+What the tag *does* settle is that the pet is on screen and un-culled, and that the failure is
+specific to the sprite. The show path toggles three different sub-objects -
+`[pet+0x3c8]->vtbl[0x2b8]`, `FUN_14159b0a0(pet+0x40, v)` and `pet->vtbl[0x18](v)` - so "the tag
+draws and the sprite does not" is consistent with either a transition that never ran or one
+that ran on only part of the object. `-PetSync` separates those; the tag does not.
 
 ## 6. The correction that makes the next run worth spending
 
