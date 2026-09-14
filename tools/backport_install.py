@@ -19,7 +19,7 @@ archive as the base. Every existing image is carried over byte for byte; ours ar
 | `Item/Cash/Cash_000.wz`, `Item/Consume/Consume_000.wz` | `merge`: an item image (`0522.img`) holds every item with that prefix, so only OUR nodes are taken from the modern image and laid onto the classic image of the same name (or an empty one) |
 | `Item/<Cash|Consume>/_Canvas/_Canvas_000.wz` | `merge`, the same keys |
 | `String/String_000.wz` | `strings`: `Eqp.img` (under `ClassicWorld/<Type>/<id>`), `Cash.img` and `Consume.img` (flat `<id>`) gain `name` and `desc` leaves |
-| `Item/Pet/Pet_000.wz` | `patch`: every pet's `info/life` -> 0 and `info/permanent` -> 1, the modern permanent pet's shape; the eight pets the classic shop never listed get Commodity rows under the Pets tab |
+| `Item/Pet/Pet_000.wz` | `patch`: every pet gets `info/permanent` -> 1 and its start skills; **`info/life` is left alone** - zeroing it (the modern permanent pet's shape) is what made a summoned pet invisible, see the note at the patch rows; the eight pets the classic shop never listed get Commodity rows under the Pets tab |
 | `Effect/Effect_000.wz`, `Effect/_Canvas/_Canvas_000.wz` | `merge`: the classic client has no `ItemEff.img` at all, so a NEW one is made from the set items' worn-effect nodes (Himmel's Blessing, 1103918) and a new canvas `ItemEff.img` from the holders their outlinks name (1103930) |
 
 The modern client is opened read-only as the SOURCE of every copy; nothing there is
@@ -417,8 +417,30 @@ def main():
     for pet_id, pet_name in pets:
         tsv = os.path.join(args.build_dir, "pet-%07d.tsv" % pet_id)
         with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write("# %s: permanent - life 0 and permanent 1, as the modern client's permanent pet carries\n" % pet_name)
-            fh.write("info/life\tint\t0\n")
+            # **`info/life` IS NO LONGER ZEROED, and that is the pet-invisibility fix.**
+            #
+            # It used to be set to 0 beside `permanent 1`, because the MODERN client's one
+            # permanent pet (5000060) carries that pair. `CLAUDE.md` rates the modern source
+            # 1-of-8 against a held-out control and says to label every claim from it a
+            # candidate; this one was applied to the classic client anyway, and the comment
+            # above it admitted that whether this client reads `permanent` was [I].
+            #
+            # On 2026-09-14 a full diff of the Husky image against `Pet_000.wz.bak` showed
+            # `life: 7 -> 0` and the three added keys were the ONLY differences in 1400 lines -
+            # every animation node, canvas and `_outlink` was byte-identical. A summoned pet
+            # drew its name tag, reported 34 movements and never appeared, and the client's own
+            # show/hide ladder (FUN_141ecde00) was measured deciding SHOW: all eleven gates pass
+            # and both session flags gate 11 reads are untouched. So the client wanted to draw a
+            # pet whose declared lifespan was zero days.
+            #
+            # Permanence does not need this key. It is on the wire already, in the pet body
+            # `net::bag` builds: `dateDead = ITEM_NEVER_EXPIRES` and `remainLife = 0`, which is
+            # what puts "This miraculous pet will never expire!" in the tooltip the owner
+            # screenshotted. `permanent 1` is kept - it is additive and harmless - and the
+            # lifespan is left exactly as Nexon shipped it.
+            fh.write("# %s: permanent via the pet BODY (dateDead/remainLife), not by zeroing\n" % pet_name)
+            fh.write("# info/life. See tools/backport_install.py - a life of 0 days is why a\n")
+            fh.write("# summoned pet had a name tag, walked, and drew nothing.\n")
             fh.write("info/permanent\tint\t1\n")
             # **A pet declares only the skills it starts with.** The owner, 2026-09-13: "the
             # Husky should by default come with Meso Magnet and Item Pouch"; and the four
