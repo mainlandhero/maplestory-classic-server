@@ -32,7 +32,30 @@
 //!
 //! The table is now keyed **per launch** rather than per machine: one row per sign-in, keyed
 //! by the SHA-256 of the session token that sign-in issued. A second sign-in adds a row; it
-//! does not remove anybody else's.
+//! does not remove **anybody else's**.
+//!
+//! # One live claim per account, from 2026-09-13
+//!
+//! It does remove *your own*. The owner: *"shouldn't they be allowed to sign in multiple times?
+//! Signing in again should invalidate previous claims on that account."*
+//!
+//! Read the two sentences together, because the difference between them is the whole fix and
+//! it is one `WHERE` clause: **scoped by account**, a re-sign-in replaces the signer's own
+//! earlier claim and leaves every other account's alone. The eviction bug above was
+//! `DELETE FROM login_claims` with no predicate at all, which is what made `owl`'s sign-in
+//! serve `otter`'s connection as `owl`. That test still passes.
+//!
+//! What it buys is rule 3. Two live claims staked from one address stop the address picking
+//! one out, so *every* connection from that address falls to the fallback - and the second
+//! claim was the same person retrying. Measured on the live server on 2026-09-13: six
+//! launches from one address, the first three matched, the rest refused with *"4 login claims
+//! are live and the evidence presented did not pick one out"*. The guard was right; there was
+//! no honest answer to give, and the reason was four sign-ins by one account.
+//!
+//! What it costs is stated where it is enforced: the superseded launch's client token stops
+//! matching a live row, so a client still holding it is resolved as
+//! [`ClaimResolution::NoClaim`] at its next login connection. Signing in again while a client
+//! of that account is running cuts that client off at its next Log Out or world change.
 //!
 //! # This is still not authentication, and must never be reported as if it were
 //!
@@ -325,6 +348,13 @@ pub struct StakedClaim {
     /// "world" - so `CLAUDE.md`'s standing constraint *"the game socket carries no
     /// credentials"* is untouched by this. Say so when reporting progress.
     pub client_token: String,
+    /// How many of **this account's** earlier live claims this sign-in replaced.
+    ///
+    /// Normally 0, and 1 when somebody signs in again without the previous launch having
+    /// expired. Carried out rather than swallowed for the reason `CLAUDE.md` gives about
+    /// guards whose answers nobody reads: a launch that silently invalidated a credential the
+    /// player is still holding should say so in the log where they can see it.
+    pub superseded: usize,
 }
 
 /// Redacted, because a `{:?}` of a struct is how a secret reaches a log without anybody
@@ -907,7 +937,10 @@ impl LiveRow {
 }
 
 impl Store {
-    /// **Stake a claim for one launch.** Does not touch anybody else's.
+    /// **Stake a claim for one launch.** Does not touch anybody else's - but it does replace
+    /// **this account's** own earlier live claims, one per account being the rule since
+    /// 2026-09-13. See the module header, and the comment at the `DELETE` that enforces it for
+    /// what a superseded launch loses. The count comes back in [`StakedClaim::superseded`].
     ///
     /// `token` is the session token `Store::authenticate` just issued; only its SHA-256 is
     /// stored, never the token. Pass [`LOGIN_CLAIM_TTL_SECS`] for `ttl_secs` unless there is a
@@ -1001,6 +1034,37 @@ impl Store {
         // Expired rows only. THIS IS NOT THE OLD `DELETE FROM login_claims` - nothing live is
         // touched, so a second sign-in can no longer evict the first.
         tx.execute("DELETE FROM login_claims WHERE expires_at <= ?1", rusqlite::params![now])?;
+
+        // **This account's own earlier claims, and nobody else's.** The owner, 2026-09-13:
+        // *"shouldn't they be allowed to sign in multiple times? Signing in again should
+        // invalidate previous claims on that account."*
+        //
+        // It is scoped by `account_id`, which is the entire difference between this and the
+        // eviction bug in the module header: `otter` signing in leaves `owl`'s claim exactly
+        // where it was, and the regression test for that still passes. What it removes is the
+        // second live row for ONE account, which was never useful and was actively harmful -
+        // with two of them staked from one address, rule 3 stops picking one out and every
+        // connection from that address falls to the fallback. Measured on the live server on
+        // 2026-09-13: six launches from one address, the first three matched by address and
+        // the rest refused with *"4 login claims are live and the evidence presented did not
+        // pick one out"*. Nothing was wrong with the guard; there was simply no longer an
+        // honest answer, and the reason there wasn't is that the same person had signed in
+        // four times.
+        //
+        // `token_hash <> ?2` keeps the re-stake path intact: staking the same token again is
+        // the same sign-in refreshing itself and is handled by the upsert below.
+        //
+        // **What this costs.** The superseded launch stops working, in every sense: its client
+        // token no longer matches a live row, so a client still holding it is resolved as
+        // `NoClaim` at its next login connection rather than served, and a migration bound to
+        // that claim's hash cannot be re-derived. That is the meaning of "signing in again
+        // invalidates the previous claim" and not a side effect of it - but it does mean a
+        // second sign-in while a client of the same account is running will cut that client
+        // off at its next Log Out or world change, which is rule 2's territory.
+        let superseded = tx.execute(
+            "DELETE FROM login_claims WHERE account_id = ?1 AND token_hash <> ?2",
+            rusqlite::params![account_id, token_hash],
+        )?;
         tx.execute(
             "INSERT INTO login_claims
                  (account_id, token_hash, created_at, expires_at, peer, launch_hash,
@@ -1037,6 +1101,7 @@ impl Store {
             claim: LoginClaim { account_id, account_name, created_at: now, expires_at },
             launch_id: launch.token,
             client_token,
+            superseded,
         })
     }
 
@@ -1553,6 +1618,83 @@ mod tests {
         assert_eq!(live.len(), 2);
         let names: Vec<&str> = live.iter().map(|c| c.account_name.as_str()).collect();
         assert!(names.contains(&"wisp") && names.contains(&"wisp_alt"), "{names:?}");
+    }
+
+    /// **Signing in again replaces your own claim, and only your own.**
+    ///
+    /// The owner, 2026-09-13: *"shouldn't they be allowed to sign in multiple times? Signing in
+    /// again should invalidate previous claims on that account."* The other account's row in
+    /// this test is the guard on the fix: it is the eviction bug in the module header, and it
+    /// must survive a re-sign-in by somebody else.
+    #[test]
+    fn signing_in_again_replaces_your_own_claim_and_nobody_elses() {
+        let (store, wisp, other) = store_with_accounts();
+        let other_token = login(&store, "wisp_alt");
+        store.stake_login_claim(other, &other_token, LOGIN_CLAIM_TTL_SECS).unwrap();
+
+        let first = login(&store, "wisp");
+        let staked = store.stake_login_claim_with(wisp, &first, LOGIN_CLAIM_TTL_SECS, None).unwrap();
+        assert_eq!(staked.superseded, 0, "there was nothing of wisp's to replace");
+
+        let second = login(&store, "wisp");
+        let staked = store.stake_login_claim_with(wisp, &second, LOGIN_CLAIM_TTL_SECS, None).unwrap();
+        assert_eq!(staked.superseded, 1, "the first sign-in's claim");
+
+        assert_eq!(claim_rows(&store), 2, "one for wisp, one for wisp_alt");
+        let live = store.live_login_claims().unwrap();
+        assert_eq!(live.iter().filter(|c| c.account_id == wisp).count(), 1);
+        assert_eq!(
+            live.iter().filter(|c| c.account_id == other).count(),
+            1,
+            "somebody else's claim was evicted - this is the bug the module exists to fix"
+        );
+
+        // The replaced launch is gone in the sense that matters: its token no longer resolves.
+        let r = store.resolve_login_claim(&ClaimEvidence::with_token(first)).unwrap();
+        assert_eq!(r.resolved(), None, "the superseded token still works: {}", r.why());
+        let r = store.resolve_login_claim(&ClaimEvidence::with_token(second)).unwrap();
+        assert_eq!(r.resolved().expect("the newest sign-in").claim.account_id, wisp);
+    }
+
+    /// **The failure this was reported from**, in the shape the live server logged it.
+    ///
+    /// 2026-09-13: one person signed in repeatedly from one address, and from the fourth
+    /// connection on the login server refused every one of them - *"4 login claims are live
+    /// and the evidence presented did not pick one out"*. Rule 3 needs the address to name
+    /// exactly one claim, and their own retries were the other ones.
+    #[test]
+    fn repeated_sign_ins_from_one_address_stay_resolvable_by_address() {
+        let (store, wisp, _other) = store_with_accounts();
+        let peer = "108.27.246.100";
+
+        let mut last = String::new();
+        for _ in 0..4 {
+            last = login(&store, "wisp");
+            store.stake_login_claim_with(wisp, &last, LOGIN_CLAIM_TTL_SECS, Some(peer)).unwrap();
+        }
+
+        let r = store.resolve_login_claim(&ClaimEvidence::default().from_peer(peer)).unwrap();
+        let resolved = r.resolved().expect("four sign-ins by one account is still one claim");
+        assert_eq!(resolved.how, ResolvedBy::PeerAddress, "{}", r.why());
+        assert_eq!(resolved.claim.account_id, wisp);
+        assert_eq!(resolved.token_hash.as_deref(), Some(hash_token(&last).as_str()));
+    }
+
+    /// Two accounts behind one address are still ambiguous, and must stay that way.
+    ///
+    /// The fix above is scoped by account precisely so it cannot collapse this case: two
+    /// different people on one NAT have two honest answers and the address picks neither.
+    #[test]
+    fn two_accounts_behind_one_address_are_still_refused_rather_than_guessed() {
+        let (store, wisp, other) = store_with_accounts();
+        let peer = "108.27.246.100";
+        let a = login(&store, "wisp");
+        let b = login(&store, "wisp_alt");
+        store.stake_login_claim_with(wisp, &a, LOGIN_CLAIM_TTL_SECS, Some(peer)).unwrap();
+        store.stake_login_claim_with(other, &b, LOGIN_CLAIM_TTL_SECS, Some(peer)).unwrap();
+
+        let r = store.resolve_login_claim(&ClaimEvidence::default().from_peer(peer)).unwrap();
+        assert!(matches!(r, ClaimResolution::Ambiguous { live: 2, .. }), "{}", r.why());
     }
 
     /// **Neither can be served as the other.** Each connection presents its own token and gets
@@ -2124,14 +2266,24 @@ mod tests {
     fn clearing_one_account_takes_all_its_launches_and_nobody_elses() {
         let (store, wisp, other) = store_with_accounts();
         let a = login(&store, "wisp");
-        let a2 = login(&store, "wisp");
         let b = login(&store, "wisp_alt");
         store.stake_login_claim(wisp, &a, LOGIN_CLAIM_TTL_SECS).unwrap();
-        store.stake_login_claim(wisp, &a2, LOGIN_CLAIM_TTL_SECS).unwrap();
         store.stake_login_claim(other, &b, LOGIN_CLAIM_TTL_SECS).unwrap();
+        // A second row for `wisp`, written directly rather than staked. Staking cannot produce
+        // one any more - one live claim per account since 2026-09-13 - but a database written
+        // before that change can hold several, and the live server's did: four live claims,
+        // more than one of them the same person. Clearing by account must still take them all.
+        store
+            .conn()
+            .execute(
+                "INSERT INTO login_claims (account_id, token_hash, created_at, expires_at)
+                      VALUES (?1, 'a-hash-from-an-older-build', ?2, ?3)",
+                rusqlite::params![wisp, Store::now(), Store::now() + LOGIN_CLAIM_TTL_SECS],
+            )
+            .unwrap();
         assert_eq!(claim_rows(&store), 3);
 
-        assert_eq!(store.clear_login_claims_for(wisp).unwrap(), 2, "both of wisp's launches");
+        assert_eq!(store.clear_login_claims_for(wisp).unwrap(), 2, "both of wisp's rows");
         assert_eq!(
             store.current_login_claim().unwrap().map(|c| c.account_id),
             Some(other),
