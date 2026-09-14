@@ -1145,6 +1145,112 @@ mod tests {
         assert_eq!(purse(a_id), 800, "+500 at 50%");
     }
 
+    /// **Party chat reaches every other member on the channel, on any map, as the client's
+    /// own 0x01B1 - and not the sender.** The owner, 2026-09-14: *"my party member does not
+    /// receive the message."* The stranger on the same map hears nothing; the member on
+    /// another map does.
+    #[test]
+    fn a_party_line_reaches_the_other_members_anywhere_on_the_channel_and_nobody_else() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let config = Arc::new(Config::default());
+        let fields = Arc::new(Fields::new());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        store.set_gm("maplecw", true).unwrap();
+        let make = |name: &str, map: u32| {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: map, ..Default::default() };
+            let made = store.create_character(account, 0, &chr).unwrap();
+            store.create_migration(account, made.id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(made.id);
+            s.on_field_entered();
+            (s, made.id)
+        };
+        let (mut leader, leader_id) = make("Cobalt", 104_040_000);
+        let (mut same_map, same_id) = make("Tester2", 104_040_000);
+        let (mut far, far_id) = make("Robin", 100_000_000);
+        let (mut stranger, _) = make("Stranger", 104_040_000);
+        let created = leader.run_party_request(leader_id, crate::party::Request::Create { name: "P".into() });
+        let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        for (m, id) in [(&mut same_map, same_id), (&mut far, far_id)] {
+            let _ = leader.run_party_request(leader_id, crate::party::Request::Invite { target: id });
+            let _ = m.tick(1_000);
+            let _ = m.run_party_request(id, crate::party::Request::Accept { party });
+        }
+        for s in [&mut leader, &mut same_map, &mut far, &mut stranger] {
+            let _ = s.tick(2_000);
+        }
+
+        // The owner's captured request, with the client's own idea of the recipient list.
+        let mut req = net::groupmessage::CLIENT_GROUP_MESSAGE.to_le_bytes().to_vec();
+        req.extend_from_slice(&[1, 1]);
+        req.extend_from_slice(&same_id.to_le_bytes());
+        req.extend_from_slice(&5u16.to_le_bytes());
+        req.extend_from_slice(b"Hello");
+        let own = leader.handle(&req);
+        assert!(own.iter().all(|r| r.opcode != net::groupmessage::GROUP_MESSAGE), "the sender's client draws its own line: {own:?}");
+
+        for (m, name) in [(&mut same_map, "same map"), (&mut far, "another map")] {
+            let mail = m.tick(3_000);
+            let line = mail.iter().find(|r| r.opcode == net::groupmessage::GROUP_MESSAGE).unwrap_or_else(|| panic!("{name}: the line"));
+            assert_eq!(line.body, net::groupmessage::group_message(1, u32::try_from(account).unwrap(), leader_id, 0, "Cobalt", "Hello"));
+            assert!(line.what.contains("Cobalt says 'Hello'"), "{}", line.what);
+        }
+        let mail = stranger.tick(3_000);
+        assert!(mail.iter().all(|r| r.opcode != net::groupmessage::GROUP_MESSAGE), "not in the party: {mail:?}");
+    }
+
+    /// **The pick-up-rights button is a toggle, answered with the client's 0x2D.** The owner,
+    /// 2026-09-14: *"nothing happened"* - the reply was a bare 0x0D whose block carried a
+    /// constant 0 in the rights byte. Each press flips All <-> Party Leader, every member
+    /// gets `str name, u8 isPublic, u8 rights`, and the block's tail byte follows.
+    #[test]
+    fn the_pickup_rights_button_toggles_and_every_member_gets_the_status_packet() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let config = Arc::new(Config::default());
+        let fields = Arc::new(Fields::new());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        store.set_gm("maplecw", true).unwrap();
+        let make = |name: &str| {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: 104_040_000, ..Default::default() };
+            let made = store.create_character(account, 0, &chr).unwrap();
+            store.create_migration(account, made.id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(made.id);
+            s.on_field_entered();
+            (s, made.id)
+        };
+        let (mut leader, leader_id) = make("Cobalt");
+        let (mut member, member_id) = make("Tester2");
+        let created = leader.run_party_request(leader_id, crate::party::Request::Create { name: "the owner's Party".into() });
+        let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        let _ = leader.run_party_request(leader_id, crate::party::Request::Invite { target: member_id });
+        let _ = member.tick(1_000);
+        let _ = member.run_party_request(member_id, crate::party::Request::Accept { party });
+        let _ = leader.tick(2_000);
+        assert_eq!(fields.parties().party(party).unwrap().pickup_rights, crate::party::PICKUP_ALL, "a new party is All");
+
+        // The request the button sends carries a constant 1; the value is ignored.
+        let out = leader.run_party_request(leader_id, crate::party::Request::SetPickupRights { rights: 1 });
+        let status = out.iter().find(|r| r.opcode == net::party::PARTY_RESULT && r.body[0] == net::party::result::PUBLIC_PRIVATE).expect("0x2D to the leader");
+        assert_eq!(status.body, net::party::party_status("the owner's Party", false, true), "name, isPublic 0, rights 1 = Party Leader");
+        assert!(status.what.contains("Party Leader"), "{}", status.what);
+        let mail = member.tick(3_000);
+        let theirs = mail.iter().find(|r| r.opcode == net::party::PARTY_RESULT && r.body[0] == net::party::result::PUBLIC_PRIVATE).expect("0x2D to the member");
+        assert_eq!(theirs.body, status.body, "the same bytes to every member");
+        assert_eq!(fields.parties().party(party).unwrap().pickup_rights, crate::party::PICKUP_LEADER_ONLY);
+
+        // Press again: back to All, and any later block carries 0 in that byte.
+        let out = leader.run_party_request(leader_id, crate::party::Request::SetPickupRights { rights: 1 });
+        let status = out.iter().find(|r| r.body.first() == Some(&net::party::result::PUBLIC_PRIVATE)).unwrap();
+        assert_eq!(*status.body.last().unwrap(), 0, "rights byte 0 = All");
+        assert_eq!(fields.parties().party(party).unwrap().pickup_rights, crate::party::PICKUP_ALL);
+
+        // A member's press is refused as not-the-leader, and nothing flips.
+        let out = member.run_party_request(member_id, crate::party::Request::SetPickupRights { rights: 1 });
+        assert!(out.iter().all(|r| r.body.first() != Some(&net::party::result::PUBLIC_PRIVATE)), "{out:?}");
+        assert_eq!(fields.parties().party(party).unwrap().pickup_rights, crate::party::PICKUP_ALL);
+    }
+
     /// The `0x00E7` body the client sends for a typed line: u32 tick, the text, u8 tab.
     fn gm_chat_body(text: &str) -> Vec<u8> {
         let mut b = net::opcode::CLIENT_CHAT.to_le_bytes().to_vec();
@@ -1215,6 +1321,79 @@ mod tests {
         assert_eq!(
             u32::from_le_bytes(told[0].body[4..8].try_into().unwrap()),
             ids[1],
+        );
+    }
+
+    /// **A pet summoned BEFORE the other player arrives still reaches them.** The owner,
+    /// 2026-09-14: *"The second client does not see the Husky pet."* The summon and every walk
+    /// were already published to the map, and a pet owner walking into a map already went out
+    /// as spawn-then-pet. The direction nobody covered was this one: the pet is out, someone
+    /// else arrives, and they got the owner's spawn alone - the pet lived on one screen only.
+    ///
+    /// Three things are pinned. The arrival is handed the owner's `0x0224` and then the pet's
+    /// `0x0277`, **in that order**, because the pet packet names a character the spawn creates
+    /// and the client drops a user-pool packet for a character it does not have. The owner's
+    /// own `0x0277` for the arrival is not sent back to the owner. And putting the pet away
+    /// clears it, so the next arrival is not handed a pet that is no longer out.
+    #[test]
+    fn a_pet_summoned_before_another_player_arrives_is_handed_to_them_after_the_owners_spawn() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut ids = Vec::new();
+        for name in ["Owner", "Arrival"] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: 104_040_000, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.create_migration(account, id, 0, 0).unwrap();
+            ids.push(id);
+        }
+        store.add_item(ids[0], store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+        let mut item_names = std::collections::HashMap::new();
+        item_names.insert(5_000_006u32, "Husky".to_string());
+        let config = Arc::new(Config { item_names, ..(*config).clone() });
+
+        let mut owner = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut arrival = Session::joining(store, config, fields.clone());
+        owner.claim_for_character(ids[0]);
+        arrival.claim_for_character(ids[1]);
+
+        // The owner is alone, summons, and nobody is there to hear it.
+        owner.on_field_entered();
+        owner.last_position = Some((300, -50));
+        let summon = owner.on_pet_activate(&super::tests::hex("509a18140100"));
+        assert!(summon.iter().any(|r| r.opcode == net::pet::PET_ACTIVATED), "the owner sees the pet");
+
+        // Then the other player arrives: spawn, then pet, in that order.
+        let joined = arrival.on_field_entered();
+        let about_owner: Vec<(u16, u32)> = joined
+            .iter()
+            .filter(|r| r.opcode == net::userpool::USER_ENTER_FIELD || r.opcode == net::pet::PET_ACTIVATED)
+            .map(|r| {
+                let at = if r.opcode == net::userpool::USER_ENTER_FIELD { 4 } else { 0 };
+                (r.opcode, u32::from_le_bytes(r.body[at..at + 4].try_into().unwrap()))
+            })
+            .collect();
+        assert_eq!(
+            about_owner,
+            vec![(net::userpool::USER_ENTER_FIELD, ids[0]), (net::pet::PET_ACTIVATED, ids[0])],
+            "the arrival is handed the owner, then the owner's pet - the order the client needs"
+        );
+        let pet = joined.iter().find(|r| r.opcode == net::pet::PET_ACTIVATED).unwrap();
+        assert_eq!(pet.body[8], 1, "activated");
+        assert_eq!(&pet.body[10..14], &5_000_006u32.to_le_bytes(), "the Husky");
+        assert_eq!(&pet.body[46..48], &net::pet::PET_SIZE_PERCENT.to_le_bytes(), "life-size on their screen too");
+
+        // The owner hears about the arrival and is NOT handed their own pet back.
+        let mail = owner.tick(1_000);
+        assert!(mail.iter().any(|r| r.opcode == net::userpool::USER_ENTER_FIELD));
+        assert!(!mail.iter().any(|r| r.opcode == net::pet::PET_ACTIVATED), "not echoed to the owner: {mail:?}");
+
+        // Put away: the next arrival gets no pet. (The live observer got the put-away itself.)
+        owner.on_pet_activate(&super::tests::hex("f29d18140100"));
+        let _ = arrival.tick(2_000);
+        let again = arrival.on_field_entered();
+        assert!(
+            !again.iter().any(|r| r.opcode == net::pet::PET_ACTIVATED),
+            "a pet that has been put away must not travel with its owner any more"
         );
     }
 

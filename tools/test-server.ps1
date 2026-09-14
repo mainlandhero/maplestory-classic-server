@@ -675,6 +675,40 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
+     TP. PARTY CHAT, AND THE PICK-UP RIGHTS BUTTON. (Party mesos: DONE, "Party loot
+         works".) the owner, 2026-09-14: "Hello" in party chat reached nobody, and Pick-up
+         rights did nothing.
+         PARTY CHAT: the line arrives as 0x0179 (kind 1, the client's recipient list,
+         the text) and went unanswered. It now goes to every OTHER member on this
+         channel, on any map, as 0x01B1 - the client's own group-message packet, whose
+         handler reads u8 kind, u32 account, u32 char, str name, str text, then the same
+         chat-info block the reference sends (name, text, ids, world, zeros). The sender
+         is not sent a copy: its client draws its own line.
+           ACROSS CHANNELS: NOT YET. Each channel is its own process with its own party
+           registry - a party does not exist across channels today - so a member on the
+           other channel is not on the roster at all. That is a shared-registry job, not a
+           chat one; the log says "not on this channel and was NOT told" when it happens.
+         PICK-UP RIGHTS: the button's request carries no value (its builder hardcodes the
+         payload - both of the owner's clicks were byte-identical), so it is a TOGGLE, and
+         0x2D is the client's own rights-changed packet: str name, u8 isPublic, u8 rights
+         (1 = Party Leader, 0 = All) - the arm stores both, says "The party's item
+         pick-up rights changed to %s" when it differs, and relabels the window. Under
+         Party Leader, only the leader (and a drop's killer) may pick up party drops.
+         Two clients in a party, same channel, different maps is fine for chat:
+           1. type a line in party chat on one:
+              the other sees "[name]: line" in its party chat colour -> fixed
+              nothing arrives -> world-ch0.log: "-> N of M member(s)" says whether
+                          the bus delivered; 0 of 1 means the member was between fields
+              the client DIES -> the chat-info tail; say so, the hook log names the packet
+           2. leader clicks Pick-up rights:
+              both see "The party's item pick-up rights changed to Party Leader" and the
+                          window's label follows; click again -> "...to All" -> fixed
+              the line says the opposite of the label -> the byte's meaning is
+                          reversed; say which word appeared first
+              nothing -> world-ch0.log has the 0x2D lines; say so
+           3. under Party Leader, the member tries to pick up a party drop: refused
+              (it stays on the floor); the leader takes it.
+
      TO. PARTY MESOS: 70% TO THE PICKER, A YELLOW COPY OF THE SHARE TO EVERY MEMBER.
          The owner, 2026-09-14: the EXP split, for mesos. Built: when a party member picks up
          mesos A MOB dropped, the picker keeps 70% (white "You have gained mesos"), and
@@ -3516,6 +3550,19 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
+        Write-Host '  TP. PARTY CHAT, AND THE PICK-UP RIGHTS BUTTON. (Party mesos: DONE.)' -ForegroundColor Magenta
+        Write-Host '      Party chat (0x0179) went unanswered; it now reaches every other'
+        Write-Host '      member on this channel, any map, as the client''s 0x01B1. NOT'
+        Write-Host '      across channels: each channel has its own party registry.' -ForegroundColor Yellow
+        Write-Host '      Pick-up rights: the button sends no value - it is a TOGGLE - and'
+        Write-Host '      0x2D is the client''s rights-changed packet (1 Leader, 0 All).'
+        Write-Host '        1. type in party chat: the other client sees it -> fixed;'
+        Write-Host '           nothing -> log line "-> N of M member(s)"; DIES -> say so' -ForegroundColor Red
+        Write-Host '        2. leader clicks Pick-up rights: both see "changed to Party'
+        Write-Host '           Leader", label follows; again -> "to All" -> fixed'
+        Write-Host '           line and label disagree -> the byte is reversed; say which'
+        Write-Host '        3. under Party Leader the member cannot take a party drop'
+        Write-Host ''
         Write-Host '  TO. PARTY MESOS: 70% TO THE PICKER, A YELLOW COPY TO EVERY MEMBER.' -ForegroundColor Magenta
         Write-Host '      A party member picks up a MOB''s mesos: 70% to them (white), and'
         Write-Host '      every other member on the map gets a copy of the 30% share with'
