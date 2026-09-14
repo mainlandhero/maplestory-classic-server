@@ -176,3 +176,60 @@ The outcome that would close the ladder for good is **`142cc1e49` with peek 0 an
 `14159b0a0`**: desired 1, current 1, the client already believes the pet is visible, and the
 failure is in drawing rather than in visibility. The outcome that reopens it is `142cc1e49`
 absent, or its peek non-zero.
+
+
+---
+
+# The `-PetSync` run: the client already thinks the pet is visible
+
+One capture, 2026-09-14 16:51:45, kept as
+`research/fixtures/pet-sync-says-visible-2964-times-and-nothing-draws-hook.log` (and the
+channel side as `pet-sync-run-world-ch0.log`). Every number below is from that one file.
+
+```text
+0x140304100    36 hits      POSITIVE CONTROL - the hook armed and the log is evidence
+0x141ecde00  4164 hits      the ladder ran for the pet. First hit at the summon
+                            (0x0277 at 20:51:55.099); 3322 more from the periodic
+                            updater 0x141ec1ce8, ~30 a second, as designed
+0x142cc1e49  6000 hits      of which 2964 with called-from=0x141ecdf10, the ladder.
+                            [rcx+0x24ac] = 0x00000000 on ALL 2964, and reaching that
+                            instruction at all proves [rcx+0x24b0] was 0 too
+0x14159b0a0     2 hits      both from 0x141e4c056, both at 16:51:53 - two seconds
+                            BEFORE the summon, during opcode 0x007C. NEVER from the
+                            ladder's 0x141ecdf8f
+```
+
+Read against the tail in §6:
+
+* gate 11 returns 0 on every evaluation, so `cmove edi, ebp` fires and **desired = 1 = visible**;
+* the sync never transitions, so **current == desired**;
+* therefore **current = 1. The client has the pet marked visible, 2964 times over, and draws
+  nothing.**
+
+**The visibility ladder is innocent and this closes it.** `research/pet-not-drawn-2026-09-13.md`
+spent three runs on a mechanism that was answering "yes" the whole time; what made that
+invisible was reading a sync as a verdict, so that "no transition" looked like "refused".
+
+## What that leaves, and the control that killed the last cheap theory
+
+The pet is visible, positioned at the owner's feet, iterated 4164 times, its name tag is drawn, and
+its sprite is not. The obvious remaining theory was that the sprite resolves to the **1x1
+placeholder** - `Item/Pet/5000006.img/stand0/0` is a 1x1 canvas carrying an `_outlink` into
+`Item/Pet/_Canvas`, and a failed resolve would draw one transparent pixel, which looks exactly
+like this.
+
+**It is dead, and the control is on the owner's screen.** `Mob/Mob_000.wz/0000001.img/move/0` is the
+*same shape* - 1x1, 10 bytes, `_outlink: Mob/_Canvas/0000001.img/move/0` - and the orange
+mushrooms and snails in the screenshot are drawing. Outlink resolution works for field
+animations in this client, in this session.
+
+So the failure is between "the layer is visible" and "the layer has something to draw".
+`[pet+0x3c8]` is reached by `QueryInterface` (`vtbl+0x168`) and answered `get_visible` through
+`vtbl+0x2b0`; HRESULT returns and a vtable that large make it one of the client's `IWzGr2D*`
+layer interfaces, which is also the object an animation's canvases get inserted into.
+
+**The next step is not a launch.** It is a Ghidra decompile of `CPet::Init` (`FUN_141eb9760`,
+11 005 bytes) and the two `FUN_141ed3540` template loads it requires, to find where a pet's
+canvases are inserted into that layer and what selects the action - the one field we send that
+could choose an animation is `moveAction`, and we send `0`. Nothing about that is established
+yet, and it is deliberately written here as the question rather than as a candidate.
