@@ -108,6 +108,11 @@ pub fn prepare(
 ) -> Result<(), String> {
     let client_dir = &layout.client_dir;
 
+    // Which launcher is this? Same reason the servers print it (`store::buildstamp`), and
+    // with an extra one: this log is what a player on another machine copies and pastes, so
+    // it is the only way to tell whether the build they are running is the one that carries
+    // a fix. It is first, so a launch that fails at the very next step still says.
+    log(Level::Info, store::buildstamp::line());
     log(Level::Info, format!("paths from: {}", layout.source.label()));
     if let Some(cfg) = &layout.config_file {
         log(Level::Info, format!("config: {}", cfg.display()));

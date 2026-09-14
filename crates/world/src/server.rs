@@ -459,6 +459,16 @@ pub fn serve(config: Config) -> std::io::Result<()> {
             .map_err(|e| std::io::Error::other(format!("{}: {e}", config.db_path.display())))?,
     );
 
+    // **WHICH BUILD IS THIS?** First line out, before anything that could fail.
+    //
+    // The owner, 2026-09-13, after an afternoon's fixes turned out not to be running on the
+    // deployed server and the only way to tell was to reason about its behaviour: *"as
+    // part of startup, all of the processes should include a build time from now on"*.
+    // It is the executable's own file - time, size and digest - so it moves whenever the
+    // linker rewrites the binary, including for a dependency-only change. `store::buildstamp`
+    // says why a compile-time constant would have been stale in exactly this case.
+    log(&store::buildstamp::line());
+
     let listener = TcpListener::bind(config.bind)?;
     log(&format!(
         "world {} channel {} listening on {}",

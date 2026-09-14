@@ -200,6 +200,9 @@ pub fn serve_on(
     tls: Arc<rustls::ServerConfig>,
 ) -> io::Result<()> {
     let listener = listen(bind, port)?;
+    // Which build. See `store::buildstamp` - the executable's own file, not a compile-time
+    // constant, because a constant goes stale on a dependency-only change.
+    println!("{}", store::buildstamp::line());
     println!("auth server listening on https://{bind}:{port} (TLS 1.3, pinned certificate)");
     run(listener, service, tls)
 }

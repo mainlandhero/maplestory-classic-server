@@ -98,6 +98,30 @@ $zipPath   = Join-Path $OutDir 'MapleCW-setup.zip'
 
 function Fail([string]$msg) { throw $msg }
 
+
+# **The identity every one of these binaries prints at its own startup.**
+#
+# store::buildstamp puts `sha256 <16 hex>` in the first line each server logs, so a deployment
+# can be checked against the artifact it came from by comparing two short strings - no build,
+# no version number, no trusting a file date that unzipping may have rewritten. The owner,
+# 2026-09-13, after fixes turned out not to be running on the deployed server: "as part of
+# startup, all of the processes should include a build time from now on."
+#
+# Lowercase and truncated to 16 to MATCH what the process prints. Get-FileHash returns
+# uppercase; a comparison that requires the reader to notice that is not a comparison.
+function Show-BuildIdentity([string]$dir, [string[]]$names) {
+    Write-Host 'build identity - each of these prints the same digest in its own first log line:' -ForegroundColor Cyan
+    foreach ($n in $names) {
+        $p = Join-Path $dir $n
+        if (-not (Test-Path $p)) { continue }
+        $f = Get-Item $p
+        $d = (Get-FileHash $p -Algorithm SHA256).Hash.ToLower().Substring(0, 16)
+        Write-Host ("   {0,-24} {1,10:N0} bytes  {2:yyyy-MM-dd HH:mm:ss}  sha256 {3}" -f `
+            $n, $f.Length, $f.LastWriteTimeUtc, $d)
+    }
+    Write-Host '   (times are UTC, the same zone the startup line uses)'
+}
+
 # ---------------------------------------------------------------- preflight
 # Every one of these is something whose absence produces a payload that installs fine and
 # then does not work, which is the expensive kind of failure: it is found on the target
@@ -300,6 +324,10 @@ foreach ($b in $binaries) {
     Copy-Item $src $dst -Force
 }
 Write-Host ("staged {0} binaries" -f $binaries.Count)
+# The launcher is the one binary a PLAYER runs, and its log is what they paste back when
+# something goes wrong - so its digest is the way to tell whether they are running the
+# build that carries a fix. It prints the same string in its own first log line.
+Show-BuildIdentity $stage @('maplecw-launcher.exe')
 
 if ($ClientOnly) {
     # No gm-handbook, no data\, and no server-start scripts: all three are the world server's,
