@@ -1201,23 +1201,26 @@
                          not what this pet code reads; say so
               the pet takes your OWN dropped item                           -> the byte is
                          ignored; paste the pet pick-up line
-         v) NEW 2026-09-14 (round 8) - THE RE-PARENT IS REAL, AND IT IS A CLIENT OPTION.
-            -PetParent made it [L]: FUN_142934760(user, 1) fired exactly ONCE, while
-            dispatching 0x01A0 SetField, from 0x142887193 - and the value it stored is
-            read from DAT_143ac87a0+0x70, the client's OWN options object (the same one
-            whose +0x58 gave the alpha). user+0x3fd0 read 0 for the first 39 samples and
-            1 for the next 5961; user+0x3fd8 is a live object. So at SetField the client
-            applies an option that sends the pet's sprite onto a user-owned object, and
-            it is not a byte we sent.
-            What the option means is not yet known. So this run tests CAUSATION first,
-            and it PATCHES THE CLIENT: the probe rewrites the setter's argument to 0.
-              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetParentOff
-            The screen is the reading this time:
-              THE HUSKY DRAWS               -> user+0x3fd0 = 1 was the cause. Then I name
-                         the option and we choose the real fix
-              invisible, peek 3ed0 = 0      -> not it; the re-parent theory is dead
-              invisible, peek 3ed0 = 1      -> the rewrite did not take; nothing measured
-              no 140304100 lines            -> the hook never armed; not evidence
+         v) NEW 2026-09-14 (round 9) - DOES THE PET EVER GET FRAMES?
+            -PetParentOff: the rewrite took (user+0x3fd0 = 0 on all 3555 samples) and the
+            Husky stayed invisible. The re-parent theory is dead. Seven things measured
+            or forced now, and the sprite is still not on screen - so the last question
+            is whether there is anything IN it.
+            The frames go through FUN_141ec87b0, whose core is: decode the action from
+            moveAction (0 for us), look up that action's frame list, LAZY-LOAD it from the
+            WZ template through FUN_140cd8da0, and if the list is STILL empty fall into
+            FUN_141ec86c0 and try action 2. Every earlier measurement fits that loader
+            returning zero frames: a visible, positioned, opaque, drawn, EMPTY layer.
+              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetLoad
+            Paste the counts and r8 on 140cd8da0:
+              140cd8da0 then 141ec86c0   -> the loader produced NO FRAMES for that action;
+                         r8 says which. The bug is between the template and the WZ names
+              141ec86c0, no 140cd8da0    -> the action index was rejected before loading;
+                         moveAction 0 is out of range for this pet and is back in play
+              140cd8da0, no 141ec86c0    -> frames loaded and it still does not draw; the
+                         sprite has content and the fault is presentation (layer rect)
+              neither                    -> FUN_141ec87b0 returned at its top
+              no 140304100 lines         -> the hook never armed; not evidence
             FREE, same run: walk to another map with the pet out and say whether it
             appears there.
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
@@ -2166,9 +2169,13 @@ param(
     # the client's own options object. user+0x3fd0 then reads 1 on 5961 of 6000 samples
     # and user+0x3fd8 is a live object. The sprite really is being re-parented.
     [switch]$PetParent,
-    # **-PetParentOff**: THIS PATCHES THE CLIENT. Forces that setter to store 0, so the
-    # sprite takes the normal arm. One variable; the screen is the reading.
+    # **-PetParentOff**: ANSWERED 2026-09-14 - the rewrite took (user+0x3fd0 = 0 on all
+    # 3555 samples) and the Husky stayed invisible. The re-parent theory is dead.
     [switch]$PetParentOff,
+    # **-PetLoad**: does the pet ever get FRAMES for its action? FUN_141ec87b0 lazily loads
+    # them through FUN_140cd8da0 and falls into FUN_141ec86c0 when there are none. See the
+    # $Probe block.
+    [switch]$PetLoad,
     [switch]$PetGates,
     # ON BY DEFAULT SINCE 2026-09-14, and accepted only so that every launch line already
     # written down keeps working. It used to be the switch that made the channel answer at
@@ -2519,7 +2526,53 @@ if (-not $SilentChannel) { $SetFieldProbe = $true }
 #
 # So: passing -InventorySlots means the bag is the variable, and the bag gets the watches.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    if ($PetParentOff) {
+    if ($PetLoad) {
+        # **DOES THE PET EVER GET FRAMES FOR ITS ACTION?**
+        #
+        # Seven things measured or forced and the sprite is still not on screen, so the
+        # remaining question is whether there is anything IN it. Re-reading FUN_141ecaa40
+        # after -PetParentOff: a "reset / set from VARIANT / insert into layer" triple whose
+        # second arm hands it the USER's object is the shape of an IWzVector2D - the pet's
+        # position, relative to the field or to the user - not a canvas. The frames go
+        # through the one 8 KB function only skimmed so far, FUN_141ec87b0
+        # (research/msexe-pet-postinit.c), and its core is a loop:
+        #
+        #   action = FUN_141ebe350(pet, &facing)         ; the moveAction decode -> 0 for us
+        #   FUN_141ec3380(pet, &action)                  ; may adjust it
+        #   arr = [pet+0x360] (or +0x368)                ; per-action frame lists, 24 B each
+        #   if (action < 0 || arr == 0 || action >= count(arr)) -> FALLBACK, action = 2
+        #   list = arr + action*24
+        #   if (list->count != 0) break                  ; frames already cached
+        #   FUN_140cd8da0(DAT_143ac0188, template, action, ..., list)   ; LAZY LOAD from WZ
+        #   if (list->count != 0) break                  ; loaded
+        #   FALLBACK: FUN_141ebdf10(pet) if pet+0x308 >= 0; FUN_141ec86c0(pet); action = 2
+        #
+        # Every earlier measurement is consistent with that loader returning ZERO frames:
+        # the layer is visible, positioned, opaque, drawn (its tag child shows) and empty.
+        #
+        # 140cd8da0:hits=200    the loader. r8 is the ACTION INDEX it was asked for, rdx the
+        #                       template. If it fires and the pet stays blank, it loaded
+        #                       nothing or the wrong node
+        # 141ec86c0:hits=200    THE FALLBACK. Fires only when the action index is invalid or
+        #                       the loader left the list empty. rcx is the pet
+        # 141ebdf10:hits=200    the other fallback (pet+0x308 >= 0 arm)
+        # 140304100:hits=200    positive control
+        #
+        # READ IT LIKE THIS:
+        #   140cd8da0 fires, then 141ec86c0 fires   -> the loader produced NO FRAMES for
+        #                      that action. The bug is between the template and the WZ node
+        #                      names, and r8 says which action index. That is the answer
+        #   141ec86c0 fires, 140cd8da0 silent       -> the action INDEX was rejected before
+        #                      loading; the moveAction decode (0) is out of range for this
+        #                      pet's table, so moveAction is back in play after all
+        #   140cd8da0 fires, 141ec86c0 silent       -> frames loaded and the pet still does
+        #                      not draw. Then the sprite has content and the fault is in
+        #                      how it is presented; that would need the layer's rect
+        #   neither fires                           -> FUN_141ec87b0 returned at its top
+        #                      (user+0x100+0x5ac, which reads 0, so this should not happen)
+        #   no 140304100 lines                      -> the hook never armed; not evidence
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,140cd8da0:hits=200,141ec86c0:hits=200,141ebdf10:hits=200,140304100:hits=200:dump=143AC2400/968'
+    } elseif ($PetParentOff) {
         # **CAUSATION TEST. THIS RUN PATCHES THE CLIENT** - `:rdx=0` rewrites the second
         # argument of FUN_142934760 on entry, so user+0x3fd0 is stored as 0 instead of the
         # option's 1, and FUN_141eca710 takes its NORMAL arm for the pet's sprite. Describe
@@ -3705,20 +3758,24 @@ function Show-TestPlan {
         Write-Host '                         -> paste that inbound body'
         Write-Host '           pet never goes for drops -> keys not read; say so'
         Write-Host '           pet takes YOUR OWN drop -> paste the pet pick-up line' -ForegroundColor Yellow
-        Write-Host '      v) THE RE-PARENT IS REAL, AND IT IS A CLIENT OPTION.' -ForegroundColor Yellow
-        Write-Host '         -PetParent made it [L]: FUN_142934760(user, 1) fired ONCE, during'
-        Write-Host '         0x01A0 SetField, and the value comes from DAT_143ac87a0+0x70 - the'
-        Write-Host '         client''s OWN options object. user+0x3fd0 read 0 for 39 samples,'
-        Write-Host '         then 1 for 5961; user+0x3fd8 is a live object. Not a byte we sent.'
-        Write-Host '         What the option means is not known yet, so this tests CAUSATION' -ForegroundColor Yellow
-        Write-Host '         first - and it PATCHES THE CLIENT: the setter''s argument is'
-        Write-Host '         rewritten to 0. Summon at once, 10s, quit:'
-        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetParentOff' -ForegroundColor Cyan
-        Write-Host '         The SCREEN is the reading this time:'
-        Write-Host '           THE HUSKY DRAWS -> that field was the cause; next I name the' -ForegroundColor Yellow
-        Write-Host '                         option and we pick the real fix'
-        Write-Host '           invisible, peek 3ed0 = 0 -> not it; the theory is dead'
-        Write-Host '           invisible, peek 3ed0 = 1 -> the rewrite did not take'
+        Write-Host '      v) DOES THE PET EVER GET FRAMES?' -ForegroundColor Yellow
+        Write-Host '         -PetParentOff: the rewrite took (user+0x3fd0 = 0 on all 3555'
+        Write-Host '         samples) and the Husky stayed invisible. Re-parent is dead.'
+        Write-Host '         Seven things measured or forced; the sprite is still missing.'
+        Write-Host '         So: is there anything IN it? FUN_141ec87b0 decodes the action'
+        Write-Host '         from moveAction (0), looks up that action''s frame list, LAZY-'
+        Write-Host '         LOADS it from the WZ template via FUN_140cd8da0, and if the list'
+        Write-Host '         is STILL empty falls into FUN_141ec86c0 and tries action 2.'
+        Write-Host '         Every measurement so far fits that loader returning ZERO frames.' -ForegroundColor Yellow
+        Write-Host '         Summon at once, 10s, quit:'
+        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetLoad' -ForegroundColor Cyan
+        Write-Host '         Paste the counts and r8 on 140cd8da0:'
+        Write-Host '           140cd8da0 then 141ec86c0 -> NO FRAMES for that action; r8 says' -ForegroundColor Yellow
+        Write-Host '                         which. The bug is template vs WZ node names'
+        Write-Host '           141ec86c0, no 140cd8da0 -> the action index was rejected;'
+        Write-Host '                         moveAction 0 is back in play'
+        Write-Host '           140cd8da0, no 141ec86c0 -> frames loaded, still blank; the'
+        Write-Host '                         fault is presentation (the layer rect)'
         Write-Host '           NO 140304100 lines -> the hook never armed; not evidence' -ForegroundColor Red
         Write-Host '         FREE: walk to another map with the pet out and say whether it'
         Write-Host '         appears there.'
