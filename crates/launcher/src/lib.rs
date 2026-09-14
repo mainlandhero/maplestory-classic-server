@@ -27,6 +27,7 @@
 
 mod app;
 mod client;
+mod clientpatch;
 mod config;
 mod firewall;
 mod http;

@@ -7,6 +7,7 @@ description = "MapleCW launcher: sign in, stake the login claim, patch the clien
 
 [dependencies]
 store = { path = "../store" }
+patchset = { path = "../patchset" }
 # The pin, shared with the sign-in service so both agree on what a fingerprint is.
 tlspin = { path = "../tlspin" }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }

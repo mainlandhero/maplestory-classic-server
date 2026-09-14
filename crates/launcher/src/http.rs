@@ -462,7 +462,59 @@ pub fn parse_launch(response: &str) -> LaunchReply {
 ///
 /// The handshake runs inside the first write, so a certificate that does not match the pin
 /// fails there - before the request, and therefore before the password, has been sent.
-fn send(host: &str, port: u16, pin: &Fingerprint, request: &[u8]) -> Result<String, String> {
+/// **A GET whose answer may be binary and large.** Returns `(status, body bytes)`.
+///
+/// `send` exists for JSON and turns the answer into a `String` with `from_utf8_lossy`, which
+/// silently replaces every invalid byte - fine for JSON, fatal for a 13 MB WZ archive, where it
+/// would produce a file that is the right length and the wrong contents. So this one keeps the
+/// bytes, and `crate::clientpatch` hashes them before anything is written.
+///
+/// Used for the client manifest and for client patch files. `crate::clientpatch`.
+pub fn get_bytes(
+    host: &str,
+    port: u16,
+    pin: &Fingerprint,
+    path: &str,
+) -> Result<(u16, Vec<u8>), String> {
+    let request = format!(
+        "GET {path} HTTP/1.1
+         Host: {host}:{port}
+         Accept: */*
+         Connection: close
+
+"
+    );
+    let raw = send_bytes(host, port, pin, request.as_bytes())?;
+    split_response(&raw)
+}
+
+/// Split a raw HTTP/1.1 response into its status and its body, on bytes.
+///
+/// Deliberately not a general parser: our own server is the only thing on the other end, it
+/// always sends `Content-Length` and `Connection: close`, and the body is simply the rest.
+fn split_response(raw: &[u8]) -> Result<(u16, Vec<u8>), String> {
+    let head_end = raw
+        .windows(4)
+        .position(|w| w == b"
+
+")
+        .ok_or_else(|| "the server's answer had no header block".to_string())?;
+    let head = String::from_utf8_lossy(&raw[..head_end]);
+    let status_line = head.lines().next().unwrap_or_default();
+    let status: u16 = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|c| c.parse().ok())
+        .ok_or_else(|| format!("could not read a status from {status_line:?}"))?;
+    Ok((status, raw[head_end + 4..].to_vec()))
+}
+
+/// [`send`], keeping the answer as bytes.
+fn send_bytes(host: &str, port: u16, pin: &Fingerprint, request: &[u8]) -> Result<Vec<u8>, String> {
+    send_raw(host, port, pin, request)
+}
+
+fn send_raw(host: &str, port: u16, pin: &Fingerprint, request: &[u8]) -> Result<Vec<u8>, String> {
     let addr = (host, port)
         .to_socket_addrs()
         .map_err(|e| format!("{host}:{port} is not an address this machine can resolve: {e}"))?
@@ -499,7 +551,12 @@ fn send(host: &str, port: u16, pin: &Fingerprint, request: &[u8]) -> Result<Stri
         Err(e) if e.kind() == ErrorKind::UnexpectedEof && !buf.is_empty() => {}
         Err(e) => return Err(explain(host, port, e, "read the answer")),
     }
-    Ok(String::from_utf8_lossy(&buf).into_owned())
+    Ok(buf)
+}
+
+/// The JSON path: [`send_raw`], made lossy text. One socket implementation, two shapes.
+fn send(host: &str, port: u16, pin: &Fingerprint, request: &[u8]) -> Result<String, String> {
+    Ok(String::from_utf8_lossy(&send_raw(host, port, pin, request)?).into_owned())
 }
 
 /// A TLS or socket error as a sentence that says what to do. The fingerprint case is the one
