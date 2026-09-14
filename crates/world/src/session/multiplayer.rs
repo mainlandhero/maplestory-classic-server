@@ -111,6 +111,9 @@ impl Session {
                 crate::broadcast::Event::PartyHeal { percent, caster } => {
                     out.extend(self.heal_percent(percent, &format!("Heal from character {caster}")));
                 }
+                crate::broadcast::Event::PartyMesos { amount, picker } => {
+                    out.extend(self.receive_party_mesos(amount, picker));
+                }
                 crate::broadcast::Event::PartyBuff { skill_id, level, caster } => {
                     out.extend(self.receive_party_buff(skill_id, level, caster));
                 }
@@ -1030,6 +1033,116 @@ mod tests {
         let _ = a.tick(5_000);
         assert_eq!(exp(killer_id), 210);
         assert_eq!(exp(a_id), 80, "a 0% share pays nothing - and is not floored to 1");
+    }
+
+    /// **A mob's mesos split like its EXP: 70% to the picker, the party share to every other
+    /// member on the map, each, in yellow - and a player's dropped mesos do not.** The owner,
+    /// 2026-09-14. Three effects per share and the test says something about all three: the
+    /// purse row, the `0x007C` balance, and the message line (its kind, and that it is the
+    /// `smallChange` field, which is the client's yellow "Spotting Small Change" line, with
+    /// no white line beside it).
+    #[test]
+    fn party_mesos_from_a_mob_split_seventy_thirty_and_a_players_drop_does_not() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let config = Arc::new(Config::default());
+        let fields = Arc::new(Fields::new());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        store.set_gm("maplecw", true).unwrap();
+        let map = 104_040_000;
+        let make = |name: &str| {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: map, ..Default::default() };
+            let made = store.create_character(account, 0, &chr).unwrap();
+            store.create_migration(account, made.id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(made.id);
+            s.on_field_entered();
+            (s, made.id)
+        };
+        let (mut picker, picker_id) = make("Cobalt");
+        let (mut a, a_id) = make("Tester2");
+        let (mut b, b_id) = make("Robin");
+        let (mut stranger, stranger_id) = make("Stranger");
+        let created = picker.run_party_request(picker_id, crate::party::Request::Create { name: "P".into() });
+        let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        for (m, id) in [(&mut a, a_id), (&mut b, b_id)] {
+            let _ = picker.run_party_request(picker_id, crate::party::Request::Invite { target: id });
+            let _ = m.tick(1_000);
+            let _ = m.run_party_request(id, crate::party::Request::Accept { party });
+        }
+        for s in [&mut picker, &mut a, &mut b, &mut stranger] {
+            let _ = s.tick(2_000);
+        }
+        let purse = |id: u32| store.mesos(id).unwrap();
+        let meso_drop = |from_mob: bool, owner: u32, party_id: u32| {
+            fields.with_drops(map, |d| {
+                d.drop_from_mob(crate::drops::DropFromMob {
+                    from_mob,
+                    map_id: map,
+                    owner_id: owner,
+                    item: store::Item::bundle(0, 0),
+                    inv_type: store::InventoryType::Etc,
+                    meso: 1_000,
+                    x: 400,
+                    y: 395,
+                    source_x: 400,
+                    source_y: 395,
+                    now_ms: 0,
+                    party_id,
+                })
+            }).0
+        };
+        let pick_up = |id: u32| {
+            let mut b = 0x032Cu16.to_le_bytes().to_vec(); // the measured pick-up opcode
+            b.extend_from_slice(&[0u8; 13]);
+            b.extend_from_slice(&id.to_le_bytes());
+            b.extend_from_slice(&[0u8; 4]);
+            b
+        };
+
+        // A mob's 1000 mesos, picked up by a party member with two others on the map.
+        let drop_id = meso_drop(true, picker_id, party);
+        let out = picker.handle(&pick_up(drop_id));
+        let stat = out.iter().find(|r| r.opcode == net::stats::STAT_CHANGED).unwrap_or_else(|| panic!("the picker's balance: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>()));
+        assert!(stat.what.contains("+700 mesos") && stat.what.contains("70% of 1000; 2 party member(s) mailed 300 each"), "{}", stat.what);
+        let line = out.iter().find(|r| r.opcode == net::message::MESSAGE).expect("the picker's line");
+        assert_eq!(&line.body[4..8], &700i32.to_le_bytes(), "the picker's white line says +700");
+        assert_eq!(&line.body[8..10], &[0, 0], "and carries no small change of its own");
+        assert_eq!(purse(picker_id), 700, "70% to the picker");
+        for (m, id, name) in [(&mut a, a_id, "a"), (&mut b, b_id, "b")] {
+            let mail = m.tick(3_000);
+            let stat = mail.iter().find(|r| r.opcode == net::stats::STAT_CHANGED).unwrap_or_else(|| panic!("{name}: the balance"));
+            assert!(stat.what.contains("+300 mesos -> 300, a party share"), "{name}: {}", stat.what);
+            let line = mail.iter().find(|r| r.opcode == net::message::MESSAGE).unwrap_or_else(|| panic!("{name}: the yellow line"));
+            assert_eq!(line.body[0], net::message::kind::DROP_PICKUP);
+            assert_eq!(&line.body[4..8], &0i32.to_le_bytes(), "{name}: gain 0 - no white line");
+            assert_eq!(&line.body[8..10], &300u16.to_le_bytes(), "{name}: smallChange 300 - 'Spotting Small Change (+300)', yellow");
+            assert!(line.what.contains("YELLOW"), "{name}: {}", line.what);
+            assert_eq!(purse(id), 300, "{name}: a COPY of the 30%, not a split");
+        }
+        let _ = stranger.tick(3_000);
+        assert_eq!(purse(stranger_id), 0, "not in the party");
+
+        // Mesos a PLAYER dropped: 100% to whoever picks them up, party or not.
+        let drop_id = meso_drop(false, picker_id, 0);
+        let out = picker.handle(&pick_up(drop_id));
+        let stat = out.iter().find(|r| r.opcode == net::stats::STAT_CHANGED).unwrap();
+        assert!(stat.what.contains("+1000 mesos") && !stat.what.contains("party"), "{}", stat.what);
+        assert_eq!(purse(picker_id), 1_700);
+        let _ = a.tick(4_000);
+        assert_eq!(purse(a_id), 300, "nothing more for the members");
+
+        // A mob's mesos picked up by someone in NO party: all of it.
+        let drop_id = meso_drop(true, stranger_id, 0);
+        let _ = stranger.handle(&pick_up(drop_id));
+        assert_eq!(purse(stranger_id), 1_000);
+
+        // The party rate is the EXP rate: at 50% each member gets 500 and the picker still 700.
+        let _ = picker.handle(&gm_chat_body("!setrates 1 1 1 1 50"));
+        let drop_id = meso_drop(true, picker_id, party);
+        let _ = picker.handle(&pick_up(drop_id));
+        let _ = a.tick(5_000);
+        assert_eq!(purse(picker_id), 2_400);
+        assert_eq!(purse(a_id), 800, "+500 at 50%");
     }
 
     /// The `0x00E7` body the client sends for a typed line: u32 tick, the text, u8 tab.

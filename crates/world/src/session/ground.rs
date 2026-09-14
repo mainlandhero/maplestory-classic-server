@@ -306,6 +306,85 @@ impl Session {
         leaves
     }
 
+    /// The picker's cut of a meso pick-up, having mailed every other party member on the map
+    /// their share. `(picker's amount, a note for the log line)`.
+    ///
+    /// The rule is the EXP rule (`Session::party_exp_split`): the picker keeps **70%**, every
+    /// other member standing on the same map receives the **party share of the whole**
+    /// (`RateKind::Party`, 30% until `!setrates` changes it) - a copy each, not a division.
+    /// Only for a drop a mob left (`from_mob`); anything else, or no party, or nobody else on
+    /// the map, is the whole amount to the picker. Integer arithmetic, so the picker's 70%
+    /// rounds down and a 1-meso drop pays the picker 0 and the members 0 - and a member's
+    /// zero share is not mailed, since it would draw nothing.
+    fn party_meso_split(&self, total: u32, from_mob: bool, picker: u32, map: u32) -> (u32, String) {
+        if !from_mob || total == 0 {
+            return (total, String::new());
+        }
+        let members = match self.fields.parties().party_of(picker) {
+            Some(p) if p.members.len() >= 2 => p.members.clone(),
+            _ => return (total, String::new()),
+        };
+        let others: Vec<u32> = members.into_iter().filter(|&m| m != picker).collect();
+        let eligible = self.bus().characters_on(map, &others);
+        if eligible.is_empty() {
+            return (total, " (party, alone on the map: all of it)".to_string());
+        }
+        let share = self.rate(store::rates::RateKind::Party);
+        let each = u32::try_from(share.share_of(u64::from(total))).unwrap_or(u32::MAX);
+        let mine = total * 70 / 100;
+        let mut paid = 0usize;
+        if each > 0 {
+            for member in &eligible {
+                if self.bus().send_to_character(*member, crate::broadcast::Event::PartyMesos { amount: each, picker }) {
+                    paid += 1;
+                } else {
+                    crate::server::log(&format!(
+                        "   mesos: party member {member} was on map {map} at the split and gone by delivery; their {each} share was not paid"
+                    ));
+                }
+            }
+        }
+        crate::server::log(&format!(
+            "   mesos: party pick-up on map {map} of {total} from a mob - picker {picker} keeps {mine} (70%, white), {paid} member(s) each receive {each} ({} of the whole, yellow 'Spotting Small Change')",
+            share.as_percent()
+        ));
+        (mine, format!(" (70% of {total}; {paid} party member(s) mailed {each} each)"))
+    }
+
+    /// **Receive a party share of mesos somebody else picked up** - `Event::PartyMesos` over
+    /// the bus. Credits this character's purse, sends the balance (`0x007C`, the only way the
+    /// client learns it) and the client's own yellow line for the event,
+    /// `net::message::meso_party_share`. A share too large for that line's `u16` falls back
+    /// to the white `You have gained mesos` line rather than drawing nothing.
+    pub(super) fn receive_party_mesos(&mut self, amount: u32, picker: u32) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        if amount == 0 {
+            return Vec::new();
+        }
+        let total = match self.store.add_mesos(chr.id, i64::from(amount)) {
+            Ok(total) => total,
+            Err(e) => return self.notice(format!("Could not credit your party share of mesos: {e}")),
+        };
+        let mut out = vec![Reply {
+            opcode: net::stats::STAT_CHANGED,
+            body: net::stats::StatChange { meso: Some(u64::from(total)), ..Default::default() }.build(),
+            what: format!("StatChanged: +{amount} mesos -> {total}, a party share of character {picker}'s pick-up. Bit 18."),
+        }];
+        out.push(match net::message::meso_party_share(amount) {
+            Some(body) => Reply {
+                opcode: net::message::MESSAGE,
+                body,
+                what: format!("Message: party share +{amount} mesos as smallChange - 'Spotting Small Change (+{amount})', YELLOW, message area; no white line"),
+            },
+            None => Reply {
+                opcode: net::message::MESSAGE,
+                body: net::message::meso_gained(amount.min(i32::MAX as u32) as i32),
+                what: format!("Message: party share +{amount} mesos is past the smallChange u16 ({}); the plain WHITE line instead", net::message::PARTY_SHARE_LINE_MAX),
+            },
+        });
+        out
+    }
+
     /// `0x032C` - the player walked over a drop.
     ///
     /// **This handler exists to be read in a log.** Until a run names the opcode it reports
@@ -395,7 +474,14 @@ impl Session {
             // and would not swing again. Whether the missing credit is what latched it is
             // being established separately - but crediting them is right regardless.
             if drop.is_meso() {
-                let amount = drop.meso;
+                // **A party splits a mob's mesos the way it splits its EXP.** The owner,
+                // 2026-09-14: the picker keeps 70%, every other member on the map gets a
+                // copy of the party share - "provided that the mesos is from mob death";
+                // mesos a player dropped are 100% to whoever picks them up, party or not.
+                // `from_mob` is the drop's own record of that (set only by the kill path).
+                // The members' shares cross the bus as facts and are credited by their own
+                // sessions; this one credits the picker's cut and nothing else.
+                let (amount, split_note) = self.party_meso_split(drop.meso, drop.from_mob, chr.id, map);
                 let credited = self.store.add_mesos(chr.id, i64::from(amount));
                 // **The stat change goes FIRST, and it replaces the `0x0070` an item would
                 // send** - mesos are not an inventory slot. Then the leave. The order is
@@ -411,7 +497,7 @@ impl Session {
                             }
                             .build(),
                             what: format!(
-                                "StatChanged: +{amount} mesos -> {total}. Bit 18, and the ONLY                                  way this client is ever told a meso balance - the SetField                                  stat block has no meso field at all."
+                                "StatChanged: +{amount} mesos -> {total}{split_note}. Bit 18, and the ONLY                                  way this client is ever told a meso balance - the SetField                                  stat block has no meso field at all."
                             ),
                         });
                     }
