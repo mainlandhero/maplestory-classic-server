@@ -193,7 +193,7 @@ IF A SERVER EXITS ON ITS OWN
 ----------------------------
 
 The window says so in red, names which one it was, and prints the last lines of THAT
-server's log and its .err file - login.log, auth.log or world.log, whichever died.
+server's log and its .err file - login.log, auth.log or world-ch0.log, whichever died.
 Read those lines first; they carry the reason.
 
 The most common one is a port already in use, and it reads as

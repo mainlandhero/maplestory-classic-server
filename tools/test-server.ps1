@@ -39,7 +39,7 @@
     difference between "a stack over slotMax is a client-killer" and "the session ended".
 
 
-    AFTERWARDS: world.log is the evidence. Say what you saw per step; I will read it.
+    AFTERWARDS: world-ch0.log is the evidence. Say what you saw per step; I will read it.
 
     HOW A RUN STARTS, since 2026-09-05: the servers come up and THE LAUNCHER OPENS. Sign
     in there, press Start Game. Nothing is served to a client that did not come through a
@@ -131,7 +131,7 @@
     both members; the block is what draws them, so a client dying HERE means the block is
     wrong: stop and keep the logs. DECLINE on a fresh invite - leader reads "has denied the
     party request", nobody joins. TIMEOUT - invite, leave the dialog alone about a minute,
-    invite the same character again: it must go through; world.log prints "LAPSED".
+    invite the same character again: it must go through; world-ch0.log prints "LAPSED".
 
     T14b (2026-09-05, from the owner's screenshot run - the party draws both members correctly).
     Six party mechanics, all server-side and unit-tested, none yet on a screen. LEAVE: the
@@ -153,7 +153,7 @@
     too (it is fed from the same packet, a second field). A blank bar is the finding. One
     thing is NOT built because its opcode has never been captured, and guessing a packet body
     has killed this client three times: DROPPING MESOS. Try it and read the inbound opcode off
-    world.log (or report that none appears) - that one measurement is all it needs.
+    world-ch0.log (or report that none appears) - that one measurement is all it needs.
 
     T15 (2026-09-06). ARCHER AUDIT. Arrows were never taken - the rule sat in firstjob.rs since
     08-28 and on_attack never read it. Now: with a bow or crossbow worn, a normal shot takes 1
@@ -172,7 +172,7 @@
     a normal throw takes 1 star, LUCKY SEVEN takes 2 (one per projectile - the data has no
     bulletConsume for it, so this is the owner's attack-amount rule, [I]), Double Stab with a dagger
     takes 0. Every 207xxxx star counts; the lowest matching stack drains first (the attack
-    packet carries no slot). If a throw takes NOTHING and world.log says "a 0x00E0 SHOOT body
+    packet carries no slot). If a throw takes NOTHING and world-ch0.log says "a 0x00E0 SHOOT body
     did not parse", that is the finding: no shoot body has ever been captured and the parser
     comes from melee. RECHARGE: at any Grocer (Lucy, Mina, Luna...) select a partial star stack
     in your inventory and press Recharge. Expected: the stack fills to slotMax (Subi 500) and
@@ -298,7 +298,7 @@
                                                       This is the ONE thing the tests cannot
                                                       see, so look at the portrait on purpose.
             "is not a command"                     -> the dispatcher never reached it.
-            nothing at all                         -> worse than a refusal; check world.log for
+            nothing at all                         -> worse than a refusal; check world-ch0.log for
                                                       the 0x00E7 and whether anything went back.
           Then run !tool again the SAME session and pick the same option: it must REFUSE IN
           WORDS, never go silent, and the log must say NOTHING PAID. Reset is UTC midnight.
@@ -318,7 +318,7 @@
               Henesys bench. The player should seat and STAY seated; press a movement key
               to get up again.
                 seats           -> 0x0252 was the missing packet. Say so and we are done.
-                nothing at all  -> check world.log. If 0x0252 went out, the suspect is the
+                nothing at all  -> check world-ch0.log. If 0x0252 went out, the suspect is the
                                    handler's own gate at 1428341d3, which returns before
                                    reading anything. It is NOT a body-length fault.
                 you get up by yourself, or a 0x00DA ffff appears in the log
@@ -337,7 +337,7 @@
           map-chair attempt and stand. On 2026-09-09 an earlier 12-byte version of it faulted
           Tester2's client 5 ms after it went out; the body is 13 bytes and a test pins that.
           If a second client EVER exits while somebody sits, that packet is the first suspect:
-            world.log        -> 0x02AD ... 13 bytes
+            world-ch0.log        -> 0x02AD ... 13 bytes
             hook log         CLIENT FAULT #1 code=0xc0000005
           Say so immediately and do not close the surviving client - tools\chairprobe.py
           --pid <n> reads its state, and with two clients up you must pass --pid because they
@@ -355,7 +355,7 @@
           Tester2 sends Cobalt a trade request. Cobalt must get a "Trade request from
           Tester2" popup; on 2026-09-09 nothing appeared at all, which is what this fixes.
             popup appears  -> the `type` field was the bug and it is fixed.
-            no popup       -> check world.log for 0x0575 going out. If it went out, the
+            no popup       -> check world-ch0.log for 0x0575 going out. If it went out, the
                               cause is field 3, the only guessed field in the packet: a HIT
                               on the client's local lookup makes it auto-decline SILENTLY,
                               which looks identical to today's symptom.
@@ -387,7 +387,7 @@
                                                 walk a step first. That is a REFUSAL,
                                                 not a freeze, and it is working as built.
             nothing at all and no chat line  -> that is the freeze coming back. Check
-                                                world.log for 0x0143 and say so.
+                                                world-ch0.log for 0x0143 and say so.
           THEN TRY THE INVENTORY IMMEDIATELY. The whole reason this opcode matters is that
           an unanswered one latches +0x2330 and kills the bag, the AP buttons and the cash
           shop for the rest of the session. Move an item after dropping: if the bag is dead,
@@ -641,7 +641,7 @@
 
     T12 (NEW 2026-09-05). REGISTRATION AND RECOVERY, and the launcher half needs no client.
     As the GM type !registrationcode: a chat notice shows an 8-character code, XXXX-XXXX,
-    and world.log must NOT contain it (grep it - the log line says "not logged"). In the
+    and world-ch0.log must NOT contain it (grep it - the log line says "not logged"). In the
     launcher, Register tab: any username, an email, a password WITHOUT a digit -> refused on
     the spot and the code is still live; with a digit -> "account created", the Sign in tab
     comes back with the name filled in, Login works. Then !recoverycode <that email> in game;
@@ -694,7 +694,7 @@
            no circle, but it moves -> the appear type is being ignored; say so, and
                           whether it was hittable at once
            circle plays, it never moves and cannot be hit -> the 0x03E8 did not clear
-                          the state; world.log shows whether it went out (2500 ms after
+                          the state; world-ch0.log shows whether it went out (2500 ms after
                           the spawn line) - if it did, the next run watches 141c82390
            it moves but stays unhittable -> the reset reached it late or not at all; same
            the client DIES at the spawn -> the appear-option word; say so, the hook log
@@ -710,14 +710,14 @@
          names that tab. equips.txt now carries a `cash` column (596 of 1795 equips), the
          server places by it, restores the Deco tab on every field entry, and moves any
          cash equip found in the Equip tab into Deco first - your four included, on the
-         next field entry, with a line in world.log each. Chat notices are folded to
+         next field entry, with a line in world-ch0.log each. Chat notices are folded to
          ASCII before they go out (Ubel, not a box).
          Log in and change map once (the relocation runs on field entry):
            the Deco tab shows Ubel's Clothes, Shoes, Gloves and Weapon -> fixed
-           Deco still empty, Equip tab still has them -> world.log has no "moved from
+           Deco still empty, Equip tab still has them -> world-ch0.log has no "moved from
                           Equip slot" line: the config did not flag them; say so
            Deco empty AND Equip tab lost them -> the Deco Add is not drawn; the rows
-                          are in the database (world.log lists the moves)
+                          are in the database (world-ch0.log lists the moves)
            double-click one in the Deco tab -> equips? (not built for Deco - report)
          Then open the Cash Shop, double-click Ubel's Clothes in the Item Inventory's
          Deco tab: it should go to the Cash Inventory like a Cash-tab item does (0x0B
@@ -725,7 +725,7 @@
 
      TL. BAG -> LOCKER, WITH EVERY CASH ITEM CARRYING A SERIAL. -SetFieldProbe.
          Run 6 (04:03) measured the prediction: "nothing moves back" and NO 0x03E1 in
-         world.log after the entry reload - the client sent nothing, because every item
+         world-ch0.log after the entry reload - the client sent nothing, because every item
          in the Cash tab had come from the bag restore with +0x38 = 0, and the double-
          click builder (1410cff01) builds no request for those. So now EVERY body that
          lands in the Cash tab - the field-entry restore, the shop-entry restore, every
@@ -739,10 +739,10 @@
            1. double-click a Mystery Hair Coupon (a bag-restored item, never moved):
               it goes to the Cash Inventory and leaves the Item Inventory -> fixed
               nothing happens at all -> the builder still saw +0x38 = 0; the restore
-                          body is not reaching the item; world.log has the body
+                          body is not reaching the item; world-ch0.log has the body
               in the locker AND still in the Item Inventory -> the lookup missed; say
                           whether anything ELSE in the Cash tab vanished (slot 0)
-              "unknown error" -> refused; world.log says why
+              "unknown error" -> refused; world-ch0.log says why
               client DIES -> say so; the longer Cash-tab body is the suspect
            2. drag it out again -> should move (0x0A on the re-keyed row)
            3. exit the shop, open the inventory Cash tab: the coupons are where they
@@ -830,17 +830,17 @@
             through the same named-portal lookup as a walk, so THE FREE MARKET DOORS ARE
             THE SAME PACKET (all four are pt 7) - TF below was untestable until this.
               you arrive in Ellinia Station -> done, and TF is worth doing
-              nothing -> grep world.log for 0x014A. If it is there and no SetField
+              nothing -> grep world-ch0.log for 0x014A. If it is there and no SetField
                          follows, the lookup missed: say what the log line says
               you arrive somewhere else -> say where; the reverse-link derivation is wrong
 
          b) THE CLOCK, once you are in the station. It sat at 00:00 because nothing ever
             sent it a time. It is `0x01BC` type 1 - hour, minute, second - and it carries
-            **UTC**, per your correction this morning: the same time every world.log line
+            **UTC**, per your correction this morning: the same time every world-ch0.log line
             is stamped with, so the wall and the log agree.
               it shows UTC (your taskbar plus four hours), AM/PM right, and TICKS -> done
               it shows your taskbar time -> local got through; serverclock.rs is wrong
-              still 00:00 -> grep world.log for 0x01BC on that entry. Sent = the client
+              still 00:00 -> grep world-ch0.log for 0x01BC on that entry. Sent = the client
                          ignored it; not sent = clocks.txt does not list the map
               the client DIES on entry -> the widget was missing when the packet arrived,
                          which the decode says throws. Every map in clocks.txt is one
@@ -891,9 +891,9 @@
          nothing on purpose, and both servers now say so. Seventeen HANDLED opcodes had no
          name either (0x00E5, 0x0199, ...) - fixed and pinned by a test.
          research/opcode-dispositions-2026-09-12.md. After any launch:
-           grep -c UNKNOWN login.log world.log world-ch1.log  -> 0 is the expectation.
+           grep -c UNKNOWN login.log world-ch0.log world-ch1.log  -> 0 is the expectation.
                          Any hit is a packet this project has never seen: paste the line
-           grep "is a client report" world.log -> the correct silences; 0x0422 lines now
+           grep "is a client report" world-ch0.log -> the correct silences; 0x0422 lines now
                          say "leaving the field: reason N" - a reason other than 2 or 4
                          is new information, say which
            anything "is not answered yet" that is NOT a report -> a real gap; paste it
@@ -904,7 +904,7 @@
          them: that is why nothing happened AND the item stayed. Handled now, through the
          same full refund `!resetap` / `!resetsp` do.
            the stat window refunds to base and shows the AP, the scroll is gone -> done
-           the stats reset but the scroll stays -> the consume failed; world.log names it
+           the stats reset but the scroll stays -> the consume failed; world-ch0.log names it
            nothing, and the inventory is FROZEN -> the latch is not cleared; relog and tell me
            a message but no change -> the reset itself refused; the chat line says why
 
@@ -930,7 +930,7 @@
                          for now: the record cannot carry worn slots above 31 (measured,
                          the client discards them) and the look's cover map is unbuilt.
                          That is the next piece of work, not a failure of this one
-              refused again -> world.log names the reason; paste it
+              refused again -> world-ch0.log names the reason; paste it
          b) The weapon: CLIENT-side, and it is the data - FIXED IN THE DATA 2026-09-12,
             INSTALLED the same night (client closed; all 24 archives; originals kept .bak). The classic covers spell the weapon TYPES they dress as
             children: 01702001 has a real 30 and 31/32/33 as LINKS to it. Every backported
@@ -958,11 +958,11 @@
                          inventory shows the same icons
               lines run together -> the client wants a different line break; say so
               no box at all, items still arrive -> the unsolicited Say is refused; paste
-                         world.log's "ScriptMessage ... receipt" line and what came after
+                         world-ch0.log's "ScriptMessage ... receipt" line and what came after
               the name reads "Maple Administrator" -> the String.wz rename did not land;
                          say so
          f) THE BOX ITSELF - "Double clicking the Signature Style Collection box does not
-            grant all 8 character costume coupons" (2026-09-12). world.log shows NO packet
+            grant all 8 character costume coupons" (2026-09-12). world-ch0.log shows NO packet
             for the double-click: the client did not treat it as a use. It opens a Cash item
             on double-click by its id FAMILY; Nexon's box is 5222221 (family 522, which this
             client has no items of) while the set coupons are 5681xxx (family 568, its own
@@ -975,11 +975,11 @@
             opening - this was never exercised on screen before today. Double-click it:
               the eight coupons arrive (Cash tab), the Administrator's receipt lists
                          them, the box is gone -> done
-              still nothing, and world.log has no 0x0114 -> the family reading is wrong;
+              still nothing, and world-ch0.log has no 0x0114 -> the family reading is wrong;
                          say so, and I read the client's double-click dispatch instead
-              0x0114 arrives but the server refuses -> world.log names why; paste it
+              0x0114 arrives but the server refuses -> world-ch0.log names why; paste it
               the box in your bag shows no name / a blank icon -> the rename on open did
-                         not run; grep world.log for "rename" and paste
+                         not run; grep world-ch0.log for "rename" and paste
          g) CASH EQUIPS SURVIVE A RELOG - CONFIRMED, and the weapon cover too (the owner,
             2026-09-12: "Ubel's weapon is fine in game and on character select"). The cover
             rides in the look's weapon-sticker u32 (look+0x2d) and the real weapon keeps
@@ -987,7 +987,7 @@
          h) HIMMEL'S CAPE - DONE (the owner, 2026-09-12: "Himmel's cape now looks fine"): the
             effect draws behind the body at z -2. Nothing to test here.
          i) THE HAIR-HATS STILL DO NOT GO ON (the owner, 2026-09-12: "equipping the hair caps
-            still does not work") - and world.log again has NO 0x0107 for them, so the islot
+            still does not work") - and world-ch0.log again has NO 0x0107 for them, so the islot
             change was not the gate. The double-click equip path is FUN_1417dd7e0 (it ends in
             the 0x0107 builder FUN_142cc5b00) and it has a dozen exits before the send; the
             slot validator FUN_140253980 is category-only and would pass a cap, so the gate
@@ -1023,7 +1023,7 @@
             dialogues before and after I click 'Accept'" (What Sen wants to eat, 1003). The
             client shows a quest's Say.0 itself before the button; the server's answer to the
             Accept (0x0151 action 1) is the Say.0.yes branch - and 1003 has none, so the code
-            fell back to Say.0 and replayed it (world.log 04:06:17). An accept with no yes
+            fell back to Say.0 and replayed it (world-ch0.log 04:06:17). An accept with no yes
             branch now sends the quest record and NO box; quests that have a yes branch
             (Heena's 1000) are unchanged. Take 1003 from Nina again (give it up first if held):
               their two lines, Accept, the window closes, journal has the quest -> done
@@ -1045,17 +1045,17 @@
             none:
               the Etc count drops by one per cast; with none, the red/pink line appears and
                          the mob takes no damage -> done
-              the count drops on the server (world.log "itemCon: ... threw") but not in
+              the count drops on the server (world-ch0.log "itemCon: ... threw") but not in
                          the bag window -> the 0x0070 shape for Etc; say so
               the line appears in a colour that is not the client's usual error colour ->
                          say which; category 11 is the guess, 1..5 are the client's own
               the swing still hurts the mob with no shell -> the client applies damage
                          locally; say so (then the refusal has to also revert HP)
-              nothing at all with no shell -> the line was refused; paste world.log's
+              nothing at all with no shell -> the line was refused; paste world-ch0.log's
                          "itemCon" line
          m) RAIN'S QUIZ - the MENU works (2026-09-13: quiz 2 answered, "Yup..." drawn), and
             then "Rain's quiz dialogue repeats after I choose the correct answer. That is not
-            okay." world.log 04:59:24: the record, the exp and the fanfare went out BEFORE
+            okay." world-ch0.log 04:59:24: the record, the exp and the fanfare went out BEFORE
             the question, then the menu, then the answer and the closing line - and the
             server sent nothing after. So what came back was the client's own doing: it acts
             on a completion at once and offers the NEXT quiz (1015's opening), which the menu
@@ -1068,11 +1068,11 @@
                          Rain's NEXT offer opens ONCE (that is the chain, and it is theirs to
                          open) -> done
               the offer opens BEFORE the question again -> the completion is still early;
-                         paste the world.log lines between 0x0151 and the menu
+                         paste the world-ch0.log lines between 0x0151 and the menu
               wrong answer, close the box: the quest is still in the journal as started,
                          and clicking Rain asks again -> done for that half
               "That's right!" but no quest-clear sound / exp -> the deferred record did not
-                         fire; paste world.log's "quiz:" line
+                         fire; paste world-ch0.log's "quiz:" line
          o) NEW 2026-09-13 - ONE REWARD FROM THE POOL. "When I finished 'Please bring this
             letter to Lucas', Maria gave me one of every single Headband item when it's
             suppose to be choose 1 randomly from the pool." Quest 1008's Act.1.item.1..7 are
@@ -1084,7 +1084,7 @@
             bring their reply back:
               ONE headband in the Equip tab, the letter gone -> done
               still all seven -> the running server predates the fix; say so
-              no headband at all -> the draw picked nothing; paste world.log's "reward rows"
+              no headband at all -> the draw picked nothing; paste world-ch0.log's "reward rows"
                          line
          p) NEW 2026-09-13 - THE ELEVEN PETS, PERMANENT, IN THE SHOP. "Brown Puppy, Panda and
             Dino Boy all have 3 day duration ... change all of them to permanent duration.
@@ -1108,7 +1108,7 @@
                          yet) WITHOUT the client dying -> the body is right; say what the
                          double-click did
               client dies at purchase or at the move -> paste client-exit.log and the last
-                         0x03E1 / 0x0070 line in world.log; the pet body is I on meanings
+                         0x03E1 / 0x0070 line in world-ch0.log; the pet body is I on meanings
               only three pets listed -> the Pets tab does not list by SN prefix; say so
          q) NEW 2026-09-13 - THE REPEAT-DIALOGUE AUDIT, every quest. "Please audit all of the
             questline and make sure repeat dialogue is no longer a concern." The rule the three
@@ -1154,10 +1154,10 @@
               it always comes back on the spot it died                 -> the draw is not
                          reaching the field; paste the SPAWN lines around one kill
               the map thins out over time (fewer than 49 standing)      -> a refill is being
-                         dropped; paste world.log
-              two mobs on one point, or more than 49                    -> paste world.log
+                         dropped; paste world-ch0.log
+              two mobs on one point, or more than 49                    -> paste world-ch0.log
          t) DONE 2026-09-13 - RAIN'S QUIZ: THE CLIENT CONDUCTS IT. The owner's five screenshots
-            plus world.log settled it without the watch run: for 41 s the client drew the whole
+            plus world-ch0.log settled it without the watch run: for 41 s the client drew the whole
             quiz - offer, question, "that's correct" - with ZERO inbound quest/script packets,
             then sent the turn-in, which the server answered by asking the question AGAIN. The
             client grades the quiz from its own Quest.wz and sends the turn-in only on a right
@@ -1192,7 +1192,7 @@
             Kill a mob near the pet, then drop something from your own bag:
               the pet goes to the mob's drop, it lands in the bag, no click -> works; say
                          roughly how far away a drop can be and still get taken
-              the pet goes to it and nothing happens; world.log shows an inbound
+              the pet goes to it and nothing happens; world-ch0.log shows an inbound
                          0x0329..0x032E "named no live drop"                -> the request's
                          shape is not the reference's; paste that body
               the pet never moves toward drops                              -> the keys are
@@ -1238,12 +1238,12 @@
               menu with three rows and hair icons; pick one; those items + receipt -> done
               menu opens but End Chat spends the coupon -> tell me (it must not)
               no menu, the items arrive as before -> the coupon id differs; paste the
-                         world.log line for 0x0114
+                         world-ch0.log line for 0x0114
               rows show no icons / wrong names -> say which
          c) The Übel Hair Coupon: Confirm sends 0x0165, which nothing answered. Handled:
             hair applied, coupon spent, the map re-entered to redraw (as !hair does).
               hair changes on re-entry, coupon gone -> done
-              nothing -> grep world.log for 0x0165 and paste the line after it
+              nothing -> grep world-ch0.log for 0x0165 and paste the line after it
 
      TH. THE FACE COUPON opens no dialog and has no tooltip preview. The face's images are
          installed and structurally identical to a classic face (checked node by node); the
@@ -1261,7 +1261,7 @@
            you land back in Henesys Market -> the memory works
            you land somewhere else -> say WHERE. Henesys is also the FALLBACK, so do the
                          second half below before believing the first
-           nothing happens on either -> the portal is still dead; grep world.log for
+           nothing happens on either -> the portal is still dead; grep world-ch0.log for
                          "free market"
          **Then the half that tells the two apart**: do it again from **El Nath Market**
          (20001010, `!map 20001010`). El Nath is NOT the fallback, so landing there proves
@@ -1287,13 +1287,13 @@
          the storage line below is a separate check of the second repaired table.
          a) Buy ONE Etc Tab 5-Slot Coupon (100 LP).
            it lands in Cash Inventory and LP drops by 100 -> fixed
-           "unknown error" -> a different server error; the world.log line names it
+           "unknown error" -> a different server error; the world-ch0.log line names it
            "not enough leaf points" again -> the wallet read is wrong; say your LP
          b) MOVE it from Cash Inventory into your bag's Cash tab (the move button or a
             double-click in the panel). NEW 2026-09-10: this was refused by the server
             until now - no archived run ever had one - so it is unseen on a screen.
            it appears in the Cash tab at the slot you picked -> 0x0A/0x19 work
-           "unknown error" and it stays put -> world.log names which check refused it
+           "unknown error" and it stays put -> world-ch0.log names which check refused it
            it vanishes from the panel but is NOT in the Cash tab -> the 0x19 body is
                          wrong; say which tab you were looking at
          c) LEAVE the shop and come back with something still in Cash Inventory.
@@ -1312,8 +1312,8 @@
             **`!item 2040400 3`** - a topwear DEF scroll, 100% success and cursed 0, so it
             cannot destroy anything. Use THAT one first.
               the stats change and a sound plays -> the whole path works
-              "cannot be used here" -> a refusal, and world.log names which one
-              nothing at all -> grep world.log for 0x0236. If it went out, the client
+              "cannot be used here" -> a refusal, and world-ch0.log names which one
+              nothing at all -> grep world-ch0.log for 0x0236. If it went out, the client
                             did not draw it; if it did not, the handler refused early
             THEN, deliberately: **`!item 2040403 3`** is the same scroll at 10% success and
             **cursed 50** - it DESTROYS the shirt on half its failures. That arm has never
@@ -1378,7 +1378,7 @@
 
          d) THE SOUND. 0x0236 now goes to the whole map on every success and failure.
               a sound and a flash on YOUR screen -> the packet lands and the effect is real
-              nothing at all -> the body or the dispatcher is wrong. world.log will show
+              nothing at all -> the body or the dispatcher is wrong. world-ch0.log will show
                             0x0236 going out either way, so an empty screen is a CLIENT
                             result, not a server one
               second client sees it too -> the map broadcast works. Worth one look if T1 is
@@ -1417,7 +1417,7 @@
                        -> the whole user pool works. THE result of this run
             b) a client STILL dies when the second arrives -> the body is wrong somewhere
                        ELSE. Say WHICH client died - the arriving one or the one already
-                       there - because that names the direction. world.log has the length
+                       there - because that names the direction. world-ch0.log has the length
                        we sent; the hook log will have NO dispatch line for 0x0224, since
                        that line is written on return
             c) nothing appears and nothing dies -> the packet was DROPPED, not misread,
@@ -1475,7 +1475,7 @@
           Closing the client is the better half of this test: it is the exit that goes
           through no log out, and the one the leaving player cannot see.
 
-          world.log discriminates all of this without a second launch - grep it for
+          world-ch0.log discriminates all of this without a second launch - grep it for
           "mob control:", which names the count and the recipient on every handover.
      T11. THE THIRD JOB ADVANCEMENT, AND THE FERRY. Set yourself up first:
               !job 110   !exp 31545355   !map 10005000
@@ -1494,11 +1494,11 @@
           b) PICK EL NATH.
                *** THIS IS THE MOMENT. No character has ever been on an Ossyria map. ***
                you arrive in a snowy town -> 87 maps just became reachable. Say so
-               black screen, or the client dies -> THE finding of this run. world.log's
+               black screen, or the client dies -> THE finding of this run. world-ch0.log's
                           SetField line names the map; say whether the screen drew
                           anything first
                1000 mesos gone but no warp -> the fare moved and the field did not.
-                          world.log will say which
+                          world-ch0.log will say which
           c) WALK RIGHT and take the door into Chief's Residence. Four NPCs are inside:
              Tylus, Robeira, Rene and Arec.
                all four visible -> the NPC list crossed the continent too
@@ -1539,7 +1539,7 @@
              else - Warrior's Rocky Mountain, map 80001300, full of Fire Boars and Lupins.
                you arrive -> the warp works and the map loads. THIS IS THE STEP THAT
                           MATTERS; no character has ever been on one of these four maps
-               the screen goes black / the client dies -> say WHICH, and world.log's
+               the screen goes black / the client dies -> say WHICH, and world-ch0.log's
                           SetField line names the map. That map has 132 footholds and 30
                           mobs, so a load failure is a real finding
                nothing happens -> the click never reached job_test_for. Say so; the
@@ -1548,7 +1548,7 @@
 
           b) KILL ANYTHING IN THERE. Every mob drops one Dark Marble, guaranteed.
                a marble per kill -> the drop rule works
-               no marble -> the map gate. world.log's drop line names the map it used
+               no marble -> the map gate. world-ch0.log's drop line names the map it used
                marbles from OTHER mobs elsewhere later -> the leak the gate exists to
                           stop; say where you were
 
@@ -1662,7 +1662,7 @@
                         Etc bag in the character record instead, which is silent by
                         construction rather than by experiment
           the tooltip still pops
-                     -> the chain is wrong somewhere. world.log will show the mode-5
+                     -> the chain is wrong somewhere. world-ch0.log will show the mode-5
                         bodies went out, so the next question is whether the store call
                         alone still trips the quest check
           ALL FOUR tabs empty
@@ -1739,7 +1739,7 @@
           The El Nath scroll must REFUSE with a chat notice and LEAVE THE SCROLL IN THE BAG.
             the scroll vanishes on the refusal -> the transition guard is broken
             nothing happens at all on either -> the client never sent 0x010E for a 0203
-                       item, and the whole path is dead code. Grep world.log for 0x010E
+                       item, and the whole path is dead code. Grep world-ch0.log for 0x010E
      T6. !npcreload. Add a line to data/npc-dialogue.txt while the server is RUNNING, then
          run the command and click that NPC.
           a) does it say the new line without a restart?
@@ -1812,7 +1812,7 @@
             right in the dialog but keys do nothing -> live copy not taken; say so
             the QUICKSLOT bar changed -> the quickslot gate 0 path (FUN_1401de860) does
                        not keep; say what it shows
-          client exits at field entry AGAIN -> paste world.log's 0x009E line; the reason
+          client exits at field entry AGAIN -> paste world-ch0.log's 0x009E line; the reason
                        and position bytes after "01 00" say which read failed
           the '.' key attacks -> in your saved delta (attack moved off Ctrl); rebind
 
@@ -1910,7 +1910,7 @@
     the session was the cause (the long-session corruption family); dies -> !rates is fatal
     and that is a finding nobody has yet. !job, !resetap and !resetsp answer in
     ONE line now ("Cobalt is now a Swordsman", "Skill Point successfully reset for Cobalt");
-    the working is in world.log.
+    the working is in world-ch0.log.
       !nx [amount]                          grant NX. Real and displayed, but it buys
                                             NOTHING - every price tag reads LP
       !lp [amount]                          grant LEAF POINTS, the currency the shop
@@ -2014,9 +2014,9 @@ param(
     # channels than you run: the client connects to the address for the channel it picked,
     # so an advertised channel with nothing behind it is one nobody can enter.
     #
-    # Channel N listens on $ChannelPort + N and logs to world.log (channel 0) or
+    # Channel N listens on $ChannelPort + N and logs to world-ch0.log (channel 0) or
     # world-ch<N>.log (the rest). Channel 0 keeps the plain name because every doc and
-    # instruction in this repo points at world.log.
+    # instruction in this repo points at world-ch0.log.
     [int]$Channels = 2,
     # The account -ListOnly prints. Nothing else reads it any more.
     #
@@ -2054,7 +2054,7 @@ param(
     # When a migration is bound to the sign-in that minted it: auto (default - bound when the
     # login connection came from a process on this machine, which the channel re-checks
     # through the OS; address-bound otherwise), always, or never. The escape hatch if a
-    # character stops entering the world and world.log says "REFUSED the migration":
+    # character stops entering the world and world-ch0.log says "REFUSED the migration":
     #   -BindMigrations never
     [string]$BindMigrations = 'auto',
     # The launcher drives every ordinary run now: it signs in, installs the hook and starts
@@ -2304,7 +2304,7 @@ param(
     #
     # -Mobs used to be the opt-in, and it cost a launch: the owner stood on map 40, which has
     # six snails, and saw none - the server had them loaded and sent none, because the
-    # switch was not passed. It said so only in world.log.err. Kept as a no-op so an old
+    # switch was not passed. It said so only in world-ch0.log.err. Kept as a no-op so an old
     # command line still runs.
     #
     # -MobLimit caps how many go out per field. Still useful when a mob run does fault:
@@ -2429,7 +2429,7 @@ $ErrorActionPreference = 'Stop'
 #   1420dd920  NEVER fired - 0x0138's apply loop does not run, so it is a dead end for
 #              dressing the local character.
 #
-# **For the channel-swap run the probe is NOT the instrument - world.log is.** The swap
+# **For the channel-swap run the probe is NOT the instrument - world-ch0.log is.** The swap
 # request's opcode is unknown, so there is no handler to watch; the client will name its own
 # request in the log the way it named 0x00D1 and 0x0151. These two slots are free
 # confirmations rather than a measurement, and neither can affect the client:
@@ -2504,7 +2504,7 @@ if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
         $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,140f810e0:hits=60,140304100:hits=200:dump=143AC2400/968'
     } elseif ($MobTargets) {
         # 141d31b20:args=17 - the melee target collector. EXPECT ONE ENTRY PER SWING; the
-        #   pairing against 0x00DF in world.log is already established, so a missing entry
+        #   pairing against 0x00DF in world-ch0.log is already established, so a missing entry
         #   here means the watch, not the client.
         #
         #   WHAT THIS NO LONGER ASKS: whether the loop starts. Settled 2026-08-20 off an
@@ -2558,7 +2558,7 @@ if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
         # a blank screen readable. All six slots are in use.
         #
         # The watch line already prints "while dispatching opcode 0x%04X" and rdx, so these
-        # cost nothing to read and pair directly with world.log - CLAUDE.md, "count the same
+        # cost nothing to read and pair directly with world-ch0.log - CLAUDE.md, "count the same
         # event in two logs".
         #
         # 140d78070:peek=0x74:hits=20 - THE INSTRUMENT FOR THIS RUN. It is the buy entry
@@ -2572,7 +2572,7 @@ if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
         #                                        localises to one byte
         #   It replaced 14209ad60, whose question (does 0x01A3 reach its handler) is now
         #   answered twice over, and whose remaining use - re-entry - is visible on screen
-        #   and in world.log without spending a slot.
+        #   and in world-ch0.log without spending a slot.
         # 140d734e0:hits=40 - the cash shop stage's OWN OnPacket. A line means a stage object
         #   exists and is receiving, and rdx names which of 0x5AD/0x5AE/0x5B9/0x5BA arrived.
         #     rdx=0x5ad -> the wallet was accepted. Read the balance off the screen
@@ -2651,7 +2651,7 @@ $loginExe = Join-Path $root 'target\release\maplecw-login.exe'
 $worldExe = Join-Path $root 'target\release\maplecw-world.exe'
 $userAdd = Join-Path $root 'target\release\maplecw-useradd.exe'
 $serverLog = Join-Path $root 'login.log'
-$worldLog = Join-Path $root 'world.log'
+$worldLog = Join-Path $root 'world-ch0.log'
 
 function Stop-All {
     # Never pipe a native command's stderr under PowerShell 5.1: it wraps each line in an
@@ -2854,8 +2854,8 @@ $channelList = (0..($Channels - 1) | ForEach-Object { "127.0.0.1:$($ChannelPort 
 
 # Keep the previous run's log instead of deleting it.
 #
-# **Three separate conclusions have died with an overwritten world.log.** The most expensive:
-# an attack capture showing 127-byte zero-target bodies was read out of a world.log that also
+# **Three separate conclusions have died with an overwritten world-ch0.log.** The most expensive:
+# an attack capture showing 127-byte zero-target bodies was read out of a world-ch0.log that also
 # carried 90 mob-control packets, the pair was reported as "the client will not target our
 # mobs", and by the time anyone tried to re-check it the file had been replaced by the next
 # launch. No fixture had been taken. The observation was real and is now unverifiable, which
@@ -2865,7 +2865,7 @@ $channelList = (0..($Channels - 1) | ForEach-Object { "127.0.0.1:$($ChannelPort 
 # kilobytes is the wrong trade in every direction.
 # `-Into` exists so the HOOK log can be archived next to the server logs rather than into a
 # second buffer under client-patched\. `CLAUDE.md`'s "count the same event in two logs"
-# needs both halves of one run in one place: world.log says what the server SENT, the hook
+# needs both halves of one run in one place: world-ch0.log says what the server SENT, the hook
 # log says what the client DID with it, and three of this project's answers came from the
 # two disagreeing. One of them being archived and the other deleted made that impossible
 # for every run but the current one.
@@ -3019,7 +3019,10 @@ $worldSrv = $null
 $worldAll = @()
 foreach ($ch in 0..($Channels - 1)) {
     $chPort = $ChannelPort + $ch
-    $chLog = if ($ch -eq 0) { $worldLog } else { Join-Path $root "world-ch$ch.log" }
+    # **Every channel is named the same way**, channel 0 included. It used to be the
+    # odd one out - `world.log` while channel 1 was `world-ch1.log` - which made a
+    # two-channel server look like one channel plus a mystery file. The owner, 2026-09-14.
+    $chLog = Join-Path $root "world-ch$ch.log"
     Save-PreviousLog $chLog
     Remove-Item $chLog -Force -ErrorAction SilentlyContinue
     $chArgs = @('--db', "`"$Database`"", '--bind', "127.0.0.1:$chPort", '--channel', "$ch")
@@ -3103,7 +3106,7 @@ function Show-TestPlan {
         Write-Host '        circle, THEN it walks/attacks, hittable after ~2.5 s -> fixed'
         Write-Host '        no circle but it moves -> appear type ignored; say so'
         Write-Host '        circle, never moves, cannot be hit -> the 0x03E8 did not'
-        Write-Host '          clear it; world.log says if it went out 2500 ms later'
+        Write-Host '          clear it; world-ch0.log says if it went out 2500 ms later'
         Write-Host '        moves but unhittable -> same; say so'
         Write-Host '        client DIES at the spawn -> the appear-option word' -ForegroundColor Red
         Write-Host ''
@@ -3120,7 +3123,7 @@ function Show-TestPlan {
         Write-Host '        goes to the Cash Inventory -> 0x0B with tab 6 works'
         Write-Host ''
         Write-Host '  TL. BAG -> LOCKER, EVERY CASH ITEM NOW CARRIES A SERIAL. -SetFieldProbe.' -ForegroundColor Magenta
-        Write-Host '      Run 6 (04:03): "nothing moves back" and NO 0x03E1 in world.log -'
+        Write-Host '      Run 6 (04:03): "nothing moves back" and NO 0x03E1 in world-ch0.log -'
         Write-Host '      the client sent nothing: bag-restored items had +0x38 = 0 and'
         Write-Host '      the double-click builder skips those. Now every Cash-tab body'
         Write-Host '      (field entry, shop entry, every Add) carries a serial. A Cash'
@@ -3128,10 +3131,10 @@ function Show-TestPlan {
         Write-Host '      Enter the shop. Item Inventory EMPTY -> the longer body; say so.' -ForegroundColor Red
         Write-Host '        1. double-click a Mystery Hair Coupon (never moved before):'
         Write-Host '           in the locker, gone from Item Inventory -> fixed'
-        Write-Host '           nothing at all -> the builder still saw 0; world.log has the body'
+        Write-Host '           nothing at all -> the builder still saw 0; world-ch0.log has the body'
         Write-Host '           in the locker AND still in Item Inventory -> lookup missed;'
         Write-Host '             say if anything ELSE in the Cash tab vanished (slot 0)'
-        Write-Host '           "unknown error" -> refused; world.log says why'
+        Write-Host '           "unknown error" -> refused; world-ch0.log says why'
         Write-Host '           client DIES -> say so; the longer body is the suspect' -ForegroundColor Red
         Write-Host '        2. drag it out again -> should move'
         Write-Host '        3. exit, check the inventory Cash tab; re-enter, both panels'
@@ -3165,10 +3168,10 @@ function Show-TestPlan {
         Write-Host '         is the door. TF is TESTABLE NOW - same packet.' -ForegroundColor Green
         Write-Host '      b) THE CLOCK, once in the station. It sat at 00:00 because'
         Write-Host '         nothing sent a time. 0x01BC type 1 (h, m, s) now carries'
-        Write-Host '         UTC per your correction - the same time world.log stamps.'
+        Write-Host '         UTC per your correction - the same time world-ch0.log stamps.'
         Write-Host '           UTC (taskbar + 4h), AM/PM right, and it TICKS -> done'
         Write-Host '           your taskbar time -> local got through; serverclock.rs'
-        Write-Host '           still 00:00 -> grep world.log for 0x01BC on the entry.'
+        Write-Host '           still 00:00 -> grep world-ch0.log for 0x01BC on the entry.'
         Write-Host '                       sent = the client ignored it; not sent ='
         Write-Host '                       the map is not in clocks.txt'
         Write-Host '           client DIES on entry -> the widget was missing when the' -ForegroundColor Yellow
@@ -3206,7 +3209,7 @@ function Show-TestPlan {
         Write-Host '      through session/reports.rs, and the log now says "is a client'
         Write-Host '      report; nothing is expected back". 17 handled opcodes were'
         Write-Host '      unnamed too (0x00E5, 0x0199...) - fixed, test-pinned.'
-        Write-Host '        grep -c UNKNOWN login.log world.log world-ch1.log -> 0'
+        Write-Host '        grep -c UNKNOWN login.log world-ch0.log world-ch1.log -> 0'
         Write-Host '          any hit = a packet never seen before; paste the line' -ForegroundColor Yellow
         Write-Host '        "leaving the field: reason N" with N not 2 or 4 -> new; say N'
         Write-Host '        "is not answered yet" on a non-report -> a real gap; paste'
@@ -3215,7 +3218,7 @@ function Show-TestPlan {
         Write-Host '      Your two presses were 0x0116, not the coupons 0x0114, and'
         Write-Host '      nothing answered them. Handled now: full refund, as !resetap.'
         Write-Host '        stats back to base, AP shown, scroll gone -> done'
-        Write-Host '        stats reset, scroll stays -> consume failed; world.log'
+        Write-Host '        stats reset, scroll stays -> consume failed; world-ch0.log'
         Write-Host '        nothing and inventory FROZEN -> latch not cleared; tell me' -ForegroundColor Yellow
         Write-Host '        a message, no change -> the reset refused; chat says why'
         Write-Host ''
@@ -3235,7 +3238,7 @@ function Show-TestPlan {
         Write-Host '           sits in the Deco equip window -> the move works'
         Write-Host '           not drawn / gone after relog -> EXPECTED for now: the'
         Write-Host '                      record cannot carry worn slots over 31 yet'
-        Write-Host '           refused again -> world.log names why; paste it'
+        Write-Host '           refused again -> world-ch0.log names why; paste it'
         Write-Host '      b) Weapon: CLIENT data - FIXED AND INSTALLED. Covers list'
         Write-Host '         the weapon TYPES they dress as children (classic: 30 + links'
         Write-Host '         31/32/33); ours had 30 and 49 only; suitcase is 32. Each'
@@ -3253,16 +3256,16 @@ function Show-TestPlan {
         Write-Host '           no icons -> #i unresolved; say so'
         Write-Host '           lines run together -> wrong line break; say so'
         Write-Host '           no box, items arrive -> unsolicited Say refused; paste'
-        Write-Host '             the world.log "ScriptMessage ... receipt" line'
+        Write-Host '             the world-ch0.log "ScriptMessage ... receipt" line'
         Write-Host '           name reads "Maple Administrator" -> rename not landed'
         Write-Host '      f) THE BOX: double-click sent NO packet - the client opens a' -ForegroundColor Yellow
         Write-Host '         Cash item by id FAMILY, and 522 is not one it opens; the'
         Write-Host '         568 coupons are. The box now wears 5681599 (node, string,'
         Write-Host '         shop row, server); an old one in a bag is renamed on start.'
         Write-Host '           eight coupons + receipt, box gone -> done'
-        Write-Host '           still nothing, no 0x0114 in world.log -> family reading' -ForegroundColor Yellow
+        Write-Host '           still nothing, no 0x0114 in world-ch0.log -> family reading' -ForegroundColor Yellow
         Write-Host '             wrong; say so' -ForegroundColor Yellow
-        Write-Host '           0x0114 arrives, server refuses -> paste world.log line'
+        Write-Host '           0x0114 arrives, server refuses -> paste world-ch0.log line'
         Write-Host '           box in bag has no name/icon -> rename did not run; say so'
         Write-Host '      g) CASH EQUIPS + THE WEAPON COVER SURVIVE A RELOG - CONFIRMED on select' -ForegroundColor DarkGray
         Write-Host '         and in the field (2026-09-12). Nothing to test here.' -ForegroundColor DarkGray
@@ -3299,7 +3302,7 @@ function Show-TestPlan {
         Write-Host '           server log says threw, bag window unchanged -> 0x0070 shape; say so'
         Write-Host '           line in an odd colour -> say which; category 11 is the guess'
         Write-Host '           mob still hurt with no shell -> client-local damage; say so'
-        Write-Host '           nothing at all -> paste world.log "itemCon" line' -ForegroundColor Yellow
+        Write-Host '           nothing at all -> paste world-ch0.log "itemCon" line' -ForegroundColor Yellow
         Write-Host '      m) RAIN''S QUIZ - menu works; the "repeat" after the right answer was the' -ForegroundColor Yellow
         Write-Host '         client offering the NEXT quiz: our completion went out before the'
         Write-Host '         question. Now the turn-in waits for the right choice (record, exp,'
@@ -3314,7 +3317,7 @@ function Show-TestPlan {
         Write-Host '         rows go to that gender (39 quests). Do Lucas''s Reply again:'
         Write-Host '           ONE headband, letter gone -> done'
         Write-Host '           still seven -> old server; say so'
-        Write-Host '           none -> paste world.log "reward rows" line' -ForegroundColor Yellow
+        Write-Host '           none -> paste world-ch0.log "reward rows" line' -ForegroundColor Yellow
         Write-Host '      p) NEW - ELEVEN PETS, PERMANENT, IN THE SHOP: the "3 days" was each' -ForegroundColor Yellow
         Write-Host '         pet''s own info/life; all eleven now life 0 + permanent 1, the eight'
         Write-Host '         missing ones have Pets-tab rows, and a pet is BOUGHT as a type-3'
@@ -3342,9 +3345,9 @@ function Show-TestPlan {
         Write-Host '         random free point across the whole map. Kill a few on Split Road:'
         Write-Host '           stands up elsewhere, maybe another type, count stays 49 -> designed'
         Write-Host '           always back on the same spot -> paste SPAWN lines around a kill' -ForegroundColor Yellow
-        Write-Host '           map thins out, or more than 49 -> paste world.log' -ForegroundColor Yellow
+        Write-Host '           map thins out, or more than 49 -> paste world-ch0.log' -ForegroundColor Yellow
         Write-Host '      t) RAIN''S QUIZ: THE CLIENT CONDUCTS IT. The screenshots +' -ForegroundColor Yellow
-        Write-Host '         world.log showed the client draws the whole quiz with no packets,' -ForegroundColor DarkGray
+        Write-Host '         world-ch0.log showed the client draws the whole quiz with no packets,' -ForegroundColor DarkGray
         Write-Host '         then sends the turn-in - which the server used to re-ask. Fixed: a' -ForegroundColor DarkGray
         Write-Host '         quiz turn-in records the completion and says nothing - NOT YET' -ForegroundColor Yellow
         Write-Host '         seen on screen. Rain''s next question, answer right, press OK:'
@@ -3403,7 +3406,7 @@ function Show-TestPlan {
         Write-Host '      walk back out of the Free Market via out00.'
         Write-Host '        back in Henesys Market -> the memory works'
         Write-Host '        somewhere else -> say WHERE'
-        Write-Host '        nothing at all -> grep world.log for "free market"'
+        Write-Host '        nothing at all -> grep world-ch0.log for "free market"'
         Write-Host '      THEN from EL NATH MARKET (!map 20001010) - El Nath is NOT' -ForegroundColor Yellow
         Write-Host '      the fallback, so landing there proves the town is'
         Write-Host '      REMEMBERED and not hard-coded. Henesys alone cannot.'
@@ -3421,12 +3424,12 @@ function Show-TestPlan {
         Write-Host '      The coupon goes to the CASH INVENTORY panel, never storage.'
         Write-Host '      a) Buy ONE Etc Tab 5-Slot Coupon (100 LP).' -ForegroundColor Yellow
         Write-Host '          in Cash Inventory, LP down 100 -> fixed'
-        Write-Host '          "unknown error" -> other server error; world.log names it'
+        Write-Host '          "unknown error" -> other server error; world-ch0.log names it'
         Write-Host '          "not enough leaf points" again -> wallet read wrong'
         Write-Host '      b) MOVE it from Cash Inventory to your Cash tab. NEW: the' -ForegroundColor Yellow
         Write-Host '         server refused this until today; never seen on a screen.' -ForegroundColor Yellow
         Write-Host '          appears in the Cash tab at your slot -> 0x0A/0x19 work'
-        Write-Host '          "unknown error", stays put -> world.log names the check'
+        Write-Host '          "unknown error", stays put -> world-ch0.log names the check'
         Write-Host '          gone from panel, NOT in Cash tab -> 0x19 body wrong; say tab'
         Write-Host '      c) LEAVE the shop and return with an item still in the panel.'
         Write-Host '          still listed -> entry listing works (new, unmeasured)'
@@ -3442,8 +3445,8 @@ function Show-TestPlan {
         Write-Host '         !item 2040400 3 - topwear DEF, 100% and cursed 0,'
         Write-Host '         so it CANNOT destroy anything. That one first.' -ForegroundColor Yellow
         Write-Host '           stats change + a sound -> the whole path works'
-        Write-Host '           "cannot be used here" -> a refusal; world.log names it'
-        Write-Host '           nothing -> grep world.log for 0x0236. Went out = the'
+        Write-Host '           "cannot be used here" -> a refusal; world-ch0.log names it'
+        Write-Host '           nothing -> grep world-ch0.log for 0x0236. Went out = the'
         Write-Host '                      client did not draw it. Did not = refused'
         Write-Host '         THEN on purpose: !item 2040403 3 is 10% with CURSED 50.'
         Write-Host '         It DESTROYS the shirt on half its failures - that arm'
@@ -3492,7 +3495,7 @@ function Show-TestPlan {
         Write-Host '           gap, no art -> #i is not honoured in a #L. Same fix'
         Write-Host '      d) THE SOUND. 0x0236 goes to the whole map now.'
         Write-Host '           sound + flash -> the effect packet is real'
-        Write-Host '           nothing       -> world.log shows 0x0236 leaving either'
+        Write-Host '           nothing       -> world-ch0.log shows 0x0236 leaving either'
         Write-Host '                            way, so silence is a CLIENT result'
         Write-Host '      e) TREASURE SCROLL - NEVER RUN, NOT ONCE.' -ForegroundColor Yellow
         Write-Host '           !item 2043200 2 while wearing a One-Handed Blunt'
@@ -3504,7 +3507,7 @@ function Show-TestPlan {
         Write-Host '                         backwards'
         Write-Host '      A ! command answered by a CHAT BALLOON is the GM GATE.' -ForegroundColor Yellow
         Write-Host ''
-        Write-Host '  AFTERWARDS: world.log is the evidence. Say what you saw per step.' -ForegroundColor Green
+        Write-Host '  AFTERWARDS: world-ch0.log is the evidence. Say what you saw per step.' -ForegroundColor Green
         Write-Host ''
         Write-Host '  ---- everything below is reference, not this run ----' -ForegroundColor DarkGray
         Write-Host '  WHAT IS WORTH A RUN NOW, in order:' -ForegroundColor Yellow
@@ -3537,7 +3540,7 @@ function Show-TestPlan {
         Write-Host '             client INTO THE WORLD, then KILL IT from Task Manager -' -ForegroundColor Yellow
         Write-Host '             not a clean quit. Press Start Game.' -ForegroundColor Yellow
         Write-Host '              it starts and plays -> correct. A crash frees the account'
-        Write-Host '                 at once: the OS closes the socket and world.log logs'
+        Write-Host '                 at once: the OS closes the socket and world-ch0.log logs'
         Write-Host '                 "ended: ... forcibly closed ... (os error 10054)".'
         Write-Host '              "already logged in" -> A LOCKOUT. Say how long it lasts.'
         Write-Host '                 More than ~60 s means the release AND the expiry both'
@@ -3564,7 +3567,7 @@ function Show-TestPlan {
         Write-Host '       AND THE CHANNEL NOW HOLDS THE CLAIM TO THE SIGN-IN: on this box the'
         Write-Host '       migration is bound to your launcher sign-in and the channel checks'
         Write-Host '       it through the OS. If a character does NOT enter the world, read'
-        Write-Host '       world.log for "REFUSED the migration" - that is the on-box'
+        Write-Host '       world-ch0.log for "REFUSED the migration" - that is the on-box'
         Write-Host '       attestation failing, it is a finding, and -BindMigrations never'
         Write-Host '       gets you playing while it is looked at.'
         Write-Host '    0b. CHAT AND PARTY INVITE. The 2026-09-05 evening run: the invite went'
@@ -3585,7 +3588,7 @@ function Show-TestPlan {
         Write-Host '       DECLINE (fresh invite): leader reads "has denied the party request",'
         Write-Host '       nobody joins.'
         Write-Host '       TIMEOUT: invite, leave the dialog ALONE about a minute, then invite'
-        Write-Host '       the SAME character again. It must go through. world.log: "LAPSED".'
+        Write-Host '       the SAME character again. It must go through. world-ch0.log: "LAPSED".'
         Write-Host '    0c. PARTY MECHANICS (new 2026-09-05, from the owner''s screenshot run).'
         Write-Host '       LEAVE: the member clicks Leave - they must actually leave, and the'
         Write-Host '       leader''s window drops them. Before: "unknown error", stuck in party.'
@@ -3616,7 +3619,7 @@ function Show-TestPlan {
         Write-Host '    0f. THIEF AUDIT (2026-09-06). Wear a claw, stars in the Use tab.'
         Write-Host '       Normal throw: the stack drops by 1. LUCKY SEVEN: by 2 (one per'
         Write-Host '       star thrown - the data has no bulletConsume, so [I]). Double Stab'
-        Write-Host '       with a dagger: 0. If NOTHING drops and world.log says "SHOOT body'
+        Write-Host '       with a dagger: 0. If NOTHING drops and world-ch0.log says "SHOOT body'
         Write-Host '       did not parse", that is the finding: no 0x00E0 was ever captured.'
         Write-Host '       RECHARGE: at Lucy/Mina/Luna, click a partial star stack, press'
         Write-Host '       Recharge. Stack fills to 500 (Subi); mesos drop by missing x 0.3,'
@@ -3682,7 +3685,7 @@ function Show-TestPlan {
         Write-Host '                                        The ONE thing tests cannot see -'
         Write-Host '                                        look at the portrait on purpose.'
         Write-Host '             "is not a command"      -> dispatcher never reached it'
-        Write-Host '             nothing at all          -> check world.log for the 0x00E7'
+        Write-Host '             nothing at all          -> check world-ch0.log for the 0x00E7'
         Write-Host '           Run !tool again the same session: it must REFUSE IN WORDS and'
         Write-Host '           log NOTHING PAID. Reset is UTC midnight. Leaf Points are per'
         Write-Host '           ACCOUNT; Level up and the AP/SP reset are per CHARACTER.'
@@ -3698,7 +3701,7 @@ function Show-TestPlan {
         Write-Host '               Sit on a Henesys bench. You should seat AND STAY'
         Write-Host '               seated; a movement key gets you up.'
         Write-Host '                 seats        -> 0x0252 was the missing packet, done'
-        Write-Host '                 nothing      -> grep world.log for 0x0252. If it WENT'
+        Write-Host '                 nothing      -> grep world-ch0.log for 0x0252. If it WENT'
         Write-Host '                                 OUT the suspect is the handler gate at'
         Write-Host '                                 1428341d3, NOT a body length.'
         Write-Host '                 you stand up by yourself, or 0x00DA ffff in the log'
@@ -3715,7 +3718,7 @@ function Show-TestPlan {
         Write-Host '           earlier 12-byte version faulted Tester2 5 ms after sending;'
         Write-Host '           it is 13 bytes now and a test pins that.'
         Write-Host '           IF A SECOND CLIENT EVER EXITS WHILE SOMEONE SITS, say so and' -ForegroundColor Red
-        Write-Host '           do NOT close the survivor. Check world.log for 0x02AD and the'
+        Write-Host '           do NOT close the survivor. Check world-ch0.log for 0x02AD and the'
         Write-Host '           hook log for CLIENT FAULT 0xc0000005.'
         Write-Host '           Two clients share one hook log, so chairprobe needs --pid:'
         Write-Host '             cd "C:\MapleCW"; python tools\chairprobe.py --pid <n>'
@@ -3727,7 +3730,7 @@ function Show-TestPlan {
         Write-Host '           Tester2 sends Cobalt a trade request. Cobalt must get a'
         Write-Host '           "Trade request from Tester2" popup. Yesterday: nothing at all.'
         Write-Host '             popup     -> the type field was the bug, and it is fixed'
-        Write-Host '             no popup  -> grep world.log for 0x0575. If it WENT OUT, the'
+        Write-Host '             no popup  -> grep world-ch0.log for 0x0575. If it WENT OUT, the'
         Write-Host '                          cause is field 3, the one guessed field: a hit'
         Write-Host '                          on the local lookup auto-declines SILENTLY.'
         Write-Host '           ACCEPT DOES NOTHING AND THAT IS EXPECTED, not a regression:' -ForegroundColor Yellow
@@ -3751,7 +3754,7 @@ function Show-TestPlan {
         Write-Host '             nothing + a chat line saying why'
         Write-Host '                                -> a refusal fired, and the line says'
         Write-Host '                                   which. That is working as built.'
-        Write-Host '             nothing, no line   -> the FREEZE is back. Grep world.log'
+        Write-Host '             nothing, no line   -> the FREEZE is back. Grep world-ch0.log'
         Write-Host '                                   for 0x0143 and say so.'
         Write-Host '           THEN MOVE AN ITEM IN YOUR BAG straight after.' -ForegroundColor Yellow
         Write-Host '           An unanswered 0x0143 latches +0x2330 and kills the bag, the'
@@ -3892,7 +3895,7 @@ function Show-TestPlan {
         Write-Host '    0d. STILL NEEDS A CAPTURE - do this and report the inbound opcode:'
         Write-Host '       DROP MESOS: try to drop mesos. It does nothing today because the'
         Write-Host '       client''s meso-drop request has never been captured. Note what'
-        Write-Host '       "<- 0x...." appears in world.log when you try (or that none does).'
+        Write-Host '       "<- 0x...." appears in world-ch0.log when you try (or that none does).'
         Write-Host '    1. THE MOB FLINCH. A non-controller hits a mob: from the'
         Write-Host '       SECOND hit it should flinch and slide. First hit never'
         Write-Host '       will - the grant ships with that swing.'
@@ -3902,7 +3905,7 @@ function Show-TestPlan {
         Write-Host '    3. T11/T10, single-client, still untested.'
         Write-Host '    4. REGISTRATION AND RECOVERY (new 2026-09-05, no client needed for'
         Write-Host '       the launcher half). As the GM type !registrationcode - a chat'
-        Write-Host '       notice shows an 8-character code, XXXX-XXXX, and world.log must'
+        Write-Host '       notice shows an 8-character code, XXXX-XXXX, and world-ch0.log must'
         Write-Host '       NOT contain it. In the launcher: Register tab, any username, an'
         Write-Host '       email, a password WITHOUT a digit -> refused on the spot, the'
         Write-Host '       code still live; with a digit -> "account created", back on the'
@@ -4002,7 +4005,7 @@ function Show-TestPlan {
         Write-Host '                       position, not where the mob was standing'
         Write-Host '       CLOSING THE CLIENT is the better half: no log out runs, and'
         Write-Host '       it is the exit the leaving player cannot see.'
-        Write-Host '       grep world.log for "mob control:" - it names the count and'
+        Write-Host '       grep world-ch0.log for "mob control:" - it names the count and'
         Write-Host '       the recipient, so this needs no second launch to read.'
         Write-Host '  T11. THIRD JOB + THE FERRY. THE ONE. Set up with:' -ForegroundColor Yellow
         Write-Host '         !job 110   !exp 31545355   !map 10005000'
@@ -4016,7 +4019,7 @@ function Show-TestPlan {
         Write-Host '       b) PICK EL NATH. *** THIS IS THE MOMENT. ***'
         Write-Host '            a snowy town -> 87 maps just became reachable'
         Write-Host '            black screen / client dies -> THE finding of this run'
-        Write-Host '            mesos gone, no warp -> world.log says which half ran'
+        Write-Host '            mesos gone, no warp -> world-ch0.log says which half ran'
         Write-Host '       c) WALK RIGHT into Chief Residence. Four NPCs inside.'
         Write-Host '       d) CLICK TYLUS (they serve Fighter/Page/Spearman).'
         Write-Host '            "You are a Crusader now" -> DONE. Then open the skill'
@@ -4042,11 +4045,11 @@ function Show-TestPlan {
         Write-Host '       a) CLICK THE EXAMINER there (Warrior Job Instructor).'
         Write-Host '            you end up somewhere else -> the warp works. NOBODY HAS'
         Write-Host '                       EVER BEEN ON THAT MAP. This is the step'
-        Write-Host '            black screen / client dies -> say which; world.log names'
+        Write-Host '            black screen / client dies -> say which; world-ch0.log names'
         Write-Host '                       the map in its SetField line'
         Write-Host '            nothing happens -> the click never routed'
         Write-Host '       b) KILL ANYTHING IN THERE. Every mob drops one Dark Marble.'
-        Write-Host '            no marble -> the map gate; world.log names the map used'
+        Write-Host '            no marble -> the map gate; world-ch0.log names the map used'
         Write-Host '       c) CLICK THE NPC INSIDE. It is the ONLY way out.'
         Write-Host '            nothing happens -> YOU ARE STUCK. Return scroll or !map,'
         Write-Host '                       and say so - worst failure in this run'
@@ -4073,7 +4076,7 @@ function Show-TestPlan {
     Write-Host '        no tooltip + Etc still full -> it works, roll it out'
     Write-Host '        no tooltip + Etc EMPTY, others full -> THE FAILURE THAT'
     Write-Host '                   MATTERS. Say so; it gets reverted'
-    Write-Host '        tooltip still pops -> the chain is wrong; world.log shows'
+    Write-Host '        tooltip still pops -> the chain is wrong; world-ch0.log shows'
     Write-Host '                   the mode-5 bodies went out'
     Write-Host '        ALL FOUR tabs empty -> not mode 5, something else broke'
     Write-Host '      No server has ever sent a mode 5. That is why only one tab.' -ForegroundColor Yellow
@@ -4527,7 +4530,7 @@ if (-not $DirectClient) {
 # the child - a launcher will replace all of this with one config file (docs/launcher.md).
 $hookLog = Join-Path $ClientDir 'maplecw-hook.log'
 New-Item -ItemType File -Path (Join-Path $ClientDir 'maplecw-hook.enable') -Force | Out-Null
-# ARCHIVED, not deleted - and it used to be deleted, while world.log beside it was kept.
+# ARCHIVED, not deleted - and it used to be deleted, while world-ch0.log beside it was kept.
 # That asymmetry is exactly the trap CLAUDE.md describes: the hook log is the only record
 # of what the CLIENT did with a packet, it is where the dispatch lines and the CLIENT FAULT
 # line live, and every previous run's copy was thrown away at the next launch.
