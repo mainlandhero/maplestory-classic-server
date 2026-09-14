@@ -34,6 +34,7 @@ pub mod db;
 pub mod fieldreturn;
 pub mod inventory;
 pub mod keymap;
+pub mod kick;
 pub mod migration;
 pub mod error;
 pub mod password;
@@ -59,6 +60,7 @@ pub use claims::{
     ResolvedClaim, StakedClaim,
     LOGIN_CLAIM_TTL_SECS,
 };
+pub use kick::{KickRequest, KickWatch};
 pub use codes::{NewCode, CODE_ALPHABET, CODE_CHARS, INVITE_TTL_SECS, RECOVERY_TTL_SECS};
 pub use presence::{
     holder_key, PresenceGuard, PresenceHolder, PresenceOutcome, PRESENCE_LEASE_SECS,
