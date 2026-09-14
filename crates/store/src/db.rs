@@ -522,14 +522,23 @@ impl Store {
         // so a stored 30 there can only be the uniform default this column was created with.
         // Same shape as the 24 repair below, and idempotent for the same reason: nothing can
         // set this column to 30 on purpose.
-        conn.execute(
-            &format!(
-                "UPDATE characters SET slots_deco = {} WHERE slots_deco = {}",
-                net::opcode::DECO_INVENTORY_SLOTS,
-                net::opcode::DEFAULT_INVENTORY_SLOTS
-            ),
-            [],
-        )?;
+        //
+        // **And the Cash tab, from 2026-09-13**: *"The user's Cash tab in the Player Inventory
+        // should also come with 150 slots by default, just like the Deco tab."* Cash DOES have
+        // a slot coupon, so unlike Deco this column could in principle hold a value somebody
+        // paid for - but the coupons add five at a time, so a bought Cash tab reads 35, 40, ..,
+        // never exactly 30. Matching `= 30` therefore still means "nobody ever touched it",
+        // which is the same argument the two repairs below rest on.
+        for column in ["slots_deco", "slots_cash"] {
+            conn.execute(
+                &format!(
+                    "UPDATE characters SET {column} = {} WHERE {column} = {}",
+                    net::opcode::MAX_INVENTORY_SLOTS,
+                    net::opcode::DEFAULT_INVENTORY_SLOTS
+                ),
+                [],
+            )?;
+        }
 
         // A one-off repair, in the same spirit as the `map_id = 0` one above and with the
         // same justification: **24 was never a value anybody chose.**

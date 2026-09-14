@@ -264,36 +264,56 @@ pub const PET_ITEM_LEN: usize = 1 + 18 + 48;
 /// (`Pet.encode`: `encodeInt(getHue()); // -1`). **[L]** for the test, **[R]** for the value.
 pub const PET_HUE_UNDYED: u32 = 0xFFFF_FFFF;
 
-/// **`petSkill`: the bitmask of skills this pet has REGISTERED.** The owner, same tooltip: the
-/// Husky lists Item Pouch, Expanded Auto Move and Auto Move and says *"This is an
-/// unregistered pet."* under each, and it picks nothing up.
+/// **`petSkill`: the bitmask of skills a pet has learned**, and the client's own numbering.
 ///
-/// The WZ keys the installer writes (`pickupItem`, `sweepForDrop`, `longRange`) are what makes
-/// the client *list* the skills; whether each is usable is a separate per-pet mask, and the
-/// tooltip's own code is unambiguous **[L]**: it takes a `u16` from the item, ANDs it with the
-/// skill's bit, and prints `(Learned)` (`0x9E5`) when the result is zero-flagged and
-/// *"This is an unregistered pet."* (`0x9E6`) otherwise. We sent `0`, so every skill was
-/// unregistered.
+/// The tooltip prints a line per skill the pet's IMAGE declares and then, for each, either
+/// `(Learned)` (`0x9E5`) or *"This is an unregistered pet."* (`0x9E6`), by ANDing this `u16`
+/// against that skill's bit (`FUN_14266f2d0`). **[L]**
 ///
-/// The bit values are the reference server's `PetSkill` enum - `ITEM_PICKUP 0x1`,
-/// `EXPANDED_AUTO_MOVE 0x2`, `AUTO_MOVE 0x4` - and are **[R]/[I]**: that they live in this
-/// `u16` is measured, their numbering is not. The tooltip is the test: the three lines become
-/// `(Learned)` if the numbering is right.
-pub const PET_SKILL_ITEM_PICKUP: u16 = 0x0001;
-/// See [`PET_SKILL_ITEM_PICKUP`].
-pub const PET_SKILL_EXPANDED_AUTO_MOVE: u16 = 0x0002;
-/// See [`PET_SKILL_ITEM_PICKUP`].
-pub const PET_SKILL_AUTO_MOVE: u16 = 0x0004;
-/// **What a pet has learned when it is bought: nothing.** The owner, 2026-09-13: *"The pets start
-/// with nothing learned, and the player has to purchase those skills in the Cash Shop and
-/// choose the pet as a target for it to learn those skills."*
+/// The numbering is the client's, read off `FUN_141ed1ad0` - an eleven-entry jump table
+/// (`cmp edx, 0xa`) that turns a skill index into its name string. **[L]**, and it is NOT the
+/// reference server's order, which had `EXPANDED_AUTO_MOVE` second:
 ///
-/// So the mask is `0`, and the installer no longer writes the skill keys into the pet's WZ
-/// either - a pet that advertises a skill it has not learned is what produced the
-/// *"This is an unregistered pet."* lines the owner asked to be rid of. The Cash Shop side (a pet
-/// skill item that targets a pet and sets a bit here, stored per pet item) is **not built**;
-/// when it is, this constant becomes a column and the bits above are its values.
-pub const PET_SKILLS_LEARNED_AT_START: u16 = 0;
+/// ```text
+/// index  string  name                            the pet-image key that declares it
+///   0    0x9D1   Item Pouch                      info/pickupItem
+///   1    0x9D2   Auto HP Potion Pouch            info/consumeHP    (item 5190000)
+///   2    0x9D4   Expanded Auto Move              info/longRange    (item 5190003)
+///   3    0x9D5   Auto Move                       info/sweepForDrop (item 5190002 says dropSweep)
+///   4    0x9D3   Auto MP Potion Pouch            info/consumeMP    (item 5190001)
+///   5    0x9D7   Ignore Item
+///   6    0x9D8   Auto Buff
+///   7    0x9D9   Auto Feed and Movement Skill
+///   8    0x9DA   Fatten Up
+///   9    0x9DB   Pet Shop Skill
+/// ```
+///
+/// **Meso Magnet (`0x9DC`) is not in that table at all** and needs no key: the owner, 2026-09-13,
+/// with every skill key cleared, *"the Husky should by default come with Meso Magnet and Item
+/// Pouch. Currently it is missing the Item Pouch skill by default"* - so Meso Magnet showed on
+/// its own and Item Pouch did not. It is innate. **[D]**
+///
+/// The bit is `1 << index`. **[I]** on the shift itself - the table gives the order and the
+/// tooltip is the test - but the order is measured.
+pub const PET_SKILL_ITEM_POUCH: u16 = 1 << 0;
+/// See [`PET_SKILL_ITEM_POUCH`]. Bought as item `5190000`.
+pub const PET_SKILL_AUTO_HP: u16 = 1 << 1;
+/// See [`PET_SKILL_ITEM_POUCH`]. Bought as item `5190003`.
+pub const PET_SKILL_EXPANDED_AUTO_MOVE: u16 = 1 << 2;
+/// See [`PET_SKILL_ITEM_POUCH`]. Bought as item `5190002`.
+pub const PET_SKILL_AUTO_MOVE: u16 = 1 << 3;
+/// See [`PET_SKILL_ITEM_POUCH`]. Bought as item `5190001`.
+pub const PET_SKILL_AUTO_MP: u16 = 1 << 4;
+
+/// **What every pet knows the day it is bought.** The owner, 2026-09-13: *"the Husky should by
+/// default come with Meso Magnet and Item Pouch."*
+///
+/// Meso Magnet is innate and carries no bit, so this is Item Pouch alone - and the installer
+/// puts `info/pickupItem 1` back on every pet so the client declares it. The other four
+/// (Auto HP, Auto MP, Auto Move, Expanded Auto Move) are the items the Cash Shop already sells
+/// at 100 LP under the Pets tab (`5190000..5190003`, SN `160300002..5`); learning one is
+/// **not built**, and when it is, this constant becomes the starting value of a per-pet column.
+pub const PET_SKILLS_LEARNED_AT_START: u16 = PET_SKILL_ITEM_POUCH;
 
 /// A pet (item type 3) - what `FUN_140304550` reads after the shared base. The owner,
 /// 2026-09-13: *"They should also be permanent duration. They should never need to be
@@ -311,7 +331,7 @@ pub const PET_SKILLS_LEARNED_AT_START: u16 = 0;
 /// u8       fullness        1403045cc   100 - fed
 /// raw[8]   dateDead        14030460f   ITEM_NEVER_EXPIRES: it never dies, never needs reviving
 /// u16      petAttribute    140304617   0
-/// u16      petSkill        14030462e   PET_SKILLS_LEARNED_AT_START - nothing, until the shop sells one
+/// u16      petSkill        14030462e   PET_SKILLS_LEARNED_AT_START - Item Pouch; the rest are bought
 /// u32      remainLife      140304645   0 - not a limited-life pet
 /// u16      attribute       14030467e   0
 /// u8       active          14030469b   0
@@ -687,7 +707,8 @@ mod pet_tests {
         assert_eq!(&b[44..46], &0u16.to_le_bytes(), "petAttribute");
         // The two fields the tooltip reads. A zero skill mask makes every skill the WZ grants
         // read "This is an unregistered pet."; a zero hue makes it read "Your pet has been dyed!".
-        assert_eq!(&b[46..48], &0u16.to_le_bytes(), "petSkill: nothing is learned until the shop sells it");
+        assert_eq!(&b[46..48], &1u16.to_le_bytes(), "petSkill: Item Pouch, learned from the start");
+        assert_eq!(PET_SKILLS_LEARNED_AT_START, PET_SKILL_ITEM_POUCH, "Meso Magnet is innate and has no bit");
         assert_eq!(&b[48..52], &0u32.to_le_bytes(), "remainLife");
         assert_eq!(&b[52..54], &0u16.to_le_bytes(), "attribute");
         assert_eq!(b[54], 0, "active");

@@ -2237,10 +2237,21 @@ pub const DEFAULT_INVENTORY_SLOTS: u16 = 30;
 /// chose for this tab - a cash equip past the thirtieth would have been refused at placement.
 pub const DECO_INVENTORY_SLOTS: u16 = 150;
 
-/// The six starting sizes, indexed like [`Character::inventory_slots`]: five at
-/// [`DEFAULT_INVENTORY_SLOTS`], Deco at [`DECO_INVENTORY_SLOTS`].
+/// The Cash tab's size, which is also its ceiling: **150, from the first login.**
+///
+/// The owner, 2026-09-13: *"The user's Cash tab in the Player Inventory should also come with 150
+/// slots by default, just like the Deco tab."* So it is [`MAX_INVENTORY_SLOTS`] from the start,
+/// exactly as Deco is, and the Cash slot coupon has nothing left to add - `session::cashitem`
+/// already answers a coupon at the ceiling with *"already at the maximum of 150 slots"* rather
+/// than failing, so no other path changes.
+pub const CASH_INVENTORY_SLOTS: u16 = 150;
+
+/// The six starting sizes, indexed like [`Character::inventory_slots`]: four at
+/// [`DEFAULT_INVENTORY_SLOTS`], **Cash and Deco full** at [`CASH_INVENTORY_SLOTS`] /
+/// [`DECO_INVENTORY_SLOTS`]. The order is [`INVENTORY_SLOT_ORDER`], so those are the last two.
 pub const fn default_inventory_slots() -> [u16; INVENTORY_COUNT] {
     let mut slots = [DEFAULT_INVENTORY_SLOTS; INVENTORY_COUNT];
+    slots[INVENTORY_COUNT - 2] = CASH_INVENTORY_SLOTS;
     slots[INVENTORY_COUNT - 1] = DECO_INVENTORY_SLOTS;
     slots
 }
@@ -4168,7 +4179,11 @@ mod tests {
             let at = sizes_at + i * 2;
             assert_eq!(
                 u16::from_le_bytes([record[at], record[at + 1]]),
-                if INVENTORY_SLOT_ORDER[i] == "deco" { DECO_INVENTORY_SLOTS } else { DEFAULT_INVENTORY_SLOTS },
+                match INVENTORY_SLOT_ORDER[i] {
+                    "deco" => DECO_INVENTORY_SLOTS,
+                    "cash" => CASH_INVENTORY_SLOTS,
+                    _ => DEFAULT_INVENTORY_SLOTS,
+                },
                 "inventory {} ({}) did not get the default bag",
                 i,
                 INVENTORY_SLOT_ORDER[i]

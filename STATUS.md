@@ -179,6 +179,33 @@ re-derives it under the shape and known-key controls. Pasted in; `restore` now b
 `0x05F1` with all 89 slots after every SetField. Two new tests (net, world). Plan step 6 re-cut.
 `research/keyboard-layout-2026-09-08.md` section 7.
 
+**2026-09-13: the Cash tab starts at 150 slots, like Deco.** The owner: *"The user's Cash tab in the
+Player Inventory should also come with 150 slots by default, just like the Deco tab. Currently it is
+not at 150 slots."* `net::opcode::CASH_INVENTORY_SLOTS` beside `DECO_INVENTORY_SLOTS`, both fed by
+`default_inventory_slots()`, and the `Store::open` migration repairs an existing `slots_cash = 30`
+the same way it already repaired Deco. **The Cash tab does have a slot coupon**, unlike Deco, so
+that repair needed its own argument: the coupons add five at a time, so a bought Cash tab reads 35
+or 40 and never exactly 30 - matching `= 30` still means "nobody ever touched it". A coupon used at
+the ceiling was already answered with *"already at the maximum of 150 slots"* rather than failing,
+so nothing else changes.
+
+**2026-09-13: the pet skill table is the client's, and a pet starts with Meso Magnet and Item
+Pouch.** The owner: *"the Husky should by default come with Meso Magnet and Item Pouch. Currently it is
+missing the Item Pouch skill by default"* - the previous round cleared Nexon's own `pickupItem` and
+took Item Pouch with it. **`FUN_141ed1ad0` is the skill table** (`cmp edx, 0xa`, one jump-table arm
+per skill, each loading a name string) and it gives the client's own order **[L]**: 0 Item Pouch
+(`pickupItem`), 1 Auto HP (`consumeHP`), 2 Expanded Auto Move (`longRange`), 3 Auto Move
+(`sweepForDrop`), 4 Auto MP (`consumeMP`), then Ignore Item, Auto Buff, Auto Feed, Fatten Up, Pet
+Shop. **Not the reference's numbering**, which had Expanded Auto Move second - so `net::bag`'s bits
+were wrong and are now measured. **Meso Magnet is in no arm at all**: it is innate, which is why it
+showed with every key cleared. The four purchasable skills are `5190000..5190003`, already sold at
+100 LP under the Pets tab (SN `160300002..5`), each declaring one key plus `add 1`; learning one
+needs the pet's image to declare the skill AND the mask bit, and since the image cannot change at
+runtime that is a design decision, **not built**. The owner's Auto HP attempt sent **no packet at all** -
+the log has no candidate after field entry - so the client refused locally. Changed: the bits, and
+`PET_SKILLS_LEARNED_AT_START = Item Pouch`, and the installer restores `info/pickupItem 1`.
+**The WZ install is pending a client close.** `research/pet-skills-2026-09-13.md`.
+
 **2026-09-13: pet movement broadcast, pet chat commands, and a pet that advertises nothing.** Four
 of the owner's asks, all built off the client's own data. **(1) The WZ has the whole command system** and
 `tools/dump_pets.py` now joins its three parts into `gm-handbook/petcommands.txt` (**2405 rows, 12

@@ -420,20 +420,25 @@ def main():
             fh.write("# %s: permanent - life 0 and permanent 1, as the modern client's permanent pet carries\n" % pet_name)
             fh.write("info/life\tint\t0\n")
             fh.write("info/permanent\tint\t1\n")
-            # **A pet advertises no skill it has not learned.** The owner, 2026-09-13: "If those
-            # skills are not yet active, make sure that the pet do not have those lines ...
-            # The pets start with nothing learned, and the player has to purchase those
-            # skills in the Cash Shop and choose the pet as a target for it to learn those
-            # skills."
+            # **A pet declares only the skills it starts with.** The owner, 2026-09-13: "the
+            # Husky should by default come with Meso Magnet and Item Pouch"; and the four
+            # others "the player has to purchase ... in the Cash Shop and choose the pet as
+            # a target for it to learn".
             #
-            # The tooltip prints a line per skill the pet IMAGE declares, and the
-            # "(Learned)" / "This is an unregistered pet." half of it is the item body's
-            # petSkill mask - FUN_14266f2d0 ANDs the two (research/pet-tooltip-and-commands-
-            # 2026-09-13.md). An earlier build wrote sweepForDrop and longRange here to make
-            # every pet a vacuum pet, and Nexon's own data declares pickupItem; all three
-            # produced "unregistered" lines for skills nothing could use. So every skill key
-            # is cleared, and learning one becomes a Cash Shop purchase that sets the mask.
-            fh.write("info/pickupItem\tint\t0\n")
+            # The tooltip prints a line per skill the pet IMAGE declares, and says
+            # "(Learned)" or "This is an unregistered pet." by ANDing the item body's
+            # petSkill mask (FUN_14266f2d0). So a declared-but-unlearned skill is the line
+            # The owner asked to be rid of, and the pair has to move together:
+            #
+            #   pickupItem    Item Pouch          declared here, and in the mask
+            #                                     (net::bag::PET_SKILLS_LEARNED_AT_START)
+            #   sweepForDrop  Auto Move           item 5190002, 100 LP - NOT declared
+            #   longRange     Expanded Auto Move  item 5190003, 100 LP - NOT declared
+            #   consumeHP/MP  Auto HP/MP Pouch    items 5190000/1     - NOT declared
+            #
+            # Meso Magnet needs no key at all: it is absent from the client's own skill
+            # table (FUN_141ed1ad0) and shows with every key cleared.
+            fh.write("info/pickupItem\tint\t1\n")
             fh.write("info/sweepForDrop\tint\t0\n")
             fh.write("info/longRange\tint\t0\n")
         add("Item/Pet", "patch\t%07d.img\t%s" % (pet_id, tsv))

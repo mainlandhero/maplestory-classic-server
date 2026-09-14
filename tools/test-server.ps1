@@ -1214,9 +1214,15 @@
                 has learned none, so the "unregistered" lines are gone. The vacuum is inert
                 until the Cash Shop can sell a pet skill - that is not built.
               * the dye line should be gone (hue -1).
+            AND the skills: the client's own table (FUN_141ed1ad0) gives the order and the
+            keys - Item Pouch is info/pickupItem, and Meso Magnet is innate (in no arm of the
+            table at all). A pet now DECLARES Item Pouch and has LEARNED it; the other four
+            (Auto HP/MP, Auto Move, Expanded Auto Move) are the 100 LP items 5190000..5190003
+            already in the Pets tab, and learning one is NOT built - using one sent no packet
+            at all, so if you try it again, say exactly what the screen did.
             Summon the Husky, then:
-              hover it in the Cash tab: NO skill lines and NO "dyed" line -> both fixed; if
-                         either is still there, paste the tooltip text
+              hover it in the Cash tab: Meso Magnet AND Item Pouch, neither "unregistered",
+                         and NO "dyed" line -> fixed; if not, paste the tooltip text
               type sit, then bad, then poop: the pet plays a trick and says a line, and your
                          message still appears as normal chat -> commands work. Say which
                          words did nothing, if any
@@ -3306,8 +3312,11 @@ function Show-TestPlan {
         Write-Host '         forwarded to the map (0x0278); pet commands are ordinary chat and the'
         Write-Host '         trick is sent beside the line (words/odds/lines all from the WZ);'
         Write-Host '         pets declare and know NO skills, so no "unregistered" lines; hue -1.'
+        Write-Host '         A pet now starts with Meso Magnet + Item Pouch, both LEARNED (the'
+        Write-Host '         skill bit order is the client''s own table, not the reference''s).'
         Write-Host '         Summon the Husky, then:'
-        Write-Host '           hover it: no skill lines, no "dyed" line -> fixed; else paste it' -ForegroundColor Yellow
+        Write-Host '           hover it: Meso Magnet AND Item Pouch, no "unregistered", no' -ForegroundColor Yellow
+        Write-Host '                         "dyed" line -> fixed; else paste the tooltip'
         Write-Host '           type sit / bad / poop: it acts AND your chat still shows -> works'
         Write-Host '           type "sit down over there": it must NOT react'
         Write-Host '           type sit x10: it should sometimes sulk (40% at level 1)'
