@@ -1224,38 +1224,32 @@
                          not what this pet code reads; say so
               the pet takes your OWN dropped item                           -> the byte is
                          ignored; paste the pet pick-up line
-         v) NEW 2026-09-14 (round 10) - THE PET LAYER NEVER GETS A Z. SEND IT DOWN THE
-            ARM THAT SETS ONE.
-            -PetLoad: the frame loader ran six times (actions 5,1,2,0,8,3, template
-            5000006) and the fallback never fired - the pet HAS frames. And your
-            Character Info screenshot draws the Husky's body, so the assets and the
-            animation machinery are fine. Only the FIELD presentation is wrong.
-            Two corrections from that: the name tag has its OWN layer (positioned
-            relative to the pet's, z 0x2325), so it proves the pet layer's position,
-            not that the pet layer draws; and FUN_141ecaa40 is the pet's position
-            vector, not a canvas insert.
-            Then the find. vtbl+0x198 is put_z - the generic field-object code computes
-            z = (layer*3000 - y)*10 - 0x3fff8ada and calls it at once. The pet's LAND
-            arm (stance 0 - ours, since moveAction 0 decodes to it) never calls it: the
-            z that FUN_141eca710 computes is passed to FUN_141ecaa40 in edx, which never
-            reads it, and the layer keeps the z=0 it was created with. The FLYING arm
-            (stance 1, FUN_141ec22f0) DOES call put_z on the pet's layer, and the Husky
-            has a 2-frame fly animation.
-            So: one byte, server side, no client patch. -PetMoveAction 30 makes
-            FUN_141ec7e90 return 1 and the pet takes the arm that sets z. This is a
-            LOCALISING experiment, not a fix - a Husky should not fly.
-              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetMoveAction 30
-            (Stop the running servers first - the world binary has to relink.)
-            Summon the Husky. The screen is the reading:
-              THE HUSKY APPEARS, hovering/flying  -> the land arm's missing put_z is the
-                         bug. Then the real question: what sets z on a real server - most
-                         likely a packet we never send - and that is a server fix
-              still invisible                      -> z is not it either; the two arms
-                         share whatever is wrong, and it is in the insert path
-              it appears but at the top-left / far away -> z was it AND the position
-                         origin differs between arms; say where
-            FREE, same run: walk to another map with the pet out and say whether it
-            appears there.
+         v) NEW 2026-09-14 (round 11) - THE PET WAS DRAWN AT ZERO PERCENT.
+            -PetMoveAction 30 changed nothing (byte 33 went out as 30, 90 pet moves),
+            so the flying arm fails too and z was not it. The find came from reading
+            the graphics engine itself - Gr2D_DX11.dll is in the Ghidra project now, and
+            the layer interface's vtable is at 0x153657c98 in it:
+              vtbl+0x2b0  get_visible (the byte at layer+0x110 - what -PetSync read)
+              vtbl+0x300  flags |= v          vtbl+0x318  flags &= ~v
+              vtbl+0x320  set property (key, value)
+            CPet's animation setter calls vtbl[0x300](2) and vtbl[0x320](8, v) - a
+            SCALE - whenever the short at pet+0x230 is not 100. And pet+0x230 is where
+            CPet::Init stores the u16 read at 0x141ebacbb: the field the reference calls
+            giantRate. It is the pet's SIZE IN PERCENT, and this server has sent 0 since
+            the packet was written. The Husky was visible, opaque, positioned, framed -
+            and drawn at zero percent. The name tag has its own layer, so it drew; the
+            Character Info window never applies that field, so it drew. The mob-size
+            bug again: a 0 meant as "unset" that the client reads as zero percent.
+            net::pet::PET_SIZE_PERCENT = 100 now. One byte. Stop the servers first (the
+            world binary must relink), then the plain launch - no switches:
+              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"
+            Summon the Husky:
+              IT IS THERE, life-size          -> done. Then walk it over a mob drop and
+                         say whether it picks up; that half was never separable before
+              there, but huge or tiny         -> the unit is right and the number is not;
+                         say roughly how big against your character
+              still nothing                   -> paste the 0x0277 body line from
+                         world-ch0.log; bytes 46-47 must read 64 00
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3809,26 +3803,26 @@ function Show-TestPlan {
         Write-Host '                         -> paste that inbound body'
         Write-Host '           pet never goes for drops -> keys not read; say so'
         Write-Host '           pet takes YOUR OWN drop -> paste the pet pick-up line' -ForegroundColor Yellow
-        Write-Host '      v) THE PET LAYER NEVER GETS A Z. SEND IT DOWN THE ARM THAT DOES.' -ForegroundColor Yellow
-        Write-Host '         -PetLoad: the frame loader ran six times and the fallback never'
-        Write-Host '         fired - the pet HAS frames - and your Character Info screenshot'
-        Write-Host '         draws its body. Only the FIELD presentation is wrong.'
-        Write-Host '         The find: vtbl+0x198 is put_z. Field objects compute'
-        Write-Host '         z = (layer*3000-y)*10 - 0x3fff8ada and call it at once. The pet''s'
-        Write-Host '         LAND arm (stance 0 = ours) never does: FUN_141eca710 computes z'
-        Write-Host '         and FUN_141ecaa40 drops it, so the layer keeps z=0. The FLYING' -ForegroundColor Yellow
-        Write-Host '         arm (stance 1) DOES call put_z, and the Husky has a fly anim.'
-        Write-Host '         One byte, server side, no client patch. LOCALISING, not a fix:'
-        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetMoveAction 30' -ForegroundColor Cyan
-        Write-Host '         (Stop the running servers first - the world binary must relink.)'
-        Write-Host '         Summon the Husky. The screen is the reading:'
-        Write-Host '           IT APPEARS, hovering -> the missing put_z is the bug; next is' -ForegroundColor Yellow
-        Write-Host '                         what sets z on a real server (a packet we skip)'
-        Write-Host '           still invisible -> z is not it; the fault is in the insert path'
-        Write-Host '           appears but top-left / far away -> z was it AND the origin'
-        Write-Host '                         differs between arms; say where'
-        Write-Host '         FREE: walk to another map with the pet out and say whether it'
-        Write-Host '         appears there.'
+        Write-Host '      v) THE PET WAS DRAWN AT ZERO PERCENT.' -ForegroundColor Yellow
+        Write-Host '         -PetMoveAction 30 changed nothing, so z was not it. The find came'
+        Write-Host '         from the graphics engine: Gr2D_DX11.dll is in Ghidra now, and the'
+        Write-Host '         layer vtable (0x153657c98) reads plainly - 0x300 sets flags,'
+        Write-Host '         0x320 sets a keyed property. CPet calls vtbl[0x300](2) and'
+        Write-Host '         vtbl[0x320](8, v) - a SCALE - whenever the short at pet+0x230 is'
+        Write-Host '         not 100, and pet+0x230 is the u16 the packet calls giantRate.' -ForegroundColor Yellow
+        Write-Host '         It is the pet SIZE IN PERCENT. We have sent 0 since day one. The'
+        Write-Host '         Husky was visible, opaque, framed, positioned - at zero percent.'
+        Write-Host '         The tag has its own layer; the info window never applies it.'
+        Write-Host '         The mob-size bug again. PET_SIZE_PERCENT = 100 now. One byte.'
+        Write-Host '         STOP THE SERVERS FIRST (the world binary must relink), then the'
+        Write-Host '         plain launch, no switches:'
+        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"' -ForegroundColor Cyan
+        Write-Host '         Summon the Husky:'
+        Write-Host '           IT IS THERE, life-size -> done. Then walk it over a mob drop' -ForegroundColor Yellow
+        Write-Host '                         and say whether it picks up'
+        Write-Host '           there but huge/tiny -> right unit, wrong number; say how big'
+        Write-Host '           still nothing -> paste the 0x0277 body line from world-ch0.log;'
+        Write-Host '                         bytes 46-47 must read 64 00' -ForegroundColor Red
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'
