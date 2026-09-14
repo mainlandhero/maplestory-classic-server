@@ -476,16 +476,24 @@ pub fn get_bytes(
     pin: &Fingerprint,
     path: &str,
 ) -> Result<(u16, Vec<u8>), String> {
-    let request = format!(
-        "GET {path} HTTP/1.1
-         Host: {host}:{port}
-         Accept: */*
-         Connection: close
-
-"
-    );
+    // **CRLF, written as explicit escapes.** This line was once produced by a tool that ate
+    // the `\r\n` sequences and left real newlines with leading indentation, which is not an
+    // HTTP request: the server never sees a `\r\n\r\n`, waits out its fifteen-second read
+    // timeout and drops the connection, and the launcher reports "peer closed connection
+    // without sending TLS close_notify". The symptom names TLS and the cause is a string.
+    let request = get_request(host, port, path);
     let raw = send_bytes(host, port, pin, request.as_bytes())?;
     split_response(&raw)
+}
+
+/// The GET request line and headers, split out so a test can look at the bytes.
+///
+/// It exists because the version without one shipped broken: a tool ate the `\r\n` escapes,
+/// the request went out as indented plain lines, the server never found a header terminator,
+/// and the launch failed fifteen seconds later with a message about TLS. A string this small
+/// is not worth a test until it has cost a launch, and this one has.
+fn get_request(host: &str, port: u16, path: &str) -> String {
+    format!("GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nAccept: */*\r\nConnection: close\r\n\r\n")
 }
 
 /// Split a raw HTTP/1.1 response into its status and its body, on bytes.
@@ -493,11 +501,12 @@ pub fn get_bytes(
 /// Deliberately not a general parser: our own server is the only thing on the other end, it
 /// always sends `Content-Length` and `Connection: close`, and the body is simply the rest.
 fn split_response(raw: &[u8]) -> Result<(u16, Vec<u8>), String> {
+    // Four bytes, and the needle must BE four bytes: the same mangling that broke the request
+    // above turned this into `b"\n\n"`, which a 4-byte window can never equal - it compiles,
+    // it is always false, and every answer reads as "no header block".
     let head_end = raw
         .windows(4)
-        .position(|w| w == b"
-
-")
+        .position(|w| w == b"\r\n\r\n")
         .ok_or_else(|| "the server's answer had no header block".to_string())?;
     let head = String::from_utf8_lossy(&raw[..head_end]);
     let status_line = head.lines().next().unwrap_or_default();
@@ -680,6 +689,51 @@ fn trim(s: &str) -> String {
         format!("{}...", &s[..200])
     } else {
         s.to_string()
+    }
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::*;
+
+    /// **The bytes, not the shape.** This is the test the 2026-09-14 launch failure needed:
+    /// the request had been written with real newlines instead of `\r\n`, so the server never
+    /// saw a header terminator, waited out its read timeout and dropped the connection - and
+    /// the launcher blamed TLS. Every assertion here is about a byte that was wrong.
+    #[test]
+    fn a_get_request_is_crlf_terminated_http() {
+        let req = get_request("127.0.0.1", 8480, "/client/manifest");
+        assert!(req.starts_with("GET /client/manifest HTTP/1.1\r\n"), "{req:?}");
+        assert!(req.ends_with("\r\n\r\n"), "no header terminator: {req:?}");
+        assert!(req.contains("\r\nHost: 127.0.0.1:8480\r\n"), "{req:?}");
+        assert!(req.contains("\r\nConnection: close\r\n"), "{req:?}");
+        // No bare newline anywhere: one would end a header line the server cannot parse.
+        assert!(!req.replace("\r\n", "").contains('\n'), "a bare LF: {req:?}");
+        // And no indentation, which is what a mangled multi-line literal leaves behind.
+        for line in req.split("\r\n") {
+            assert!(!line.starts_with(' '), "an indented header line: {line:?}");
+        }
+    }
+
+    /// The other half of the same bug: the splitter's needle had become two bytes, which a
+    /// four-byte window can never equal - it compiles, it is always false, and every answer
+    /// reads as "no header block".
+    #[test]
+    fn a_response_splits_into_its_status_and_its_raw_body() {
+        let raw = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 3\r\n\r\nabc";
+        let (status, body) = split_response(raw).expect("a well-formed answer");
+        assert_eq!(status, 200);
+        assert_eq!(body, b"abc");
+
+        // A body that is not UTF-8 must survive intact - this carries WZ archives.
+        let mut raw = b"HTTP/1.1 200 OK\r\n\r\n".to_vec();
+        raw.extend_from_slice(&[0xFF, 0x00, 0xFE, 0x80]);
+        let (status, body) = split_response(&raw).unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(body, vec![0xFF, 0x00, 0xFE, 0x80], "binary must not be lossy-converted");
+
+        assert_eq!(split_response(b"HTTP/1.1 503 x\r\n\r\n").unwrap().0, 503);
+        assert!(split_response(b"no header block here").is_err());
     }
 }
 

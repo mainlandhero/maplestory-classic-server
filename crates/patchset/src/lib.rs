@@ -185,6 +185,11 @@ pub fn is_volatile(rel: &str) -> bool {
     if name.ends_with(".maplecw-part") {
         return true;
     }
+    // A hash cache. It should never be in here at all - see `HASH_CACHE_NAME` - and if it is,
+    // it must not become part of the version it was built to measure.
+    if name == HASH_CACHE_NAME {
+        return true;
+    }
     // Logs, crash reports and the screenshots the client drops beside itself (Maple_A_*.jpg).
     if name.ends_with(".log") || name.ends_with(".err") {
         return true;
@@ -208,7 +213,20 @@ impl Manifest {
     /// would quietly stop shipping a patch.
     pub fn scan(root: &Path) -> std::io::Result<Manifest> {
         let mut entries = Vec::new();
-        walk(root, root, &mut entries)?;
+        walk(root, root, &mut entries, &mut None)?;
+        entries.sort();
+        Ok(Manifest { entries })
+    }
+
+    /// [`Manifest::scan`], reusing hashes for files whose size and mtime have not moved.
+    ///
+    /// The owner, 2026-09-14: *"The launcher took too long to start, make sure we're only checking
+    /// for checksums of the file."* A full scan of this client reads 773 MB; with a warm cache
+    /// this reads none of it and only stats. `cache` is updated in place for whatever did
+    /// change, and the caller saves it.
+    pub fn scan_cached(root: &Path, cache: &mut HashCache) -> std::io::Result<Manifest> {
+        let mut entries = Vec::new();
+        walk(root, root, &mut entries, &mut Some(cache))?;
         entries.sort();
         Ok(Manifest { entries })
     }
@@ -311,6 +329,117 @@ impl Manifest {
     }
 }
 
+/// **Remembered checksums, so a launch stats the client instead of re-reading it.**
+///
+/// The owner, 2026-09-14: *"The launcher took too long to start, make sure we're only checking for
+/// checksums of the file."* A full [`Manifest::scan`] of the real client reads 773 MB across
+/// 404 files. Warm that is about half a second; cold, off a spinning disk or a machine that
+/// has just booted, it is the pause they saw. With this, a launch that changed nothing reads no
+/// file contents at all.
+///
+/// # The trade, stated rather than buried
+///
+/// A file is taken from the cache when its **path, size and whole-second mtime** all match.
+/// A file edited in place, in the same second, to the same byte length, would be missed. That
+/// is the same bargain `cargo`, `make` and `rsync` strike, and it is safe here for a specific
+/// reason: everything that legitimately changes a client file - our own patcher, the WZ
+/// installer, an unzip - writes a new file and therefore a new mtime.
+///
+/// It is only ever an **optimisation of the local side**. The server's manifest is what
+/// decides which files are wrong; a stale cache entry can at worst make this launcher believe
+/// a file is current. Deleting the cache file forces a full re-hash and costs one slow launch.
+///
+/// Stored outside the client folder by the caller, so it can never become part of the
+/// manifest it is used to build.
+#[derive(Debug, Default)]
+pub struct HashCache {
+    /// path -> (size, mtime seconds, sha256)
+    entries: std::collections::HashMap<String, (u64, i64, String)>,
+    /// Set when anything changed, so a caller can skip rewriting an unchanged file.
+    dirty: bool,
+}
+
+/// The first line of a cache file. A file without it is ignored rather than misread.
+const CACHE_HEADER: &str = "# maplecw client hash cache v1";
+
+/// The name a hash cache should be given.
+///
+/// It belongs OUTSIDE the client folder - the launcher keeps it in its own output directory -
+/// but [`is_volatile`] knows this name anyway, so a copy that ends up inside one cannot become
+/// part of the version. A cache that changed the manifest it was built from would make every
+/// client permanently disagree with the server, and the first version of the test for this put
+/// it in the scanned folder and did exactly that.
+pub const HASH_CACHE_NAME: &str = "maplecw-hashes.cache";
+
+impl HashCache {
+    /// Read a cache, or an empty one. A missing, unreadable or malformed file is **not** an
+    /// error: the only cost of losing it is one slow launch, and refusing to start over a
+    /// cache would be absurd.
+    pub fn load(path: &Path) -> HashCache {
+        let mut cache = HashCache::default();
+        let Ok(text) = std::fs::read_to_string(path) else { return cache };
+        let mut lines = text.lines();
+        if lines.next().map(str::trim_end) != Some(CACHE_HEADER) {
+            return cache;
+        }
+        for line in lines {
+            let mut f = line.split('\t');
+            let (Some(sha), Some(size), Some(mtime), Some(p)) =
+                (f.next(), f.next(), f.next(), f.next())
+            else {
+                continue;
+            };
+            let (Ok(size), Ok(mtime)) = (size.parse(), mtime.parse()) else { continue };
+            if sha.len() == 64 && is_safe_relative(p) {
+                cache.entries.insert(p.to_string(), (size, mtime, sha.to_string()));
+            }
+        }
+        cache
+    }
+
+    /// Write it back, if anything changed. Failure is ignored for the reason [`Self::load`]
+    /// gives - a cache that cannot be written costs a slow launch, not a broken one.
+    pub fn save(&self, path: &Path) {
+        if !self.dirty {
+            return;
+        }
+        let mut out = String::with_capacity(64 + self.entries.len() * 96);
+        out.push_str(CACHE_HEADER);
+        out.push('\n');
+        let mut keys: Vec<&String> = self.entries.keys().collect();
+        keys.sort();
+        for k in keys {
+            let (size, mtime, sha) = &self.entries[k];
+            out.push_str(&format!("{sha}\t{size}\t{mtime}\t{k}\n"));
+        }
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(path, out);
+    }
+
+    /// The remembered hash, if this exact file is remembered.
+    pub fn get(&self, rel: &str, size: u64, mtime: i64) -> Option<&str> {
+        match self.entries.get(rel) {
+            Some((s, m, sha)) if *s == size && *m == mtime => Some(sha),
+            _ => None,
+        }
+    }
+
+    fn put(&mut self, rel: &str, size: u64, mtime: i64, sha: &str) {
+        self.entries.insert(rel.to_string(), (size, mtime, sha.to_string()));
+        self.dirty = true;
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 /// Hash one file, streaming, so a 159 MB archive does not become 159 MB of memory.
 pub fn hash_file(path: &Path) -> std::io::Result<(u64, String)> {
     use std::io::Read;
@@ -336,7 +465,12 @@ pub fn hash_bytes(bytes: &[u8]) -> String {
     hex::encode(h.finalize())
 }
 
-fn walk(root: &Path, dir: &Path, out: &mut Vec<Entry>) -> std::io::Result<()> {
+fn walk(
+    root: &Path,
+    dir: &Path,
+    out: &mut Vec<Entry>,
+    cache: &mut Option<&mut HashCache>,
+) -> std::io::Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
@@ -345,16 +479,48 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<Entry>) -> std::io::Result<()> {
             continue;
         }
         if entry.file_type()?.is_dir() {
-            walk(root, &path, out)?;
+            walk(root, &path, out, cache)?;
         } else if entry.file_type()?.is_file() {
             if !is_safe_relative(&rel) {
                 continue;
             }
-            let (size, sha256) = hash_file(&path)?;
+            let meta = entry.metadata()?;
+            let size = meta.len();
+            let mtime = mtime_of(&meta);
+            // **The whole point of the cache: stat instead of read.** Hashing this client is
+            // 773 MB, and a cold read of that in front of every Start Game is what the owner saw
+            // as "the launcher took too long to start".
+            let cached = cache
+                .as_ref()
+                .and_then(|c| c.get(&rel, size, mtime))
+                .map(|sha| sha.to_string());
+            let sha256 = match cached {
+                Some(sha) => sha,
+                None => {
+                    let (_, sha) = hash_file(&path)?;
+                    if let Some(c) = cache.as_mut() {
+                        c.put(&rel, size, mtime, &sha);
+                    }
+                    sha
+                }
+            };
             out.push(Entry { path: rel, size, sha256 });
         }
     }
     Ok(())
+}
+
+/// Last-write time as whole seconds, or 0 when the platform will not say.
+///
+/// Seconds rather than nanoseconds deliberately: a zip extraction, a robocopy and an SMB copy
+/// all round differently, and a cache that misses on every file after an install is a cache
+/// that does nothing. The cost is the standard one - see [`HashCache`].
+fn mtime_of(meta: &std::fs::Metadata) -> i64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 /// A path under `root`, as manifest-style forward slashes.
@@ -456,6 +622,62 @@ mod tests {
             !is_volatile("MapleStory.exe"),
             "the exe is the client's version; the gate patch is idempotent so it does not churn"
         );
+    }
+
+    /// **The cache must produce the same manifest as a full read, and must re-read what
+    /// changed.** The owner, 2026-09-14: *"make sure we're only checking for checksums of the
+    /// file."*
+    #[test]
+    fn a_cached_scan_agrees_with_a_full_scan_and_notices_a_changed_file() {
+        let t = Temp::new("cache");
+        t.file("MapleStory.exe", b"exe");
+        t.file("Data/Base/Base.wz", b"base");
+
+        let full = Manifest::scan(t.path()).unwrap();
+        let mut cache = HashCache::default();
+        let first = Manifest::scan_cached(t.path(), &mut cache).unwrap();
+        assert_eq!(first, full, "a cold cached scan must equal a full scan");
+        assert_eq!(cache.len(), 2, "and it remembered both files");
+
+        // Second pass: same answer, and now served from the cache.
+        let second = Manifest::scan_cached(t.path(), &mut cache).unwrap();
+        assert_eq!(second, full);
+
+        // A changed file must NOT come back stale. Its length changes here, which is half of
+        // what the cache keys on - the other half is mtime, which the write also moves.
+        t.file("Data/Base/Base.wz", b"base, but different");
+        let after = Manifest::scan_cached(t.path(), &mut cache).unwrap();
+        assert_ne!(after, full, "a changed file was served from the cache");
+        assert_eq!(after, Manifest::scan(t.path()).unwrap(), "and it re-read the right bytes");
+    }
+
+    #[test]
+    fn a_cache_survives_a_round_trip_and_a_broken_one_is_ignored() {
+        let t = Temp::new("cachefile");
+        t.file("a.wz", b"aaa");
+        let mut cache = HashCache::default();
+        let m = Manifest::scan_cached(t.path(), &mut cache).unwrap();
+        // OUTSIDE the scanned folder, which is where the launcher keeps it.
+        let path = t.path().parent().unwrap().join(format!(
+            "maplecw-cachetest-{}-{}", std::process::id(), HASH_CACHE_NAME
+        ));
+        cache.save(&path);
+        assert!(path.is_file(), "save creates its parent directory");
+
+        let reloaded = HashCache::load(&path);
+        assert_eq!(reloaded.len(), 1);
+        let mut reloaded = reloaded;
+        assert_eq!(Manifest::scan_cached(t.path(), &mut reloaded).unwrap(), m);
+
+        // Anything unreadable is an empty cache, never an error: the cost of losing it is one
+        // slow launch.
+        std::fs::write(&path, "this is not a cache").unwrap();
+        assert!(HashCache::load(&path).is_empty());
+        assert!(HashCache::load(&t.path().join("nope.cache")).is_empty());
+        let _ = std::fs::remove_file(&path);
+
+        // And the safety net: even inside a client folder it is not part of the version.
+        assert!(is_volatile(HASH_CACHE_NAME));
     }
 
     #[test]
