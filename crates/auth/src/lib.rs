@@ -186,7 +186,23 @@ impl AuthService {
                     store::LOGIN_CLAIM_TTL_SECS,
                     peer,
                 ) {
-                    Ok(staked) => (staked.launch_id, staked.client_token),
+                    Ok(staked) => {
+                        // Said out loud, because it invalidates a credential somebody may
+                        // still be holding: a claim this sign-in replaced belongs to an
+                        // earlier launch of the SAME account, whose client token stops
+                        // matching from here on. Silence would make a client that was working
+                        // a minute ago look like a server fault.
+                        if staked.superseded > 0 {
+                            eprintln!(
+                                "auth: account {account_id} signed in again - {} earlier live \
+                                 claim(s) for this account replaced. Any client still holding \
+                                 one of those launch credentials will no longer be recognised; \
+                                 no other account is affected",
+                                staked.superseded
+                            );
+                        }
+                        (staked.launch_id, staked.client_token)
+                    }
                     Err(e) => {
                         eprintln!(
                             "auth: signed in account {account_id} but could NOT stake the login \
