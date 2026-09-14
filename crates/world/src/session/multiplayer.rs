@@ -615,9 +615,9 @@ mod tests {
     /// crate and is exactly wrong for these.
     fn channel() -> (Arc<Store>, Arc<Config>, Arc<Fields>) {
         let store = Arc::new(Store::open_in_memory().unwrap());
-        // Nothing here answers a packet at all without it; `Session::handle` and
-        // `Session::tick` both return early. See `Config::set_field_probe`.
-        let config = Arc::new(Config { set_field_probe: true, ..Config::default() });
+        // `Config::answer_packets` is on by default now; with it off `Session::handle`
+        // and `Session::tick` both return early and nothing here answers at all.
+        let config = Arc::new(Config::default());
         (store, config, Arc::new(Fields::new()))
     }
 
@@ -881,7 +881,6 @@ mod tests {
         }
         let store = Arc::new(Store::open_in_memory().unwrap());
         let config = Arc::new(Config {
-            set_field_probe: true,
             firstjob: crate::firstjob::CombatTable::load(skills),
             ..Config::default()
         });
@@ -974,7 +973,7 @@ mod tests {
     #[test]
     fn party_exp_is_a_copy_per_member_at_the_configured_share() {
         let store = Arc::new(Store::open_in_memory().unwrap());
-        let config = Arc::new(Config { set_field_probe: true, ..Config::default() });
+        let config = Arc::new(Config::default());
         let fields = Arc::new(Fields::new());
         let account = store.create_account("maplecw", "correct horse battery").unwrap();
         store.set_gm("maplecw", true).unwrap(); // after the account exists, or NoSuchAccount
@@ -1453,7 +1452,6 @@ ffd7010000a401000000000000ffff06d200000043ffe50100000000000000000000ffff061e0000
         let swing_with = |companion: bool| -> Vec<(u16, Vec<u8>)> {
             let store = Arc::new(Store::open_in_memory().unwrap());
             let config = Arc::new(Config {
-                set_field_probe: true,
                 firstjob: crate::firstjob::CombatTable::load(skills),
                 ..Config::default()
             });
@@ -1950,7 +1948,6 @@ fn logging_out_leaves_the_field_and_the_later_drop_says_nothing_more() {
         // map, id, x1, y1, x2, y2 - one flat platform from x=0 to x=800 at y=400.
         let footholds = crate::footholds::Footholds::parse("7, 42, 0, 400, 800, 400\n");
         let config = Arc::new(Config {
-            set_field_probe: true,
             footholds,
             ..Config::default()
         });

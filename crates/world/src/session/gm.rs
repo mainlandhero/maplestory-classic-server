@@ -1535,7 +1535,6 @@ mod npc_reload_tests {
             object_id: 1000, template_id: 8, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0,
         }];
         let config = Arc::new(Config {
-            set_field_probe: true,
             npcs: [(40u32, npcs)].into_iter().collect(),
             npc_strings: base.into(),
             npc_dialogue_path: overlay.to_path_buf(),

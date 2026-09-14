@@ -750,7 +750,7 @@ mod tests {
         let chr = net::opcode::Character { name: "Leader".to_string(), ..Default::default() };
         let id = store.create_character(account, 0, &chr).unwrap().id;
         store.create_migration(account, id, 0, 0).unwrap();
-        let config = Arc::new(Config { set_field_probe: true, ..Config::default() });
+        let config = Arc::new(Config::default());
         let mut s = Session::joining(store, config, Arc::new(Fields::new()));
         s.claim_for_character(id);
         s

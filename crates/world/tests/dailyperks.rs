@@ -53,7 +53,6 @@ fn config() -> Config {
     Config {
         // Without this `Session::handle` returns nothing for EVERY packet, and every
         // assertion below would fail identically whatever the feature did.
-        set_field_probe: true,
         exp_curve: world::expcurve::ExpCurve::parse(CURVE),
         ..Config::default()
     }

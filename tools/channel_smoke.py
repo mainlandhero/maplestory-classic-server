@@ -9,12 +9,19 @@ itself. No client launch is spent.
 AES like the login connection. It would have failed every check for the wrong reason - a
 stale instrument reporting a real regression.
 
-    python tools/channel_smoke.py
-    python tools/channel_smoke.py --set-field-probe
+    python tools/channel_smoke.py                    # the channel plays the game
+    python tools/channel_smoke.py --silent-channel   # the channel answers nothing
 
-The second form starts the server with the SetField delivery probe on and checks the
-packet it sends back - framing, AES, opcode and the field offsets - against the Python
-decoder. That is the check worth doing BEFORE spending one of the owner's client launches on it.
+The first form checks every packet the server sends back - framing, AES, opcode and the
+field offsets - against the Python decoder. That is the check worth doing BEFORE spending
+one of the owner's client launches on it.
+
+**The two modes swapped round on 2026-09-14.** Playing the game used to be the opt-in
+(`--set-field-probe`) and silence the default, in both this script and the server; the
+server's default moved because all 61 callers were opting in, so this follows it. The old
+flag is still accepted and means nothing, because it is written into `STATUS.md` and the
+fixture notes. `--silent-channel` now drives the silent mode, and that mode is still a real
+control: it proves the channel CAN be taken out as a variable.
 """
 import os
 import socket
@@ -216,11 +223,13 @@ def parse_equipped(body, at):
 
 
 logpath = os.path.join(tmp, "world.log")
-PROBE = "--set-field-probe" in sys.argv
+# `--set-field-probe` is accepted and ignored: the channel plays the game by default now,
+# and the flag is still in every launch line ever written down.
+PROBE = "--silent-channel" not in sys.argv
 
-# With the probe on, the point is the packet, so give the server a character to answer
-# about. With it off, the point is that an unclaimed hello is refused in plain words, so
-# leave the store empty. Each mode plants exactly what it is testing.
+# Playing the game, the point is the packet, so give the server a character to answer
+# about. Silent, the point is that an unclaimed hello is refused in plain words, so leave
+# the store empty. Each mode plants exactly what it is testing.
 if PROBE:
     plant_character_and_migration(db, CHARACTER_ID)
 
@@ -231,8 +240,8 @@ logf = open(logpath, "w")
 # suite proves the BYTES, not that the client accepts them - and on that it is wrong.
 cmd = [binary("maplecw-world"), "--db", db, "--mobs",
        "--bind", "127.0.0.1:%d" % port]
-if PROBE:
-    cmd.append("--set-field-probe")
+if not PROBE:
+    cmd.append("--silent-channel")
 proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT)
 replies = []
 try:
@@ -417,7 +426,7 @@ SET_FIELD = 0x01A0
 HEAD = 33
 if PROBE:
     print()
-    print("set-field probe checks:")
+    print("the channel answers - packet checks:")
     NPC_ENTER_FIELD = 0x044F
     set_fields = [r for r in replies if r["opcode"] == SET_FIELD]
     npcs = [r for r in replies if r["opcode"] == NPC_ENTER_FIELD]
@@ -579,7 +588,7 @@ if PROBE:
         # And the connection survived the read timeouts that made room for them.
         check("the connection survived the tick timeouts", True)
 
-    check("the probe answered every request", len(replies) >= 8 + 30 + 2,
+    check("the channel answered every request", len(replies) >= 8 + 30 + 2,
           "%d replies: %s" % (len(replies), sorted(set(hex(r["opcode"]) for r in replies))))
 
     # ---- the NPC the client clicked
@@ -871,7 +880,7 @@ if PROBE:
         check("the move was persisted, so a relog puts the character on the new map",
               stored == PORTAL_TARGET, "stored map_id = %s" % stored)
 elif replies:
-    check("the probe is off, so nothing should come back", False,
+    check("--silent-channel, so nothing should come back", False,
           "%d unexpected replies" % len(replies))
 
 print()
@@ -880,9 +889,9 @@ if replies:
     for pkt in replies:
         print("   opcode %#06x  %s" % (pkt["opcode"], pkt["body"][2:].hex(" ")))
 else:
-    print("the server sent nothing back - expected today: this stage is still UNDECODED,")
-    print("and crates/world answers nothing on purpose. When a reply is added, it is")
-    print("decoded above and this is where it gets checked.")
+    print("the server sent nothing back, which is what --silent-channel asks for. Drop the")
+    print("flag and every reply above is decoded and checked. Until 2026-09-14 this was the")
+    print("DEFAULT, and reaching it by forgetting a flag cost one of the owner's client launches.")
 
 print()
 print("FAILED: " + ", ".join(fails) if fails else "all checks passed")

@@ -520,12 +520,12 @@ pub fn serve(config: Config) -> std::io::Result<()> {
     config.advertise.spawn_refresher(|line| log(&line));
     log("NOT AUTHENTICATED: a migration seed is a u32, so it identifies a pending");
     log("  migration rather than proving who is on the far end. It is single-use.");
-    if config.set_field_probe {
-        log("SET-FIELD PROBE IS ON - which by now means 'the channel answers at all'. The");
-        log("  flag is a misnomer kept for the launch line: without it Session::handle");
-        log("  returns nothing for every packet, so the migration hello goes unanswered and");
-        log("  the client freezes on 'Connecting...'.");
-        log("  With it on, this channel answers: the migration hello with a SetField");
+    if config.answer_packets {
+        log("THIS CHANNEL ANSWERS PACKETS - the default since 2026-09-14. It used to need");
+        log("  --set-field-probe, a flag every caller passed and whose absence cost a launch;");
+        log("  --silent-channel is the way to turn answering off now, and it is only for");
+        log("  eliminating the channel as a variable.");
+        log("  This channel answers: the migration hello with a SetField");
         log("  carrying the character's real record (presence[0] the stat block, presence[2]");
         log("  the equipped list), 0x00DC with that field's NPCs and mobs, 0x00D1 with the");
         log("  portal's destination, 0x00E7 with the !map GM command, and 0x0151 with a");
@@ -535,11 +535,11 @@ pub fn serve(config: Config) -> std::io::Result<()> {
         log("  NOT yet seen on screen: the shop counter, the quest journal, the channel");
         log("  switch. Dropping an item is refused on purpose - there is nowhere to put it.");
     } else {
-        log("Packets are logged and NOT ANSWERED. The stage is no longer undecoded:");
+        log("--silent-channel: packets are logged and NOT ANSWERED. The stage is decoded:");
         log("  SetField is inbound 0x01A0, confirmed on a live client, and its 33-byte");
         log("  head is in research/msexe-stage-setfield.md. What is missing is the");
         log("  character record it must carry - see research/charrecord-decode.md.");
-        log("  Pass --set-field-probe to send the head alone as a delivery probe.");
+        log("  --silent-channel was passed, so nothing here will answer. Drop it to play.");
     }
 
     // **One set of fields per channel process**, shared by every connection on it. Mobs

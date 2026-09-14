@@ -644,7 +644,7 @@ impl Session {
     /// backlog the client would show as a flicker.
     pub fn tick(&mut self, now_ms: u64) -> Vec<Reply> {
         self.clock_ms = now_ms;
-        if !self.config.set_field_probe {
+        if !self.config.answer_packets {
             return Vec::new();
         }
         // **First**, because this is the path that carries another player's movement
@@ -759,8 +759,8 @@ impl Session {
 
     /// Handle one packet body, opcode included.
     ///
-    /// **Answers nothing at all unless [`Config::set_field_probe`] is on**, which is why
-    /// `tools/test-server.ps1` must be given `-SetFieldProbe`. Without it the migration
+    /// **Answers nothing at all when [`Config::answer_packets`] is off** - which now takes
+    /// `--silent-channel`, asked for by name. Without answers the migration
     /// hello goes unanswered and the client freezes on "Connecting..." - the exact failure
     /// the "always answer" rule exists to prevent, sitting in the default configuration.
     ///
@@ -793,7 +793,7 @@ impl Session {
             Some(b) => u16::from_le_bytes([b[0], b[1]]),
             None => return Vec::new(),
         };
-        if !self.config.set_field_probe {
+        if !self.config.answer_packets {
             return Vec::new();
         }
         match opcode {

@@ -271,12 +271,12 @@ if (Test-Path $pinFile) {
 for ($ch = 0; $ch -lt $Channels; $ch++) {
     # Every channel named the same way, channel 0 included - see test-server.ps1.
     $chLog = "world-ch$ch.log"
-    # `--set-field-probe` is NOT optional and is always passed here. Its name is a fossil:
-    # it now means "the channel answers at all". Without it `Session::handle` returns
-    # nothing for every packet, the migration hello goes unanswered, and the client sits on
-    # "Connecting..." looking exactly like a server that is not running. That cost a manual
-    # launch on 2026-08-20; an installed machine must not be able to reproduce it, so there
-    # is deliberately no switch to turn it off.
+    # `--set-field-probe` does nothing from 2026-09-14 - the channel answers by default,
+    # and this script passing it unconditionally is half of why that default changed. It is
+    # still sent so that a NEW script beside an OLD maplecw-world.exe keeps working; the new
+    # binary accepts and ignores it. An installed machine has no way to turn answering off,
+    # which stays deliberate: a silent channel reads on screen as a dead server, and that
+    # cost a manual launch on 2026-08-20.
     $worldArgs = @(
         '--bind', "$($Bind):$($ChannelPort + $ch)",
         '--db', "$db",

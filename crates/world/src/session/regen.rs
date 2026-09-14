@@ -372,7 +372,7 @@ mod tests {
         let chr = net::opcode::Character { name: "Regen".to_string(), ..Default::default() };
         let id = store.create_character(account, 0, &chr).unwrap().id;
         store.create_migration(account, id, 0, 0).unwrap();
-        let config = Config { set_field_probe: true, ..Config::default() };
+        let config = Config::default();
         let mut s = Session::new(store.clone(), Arc::new(config));
         assert!(s.claim_for_character(id).contains("claimed the migration"));
         let mut chr = s.claimed_character().unwrap();
@@ -669,7 +669,7 @@ mod tests {
         };
         let id = store.create_character(account, 0, &chr).unwrap().id;
         store.create_migration(account, id, 0, 0).unwrap();
-        let mut config = Config { set_field_probe: true, ..Config::default() };
+        let mut config = Config::default();
         config.equips.insert(1_002_003, crate::config::EquipTemplate { inc_mhp: 5, ..Default::default() });
         let mut s = Session::new(store.clone(), Arc::new(config));
         assert!(s.claim_for_character(id).contains("claimed the migration"));
@@ -905,7 +905,6 @@ mod tests {
         let id = store.create_character(account, 0, &chr).unwrap().id;
         store.create_migration(account, id, 0, 0).unwrap();
         let config = Config {
-            set_field_probe: true,
             firstjob: crate::firstjob::CombatTable::load(table),
             ..Config::default()
         };
@@ -949,7 +948,7 @@ mod chair_tests {
         let mut chairs = HashMap::new();
         chairs.insert(3_010_005, Chair { recovery_hp: 30, recovery_mp: 0, req_level: 5 });
         chairs.insert(3_010_008, Chair { recovery_hp: 0, recovery_mp: 10, req_level: 0 });
-        let config = Config { set_field_probe: true, chairs, ..Config::default() };
+        let config = Config { chairs, ..Config::default() };
 
         let mut s = Session::new(store.clone(), Arc::new(config));
         assert!(s.claim_for_character(id).contains("claimed the migration"));

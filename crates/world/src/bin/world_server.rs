@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! maplecw-world [--bind ADDR] [--db PATH] [--world-id N] [--channel N]
-//!               [--set-field-probe]
+//!               [--silent-channel]
 //! ```
 //!
 //! One process per channel. The login server hands the client an address and the client
@@ -37,15 +37,17 @@ maplecw-world - one channel of the MapleCW game world
                    so a bigger number looks the same as a fixed viewport
   --no-mobs        do NOT send monsters. On by default since 2026-08-19; this is for
                    eliminating mobs as a variable, not for ordinary use
-  --set-field-probe   NOT OPTIONAL, and NOT a probe any more. OFF by default, and
-                      with it off Session::handle and Session::tick return nothing
-                      for EVERY packet - the migration hello included - so the
-                      client sits on Connecting... forever. The name dates from
-                      2026-08-20, when this really did answer the hello with a
-                      truncated SetField to see whether the client accepted it; it
-                      now gates the whole channel. Renaming it would break the
-                      launch line in STATUS.md and in every fixture note.
-                      tools/test-server.ps1 -SetFieldProbe passes it.
+  --set-field-probe   ACCEPTED AND IGNORED since 2026-09-14 - the channel answers by
+                      default now. It is left in the parser because the flag is
+                      typed into STATUS.md, the fixture notes and the launch lines,
+                      and an unknown argument fails the whole paste.
+  --silent-channel  answer NOTHING: Session::handle and Session::tick return empty
+                      for every packet, the migration hello included, so a client
+                      sits on Connecting... forever. This was the DEFAULT until
+                      2026-09-14, when it turned out all 61 callers passed
+                      --set-field-probe to escape it and the only thing the default
+                      had ever done was cost a manual launch. Pass this to
+                      eliminate the channel as a variable, and for nothing else.
   --footholds PATH  map floor geometry, from tools/dump_portals.py
   --consumables PATH  what potions restore, from tools/dump_itemdata.py
   --skills PATH    what each job may learn and how far, from
@@ -144,8 +146,13 @@ fn main() -> ExitCode {
                 }
                 other => Err(format!("--migration-peer-policy {other:?}: expected require or record")),
             }),
-            "--set-field-probe" => {
-                config.set_field_probe = true;
+            // Accepted and ignored. It was how the channel was switched ON until
+            // 2026-09-14, and it is still typed into `STATUS.md`, every fixture note and
+            // The owner's launch lines - so it keeps working rather than failing an elevated
+            // paste with "unknown argument".
+            "--set-field-probe" => Ok(()),
+            "--silent-channel" => {
+                config.answer_packets = false;
                 Ok(())
             }
             "--portals" => value().map(|v| portals_path = PathBuf::from(v)),

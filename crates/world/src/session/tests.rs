@@ -301,14 +301,47 @@ fn gm_session() -> (Session, Arc<Store>, u32) {
     let mut item_names = std::collections::HashMap::new();
     item_names.insert(1302000u32, "Sword".to_string());
     item_names.insert(2000000u32, "Red Potion".to_string());
-    // `set_field_probe` is the master switch: with it clear, `Session::handle` returns
-    // nothing for EVERY packet. It is off in `Config::default()` and it is the same trap
-    // that cost a client launch on 2026-08-20 - a bare launcher line without
-    // `-SetFieldProbe` left the character on the select screen.
-    let config = Config { item_names, set_field_probe: true, ..Config::default() };
+    // `Config::answer_packets` is the master switch: with it clear, `Session::handle`
+    // returns nothing for EVERY packet. It was OFF in `Config::default()` until 2026-09-14,
+    // which is the trap that cost a client launch on 2026-08-20 - a bare launcher line
+    // without `-SetFieldProbe` left the character on the select screen. It is on now, so
+    // no test has to remember it, and the sixty `set_field_probe: true` lines are gone.
+    let config = Config { item_names, ..Config::default() };
     let mut s = Session::new(store.clone(), Arc::new(config));
     assert!(s.claim_for_character(id).contains("claimed the migration"));
     (s, store, id)
+}
+
+/// **The channel answers on a bare `Config::default()`, and only `answer_packets: false`
+/// silences it.** This is the guard on the 2026-09-14 default flip.
+///
+/// It is deliberately not a test of the CLI. The trap was never in the argument parser - it
+/// was that the off state was reachable by *forgetting* something, and a test that pins the
+/// parser would still pass if someone set the field back to `false` in `Config::default()`.
+/// So this asserts the behaviour: a default session replies, and the one caller who asks for
+/// silence by name gets it.
+///
+/// Sixty-one call sites passed `set_field_probe: true` and not one wanted the default. The
+/// only thing it ever produced was a launch spent on a client stuck at "Connecting..."
+/// (2026-08-20), read as a server bug for the whole run.
+#[test]
+fn default_config_answers_packets_and_silent_channel_does_not() {
+    let (mut s, _store, _id) = gm_session();
+    let spoken = s.handle(&gm_chat("!help"));
+    assert!(
+        !spoken.is_empty(),
+        "a session built from Config::default() must answer - answer_packets is the default \
+         since 2026-09-14, and a channel that answers nothing looks exactly like a server \
+         that is not running"
+    );
+
+    let (mut quiet, _store, _id) = gm_session();
+    quiet.config = Arc::new(Config { answer_packets: false, ..(*quiet.config).clone() });
+    assert!(
+        quiet.handle(&gm_chat("!help")).is_empty(),
+        "--silent-channel still has to silence the channel; it is the control that \
+         eliminates the channel as a variable"
+    );
 }
 
 /// The `0x00E7` body the client sends when a line is typed: u32 tick, the text, u8 tab.
@@ -695,7 +728,6 @@ fn two_channel_session() -> (Session, Arc<Store>, u32) {
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     store.create_migration(account_id, id, 0, 0).unwrap();
     let config = Config {
-        set_field_probe: true,
         channel_id: 0,
         channels: vec!["127.0.0.1:8485".parse().unwrap(), "127.0.0.1:8486".parse().unwrap()],
         ..Config::default()
@@ -909,7 +941,6 @@ fn shop_session_with(
     shop_by_template.insert(21u32, 0usize);
 
     let config = Config {
-        set_field_probe: true,
         // `send_shop` is gone: it existed because `0x0560` killed the client, and the real
         // cause was that this client has TWO shop windows and that was the one whose art it
         // does not ship. The classic `0x055D` counter goes out by default now.
@@ -1647,7 +1678,6 @@ fn first_job_with(
     }
     store.create_migration(account_id, made.id, 0, 0).unwrap();
     let config = Config {
-        set_field_probe: true,
         firstjob: crate::firstjob::CombatTable::load(table),
         ..Config::default()
     };
@@ -1895,7 +1925,6 @@ fn a_skill_point_is_charged_and_only_a_forget_gives_it_back() {
     store.save_character_progress(&made).unwrap();
     store.create_migration(account_id, made.id, 0, 0).unwrap();
     let config = Config {
-        set_field_probe: true,
         skills: crate::skilltable::SkillTable::load(path),
         ..Config::default()
     };
@@ -1961,7 +1990,6 @@ fn learn_grants_levels_without_charging_the_pool() {
     store.save_character_progress(&made).unwrap();
     store.create_migration(account_id, made.id, 0, 0).unwrap();
     let config = Config {
-        set_field_probe: true,
         skills: crate::skilltable::SkillTable::load(path),
         ..Config::default()
     };
@@ -2008,7 +2036,7 @@ fn clicking_an_instructor_advances_the_job() {
         made.job = 0;
         store.save_character_progress(&made).unwrap();
         store.create_migration(account_id, made.id, 0, 0).unwrap();
-        let config = Config { set_field_probe: true, npcs, ..Config::default() };
+        let config = Config { npcs, ..Config::default() };
         let mut s = Session::new(store.clone(), Arc::new(config));
         s.claim_for_character(made.id);
         (s, store, made.id)
@@ -2108,7 +2136,6 @@ fn iron_body_reduces_the_damage_taken() {
         store.set_skill_level(made.id, IRON_BODY, 20).unwrap();
         store.create_migration(account_id, made.id, 0, 0).unwrap();
         let config = Config {
-            set_field_probe: true,
             mob_attack: mob_attack.clone(),
             ..Config::default()
         };
@@ -2177,7 +2204,6 @@ fn an_attack_skill_costs_mp_and_a_potion_does_not_undo_it() {
     store.set_skill_level(made.id, POWER_STRIKE, 5).unwrap();
     store.create_migration(account_id, made.id, 0, 0).unwrap();
     let config = Config {
-        set_field_probe: true,
         firstjob: crate::firstjob::CombatTable::load(skills),
         ..Config::default()
     };
@@ -3613,7 +3639,6 @@ fn a_bad_map_says_why_and_log_out_is_answered() {
         return; // generated data, gitignored
     }
     let config = Config {
-        set_field_probe: true,
         fields: Config::load_fields(path),
         ..Config::default()
     };
@@ -3727,7 +3752,6 @@ fn npcs_chatter_in_order_on_the_clients_own_cadence() {
     strings.insert(9u32, crate::config::NpcStrings::default());
 
     let config = Config {
-        set_field_probe: true,
         npcs: [(40u32, npcs)].into_iter().collect(),
         npc_strings: strings.into(),
         ..Config::default()
@@ -3810,7 +3834,6 @@ fn entering_a_field_late_does_not_make_everyone_speak_at_once() {
         },
     );
     let config = Config {
-        set_field_probe: true,
         npcs: [(40u32, npcs)].into_iter().collect(),
         npc_strings: strings.into(),
         ..Config::default()
@@ -3899,7 +3922,7 @@ fn the_record_sizes_the_bag_and_the_override_reaches_it() {
             .collect()
     };
 
-    let plain = record_of(Config { set_field_probe: true, ..Config::default() });
+    let plain = record_of(Config::default());
     assert_eq!(
         read(&plain),
         net::opcode::default_inventory_slots().to_vec(),
@@ -3908,7 +3931,6 @@ fn the_record_sizes_the_bag_and_the_override_reaches_it() {
     assert_eq!(plain[net::opcode::PRESENCE_INVENTORY_SIZE], 1);
 
     let forced = record_of(Config {
-        set_field_probe: true,
         inventory_slots: Some(32),
         ..Config::default()
     });
@@ -3939,7 +3961,6 @@ fn a_late_tick_does_not_burst() {
         },
     );
     let config = Config {
-        set_field_probe: true,
         npcs: [(40u32, npcs)].into_iter().collect(),
         npc_strings: strings.into(),
         ..Config::default()
@@ -6148,7 +6169,6 @@ fn cash_shop_session() -> (Session, Arc<Store>, u32) {
     item_names.insert(5070000u32, "Megaphone".to_string());
     let config = Config {
         item_names,
-        set_field_probe: true,
         commodity: crate::commodity::CommodityTable::load(&path),
         ..Config::default()
     };
@@ -6380,7 +6400,6 @@ fn a_magician_may_raise_magic_claw_and_a_beginner_may_not() {
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     store.create_migration(account_id, id, 0, 0).unwrap();
     let config = Config {
-        set_field_probe: true,
         skills: crate::skilltable::SkillTable::load(path),
         ..Config::default()
     };
@@ -6508,7 +6527,6 @@ fn spending_a_point_on_an_attack_skill_warns_when_the_stat_is_missing() {
         store.save_character_progress(&made).unwrap();
         store.create_migration(account_id, made.id, 0, 0).unwrap();
         let config = Config {
-            set_field_probe: true,
             skills: crate::skilltable::SkillTable::load(path),
             ..Config::default()
         };
@@ -6861,7 +6879,7 @@ fn buffed_session(job: u16, skill_id: u32, level: u32) -> (Session, Arc<Store>, 
     store.save_character_progress(&made).unwrap();
     store.set_skill_level(made.id, skill_id, level).unwrap();
     store.create_migration(account_id, made.id, 0, 0).unwrap();
-    let config = Config { set_field_probe: true, ..Config::default() };
+    let config = Config::default();
     let mut s = Session::new(store.clone(), Arc::new(config));
     s.claim_for_character(made.id);
     (s, store, made.id)
@@ -6993,7 +7011,6 @@ fn the_cash_shop_silences_idle_chatter_and_the_field_gets_it_back() {
         },
     );
     let config = Config {
-        set_field_probe: true,
         npcs: [(40u32, npcs)].into_iter().collect(),
         npc_strings: strings.into(),
         ..Config::default()
@@ -7089,7 +7106,6 @@ fn learn_grants_a_whole_job_book_at_once() {
     store.save_character_progress(&made).unwrap();
     store.create_migration(account_id, made.id, 0, 0).unwrap();
     let config = Config {
-        set_field_probe: true,
         skills: crate::skilltable::SkillTable::load(path),
         ..Config::default()
     };
@@ -7156,7 +7172,6 @@ fn learn_clamps_each_skill_to_its_own_maximum() {
     store.save_character_progress(&made).unwrap();
     store.create_migration(account_id, made.id, 0, 0).unwrap();
     let config = Config {
-        set_field_probe: true,
         skills: crate::skilltable::SkillTable::load(path),
         ..Config::default()
     };
@@ -7203,7 +7218,6 @@ fn learn_refuses_a_skill_from_another_branch() {
     store.save_character_progress(&made).unwrap();
     store.create_migration(account_id, made.id, 0, 0).unwrap();
     let config = Config {
-        set_field_probe: true,
         skills: crate::skilltable::SkillTable::load(path),
         ..Config::default()
     };
@@ -7400,7 +7414,7 @@ fn the_second_advancement_walks_the_client_s_own_chain() {
     store.save_character_progress(&made).unwrap();
     store.set_character_map(made.id, b.examiner_map_id).unwrap();
     store.create_migration(account_id, made.id, 0, 0).unwrap();
-    let config = Config { set_field_probe: true, npcs, ..Config::default() };
+    let config = Config { npcs, ..Config::default() };
     let mut s = Session::new(store.clone(), Arc::new(config));
     s.claim_for_character(made.id);
 
@@ -7510,7 +7524,7 @@ fn a_level_thirty_character_cannot_skip_the_test() {
     made.job = b.from_job;
     store.save_character_progress(&made).unwrap();
     store.create_migration(account_id, made.id, 0, 0).unwrap();
-    let config = Config { set_field_probe: true, npcs, ..Config::default() };
+    let config = Config { npcs, ..Config::default() };
     let mut s = Session::new(store.clone(), Arc::new(config));
     s.claim_for_character(made.id);
 
@@ -7608,7 +7622,7 @@ fn clicking_a_third_job_instructor_advances_at_seventy() {
         made.job = job;
         store.save_character_progress(&made).unwrap();
         store.create_migration(account_id, made.id, 0, 0).unwrap();
-        let config = Config { set_field_probe: true, npcs, ..Config::default() };
+        let config = Config { npcs, ..Config::default() };
         let mut s = Session::new(store.clone(), Arc::new(config));
         s.claim_for_character(made.id);
         (s, store, made.id)
@@ -7689,7 +7703,7 @@ fn clicking_a_third_job_instructor_advances_at_seventy() {
             made.job = t.from_job;
             store.save_character_progress(&made).unwrap();
             store.create_migration(account_id, made.id, 0, 0).unwrap();
-            let config = Config { set_field_probe: true, npcs, ..Config::default() };
+            let config = Config { npcs, ..Config::default() };
             let mut s = Session::new(store.clone(), Arc::new(config));
             s.claim_for_character(made.id);
             s.handle(&npc_click(1000));
@@ -7830,7 +7844,7 @@ fn shared_channel(
             .collect::<Vec<_>>(),
     );
     let config =
-        Arc::new(Config { set_field_probe: true, send_mobs: true, mobs, ..Config::default() });
+        Arc::new(Config { send_mobs: true, mobs, ..Config::default() });
     let fields = Arc::new(crate::fields::Fields::new());
     fields.seed(SHARED_MAP, &config, 0);
     fields.due_respawns(SHARED_MAP, &config, 999_999);
@@ -8042,7 +8056,6 @@ fn channel_with_mob_2002(hp: u64) -> (Arc<Store>, Arc<Config>, Arc<crate::fields
     let mut mobs = std::collections::HashMap::new();
     mobs.insert(SHARED_MAP, vec![net::mob::FieldMob::new(2002, 2, 400, 395, 1, hp)]);
     let config = Arc::new(Config {
-        set_field_probe: true,
         send_mobs: true,
         mobs,
         drops: crate::droptables::DropTables::parse("2 | 4000001 | 100 | 1 | 1 | 9 | Shell\n"),
@@ -8683,7 +8696,7 @@ fn a_channel_refuses_a_migration_claimed_from_a_different_address_and_accepts_th
     let chr = net::opcode::Character { name: "Roamer".to_string(), ..Default::default() };
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     store.create_migration_bound_hash(account_id, id, 0, 0, None, Some("192.168.1.5")).unwrap();
-    let config = Arc::new(Config { set_field_probe: true, ..Config::default() });
+    let config = Arc::new(Config::default());
 
     let mut stranger = Session::new(store.clone(), config.clone())
         .with_peer_addr("192.168.1.9:50000".parse().unwrap());
@@ -8725,10 +8738,9 @@ fn the_quest_exp_rate_multiplies_a_turn_in_and_the_kill_rate_does_not() {
         (gained, exp.what.clone())
     };
     let fresh = || {
-        // `set_field_probe`, or `handle` answers nothing and the `!setrates` below is dropped
+        // `answer_packets` (the default), or `handle` answers nothing and `!setrates` is lost
         // on the floor - which reads exactly like the rate not applying.
         let config = Config {
-            set_field_probe: true,
             quests: crate::config::load_quests(path),
             ..Config::default()
         };
@@ -8802,7 +8814,6 @@ fn adv_session_with(
     }
     store.create_migration(account_id, made.id, 0, 0).unwrap();
     let mut config = Config {
-        set_field_probe: true,
         firstjob: crate::firstjob::CombatTable::load(table),
         ..Config::default()
     };
@@ -9089,7 +9100,6 @@ fn adv_channel(hp: u64, mob_max_mp: u32) -> Option<(Arc<Store>, Arc<Config>, Arc
         crate::config::MobTemplate { max_hp: 30, max_mp: mob_max_mp, ..Default::default() },
     );
     let config = Arc::new(Config {
-        set_field_probe: true,
         send_mobs: true,
         mobs,
         mob_templates,
@@ -9516,7 +9526,6 @@ fn entering_a_map_with_a_clock_node_sends_the_local_time() {
     store.create_migration(account_id, id, 0, 0).unwrap();
     let config = Config {
         clocks: [40u32].into_iter().collect(),
-        set_field_probe: true,
         ..Config::default()
     };
     let mut s = Session::new(store.clone(), Arc::new(config));
@@ -9575,7 +9584,7 @@ fn session_in_ellinia_with_the_station_door() -> (Session, u32) {
     portals.insert((10_002_000u32, "in03".to_string()), (10_002_090u32, "out00".to_string()));
     let mut portal_index = std::collections::HashMap::new();
     portal_index.insert((10_002_090u32, "out00".to_string()), 2u8);
-    let config = Config { portals, portal_index, set_field_probe: true, ..Config::default() };
+    let config = Config { portals, portal_index, ..Config::default() };
     let mut s = Session::new(store, Arc::new(config));
     assert!(s.claim_for_character(id).contains("claimed the migration"));
     (s, id)
@@ -9932,7 +9941,7 @@ fn hair_and_face_commands_persist_and_re_enter_the_map() {
     names.insert(42540u32, "Frieren Hair".to_string());
     names.insert(22035u32, "Frieren Face".to_string());
     names.insert(1302000u32, "Sword".to_string());
-    let config = Config { item_names: names, set_field_probe: true, ..Config::default() };
+    let config = Config { item_names: names, ..Config::default() };
     let mut s = Session::new(store.clone(), Arc::new(config));
     assert!(s.claim_for_character(id).contains("claimed the migration"));
     let before = store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
@@ -10310,7 +10319,7 @@ fn a_beauty_coupon_confirm_changes_the_hair_and_spends_the_coupon() {
 /// A dispatcher-enabled session; the reports need no claimed character.
 fn report_session() -> Session {
     let (_, store, _, _) = session();
-    Session::new(store, Arc::new(Config { set_field_probe: true, ..Config::default() }))
+    Session::new(store, Arc::new(Config::default()))
 }
 
 /// **Every report is answered with nothing, and nothing panics on the bodies the archive
@@ -10665,7 +10674,6 @@ fn three_snails_throws_a_red_snail_shell_and_is_refused_in_red_without_one() {
     store.set_skill_level(made.id, THREE_SNAILS, 3).unwrap();
     store.create_migration(account_id, made.id, 0, 0).unwrap();
     let mut config = Config {
-        set_field_probe: true,
         firstjob: crate::firstjob::CombatTable::load(skills),
         ..Config::default()
     };
@@ -10772,7 +10780,7 @@ fn a_double_click_on_the_husky_summons_it_and_a_second_puts_it_away() {
     assert_eq!(placed[0].slot, 1);
     let mut item_names = std::collections::HashMap::new();
     item_names.insert(5_000_006u32, "Husky".to_string());
-    let config = Config { item_names, set_field_probe: true, ..Config::default() };
+    let config = Config { item_names, ..Config::default() };
     let mut s = Session::new(store.clone(), Arc::new(config));
     s.claim_for_character(id);
     s.last_position = Some((300, -50));
@@ -10988,7 +10996,7 @@ fn a_wooden_box_stands_on_entry_breaks_on_the_fourth_hit_drops_and_comes_back() 
          1 | 2010001 | 100 | 1 | 1 | 2 | Apple
 ",
     );
-    s.config = Arc::new(Config { reactors, reactor_drops, set_field_probe: true, ..(*s.config).clone() });
+    s.config = Arc::new(Config { reactors, reactor_drops, ..(*s.config).clone() });
     let cfg = s.config.clone();
     s.fields.seed(map, &cfg, 0);
 
@@ -11075,7 +11083,7 @@ fn lucas_reply_gives_one_headband_from_the_pool_and_takes_the_letter() {
 
     // Through the turn-in itself: the letter in the bag, the quest started, then completed.
     let (mut s, store, id) = claimed_session();
-    s.config = Arc::new(Config { quests, set_field_probe: true, ..(*s.config).clone() });
+    s.config = Arc::new(Config { quests, ..(*s.config).clone() });
     store.add_item(id, store::InventoryType::Etc, &store::Item::bundle(4031002, 1), 1).unwrap();
     store.start_quest(id, 1008).unwrap();
     let out = s.record_quest_complete(1008, 1008);
@@ -11132,7 +11140,6 @@ fn a_pet_is_bought_as_a_type_3_item_that_never_dies() {
     item_names.insert(5000000u32, "Brown Kitty".to_string());
     let config = Config {
         item_names,
-        set_field_probe: true,
         commodity: crate::commodity::CommodityTable::load(&path),
         ..Config::default()
     };
@@ -11179,7 +11186,7 @@ fn no_quest_answers_its_accept_or_turn_in_with_its_own_opening_lines() {
         return; // generated data, gitignored
     }
     let quests = crate::config::load_quests(path);
-    let config = Arc::new(Config { quests: quests.clone(), set_field_probe: true, ..Config::default() });
+    let config = Arc::new(Config { quests: quests.clone(), ..Config::default() });
     let request = |action: u8, quest: u32, npc: u32| -> Vec<u8> {
         let mut b = vec![action];
         b.extend_from_slice(&quest.to_le_bytes());
