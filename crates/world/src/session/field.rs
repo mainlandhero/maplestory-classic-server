@@ -422,17 +422,21 @@ impl Session {
         // fallback position for a drop (`session::combat`), and the item-drop request
         // (`session::ground`).
         //
-        // `None` is the honest answer and each reader already handles it - the spawn falls
-        // back to the map origin and self-heals on the first step, and the two drop paths
-        // refuse with a sentence rather than guessing. **An off-map coordinate is worse than
-        // no coordinate**: the origin is at least inside the field, while Perion's x could
-        // be past the end of Henesys, and a drop placed out of the client's own pick-up box
-        // is drawn and can never be collected - which `research/user-move.md` opens by
-        // saying is indistinguishable on screen from nothing happening.
-        self.last_position = None;
-        // The stance goes with it. A pose from the map we just left is no more use than a
-        // position from it, and `remote_at` falls back to standing rather than to `0`.
-        self.last_move_action = None;
+        // `None` was the honest answer for a while, and each reader handled it - the spawn
+        // fell back to the map origin and self-healed on the first step. The owner, 2026-09-14:
+        // *"The first client also sees the client joining start from the origin of the map
+        // and then snap to their real position."* The self-heal IS the snap.
+        //
+        // The arrival portal is a fact this server already holds - it just put it in the
+        // SetField - so the announcement stands there instead, in the landing pose, on the
+        // foothold under it. That is where the client is about to put them; the first step
+        // then corrects nothing visible. **An off-map coordinate is still worse than no
+        // coordinate**, so a `portals.txt` without positions falls back to `None` and the
+        // origin, exactly as before, and the startup banner says so.
+        self.last_position = self.config.portal_positions.get(&(map, portal)).copied();
+        // The stance goes with it: landing, not the pose from the map we just left.
+        // `remote_at` falls back to standing when this is `None`.
+        self.last_move_action = self.last_position.map(|_| net::userpool::MOVE_ACTION_LANDING);
         // **And everyone on the map we are leaving is told, by us, now.**
         //
         // Until this, a server-initiated warp published a farewell only as a side effect of

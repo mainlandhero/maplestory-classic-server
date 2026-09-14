@@ -344,6 +344,7 @@ impl Session {
                 body: net::userpool::user_leave_field(chr.id),
                 what: format!("UserLeaveField: character {} is gone", chr.id),
             },
+            companions: self.pet_companions(chr),
         }
     }
 
@@ -638,6 +639,7 @@ mod tests {
                 body: Vec::new(),
                 what: format!("farewell {character}"),
             },
+            companions: Vec::new(),
         }
     }
 
@@ -2088,8 +2090,43 @@ fn logging_out_leaves_the_field_and_the_later_drop_says_nothing_more() {
         s.go_to_map(&mut moved, 104_040_000, 0, "a portal walk".to_string());
         assert_eq!(
             s.last_position, None,
-            "the new map must not inherit the old map's coordinates"
+            "the new map must not inherit the old map's coordinates - and this config has no              portal positions, so there is nothing better than None to offer"
         );
+    }
+
+    /// **An arrival stands at the portal, in the landing pose, from the first frame.** The owner,
+    /// 2026-09-14: *"The first client also sees the client joining start from the origin of the
+    /// map and then snap to their real position."* With the portal's position known, the
+    /// `0x0224` the field is told carries it - and the foothold under it, and action 4 - so
+    /// the newcomer's first step is a walk, not a snap. The previous test is the fallback when
+    /// `portals.txt` has no positions; this is the case when it does.
+    #[test]
+    fn an_arrival_is_announced_at_the_portal_in_the_landing_pose_not_at_the_origin() {
+        let (store, config, fields) = channel();
+        let mut positions = std::collections::HashMap::new();
+        positions.insert((104_040_000u32, 3u8), (-1200i16, 190i16));
+        let config = Arc::new(Config { portal_positions: positions, ..(*config).clone() });
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Walker".to_string(), map_id: 1, ..Default::default() };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        store.create_migration(account, id, 0, 0).unwrap();
+        let mut s = Session::joining(store.clone(), config, fields);
+        s.claim_for_character(id);
+        s.handle(&move_packet(&hex(REAL_MOVE)));
+        assert!(s.last_position.is_some(), "the control: a position from the old map");
+
+        let mut moved = s.claimed_character().expect("a claimed character");
+        s.go_to_map(&mut moved, 104_040_000, 3, "a portal walk".to_string());
+        assert_eq!(s.last_position, Some((-1200, 190)), "the arrival portal, not the old map, not the origin");
+        let at = s.remote_at();
+        assert_eq!((at.x, at.y), (-1200, 190));
+        assert_eq!(at.move_action, net::userpool::MOVE_ACTION_LANDING, "action 4, the jump, facing right");
+
+        // An unknown portal index on a known map is still the honest None, not a guess.
+        let mut moved = s.claimed_character().expect("a claimed character");
+        s.go_to_map(&mut moved, 104_040_000, 9, "a portal nobody mapped".to_string());
+        assert_eq!(s.last_position, None);
+        assert_eq!(s.remote_at().move_action, net::userpool::MOVE_ACTION_STANDING);
     }
 
 

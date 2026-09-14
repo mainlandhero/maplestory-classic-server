@@ -145,6 +145,17 @@ pub struct Config {
     /// valid arrival points, and `sp` is what an ordinary login uses.
     pub portal_index: HashMap<(u32, String), u8>,
 
+    /// `(map, portal index)` -> where that portal stands, in map pixels.
+    ///
+    /// The owner, 2026-09-14: *"The first client also sees the client joining start from the origin
+    /// of the map and then snap to their real position."* After a warp `last_position` was
+    /// deliberately `None`, and the `0x0224` announced to the field fell back to `(0, 0)` until
+    /// the newcomer's first step. The arrival portal is a fact the server already knows - it
+    /// put it in the SetField - so the announcement stands there instead, and a drop placed
+    /// before the first step lands there too. Empty when `portals.txt` predates the columns;
+    /// every reader falls back to what it did before.
+    pub portal_positions: HashMap<(u32, u8), (i16, i16)>,
+
     /// Every NPC standing on every map, keyed by map id.
     ///
     /// Also generated from the client's `Map.wz` by `tools/dump_portals.py`, out of each
@@ -441,8 +452,19 @@ impl Config {
     pub fn load_portals(
         path: &std::path::Path,
     ) -> (HashMap<(u32, String), (u32, String)>, HashMap<(u32, String), u8>) {
-        let (mut links, mut index) = (HashMap::new(), HashMap::new());
-        let Ok(text) = std::fs::read_to_string(path) else { return (links, index) };
+        let (links, index, _) = Self::load_portals_with_positions(path);
+        (links, index)
+    }
+
+    /// [`Self::load_portals`] plus where each portal stands - `(map, index) -> (x, y)`, from
+    /// the `x, y` columns `tools/dump_portals.py` writes. A `portals.txt` without them still
+    /// loads; the position table is then empty and arrivals fall back to the origin.
+    #[allow(clippy::type_complexity)]
+    pub fn load_portals_with_positions(
+        path: &std::path::Path,
+    ) -> (HashMap<(u32, String), (u32, String)>, HashMap<(u32, String), u8>, HashMap<(u32, u8), (i16, i16)>) {
+        let (mut links, mut index, mut positions) = (HashMap::new(), HashMap::new(), HashMap::new());
+        let Ok(text) = std::fs::read_to_string(path) else { return (links, index, positions) };
         for line in text.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -462,6 +484,9 @@ impl Config {
             // expressed. Skip rather than truncate - a wrong portal is worse than the spawn.
             if let Ok(idx) = u8::try_from(idx) {
                 index.insert((map, f[2].to_string()), idx);
+                if let (Some(Ok(x)), Some(Ok(y))) = (f.get(6).map(|v| v.parse::<i16>()), f.get(7).map(|v| v.parse::<i16>())) {
+                    positions.insert((map, idx), (x, y));
+                }
             }
             if target != 0 {
                 links.insert((map, f[2].to_string()), (target, f[4].to_string()));
@@ -484,7 +509,7 @@ impl Config {
                 }
             }
         }
-        (links, index)
+        (links, index, positions)
     }
 
     /// Is this a map the client can actually load?
@@ -2313,6 +2338,7 @@ impl Default for Config {
             chairs: HashMap::new(),
             portals: HashMap::new(),
             portal_index: HashMap::new(),
+            portal_positions: HashMap::new(),
             npcs: HashMap::new(),
             mobs: HashMap::new(),
             mob_respawn_s: HashMap::new(),

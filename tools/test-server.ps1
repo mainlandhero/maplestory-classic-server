@@ -1258,30 +1258,46 @@
                          not what this pet code reads; say so
               the pet takes your OWN dropped item                           -> the byte is
                          ignored; paste the pet pick-up line
-         v) 2026-09-14 - THE HUSKY RENDERS. giantRate is the pet's size in percent; we
-            sent 0 for eleven runs and 100 draws it life-size at your feet. CLOSED.
-            (research/pet-draw-chain-2026-09-14.md is the whole record.)
-            TWO THINGS ARE OPEN, and they need one run each:
-            (1) THE PORTAL CRASH. You reported a heap fault walking into Tester2's map
-            with the pet out. That run was the OLD build - giantRate 0 (a 0%-scaled
-            layer, which is exactly the kind of zero-sized surface that corrupts a
-            heap) AND moveAction 30. The log says the other player was not involved:
-            between your SetField (23:33:39.505) and the fault (39.926) the server sent
-            only MobCtrlAcks for the OLD map, nothing about Tester2. The client died in
-            its own field teardown with a 0%-scaled pet. The dump is
-            dumps\maplecw-crash-950712-c0000374-1.dmp. So: repeat it on THIS build -
-            pet out, Tester2 in 10001010, walk west00 from 10001000:
-              no crash                 -> it was the zero-scale layer; closed with the fix
-              crash again              -> paste client-exit.log's last lines and the new
-                         dump name; that becomes a dump analysis, not a guess
-            (2) PICK-UP. Kill a mob near the Husky, then drop something of your own:
-              it takes the mob's drop, no click       -> works; say how far it reaches
-              it walks to it and nothing happens      -> paste the inbound lines after
-                         the walk-over from world-ch0.log ("named no live drop" or not)
-              it never goes for drops                 -> the pet WZ keys are not what
-                         this client reads; say so
-              it takes YOUR OWN drop                  -> the not-for-pets byte is ignored;
-                         paste the pet pick-up line
+         v) 2026-09-14 - THE HUSKY RENDERS (giantRate is the size in percent; 0 for
+            eleven runs, 100 now). CLOSED. research/pet-draw-chain-2026-09-14.md.
+            THREE TWO-CLIENT FIXES FROM YOUR NEXT REPORT, one launch for all three -
+            two clients, Tester2 as the second:
+            (a) THE SECOND CLIENT NOW SEES THE PET. The summon and every walk were
+            already published to the map; what nobody covered was the OTHER order -
+            pet already out, Tester2 walks in - and Tester2 got the owner's spawn alone.
+            A Presence now carries "companions": the pet's 0x0277, posted right after
+            the owner's 0x0224 to whoever arrives. With the Husky out, have Tester2
+            walk into your map:
+              Tester2 sees the Husky at your feet         -> done
+              Tester2 sees you and no pet                 -> paste Tester2's world log
+                         lines after their 0x00DC: the 0x0277 should follow the 0x0224
+              Tester2 sees the pet but at (0,0)/wrong     -> the companion body's
+                         position; say where it stands
+            (b) MOBS NO LONGER SNAP ON JOIN. The joiner got each mob at its CURRENT
+            x,y but with the SPAWN POINT's foothold, so their client placed it and then
+            dropped it onto the wrong floor. The end of the controller's last path
+            names the floor under it (fifth u16 of a 21-byte element), and that now
+            travels with the position. Join a map where the other client has been
+            fighting for a while:
+              mobs stand where they are, no jump           -> done
+              still snap                                    -> say whether they snap
+                         sideways (position) or up/down (floor) - different fixes
+            (c) THE JOINER APPEARS AT THE PORTAL, LANDING, NOT AT THE ORIGIN. The
+            0x0224 the field is told used to stand at (0,0) until the newcomer's first
+            step - the "snap". portals.txt now carries each portal's x,y (regenerated
+            with tools/dump_portals.py - the server banner warns if the columns are
+            missing) and the announcement stands there in action 4, the jump pose, on
+            the foothold under it. Watch the other client walk in:
+              appears at the doorway in a landing pose, then walks -> done
+              appears at the doorway STANDING (not the pose)      -> the pose byte is
+                         wrong; it is 8 (action 4 << 1) and I will re-derive it
+              still appears at the origin                          -> paste the
+                         server banner's portals line and the 0x0224 body
+            STILL OPEN, same launch: THE PORTAL CRASH (was the old 0%-scaled pet: repeat
+            pet out, Tester2 in 10001010, walk west00 - no crash closes it; a crash
+            means paste client-exit.log tail + dump name) and PICK-UP (kill a mob near
+            the Husky; takes the mob drop with no click -> works; walks to it and
+            nothing happens -> paste the inbound lines after the walk-over).
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3848,23 +3864,28 @@ function Show-TestPlan {
         Write-Host '                         -> paste that inbound body'
         Write-Host '           pet never goes for drops -> keys not read; say so'
         Write-Host '           pet takes YOUR OWN drop -> paste the pet pick-up line' -ForegroundColor Yellow
-        Write-Host '      v) THE HUSKY RENDERS - giantRate is the size in percent, 0 for' -ForegroundColor Green
-        Write-Host '         eleven runs, 100 now. CLOSED. Two things open, one run each:'
-        Write-Host '         (1) THE PORTAL CRASH was on the OLD build - giantRate 0 (a 0%-scaled' -ForegroundColor Yellow
-        Write-Host '         layer, a classic heap corrupter) AND moveAction 30. The log says'
-        Write-Host '         Tester2 was not involved: between your SetField and the fault the'
-        Write-Host '         server sent only old-map MobCtrlAcks. Repeat it on THIS build -'
-        Write-Host '         pet out, Tester2 in 10001010, walk west00 from 10001000:'
-        Write-Host '           no crash -> it was the zero-scale layer; closed with the fix'
-        Write-Host '           crash again -> paste client-exit.log tail + the new dump name;' -ForegroundColor Yellow
-        Write-Host '                         that becomes a dump analysis'
-        Write-Host '         (2) PICK-UP: kill a mob near the Husky, then drop something of'
-        Write-Host '         your own:'
-        Write-Host '           takes the mob drop, no click -> works; say how far it reaches'
-        Write-Host '           walks to it, nothing happens -> paste the inbound lines after' -ForegroundColor Yellow
-        Write-Host '                         the walk-over (world-ch0.log)'
-        Write-Host '           never goes for drops -> the WZ keys are not what it reads'
-        Write-Host '           takes YOUR OWN drop -> the not-for-pets byte is ignored' -ForegroundColor Yellow
+        Write-Host '      v) THE HUSKY RENDERS. CLOSED. THREE TWO-CLIENT FIXES, one launch,' -ForegroundColor Green
+        Write-Host '         Tester2 as the second client:'
+        Write-Host '         (a) THE SECOND CLIENT SEES THE PET: a Presence now carries the' -ForegroundColor Yellow
+        Write-Host '         pet''s 0x0277 as a companion, posted right after the owner''s'
+        Write-Host '         0x0224 to whoever arrives. Husky out, Tester2 walks into your map:'
+        Write-Host '           Tester2 sees the Husky at your feet -> done'
+        Write-Host '           sees you, no pet -> paste Tester2''s log after their 0x00DC' -ForegroundColor Yellow
+        Write-Host '           pet at (0,0)/wrong place -> say where it stands'
+        Write-Host '         (b) MOBS NO LONGER SNAP ON JOIN: the floor under the end of the' -ForegroundColor Yellow
+        Write-Host '         controller''s last path now travels with the position. Join a map'
+        Write-Host '         the other client has been fighting on:'
+        Write-Host '           mobs stand where they are -> done'
+        Write-Host '           still snap -> sideways (position) or up/down (floor)?' -ForegroundColor Yellow
+        Write-Host '         (c) THE JOINER APPEARS AT THE PORTAL, LANDING POSE, not at the' -ForegroundColor Yellow
+        Write-Host '         origin: portals.txt has x,y now (regenerated), the 0x0224 stands'
+        Write-Host '         there in action 4 (jump) on the foothold under it. Watch them in:'
+        Write-Host '           doorway, landing pose, then walks -> done'
+        Write-Host '           doorway but STANDING -> the pose byte (8) is wrong; say so'
+        Write-Host '           still the origin -> paste the banner portals line + 0x0224 body' -ForegroundColor Yellow
+        Write-Host '         STILL OPEN: the portal crash (repeat: pet out, Tester2 in 10001010,'
+        Write-Host '         walk west00; no crash closes it) and PICK-UP (kill a mob near the'
+        Write-Host '         Husky; no-click pickup -> works; walks to it, nothing -> paste log).'
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'

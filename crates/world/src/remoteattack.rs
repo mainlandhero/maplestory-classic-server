@@ -810,6 +810,7 @@ mod tests {
                 body: Vec::new(),
                 what: format!("farewell {character}"),
             },
+            companions: Vec::new(),
         }
     }
 

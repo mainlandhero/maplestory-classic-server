@@ -1176,7 +1176,7 @@ mod tests {
         let mut m = LiveMob {
             spawn: net::mob::FieldMob::new(2000, 2, 0, 0, 1, 100),
             hp: 100,
-            at: None,
+            at: None, at_fh: None,
             damage_by: Vec::new(),
         };
         // The same sequence `fields::tests::a_killing_blow_is_credited_only_for_what_landed`
@@ -1199,7 +1199,7 @@ mod tests {
         let mut m = LiveMob {
             spawn: net::mob::FieldMob::new(2000, 2, 0, 0, 1, 100),
             hp: 100,
-            at: None,
+            at: None, at_fh: None,
             damage_by: vec![(207, 50), (209, 50)],
         };
         m.hp = 0;

@@ -108,6 +108,10 @@ pub struct LiveMob {
     pub hp: u64,
     /// Where the client last reported it. `None` means it has never moved.
     pub at: Option<(i16, i16)>,
+    /// The foothold under `at`, when the last reported path said. Sent with `at` to a
+    /// joining client so it does not place the mob and then drop it onto the spawn point's
+    /// floor - the owner's "snap". `None` keeps the spawn foothold.
+    pub at_fh: Option<i16>,
     /// Who has hurt this mob, and by how much, **counting only damage that landed**.
     ///
     /// The owner, 2026-08-20: *"over-damage of a mob's HP does not count towards % sharing"* - so
@@ -174,6 +178,11 @@ impl LiveMob {
         if let Some((x, y)) = self.at {
             m.x = x;
             m.y = y;
+        }
+        // The floor goes with the position. A reported (x, y) on the spawn point's foothold
+        // is a mob the client places and then drops, which a joining player sees as a snap.
+        if let Some(fh) = self.at_fh {
+            m.fh = fh;
         }
         m.hp = self.hp;
         m
@@ -431,7 +440,7 @@ impl Fields {
 
         let mut spawn = net::mob::FieldMob::new(id, template_id, at.0, at.1, fh, hp);
         spawn.appear_type = net::mob::APPEAR_SPAWNING;
-        let live = LiveMob { spawn, hp, at: Some(at), damage_by: Vec::new() };
+        let live = LiveMob { spawn, hp, at: Some(at), at_fh: None, damage_by: Vec::new() };
         field.mobs.insert(id, live.clone());
         live
     }
@@ -498,9 +507,18 @@ impl Fields {
     /// The raw write. Used by tests and by anything server-authoritative; the wire path is
     /// [`Fields::note_position_from`] and it is the one that enforces the controller rule.
     pub fn note_position(&self, map: u32, object_id: u32, at: (i16, i16)) {
+        self.note_position_and_floor(map, object_id, at, None);
+    }
+
+    /// [`Fields::note_position`] with the foothold the path named under that position.
+    /// `None` leaves whatever floor was last known - the spawn's, if none was ever reported.
+    pub fn note_position_and_floor(&self, map: u32, object_id: u32, at: (i16, i16), fh: Option<i16>) {
         let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(m) = maps.entry(map).or_default().mobs.get_mut(&object_id) {
             m.at = Some(at);
+            if fh.is_some() {
+                m.at_fh = fh;
+            }
         }
     }
 
@@ -532,13 +550,14 @@ impl Fields {
         map: u32,
         object_id: u32,
         at: (i16, i16),
+        fh: Option<i16>,
         reporting: crate::mobshare::SessionId,
     ) -> bool {
         let controller = self.controllers.controller_of(map, object_id);
         if !crate::mobshare::may_report_movement(controller, reporting) {
             return false;
         }
-        self.note_position(map, object_id, at);
+        self.note_position_and_floor(map, object_id, at, fh);
         true
     }
 
@@ -694,7 +713,7 @@ impl Fields {
             if field.mobs.contains_key(&object_id) {
                 continue; // already standing - a timed return racing a random draw
             }
-            let live = LiveMob { spawn: *spawn, hp: spawn.hp, at: None, damage_by: Vec::new() };
+            let live = LiveMob { spawn: *spawn, hp: spawn.hp, at: None, at_fh: None, damage_by: Vec::new() };
             field.mobs.insert(object_id, live.clone());
             out.push(live);
         }
@@ -765,7 +784,7 @@ mod tests {
         let mut m = LiveMob {
             spawn: net::mob::FieldMob::new(1, 2, 0, 0, 1, 100),
             hp: 100,
-            at: None,
+            at: None, at_fh: None,
             damage_by: Vec::new(),
         };
         assert_eq!(m.credit(1, 40), 40);
@@ -800,7 +819,7 @@ mod tests {
         let mut m = LiveMob {
             spawn: net::mob::FieldMob::new(1, 2, 0, 0, 1, 100),
             hp: 100,
-            at: None,
+            at: None, at_fh: None,
             damage_by: Vec::new(),
         };
         m.credit(7, 50);
@@ -817,7 +836,7 @@ mod tests {
         let m = LiveMob {
             spawn: net::mob::FieldMob::new(1, 2, 0, 0, 1, 100),
             hp: 100,
-            at: None,
+            at: None, at_fh: None,
             damage_by: Vec::new(),
         };
         assert!(m.shares().is_empty());
@@ -1016,17 +1035,17 @@ mod tests {
 
         // Nobody controls it yet. A mob with no controller cannot legitimately be reporting -
         // the client's move sender is only reached once a 0x03D2 has switched slot 8 on.
-        assert!(!f.note_position_from(7, id, (500, 395), CONTROLLER), "orphaned, so refused");
+        assert!(!f.note_position_from(7, id, (500, 395), None, CONTROLLER), "orphaned, so refused");
         assert_eq!(f.mob_position(7, id), None);
 
         f.controllers().claim_uncontrolled(7, CONTROLLER, &[id]);
         assert!(
-            !f.note_position_from(7, id, (900, 395), STRANGER),
+            !f.note_position_from(7, id, (900, 395), None, STRANGER),
             "a second connection's report must not move the mob a third one is simulating"
         );
         assert_eq!(f.mob_position(7, id), None, "and must not have written the position");
 
-        assert!(f.note_position_from(7, id, (500, 395), CONTROLLER), "the holder is believed");
+        assert!(f.note_position_from(7, id, (500, 395), None, CONTROLLER), "the holder is believed");
         assert_eq!(f.mob_position(7, id), Some((500, 395)));
     }
 
@@ -1053,7 +1072,7 @@ mod tests {
 
         // Once it reports, the report wins - the spawn point is a fallback, not a floor.
         f.controllers().claim_uncontrolled(7, CONTROLLER, &[id]);
-        assert!(f.note_position_from(7, id, (742, 395), CONTROLLER));
+        assert!(f.note_position_from(7, id, (742, 395), None, CONTROLLER));
         assert_eq!(f.mob_site(7, id), Some((742, 395)));
         assert_ne!(f.mob_site(7, id), Some(home), "it really moved away from home");
 
@@ -1087,6 +1106,7 @@ mod tests {
                     map: 7,
                     spawn: reply("spawn"),
                     farewell: reply("farewell"),
+                    companions: Vec::new(),
                 },
             );
         }

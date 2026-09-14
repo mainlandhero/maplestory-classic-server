@@ -155,6 +155,7 @@ impl Session {
                 what: format!("PetActivated: pet {} (Cash slot {}) put away for {}", active.item_id, active.slot, chr.name),
             };
             self.bus().publish(self.subscriber, chr.map_id, gone.clone(), None);
+            self.bus().set_companions(self.subscriber, Vec::new());
             out.push(gone);
             out.push(self.pet_item_refresh(&chr, active.slot, active.item_id, false));
             if active.slot == req.slot {
@@ -173,6 +174,8 @@ impl Session {
             ),
         };
         self.bus().publish(self.subscriber, chr.map_id, up.clone(), None);
+        // And whoever walks in after this hears about it too, right after the owner's spawn.
+        self.bus().set_companions(self.subscriber, vec![up.clone()]);
         out.push(up);
         self.active_pet = Some(ActivePet { slot: req.slot, item_id: item.item_id });
         out.push(self.pet_item_refresh(&chr, req.slot, item.item_id, true));
@@ -180,20 +183,39 @@ impl Session {
         out
     }
 
+    /// **The packets that travel with this player** - `crate::broadcast::Presence::companions`.
+    /// The summoned pet's `0x0277`, so a player arriving on the map after the summon gets
+    /// the pet right behind the owner's spawn; nothing when no pet is out.
+    pub(super) fn pet_companions(&self, chr: &net::opcode::Character) -> Vec<Reply> {
+        let Some(active) = self.active_pet else { return Vec::new() };
+        let pet = self.field_pet(chr, active.item_id);
+        vec![Reply {
+            opcode: net::pet::PET_ACTIVATED,
+            body: net::pet::pet_activated(chr.id, &pet),
+            what: format!(
+                "PetActivated: {} ({}) beside {} - sent to a player who arrived after the summon",
+                pet.name, pet.item_id, chr.name
+            ),
+        }]
+    }
+
     /// The pet again, after a `SetField` rebuilt the client's pools. Nothing when none is out.
+    ///
+    /// **For the owner only.** Everyone else on the map already got it: `announce_field_entry`
+    /// runs first and its `Presence` carries the pet as a companion, so `Bus::enter_field`
+    /// posts the owner's spawn and then the pet to the field. Publishing it here as well sent
+    /// every other player the pet twice per field entry.
     pub(super) fn pet_entry_replies(&self, chr: &net::opcode::Character) -> Vec<Reply> {
         let Some(active) = self.active_pet else { return Vec::new() };
         let pet = self.field_pet(chr, active.item_id);
-        let up = Reply {
+        vec![Reply {
             opcode: net::pet::PET_ACTIVATED,
             body: net::pet::pet_activated(chr.id, &pet),
             what: format!(
                 "PetActivated: {} ({}) back beside {} after the field entry, at ({}, {})",
                 pet.name, pet.item_id, chr.name, pet.x, pet.y
             ),
-        };
-        self.bus().publish(self.subscriber, chr.map_id, up.clone(), None);
-        vec![up]
+        }]
     }
 
     /// Whether `item_id` is the pet this session has out - the `active` byte of its body.

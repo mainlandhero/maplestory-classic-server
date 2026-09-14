@@ -253,7 +253,14 @@ fn main() -> ExitCode {
     // Portals come from the client's own Map.wz via tools/dump_portals.py. A missing file
     // is not fatal: the server still answers a transfer request, it just cannot resolve a
     // destination and says so per request rather than failing to start.
-    (config.portals, config.portal_index) = world::config::Config::load_portals(&portals_path);
+    (config.portals, config.portal_index, config.portal_positions) =
+        world::config::Config::load_portals_with_positions(&portals_path);
+    if !config.portal_index.is_empty() && config.portal_positions.is_empty() {
+        eprintln!(
+            "maplecw-world: {} has no x, y columns, so an arriving character is announced at the map ORIGIN until their first step. Regenerate with: python tools/dump_portals.py",
+            portals_path.display()
+        );
+    }
     if config.portals.is_empty() {
         eprintln!(
             "maplecw-world: no portals loaded from {} - portal walks will re-send the current map. Regenerate with: python tools/dump_portals.py",

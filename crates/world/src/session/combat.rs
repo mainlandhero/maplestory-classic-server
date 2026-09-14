@@ -81,6 +81,7 @@ impl Session {
             map,
             req.object_id,
             crate::dropsite::reported_position(&req),
+            crate::dropsite::reported_foothold(&req),
             self.subscriber.get(),
         ) {
             crate::server::log(&format!(

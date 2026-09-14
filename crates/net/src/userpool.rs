@@ -454,6 +454,18 @@ pub struct RemoteAt {
 /// right until 2026-09-04, whatever they were actually doing.
 pub const MOVE_ACTION_STANDING: u8 = 4;
 
+/// **A character arriving through a portal**, as announced to the players already there.
+///
+/// Action 4 is the jump - the same numbering as [`MOVE_ACTION_STANDING`]'s action 2, which
+/// the archive settled; walk 1, stand 2, jump 4 is the classic `CMovePath` order and the
+/// only assignment that puts the measured rest pose at 2 **[D]**. `4 << 1 = 8`, facing
+/// right. Sent with the portal's own position and the foothold under it, so the newcomer
+/// appears at the doorway in the landing pose rather than at the map origin, and their
+/// first step turns it into a walk instead of a snap. The owner, 2026-09-14: *"render right above
+/// their entry point with the static falling animation, and fall down to the correct
+/// location"* - the pose is that; the fall is the client's, once it has a move to apply.
+pub const MOVE_ACTION_LANDING: u8 = 8;
+
 /// The remote temporary-stat mask: **124 bytes**, all clear meaning "no buffs".
 ///
 /// Read as one raw block at `1429ce4e4` and handed to `FUN_140a46e50` -
