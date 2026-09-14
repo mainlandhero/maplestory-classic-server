@@ -2953,10 +2953,57 @@ $server = Start-Process -FilePath $loginExe -WorkingDirectory $root -PassThru @s
 $authLog = Join-Path $root 'auth.log'
 Save-PreviousLog $authLog
 Remove-Item $authLog -Force -ErrorAction SilentlyContinue
+# **THE LOCAL CLIENT IS PUBLISHED TOO, and its gate byte is set BEFORE the scan.**
+#
+# Since 2026-09-14 the launcher refuses to start the game until it has confirmed its client's
+# version against maplecw-auth, so a dev run whose auth service publishes nothing cannot press
+# Start Game at all. `--client-dir` here is $ClientDir, which is client-patched\ - the very
+# folder the launcher is about to check, so locally the two are the same directory and the
+# check is always a pass.
+#
+# **Order is the whole trick.** maplecw-auth hashes the folder ONCE at startup. The launcher
+# patches one byte of MapleStory.exe (the Nexon gate) at Start Game, which is after that. If
+# the byte were still unset when auth scanned, the manifest would carry the pre-patch hash, the
+# launcher would see its own patched exe as out of date, download the file - and get the
+# PATCHED bytes off disk, which do not match the hash the manifest promised. The launch would
+# be refused with "the patch did not survive the download", and the cause would be four steps
+# away from the symptom. Setting the byte here, before the scan, removes the window entirely.
+# crates/launcher/src/client.rs owns the same constants; tools/package-server.ps1 does the same
+# thing to the staged copy for the same reason.
+$clientExeForPatch = Join-Path $ClientDir 'MapleStory.exe'
+if (Test-Path $clientExeForPatch) {
+    $fs = [System.IO.File]::Open($clientExeForPatch, 'Open', 'ReadWrite')
+    try {
+        $gate = New-Object byte[] 4
+        $fs.Position = 0xd90388
+        [void]$fs.Read($gate, 0, 4)
+        $gateHex = ($gate | ForEach-Object { $_.ToString('x2') }) -join ' '
+        if ($gateHex -eq '85 c0 75 05') {
+            $fs.Position = 0xd9038a
+            $fs.WriteByte(0xEB)
+            Write-Host 'gate-patched client-patched\MapleStory.exe (75 -> EB) before the scan, so' -ForegroundColor Green
+            Write-Host '  the published manifest matches what the launcher will have on disk'
+        } elseif ($gateHex -ne '85 c0 eb 05') {
+            Write-Host "NOTE: the Nexon gate bytes are '$gateHex', not the build these offsets" -ForegroundColor Yellow
+            Write-Host '  were measured on. Left alone; the launcher will say the same thing.' -ForegroundColor Yellow
+        }
+    }
+    finally { $fs.Close() }
+}
+
 $authExe = Join-Path $root 'target\release\maplecw-auth.exe'
 if (Test-Path $authExe) {
+    $authArgsLocal = @('--db', "`"$Database`"", '--bind', '127.0.0.1', '--port', "$AuthPort")
+    # Publish the client, so the launcher's version check can pass. Without it every Start Game
+    # is refused with "this server publishes no client".
+    if (Test-Path (Join-Path $ClientDir 'MapleStory.exe')) {
+        $authArgsLocal += @('--client-dir', "`"$ClientDir`"")
+    } else {
+        Write-Host "NO CLIENT AT $ClientDir - the launcher will REFUSE to start the game," -ForegroundColor Red
+        Write-Host '  because it cannot confirm which version to run. -DirectClient still works.' -ForegroundColor Red
+    }
     $authSrv = Start-Process -FilePath $authExe -WorkingDirectory $root -PassThru @spawn `
-        -ArgumentList @('--db', "`"$Database`"", '--bind', '127.0.0.1', '--port', "$AuthPort") `
+        -ArgumentList $authArgsLocal `
         -RedirectStandardOutput $authLog -RedirectStandardError "$authLog.err"
     # TLS: the service writes auth-cert-fingerprint.txt at the repo root (beside its db), and a
     # dev-layout launcher reads it from there - nothing to copy on this machine.

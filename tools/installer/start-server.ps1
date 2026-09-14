@@ -197,29 +197,48 @@ Add-Watched 'login server' $login 'login.log'
 # must still find it.
 $clientRoot = if ($ClientDir) { $ClientDir } else { Join-Path $root 'client' }
 $authArgs = @('--db', "$db", '--bind', "$Bind", '--port', "$AuthPort")
-if (Test-Path (Join-Path $clientRoot 'MapleStory.exe')) {
-    $authArgs += @('--client-dir', "$clientRoot")
-} else {
-    # Not fatal here - the rest of the server is still worth running - but every player is
-    # about to be blocked, so it is said in the words they will report back.
+# **A missing or incomplete client is a STARTUP ERROR, not a warning.** The owner, 2026-09-14:
+# *"the server should give an error upon start up if it cannot find the proper client folder
+# along with the files that it is looking for."*
+#
+# Starting anyway would be worse than not starting: every launcher refuses to begin a game it
+# cannot version-check, so the server would be up, the ports open, and every player told
+# "this server publishes no client" with nothing on the server saying why. maplecw-auth makes
+# the same check itself and also refuses; this one exists so the failure is reported HERE, in
+# the window the operator is looking at, before four processes have been started.
+$clientExe = Join-Path $clientRoot 'MapleStory.exe'
+$clientData = Join-Path $clientRoot 'Data'
+$clientProblem = if (-not (Test-Path $clientRoot)) {
+    "there is no folder at $clientRoot"
+} elseif (-not (Test-Path $clientExe)) {
+    "$clientRoot has no MapleStory.exe"
+} elseif (-not (Test-Path $clientData)) {
+    "$clientRoot has no Data\ folder (the WZ archives)"
+} else { $null }
+if ($clientProblem) {
     Write-Host ''
-    Write-Host 'NO CLIENT TO PUBLISH, SO NOBODY CAN PLAY.' -ForegroundColor Red
-    Write-Host ("  Expected a client folder at {0}" -f $clientRoot) -ForegroundColor Red
-    Write-Host '  Every launcher checks its version against this server before starting the' -ForegroundColor Red
-    Write-Host '  game and REFUSES to start when it cannot be confirmed, so players will see' -ForegroundColor Red
-    Write-Host '  "this server publishes no client". Re-extract MapleCW-server.zip so that' -ForegroundColor Red
-    Write-Host '  client\ sits beside this script, or pass -ClientDir <path>.' -ForegroundColor Red
+    Write-Host 'CANNOT START: no client to publish, so nobody could play anyway.' -ForegroundColor Red
+    Write-Host ("  {0}" -f $clientProblem) -ForegroundColor Red
     Write-Host ''
+    Write-Host '  Every launcher checks its client against this server before starting the game' -ForegroundColor Red
+    Write-Host '  and REFUSES to start when the version cannot be confirmed. A server without' -ForegroundColor Red
+    Write-Host '  this folder would accept sign-ins and then block every player.' -ForegroundColor Red
+    Write-Host ''
+    Write-Host '  Fix: re-extract MapleCW-server.zip as ONE piece, so that client\ sits beside' -ForegroundColor Yellow
+    Write-Host '  this script next to bin\, data\ and gm-handbook\. Or pass -ClientDir <path>' -ForegroundColor Yellow
+    Write-Host '  if you keep the client somewhere else.' -ForegroundColor Yellow
+    Write-Host ''
+    exit 1
 }
+$authArgs += @('--client-dir', "$clientRoot")
 $auth = Start-Process -FilePath (Join-Path $bin 'maplecw-auth.exe') -WorkingDirectory $root `
     -ArgumentList $authArgs -PassThru -NoNewWindow `
     -RedirectStandardOutput (Join-Path $root 'auth.log') `
     -RedirectStandardError  (Join-Path $root 'auth.log.err')
 Write-Host "sign-in       pid $($auth.Id)  $($Bind):$AuthPort  <- the launcher signs in here (TLS)"
-if ($authArgs -contains '--client-dir') {
-    Write-Host ("client        publishing {0}" -f $clientRoot)
-    Write-Host '              launchers patch from here; auth.log prints the version it serves'
-}
+# Always: the script exits above if there is no client, so by here there always is one.
+Write-Host ("client        publishing {0}" -f $clientRoot)
+Write-Host '              launchers patch from here; auth.log prints the version it serves'
 if ($AuthPort -ne 8480) {
     Write-Host "              NOT the default 8480 - every client needs this in the launcher's" -ForegroundColor Yellow
     Write-Host "              Sign-in port box, or auth_port in maplecw-launcher.toml" -ForegroundColor Yellow
