@@ -1,0 +1,12 @@
+[package]
+name = "patchset"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Deliberately one dependency. This crate is compiled into the launcher, which is the binary
+# a player downloads, and into maplecw-auth, which serves patches - see the module docs for
+# why the manifest is a text table rather than JSON.
+[dependencies]
+sha2 = "0.10"
+hex = "0.4"
