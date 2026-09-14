@@ -11142,7 +11142,8 @@ fn a_pet_is_bought_as_a_type_3_item_that_never_dies() {
     let out = s.handle(&buy_body(160000003));
     let bought = out.iter().find(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT).expect("a cash shop result");
     assert!(bought.what.contains("BOUGHT"), "not refused any more: {}", bought.what);
-    // The locker record carries the pet body: type 3, the name, dateDead never.
+    // The locker record carries the pet body: type 3, the name, and a dateDead that is NOT the
+    // ITEM_NEVER_EXPIRES sentinel - the client reads that sentinel here as "this pet is a doll".
     let body = &bought.body;
     let at = body.windows(1 + 4).position(|w| w[0] == net::bag::PET_ITEM_TYPE && w[1..5] == 5000000u32.to_le_bytes()).expect("a type-3 body for item 5000000 in the record");
     let pet = &body[at..];
@@ -11150,13 +11151,13 @@ fn a_pet_is_bought_as_a_type_3_item_that_never_dies() {
     // the name sits at 19 - the same place as in the bag blob.
     assert_eq!(pet[5], 0, "no serial inside the record's body");
     assert_eq!(&pet[19..30], b"Brown Kitty", "named after the item");
-    assert_eq!(&pet[36..44], &net::opcode::ITEM_NEVER_EXPIRES.to_le_bytes(), "dateDead: never revived");
-    // The blob the bag will get for it is the same body, never expiring, never dying.
+    assert_eq!(&pet[36..44], &net::bag::PET_DATE_DEAD.to_le_bytes(), "dateDead: alive, and below the sentinel");
+    // The blob the bag will get for it is the same body: never expiring, and not yet dead.
     let item = store::Item::bundle(5000000, 1);
     let blob = s.item_blob(&item);
     assert_eq!(blob[0], net::bag::PET_ITEM_TYPE);
     assert_eq!(blob.len(), net::bag::PET_ITEM_LEN);
-    assert_eq!(&blob[36..44], &net::opcode::ITEM_NEVER_EXPIRES.to_le_bytes(), "dateDead: never revived");
+    assert_eq!(&blob[36..44], &net::bag::PET_DATE_DEAD.to_le_bytes(), "dateDead: alive, and below the sentinel");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -1091,13 +1091,14 @@
             Also please add all of the other pets into the Cash Shop ... They should never
             need to be revived." The duration the shop showed was each pet's own
             Item/Pet/<id>.img info/life (3, 7 or 90 days) - the three rows already said
-            Period 0. Every pet now carries life 0 and permanent 1, the shape of the modern
+            Period 0. Every pet now carries permanent 1, the shape of the modern
             client's one permanent pet [L on the modern data; that the classic client honours
             `permanent` is I]. The eight pets with no row have one under the Pets tab (SN
             160000003..10, 100 LP). And the PURCHASE: a pet was REFUSED until today because
             no type-3 item body existed (a bundle sent for one killed the client on 08-26);
             the body is built now off the client's own pet decoder - name, level 1, fullness
-            100, dateDead never - so buying works and the pet never dies. Summoning a pet to
+            100 - so buying works. (life 0 was WRONG and is reverted: it is row 2 of the
+            deadness test in step v, and it hid a bad dateDead for two runs.) Summoning a pet to
             follow you is NOT built yet; this run is about the shop and the bag.
             Open the Cash Shop, Pets tab:
               eleven pets, each "permanent" (or no duration line) -> the data half is done
@@ -1199,32 +1200,31 @@
                          not what this pet code reads; say so
               the pet takes your OWN dropped item                           -> the byte is
                          ignored; paste the pet pick-up line
-         v) 2026-09-13 - WHICH GATE HIDES THE PET (and I was wrong last round). I told you
-            the pet was drawing because its move report arrives 504 times after a summon.
-            That was an INFERENCE and your screen says it is wrong: a pet ticks, walks and
-            reports its position without being drawn. The run-2 watches had already measured
-            the truth - the client decides "hidden" on every frame. The pickup failure is
-            probably the same bug: a hidden pet will not run its loot logic.
-            Eight of the eleven gates are now settled from the file (an obfuscated getter, a
-            morph test, two that literally cannot fail, and the map's fieldLimit is not it -
-            1010 carries 4, which is the SUMMON limit, not NoPet). Four remain, and every
-            failing gate jumps to the same label, so the DEEPEST watch that fires names it.
-            THE 20:40 RUN CAME BACK EMPTY BECAUSE IT WAS LAUNCHED WITHOUT THE -Probe STRING:
-            the hook log shows the script's DEFAULT watches, so all four gate watches read
-            zero and the zero meant "nobody was watching". That is why it is a SWITCH now -
-            -PetGates - which cannot be half-pasted. The caps are large too.
-            Summon the Husky within a few seconds of entering the field, stand still ten
-            seconds, quit:
-              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -PinPatches -PetGates
-            Then paste the counts, and say which of these called-from values appear at all -
-            ONLY these four are the ladder; every other caller is noise:
-              142826340 called-from=0x141ecde63   gates 1..3 passed
-              140f80830 called-from=0x141ecde7e   gate 4 passed
-              1409bd2f0 called-from=0x141ecdec6   gate 5 passed
-              142cc1e40 called-from=0x141ecdf10   gates 8..10 passed -> gate 11 hides it
-            FREE, same run: every test so far has been on map 1010. Walk to another map with
-            the pet out (the server re-sends it on every field entry) and say whether it
-            appears there. If it does, the gate is map state and that halves the search.
+         v) NEW 2026-09-14 - THE PET WAS DEAD, AND IT WAS dateDead. Measured in the
+            client, no run spent on it. FUN_1402cf680 decides deadness in three rows:
+            limitedLife > 0 -> dead iff remainLife <= 0; life == 0 -> ALIVE and nothing
+            else is read; otherwise -> dead iff dateDead >= 150842304000000000, which is
+            ITEM_NEVER_EXPIRES byte for byte. We were sending exactly that sentinel as
+            dateDead in every pet body. 5000006's image has no limitedLife and life 7, so
+            it took row 3 and the client called it a doll - "Cannot move because the magic
+            duration has ended", and the tooltip switched to the WZ's descD, "the water of
+            life has dried up". dateDead is 2077-01-01 now. remainLife 1e9 stays, but it is
+            INERT for this pet (row 1 never fires), so last round eliminated nothing - it
+            tested a field the client never read. research/pet-dead-is-datedead-2026-09-14.md.
+            Summon the Husky, stand and watch ten seconds, then walk it over a drop:
+              tooltip is the normal description again, no "water of life"  -> the item is
+                         alive; that half is settled
+              still "the water of life has dried up"                       -> dateDead is
+                         not the only gate; paste the tooltip text exactly
+              the pet is VISIBLE                                           -> deadness was
+                         the whole of the invisibility too and the 11-gate hunt is closed
+              alive tooltip but STILL invisible                            -> two bugs, not
+                         one. That is the useful answer, and -PetGates is the next run
+              it walks over a drop and the item lands in your bag          -> pick-up works
+              visible and alive but it ignores drops                       -> paste the
+                         inbound lines from world-ch0.log after the walk-over
+            FREE, same run: every pet test so far has been on map 1010. Walk to another map
+            with the pet out and say whether it appears there.
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3349,9 +3349,9 @@ function Show-TestPlan {
         Write-Host '           still seven -> old server; say so'
         Write-Host '           none -> paste world-ch0.log "reward rows" line' -ForegroundColor Yellow
         Write-Host '      p) NEW - ELEVEN PETS, PERMANENT, IN THE SHOP: the "3 days" was each' -ForegroundColor Yellow
-        Write-Host '         pet''s own info/life; all eleven now life 0 + permanent 1, the eight'
+        Write-Host '         pet''s own info/life; all eleven now permanent 1, the eight'
         Write-Host '         missing ones have Pets-tab rows, and a pet is BOUGHT as a type-3'
-        Write-Host '         body (dateDead never) instead of refused. No summoning yet.'
+        Write-Host '         body instead of refused. (life 0 was wrong - see step v.)'
         Write-Host '         Cash Shop, Pets tab:'
         Write-Host '           eleven pets, no duration / permanent -> data half done'
         Write-Host '           still "3 days" -> say the tooltip text exactly'
@@ -3398,19 +3398,32 @@ function Show-TestPlan {
         Write-Host '                         -> paste that inbound body'
         Write-Host '           pet never goes for drops -> keys not read; say so'
         Write-Host '           pet takes YOUR OWN drop -> paste the pet pick-up line' -ForegroundColor Yellow
-        Write-Host '      v) WHICH GATE HIDES THE PET - and I was WRONG last round: the move' -ForegroundColor Yellow
-        Write-Host '         report does not prove it draws. The client decides "hidden" every'
-        Write-Host '         frame; the pickup failure is probably the same bug. 8 of 11 gates'
-        Write-Host '         are settled from the file; 4 remain. CAPS ARE LARGE THIS TIME.'
-        Write-Host '         USE THE SWITCH - the last run was launched without the -Probe' -ForegroundColor Yellow
-        Write-Host '         string, got the DEFAULT watches, and all four read zero because'
-        Write-Host '         nobody was watching:'
+        Write-Host '      v) NEW - THE PET WAS DEAD, AND IT WAS dateDead. Measured in the' -ForegroundColor Yellow
+        Write-Host '         client, no run spent. FUN_1402cf680 has three rows: limitedLife>0'
+        Write-Host '         -> remainLife<=0; life==0 -> ALIVE, nothing else read; otherwise'
+        Write-Host '         -> dead iff dateDead >= 150842304000000000, which is our own'
+        Write-Host '         ITEM_NEVER_EXPIRES byte for byte - and that is what we sent as'
+        Write-Host '         dateDead. The Husky has no limitedLife and life 7, so it took'
+        Write-Host '         row 3 and the client called it a doll. dateDead is 2077 now.'
+        Write-Host '         remainLife 1e9 stays but is INERT here, so last round eliminated'
+        Write-Host '         NOTHING - it tested a field the client never read.' -ForegroundColor Yellow
+        Write-Host '         Summon the Husky, watch 10s, then walk it over a drop:'
+        Write-Host '           tooltip is the normal description again -> the item is alive'
+        Write-Host '           still "the water of life has dried up" -> paste it exactly' -ForegroundColor Yellow
+        Write-Host '           the pet is VISIBLE -> deadness was the invisibility too, and'
+        Write-Host '                         the 11-gate hunt is closed'
+        Write-Host '           alive but STILL invisible -> TWO bugs; that is the useful' -ForegroundColor Yellow
+        Write-Host '                         answer, and -PetGates is the next run'
+        Write-Host '           it walks over a drop and the item lands in the bag -> pick-up'
+        Write-Host '           alive + visible but ignores drops -> paste the inbound lines' -ForegroundColor Yellow
+        Write-Host '         If it comes back invisible, THAT run needs the switch (it cannot'
+        Write-Host '         be half-pasted, and the last -Probe attempt read zero because'
+        Write-Host '         nobody was watching):'
         Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -PinPatches -PetGates' -ForegroundColor Cyan
-        Write-Host '         Summon at once, stand still 10s, quit. Say which of THESE appear:'
         Write-Host '           142826340 from 0x141ecde63 | 140f80830 from 0x141ecde7e'
         Write-Host '           1409bd2f0 from 0x141ecdec6 | 142cc1e40 from 0x141ecdf10 (gate 11)' -ForegroundColor Yellow
-        Write-Host '         FREE: every test has been on map 1010 - walk to another map with the'
-        Write-Host '         pet out and say whether it appears there.'
+        Write-Host '         FREE: every pet test has been on map 1010 - walk to another map'
+        Write-Host '         with the pet out and say whether it appears there.'
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'

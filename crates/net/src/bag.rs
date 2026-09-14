@@ -264,28 +264,61 @@ pub const PET_ITEM_LEN: usize = 1 + 18 + 48;
 /// (`Pet.encode`: `encodeInt(getHue()); // -1`). **[L]** for the test, **[R]** for the value.
 pub const PET_HUE_UNDYED: u32 = 0xFFFF_FFFF;
 
-/// **How much life a summoned pet is told it has left.** One billion.
+/// **How much life a summoned pet is told it has left.** One billion - and for this client's
+/// pets it is **never read**.
 ///
-/// It was `0`, on a doc line that read *"0 - not a limited-life pet"* - and that sentence was
-/// an **[R]** claim, taken from the reference server, about a field this client reads into a
-/// protected triple at `pet+0x8a`. `CLAUDE.md` scores that source 1-of-8 and says to treat its
-/// claims as candidates.
+/// The whole deadness question is one function, `FUN_1402cf680(item, 0)`, and it is a
+/// three-way branch on the pet's own WZ image **[L]**:
 ///
-/// On 2026-09-14 the client stated its own verdict out loud: *"Cannot move because the magic
-/// duration has ended. Use the Water of Life to revive them."* So a summoned pet was DEAD, and
-/// had been all along - `info/life 0` had merely suppressed the message, which is why the same
-/// pet was previously just silently invisible. The client's own show/hide ladder was measured
-/// wanting to SHOW it, so deadness is enforced somewhere else and this is the field that most
-/// plausibly drives it.
+/// ```text
+///   limitedLife > 0   (FUN_14038a300, "limitedLife", default 0)   -> dead iff remainLife <= 0
+///   life == 0         (FUN_14038a380, "life",        default 1)   -> ALIVE, unconditionally
+///   otherwise                                                     -> dead iff dateDead >= 0x217E646BB058000
+/// ```
 ///
-/// **This is a candidate, not a measurement**, and the run that follows is what settles it.
-/// The other candidate is `dateDead`, which is already the well-attested MapleStory permanent
-/// filetime, so it is the weaker suspect and is deliberately left alone - one variable.
+/// `Item/Pet/5000006.img/info` has no `limitedLife`, so **the first row never fires for the
+/// Husky and this constant is inert**. It was set to a billion on 2026-09-14 as a one-variable
+/// candidate for the pet being dead; the run came back unchanged, which eliminated nothing -
+/// the field was simply not consulted. It is kept, non-zero, because a pet whose image DOES
+/// carry `limitedLife` would be dead the moment it is summoned with a `0` here.
 ///
 /// A billion rather than `u32::MAX`: it is large in every unit this could be (31 years of
 /// seconds, nonsense-but-harmless in days), stays positive if the client reads it as `i32`,
 /// and leaves room above it for arithmetic that subtracts elapsed time without wrapping.
 pub const PET_REMAIN_LIFE: u32 = 1_000_000_000;
+
+/// **`dateDead`: when the pet dies - and it MUST NOT be the permanent sentinel.**
+///
+/// This is the field that was actually killing the Husky, and unlike everything before it the
+/// finding is a **[L]** read of the client rather than a candidate:
+///
+/// ```text
+///   1402cf718  mov  rax, [rip+...]            ; CompareFileTime
+///   1402cf71f  lea  rdx, [rip+0x2fae662]      ; -> 0x14327dd88 = 150842304000000000
+///   1402cf726  lea  rcx, [rdi+0x82]           ; the pet's dateDead
+///   1402cf72d  call rax
+///   1402cf733  setns cl                       ; DEAD iff dateDead >= that constant
+/// ```
+///
+/// The constant at `0x14327dd88` is `ITEM_NEVER_EXPIRES` **byte for byte** - the same 2079
+/// filetime this module hands every item as "no expiry". For an ordinary item that sentinel
+/// means *never expires*; in this one comparison it means *this pet is a doll*. Sending it as
+/// `dateDead` told the client the Husky was dead, which is why the client said so out loud
+/// (*"Cannot move because the magic duration has ended"*) and why its tooltip switched to the
+/// WZ's `descD`, *"The water of life has dried up..."*.
+///
+/// So a live pet needs `now < dateDead < ITEM_NEVER_EXPIRES`; the same function's other arm
+/// (`param2 != 0`) compares a caller-supplied time against this field and calls the pet dead
+/// once that time has passed it. 2077-01-01 satisfies both with fifty years to spare, and is
+/// a date rather than `sentinel - 1` so that a reader can see at a glance that it is a real
+/// moment and not a flag.
+///
+/// **Why this went unseen for two runs:** `info/life 0` takes the middle row above, which
+/// returns ALIVE without ever looking at `dateDead`. Our own WZ edit had zeroed `life`, so
+/// restoring it to `7` - correct in itself - is what switched the client onto the third row
+/// and exposed a bad `dateDead` that had been sitting in every pet body since the day it was
+/// written.
+pub const PET_DATE_DEAD: u64 = 150_211_584_000_000_000;
 
 /// **`petSkill`: the bitmask of skills a pet has learned**, and the client's own numbering.
 ///
@@ -352,7 +385,8 @@ pub const PET_SKILLS_LEARNED_AT_START: u16 = PET_SKILL_ITEM_POUCH;
 /// u8       level           14030457f   1
 /// u16      closeness       1403045b5   0
 /// u8       fullness        1403045cc   100 - fed
-/// raw[8]   dateDead        14030460f   ITEM_NEVER_EXPIRES: it never dies, never needs reviving
+/// raw[8]   dateDead        14030460f   PET_DATE_DEAD - and NOT ITEM_NEVER_EXPIRES, which the
+///                                      client reads as "this pet is a doll" (FUN_1402cf680)
 /// u16      petAttribute    140304617   0
 /// u16      petSkill        14030462e   PET_SKILLS_LEARNED_AT_START - Item Pouch; the rest are bought
 /// u32      remainLife      140304645   0 - not a limited-life pet
@@ -397,7 +431,7 @@ pub fn pet_item_with_state(item_id: u32, name: &str, cash_sn: Option<std::num::N
     b.push(1); //                                               14030457f  u8   level
     b.extend_from_slice(&0u16.to_le_bytes()); //                1403045b5  u16  closeness
     b.push(100); //                                             1403045cc  u8   fullness
-    b.extend_from_slice(&ITEM_NEVER_EXPIRES.to_le_bytes()); //  14030460f  raw[8] dateDead
+    b.extend_from_slice(&PET_DATE_DEAD.to_le_bytes()); //       14030460f  raw[8] dateDead
     b.extend_from_slice(&0u16.to_le_bytes()); //                140304617  u16  petAttribute
     b.extend_from_slice(&PET_SKILLS_LEARNED_AT_START.to_le_bytes()); // 14030462e u16 petSkill
     b.extend_from_slice(&PET_REMAIN_LIFE.to_le_bytes()); //     140304645  u32  remainLife
@@ -725,7 +759,12 @@ mod pet_tests {
         assert_eq!(b[32], 1, "level");
         assert_eq!(&b[33..35], &0u16.to_le_bytes(), "closeness");
         assert_eq!(b[35], 100, "fullness");
-        assert_eq!(&b[36..44], &ITEM_NEVER_EXPIRES.to_le_bytes(), "dateDead: never - never revived");
+        assert_eq!(
+            &b[36..44],
+            &PET_DATE_DEAD.to_le_bytes(),
+            "dateDead: it must be strictly BELOW ITEM_NEVER_EXPIRES. FUN_1402cf680 calls a pet dead when this field is >= that sentinel, and the client then refuses to move it"
+        );
+        assert!(PET_DATE_DEAD < ITEM_NEVER_EXPIRES, "the sentinel is the client's dead marker");
         assert_eq!(b[44..].len(), 2 + 2 + 4 + 2 + 1 + 4 + 2 + 2 + 4);
         assert_eq!(&b[44..46], &0u16.to_le_bytes(), "petAttribute");
         // The two fields the tooltip reads. A zero skill mask makes every skill the WZ grants
