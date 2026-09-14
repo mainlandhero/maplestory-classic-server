@@ -2139,6 +2139,13 @@ param(
     # call happens. Watch lines are written on ENTRY, so a missing line means never entered.
     [string]$Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142ef3e44:hits=8,141177790:hits=6,141177e80:hits=16',
     [string]$SessionTokens = '',
+    # **-PetGates**: arm the four watches that name which gate hides a summoned pet, instead
+    # of the default watches. A switch rather than a pasted -Probe string because the run of
+    # 2026-09-13 was launched without the string and came back with the DEFAULT watches - four
+    # clean zeros that looked like an answer and were an unarmed instrument, which is the
+    # failure mode `CLAUDE.md` calls the most expensive on this project. One word cannot be
+    # half-pasted. research/pet-not-drawn-2026-09-13.md.
+    [switch]$PetGates,
     # Answer the migration hello with the fixed head of a SetField, and swap the probe for
     # the two watches that make the answer readable. See research/msexe-stage-setfield.md.
     #
@@ -2476,7 +2483,17 @@ $ErrorActionPreference = 'Stop'
 #
 # So: passing -InventorySlots means the bag is the variable, and the bag gets the watches.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    if ($UserState) {
+    if ($PetGates) {
+        # The client's pet show/hide (FUN_141ecde00) is a ladder of gates and every failure
+        # jumps to the same label, so the DEEPEST of these that is entered names how far it
+        # got. Only calls whose called-from is the ladder count - all four are shared:
+        #   142826340 from 0x141ecde63   gates 1..3 passed
+        #   140f80830 from 0x141ecde7e   gate 4 passed
+        #   1409bd2f0 from 0x141ecdec6   gate 5 passed
+        #   142cc1e40 from 0x141ecdf10   gates 8..10 passed -> gate 11 is the blocker
+        # Big caps: in run 2 two of them spent 40 hits on other callers before the summon.
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142826340:hits=6000,140f80830:hits=6000,1409bd2f0:hits=6000,142cc1e40:hits=6000'
+    } elseif ($UserState) {
         # 140f810e0 - the only setter of the user state field. EXPECT several lines; read
         #   rdx on each. A value whose (v & ~1) == 0x12 is the state that disables attacking,
         #   the drop-pool clear and the pick-up pre-check all at once.
