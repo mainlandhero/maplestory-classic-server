@@ -675,6 +675,29 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
+     TO. PARTY MESOS: 70% TO THE PICKER, A YELLOW COPY OF THE SHARE TO EVERY MEMBER.
+         The owner, 2026-09-14: the EXP split, for mesos. Built: when a party member picks up
+         mesos A MOB dropped, the picker keeps 70% (white "You have gained mesos"), and
+         every other member on the map is credited a copy of the party share (30%, the
+         same !setrates field EXP uses) and sees the client's OWN yellow line for it:
+         "Spotting Small Change (+n)" - string 0xE5, drawn by the smallChange field of
+         the pick-up message with the same colour selector as party EXP. Mesos a player
+         dropped are 100% to whoever picks them up; no party, or nobody else on the map,
+         is 100% too. Nobody has sent a non-zero smallChange to this client before.
+         Two characters in a party on one map (two clients, or one plus a second
+         character on the other channel is NOT enough - same map, same channel). Kill a
+         mob, let one pick up its mesos:
+           picker: white "You have gained mesos (+70% of it)"; other: a YELLOW "Spotting
+                          Small Change (+30%)" and their meso counter rises -> fixed
+           other gets the line but the counter does not move -> the 0x007C is missing
+                          or late; world-ch0.log has both packets in order
+           other gets a WHITE "gained mesos" line -> the share was over 65,535 (the
+                          line's u16) and fell back on purpose; say the amount
+           other gets nothing -> world-ch0.log says whether the share was mailed
+                          ("party member N ... gone by delivery" is the miss)
+           the picker's own line ALSO shows a small-change line -> report; it should not
+         Then drop mesos from the inventory and pick them up: 100%, no member line.
+
      TN. THE SUMMONING SACK: THE BALROG MOVES, AND IT ARRIVES WITH THE CIRCLE.
          The owner, 2026-09-12 04:21: the sack's Balrog *"does not have AI and does not have
          movement and does not use skills"*, and *"it is also missing the summon effect
@@ -3501,6 +3524,19 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
+        Write-Host '  TO. PARTY MESOS: 70% TO THE PICKER, A YELLOW COPY TO EVERY MEMBER.' -ForegroundColor Magenta
+        Write-Host '      A party member picks up a MOB''s mesos: 70% to them (white), and'
+        Write-Host '      every other member on the map gets a copy of the 30% share with'
+        Write-Host '      the client''s own yellow line, "Spotting Small Change (+n)".'
+        Write-Host '      Player-dropped mesos: 100% to the picker, no share. Two clients'
+        Write-Host '      in a party, same map, same channel. Kill, pick up the mesos:'
+        Write-Host '        picker white +70%, other YELLOW "Small Change" +30% and the'
+        Write-Host '          counter rises -> fixed'
+        Write-Host '        other has the line, counter still -> the 0x007C is missing'
+        Write-Host '        other has a WHITE line -> share over 65,535 fell back; say it'
+        Write-Host '        other gets nothing -> world-ch0.log: was the share mailed?'
+        Write-Host '      Then drop mesos yourself and pick them up: 100%, no member line.'
+        Write-Host ''
         Write-Host '  TN. THE SUMMONING SACK: THE BALROG MOVES, AND ARRIVES WITH THE CIRCLE.' -ForegroundColor Magenta
         Write-Host '      04:21: the sack''s Balrog had no AI and no summon effect. The sack'
         Write-Host '      spawned it and granted nobody control (0x03D2) - it does now. And'

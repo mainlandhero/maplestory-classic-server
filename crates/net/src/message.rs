@@ -522,6 +522,46 @@ pub fn meso_gained(gain: i32) -> Vec<u8> {
     meso_pickup(gain, 0, 0, false, false)
 }
 
+/// The largest amount [`meso_party_share`] can draw: the field is a `u16` (`142d593fe`).
+pub const PARTY_SHARE_LINE_MAX: u32 = u16::MAX as u32;
+
+/// **`Spotting Small Change (+n)`, in YELLOW, and no white line** - a party member's share
+/// of mesos somebody else picked up.
+///
+/// The owner, 2026-09-14: *"every other member should get a copy of the 30% ... The line on the
+/// bottom right should be yellow, and along the lines of 'Picking up pocket change'."* The
+/// client has that line already - string `0xE5`, `'Spotting Small Change (+%d)'` - and it
+/// is the `u16 smallChange` field of the pick-up message that draws it. **[L]** for all of
+/// the following, read off `FUN_142d59360`:
+///
+/// ```asm
+/// 142d593fe  READ u16  -> r15d                 ; smallChange
+/// 142d5968c  test r15d, r15d ; je              ; zero -> no line
+/// 142d59691  mov  edx, 0xe5                    ; 'Spotting Small Change (+%d)'
+/// 142d596d3  mov  r9d, 2 ; lea r8d, [r9 + 2]   ; r8d = 4 -> FUN_142572050(..., 4, ...)
+/// 142d596e1  call 142572050                    ; the message area
+/// ```
+///
+/// `r8d = 4` is the same colour selector the EXP arm passes for `white = 0`, which the owner's
+/// 2026-08-20 screenshot showed as **yellow**; the plain meso line passes `r8d = 0`
+/// (`142d5950b xor r8d, r8d`), white. And the plain line is skipped outright when
+/// `gain - bonus <= 0` (`142d59484 test ebx, ebx / jle`), so `gain = 0` here draws exactly
+/// one line, the yellow one. The `test r14d, r14d / jle` at `142d596e6` then also skips the
+/// client-side purse bump, which is right: the balance arrives in the `0x007C` the server
+/// sends beside this, the only way this client is ever told a balance.
+///
+/// **`smallChange` is a `u16`**, so a share above 65 535 cannot be drawn on this line. The
+/// builder returns `None` for one; the caller falls back to the white
+/// [`meso_gained`] and says so in its log line. **[I]** that the line reads well on screen -
+/// nobody has sent a non-zero `smallChange` yet; the run says.
+pub fn meso_party_share(share: u32) -> Option<Vec<u8>> {
+    let small = u16::try_from(share).ok()?;
+    if small == 0 {
+        return None;
+    }
+    Some(meso_pickup(0, 0, small, false, false))
+}
+
 /// `Meso Penalty Applied (-n)`, for mesos the player **spent** rather than found.
 ///
 /// The owner, 2026-08-29, about the taxi fare: *"The client should receive a message similar to
@@ -802,6 +842,25 @@ pub fn item_gained_in_chat(item_id: u32, count: u32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The party share is the `smallChange` field alone**: gain 0 (no white line, no
+    /// client-side purse bump), bonus 0, and the share where `142d593fe` reads it.
+    #[test]
+    fn a_party_meso_share_is_the_small_change_field_and_nothing_else() {
+        let b = meso_party_share(300).unwrap();
+        assert_eq!(b[0], kind::DROP_PICKUP);
+        assert_eq!(b[1], 0, "not quiet: the line draws");
+        assert_eq!(b[2] as i8, pickup::MESO);
+        assert_eq!(b[3], 0, "noticeLost");
+        assert_eq!(&b[4..8], &0i32.to_le_bytes(), "gain 0: 142d59484 skips the white line");
+        assert_eq!(&b[8..10], &300u16.to_le_bytes(), "142d593fe smallChange -> string 0xE5, r8d = 4, yellow");
+        assert_eq!(&b[10..14], &0i32.to_le_bytes(), "bonus 0");
+        assert_eq!(b.len(), meso_gained(1).len(), "the same body as a plain pick-up");
+        assert_eq!(meso_party_share(0), None, "a zero share draws nothing and is not sent");
+        assert_eq!(meso_party_share(65_535).map(|b| b.len()), Some(14));
+        assert_eq!(meso_party_share(65_536), None, "past the u16: the caller falls back to the white line");
+        assert_eq!(PARTY_SHARE_LINE_MAX, 65_535);
+    }
 
     /// The routing constants, so a future edit that renumbers one fails here.
     #[test]

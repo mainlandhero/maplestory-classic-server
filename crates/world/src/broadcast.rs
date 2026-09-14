@@ -173,6 +173,16 @@ pub enum Event {
     /// from whoever happened to land the killing blow.
     Experience { amount: u64, why: String, white: bool },
 
+    /// `amount` mesos are owed to this character as their **party share** of a pick-up by
+    /// `picker`, from a drop a mob left.
+    ///
+    /// The owner, 2026-09-14: *"If mesos are picked up by a member of a party, the same split for
+    /// EXP should exist. The picked up person should get 70%, and every other member should
+    /// get a copy of the 30% provided that the mesos is from mob death."* Crosses as a fact
+    /// for the same reason EXP does: the recipient's session owns their purse row and their
+    /// client's `0x007C`, and is the only one that can say what their new balance is.
+    PartyMesos { amount: u32, picker: u32 },
+
     /// A **party buff** `caster` just put on themselves reaches this character too:
     /// `skill_id` at `level`, cast while both stood on one field.
     ///
@@ -1033,6 +1043,7 @@ mod tests {
                 // These tests only ever queue EXP shares; a party buff here is a test bug.
                 Event::PartyBuff { skill_id, .. } => panic!("not an EXP share: skill {skill_id}"),
                 Event::PartyHeal { caster, .. } => panic!("not an EXP share: heal from {caster}"),
+                Event::PartyMesos { picker, .. } => panic!("not an EXP share: mesos from {picker}"),
             })
             .collect()
     }
