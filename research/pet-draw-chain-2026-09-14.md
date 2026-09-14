@@ -181,3 +181,60 @@ Not established, and deliberately not written as a candidate: what sets `user+0x
 `FUN_140f810e0`, the user-state setter the `-UserState` probe already watches, writes
 `+0x5e4` on the same object - a **different field**, so the two are not the same thing.
 
+
+
+---
+
+# The `-PetEnable` run: the hypothesis is dead, and so is transparency
+
+`research/fixtures/pet-enable-flag-never-zeroed-and-layer-is-opaque-hook.log`, 17:17:17.
+
+```text
+140304100    36 hits   POSITIVE CONTROL - the hook armed
+140f8abc0  6000 hits   [user+0x100+0x5ac] = 0x00000000 on EVERY sample. The gate is shut
+141ec7970     0 hits   so the disable call cannot fire, and it did not
+140eeba60  2950 hits   1281 of them carry 0xffffff - alpha 0, fully transparent
+```
+
+The 1281 transparent calls looked alarming for about a minute. **None of them is the pet.**
+Correlating by the layer pointer that `SetStance`'s own call passes (`rcx=0x3081d910`), the
+pet's layer appears in that log **exactly once**, from `0x141ec794a`, with `rdx=0xffffffff` -
+opaque. The other calls are other objects.
+
+So §6 is dead on its own pre-registered terms, and transparency with it.
+
+## 7. Where this leaves it
+
+Five separate captures, five things measured working:
+
+| | measured |
+|---|---|
+| the item is alive | tooltip reads 1/1/2077, `dateDead` fixed |
+| the sync says VISIBLE | 2964 gate-11 reads of 0, and no transition, so current == desired == 1 |
+| the frames go in | `141ecaa40` x11, `pet+0x3d8` = 0 every time |
+| the enable flag is never zeroed | `user+0x100+0x5ac` = 0 on 6000 reads; `141ec7970` never fired |
+| the layer is opaque | one colour write, `0xffffffff` |
+
+The sprite and the layer both come from `DAT_143add050`, the client's own Gr2D root - the same
+singleton every other drawable uses. The packet, the WZ, the template, the position and the
+name tag were eliminated earlier.
+
+**The pet is built correctly and is not on screen.** Running the same kind of instrument again
+is the failure `CLAUDE.md` describes - widening the input to a tool with a structural blind
+spot only makes the blind spot bigger, and a second opinion means changing the question.
+
+The question this has never asked is what the layer is **attached** to:
+
+```text
+141ebbe68  call FUN_141b054f0(pet, pet[0x26], &layer, ..., 0x3eb, ...)
+```
+
+`pet[0x26]` is `pet+0x130`. Null there would attach the layer to nothing while every single
+measurement above still reads perfect - which is exactly the situation. `-PetLayer` reads it
+at the registration (`rdx`, with `called-from=0x141ebbe6d` identifying the pet's call in a
+shared 16 KB function) and again 1166 times over the pet's life through
+`141ec7880:peek=130`, so a field that is set at Init and cleared later cannot hide either.
+
+If that comes back clean too, the honest next move is a Ghidra pass on `FUN_141b054f0`
+itself, not another launch.
+

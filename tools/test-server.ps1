@@ -1201,43 +1201,42 @@
                          not what this pet code reads; say so
               the pet takes your OWN dropped item                           -> the byte is
                          ignored; paste the pet pick-up line
-         v) NEW 2026-09-14 (round 4) - THE LAYER IS VISIBLE AND IT IS NOT EMPTY.
-            -PetFrames came back on the outcome I pre-registered as the one that
-            ELIMINATES the whole draw chain, and it did:
-              141ec7880  1166 hits. The summon call is from Init (0x141ebbe86) with
-                         rdx=0, r8=1 - stance 0, forced. Exactly what the static read
-                         predicted, so moveAction 0 is confirmed correct
-              141ec2690     3 hits, all from inside SetStance
-              141ecaa40    11 hits, and [pet+0x3d8] = 0x00000000 on EVERY one, so the
-                         silent bail never fired: the sprite was reset, given its
-                         frames, and inserted into the layer
-              140304100    36 hits - the hook armed
-            So the sprite exists, has frames, is in a layer that -PetSync measured as
-            visible, which is registered and positioned - and nothing draws. Rounds 1,
-            2 and 3 are all closed and all of them were real.
-            Reading SetStance for that run turned up a SECOND writer, and it is the
-            only lead left. Every periodic call (force 0, stance unchanged - 1163 of
-            them) falls through to:
-              141ec7958  call 140f8abc0        ; ([user+0x100+0x5ac] != 0)
-              141ec795f  je epilogue           ; zero -> nothing happens
-              141ec7970  call [pet->vtbl+0x18] ; pet->vtbl[0x18](pet, 0, 0)
-            and vtbl[0x18] is THE SAME SLOT the visibility sync sets to 1. Two writers,
-            and the periodic one always writes zero; the sync would never correct it
-            because what it reads back is the LAYER's flag, a different object - which
-            is precisely why it kept measuring "already visible".
-            THIS IS A HYPOTHESIS. It only fires if user+0x100+0x5ac is non-zero and
-            nobody has ever read that field. -PetEnable reads it:
-              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetEnable
-            Paste the peek on 140f8abc0 and the counts:
-              peek 0 everywhere            -> the gate is shut, 141ec7970 cannot fire,
-                         and the idea is dead. That is a fine answer - say it
-              peek NON-ZERO + 141ec7970 firing repeatedly
-                                           -> the pet is disabled ~30 times a second by
-                         a writer the sync never sees. That is the bug
-              peek non-zero, 141ec7970 silent -> my read of the fall-through is wrong
-              140eeba60 with rdx=0xffffff  -> something makes the layer TRANSPARENT
-                         (alpha 0). Different bug; paste called-from
-              no 140304100 lines           -> the hook never armed; not evidence
+         v) NEW 2026-09-14 (round 5) - FIVE THINGS MEASURED WORKING, PET STILL BLANK.
+            -PetEnable killed my last hypothesis and it killed it cleanly, which is
+            what it was built to be able to do:
+              140f8abc0  6000 hits, [user+0x100+0x5ac] = 0x00000000 on EVERY one, so
+                         the gate is shut and the disable call CANNOT fire
+              141ec7970  0 hits - it did not fire, exactly as that predicts
+              140eeba60  2950 hits, and 1281 of them carry 0xffffff, alpha 0, fully
+                         transparent - but NOT ONE of those is the pet. Correlated by
+                         layer pointer: the pet's layer was touched exactly ONCE, with
+                         0xffffffff, opaque. Transparency is dead too
+              140304100  36 hits - the hook armed
+            The running total, each on its own capture: the item is alive; the sync has
+            it VISIBLE (2964 gate-11 reads of 0, no transition); the frames go in
+            (141ecaa40 x11, pet+0x3d8 = 0); the enable flag is never zeroed; the layer
+            is opaque. The sprite and the layer both come from the client's own Gr2D
+            root, the same singleton everything else that draws uses.
+            So the pet is built correctly and is not on screen. Widening the same
+            instrument again is the mistake CLAUDE.md names, so this changes the
+            question: what is the layer ATTACHED to? Init does
+              141ebbe68  call FUN_141b054f0(pet, pet[0x26], &layer, ..., 0x3eb, ...)
+            and pet[0x26] is pet+0x130. Null there means the layer is registered into
+            nothing while every other measurement still reads perfect. Nobody has
+            looked at it.
+              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetLayer
+            Paste rdx on 141b054f0 (called-from 0x141ebbe6d is ours), the peek on
+            141ec7880, and the counts:
+              141b054f0 rdx=0                -> the layer is attached to NOTHING. Bug
+              no 141b054f0 from 0x141ebbe6d  -> Init never registered the layer at all
+              rdx non-zero but the peek goes 0 later
+                                             -> attached at birth, detached after; give
+                         me the first timestamp where it changes
+              rdx non-zero, peek steady, 141ec87b0 fires
+                                             -> attachment is fine too and I am out of
+                         structural leads. Say so; the next move is a Ghidra pass on
+                         FUN_141b054f0 itself, not another launch
+              no 140304100 lines             -> the hook never armed; not evidence
             FREE, same run: every pet test has been on map 1010 - walk to another map
             with the pet out and say whether it appears there.
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
@@ -2172,10 +2171,14 @@ param(
     # 2026-09-14: every step ran and the layer is NOT empty, which eliminated the chain.
     # Kept because it is the control that says the draw path still works.
     [switch]$PetFrames,
-    # **-PetEnable**: the periodic SetStance calls pet->vtbl[0x18](pet, 0, 0) - the same
-    # slot the visibility sync sets to 1 - whenever user+0x100+0x5ac is non-zero. This
-    # reads that field directly and watches the call. See the $Probe block.
+    # **-PetEnable**: ANSWERED 2026-09-14 and the answer was NO - user+0x100+0x5ac read 0
+    # on all 6000 samples, 141ec7970 never fired, and the pet's layer was set OPAQUE once
+    # and never touched again. Both that hypothesis and the transparency one are dead.
     [switch]$PetEnable,
+    # **-PetLayer**: every step of the pet's own setup has now been measured working, so
+    # this stops asking about the pet and asks about the ATTACHMENT - what the layer is
+    # registered into. See the $Probe block.
+    [switch]$PetLayer,
     [switch]$PetGates,
     # ON BY DEFAULT SINCE 2026-09-14, and accepted only so that every launch line already
     # written down keeps working. It used to be the switch that made the channel answer at
@@ -2526,7 +2529,52 @@ if (-not $SilentChannel) { $SetFieldProbe = $true }
 #
 # So: passing -InventorySlots means the bag is the variable, and the bag gets the watches.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    if ($PetEnable) {
+    if ($PetLayer) {
+        # **STOP ASKING ABOUT THE PET; ASK WHAT ITS LAYER IS ATTACHED TO.**
+        #
+        # Five things are now measured working, each on its own capture: the item is alive
+        # (dateDead), the sync has it VISIBLE (2964 gate-11 reads of 0, no transition), the
+        # frames go in (141ecaa40 x11 with pet+0x3d8 = 0), the enable flag is never zeroed
+        # (user+0x100+0x5ac = 0 on 6000 reads, 141ec7970 never fired) and the layer is
+        # OPAQUE (140eeba60 touched the pet's layer once, with 0xffffffff; the 1281 calls
+        # carrying 0xffffff - alpha 0 - were all on OTHER objects, checked by layer pointer).
+        # The sprite and the layer both come from the client's own Gr2D root DAT_143add050,
+        # the same singleton everything else that draws uses.
+        #
+        # So the pet is built correctly and is not on screen, and widening the same
+        # instrument again would be the mistake CLAUDE.md names. The one structural link
+        # nobody has looked at is the REGISTRATION:
+        #
+        #   141ebbe68  call FUN_141b054f0(pet, pet[0x26], &layer, ..., 0x3eb, ...)
+        #
+        # pet[0x26] is pet+0x130, and if it is null the layer is attached to nothing while
+        # every other measurement still comes back perfect.
+        #
+        # 141b054f0:hits=6000    the registration. rdx IS pet[0x26]; the pet's own call has
+        #                        called-from=0x141ebbe6d. It is a shared 16 KB function, so
+        #                        the cap is large and called-from is what identifies ours
+        # 141ec7880:peek=130     pet[0x26] again, 1166 times over the life of the pet, so a
+        #                        field that is set at Init and CLEARED later cannot hide
+        # 141ec87b0:hits=6000    the post-Init layer work (vtbl[0x268], [0x300]...). Called
+        #                        at 141ebbe89, right after SetStance
+        # 140304100:hits=200     positive control
+        #
+        # READ IT LIKE THIS:
+        #   141b054f0 with rdx=0            -> the layer is registered into NOTHING. That is
+        #                      the bug, and it is the first thing all session that would be
+        #   141b054f0 never fires from 0x141ebbe6d
+        #                                   -> Init took the other arm and never registered
+        #                      the layer at all
+        #   rdx non-zero, and 141ec7880's peek goes 0 later
+        #                                   -> it is attached at birth and detached after;
+        #                      paste the first timestamp where the peek changes
+        #   rdx non-zero, peek stays non-zero, 141ec87b0 fires
+        #                                   -> attachment is fine too, and I am out of
+        #                      structural leads. Say so plainly; the next move is a Ghidra
+        #                      pass on FUN_141b054f0 itself rather than another launch
+        #   no 140304100 lines              -> the hook never armed; not evidence
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141b054f0:hits=6000,141ec7880:peek=130:hits=6000,141ec87b0:hits=6000,140304100:hits=200:dump=143AC2400/968'
+    } elseif ($PetEnable) {
         # **THE SECOND WRITER TO THE PET'S ENABLE FLAG.** -PetFrames eliminated the frame
         # chain: FUN_141ecaa40 ran 11 times with pet+0x3d8 = 0 every time, so the sprite was
         # reset, given its frames, and inserted into a layer that -PetSync had already
@@ -3552,31 +3600,30 @@ function Show-TestPlan {
         Write-Host '                         -> paste that inbound body'
         Write-Host '           pet never goes for drops -> keys not read; say so'
         Write-Host '           pet takes YOUR OWN drop -> paste the pet pick-up line' -ForegroundColor Yellow
-        Write-Host '      v) THE LAYER IS VISIBLE AND IT IS NOT EMPTY - chain ELIMINATED.' -ForegroundColor Yellow
-        Write-Host '         -PetFrames came back on the outcome I pre-registered as the one'
-        Write-Host '         that kills the whole draw chain: 141ecaa40 ran 11 times with'
-        Write-Host '         pet+0x3d8 = 0 EVERY time, so the sprite was reset, given its'
-        Write-Host '         frames and inserted into the layer. SetStance ran 1166 times,'
-        Write-Host '         the summon call rdx=0 r8=1 from Init - so moveAction 0 is'
-        Write-Host '         confirmed correct. Rounds 1, 2 and 3 are closed.'
-        Write-Host '         One lead left, found reading SetStance for that run. Every' -ForegroundColor Yellow
-        Write-Host '         periodic call falls through to:'
-        Write-Host '           141ec7958 call 140f8abc0     ; [user+0x100+0x5ac] != 0 ?'
-        Write-Host '           141ec7970 call [pet->vtbl+0x18](pet, 0, 0)'
-        Write-Host '         and vtbl[0x18] is THE SAME SLOT the visibility sync sets to 1.'
-        Write-Host '         Two writers; the periodic one always writes zero, and the sync'
-        Write-Host '         never notices because it reads the LAYER back instead.'
-        Write-Host '         THIS IS A HYPOTHESIS - it needs that field non-zero and nobody' -ForegroundColor Yellow
-        Write-Host '         has read it. -PetEnable reads it. Summon at once, 10s, quit:'
-        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetEnable' -ForegroundColor Cyan
-        Write-Host '         Paste the peek on 140f8abc0 and the counts:'
-        Write-Host '           peek 0 everywhere -> the gate is shut and the idea is DEAD.'
-        Write-Host '                         That is a fine answer; say it'
-        Write-Host '           peek NON-ZERO + 141ec7970 firing -> the pet is disabled ~30x a' -ForegroundColor Yellow
-        Write-Host '                         second by a writer the sync never sees. The bug'
-        Write-Host '           peek non-zero, 141ec7970 silent -> my read is wrong'
-        Write-Host '           140eeba60 rdx=0xffffff -> the layer is being made TRANSPARENT;'
-        Write-Host '                         different bug, paste called-from' -ForegroundColor Yellow
+        Write-Host '      v) FIVE THINGS MEASURED WORKING, PET STILL BLANK.' -ForegroundColor Yellow
+        Write-Host '         -PetEnable killed my last hypothesis, cleanly: [user+0x100+0x5ac]'
+        Write-Host '         read 0 on all 6000 samples so the gate is shut, and 141ec7970'
+        Write-Host '         never fired. 140eeba60 hit 2950 times and 1281 carried 0xffffff'
+        Write-Host '         (alpha 0) - but NONE on the pet: its layer was touched ONCE,'
+        Write-Host '         with 0xffffffff, opaque. Transparency is dead too.'
+        Write-Host '         Running total, each on its own capture: alive; sync says VISIBLE;' -ForegroundColor Yellow
+        Write-Host '         frames go in; enable flag never zeroed; layer opaque. Sprite and'
+        Write-Host '         layer both come from the client Gr2D root everything else uses.'
+        Write-Host '         So it is built correctly and is not on screen. Widening the same'
+        Write-Host '         instrument again is the documented mistake, so CHANGE THE'
+        Write-Host '         QUESTION: what is the layer ATTACHED to? Init does'
+        Write-Host '           141ebbe68 call FUN_141b054f0(pet, pet[0x26], &layer, ...)'
+        Write-Host '         and a null pet[0x26] attaches it to nothing while everything'
+        Write-Host '         else still measures perfect. Summon at once, 10s, quit:'
+        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetLayer' -ForegroundColor Cyan
+        Write-Host '         Paste rdx on 141b054f0 (ours is called-from 0x141ebbe6d), the'
+        Write-Host '         peek on 141ec7880, and the counts:'
+        Write-Host '           141b054f0 rdx=0 -> attached to NOTHING. That is the bug' -ForegroundColor Yellow
+        Write-Host '           no 141b054f0 from 0x141ebbe6d -> never registered at all'
+        Write-Host '           rdx ok but the peek goes 0 later -> detached after birth;'
+        Write-Host '                         give me the first timestamp it changes'
+        Write-Host '           all three fine -> attachment is fine and I am OUT of structural' -ForegroundColor Yellow
+        Write-Host '                         leads. Next move is Ghidra on 141b054f0, not a run'
         Write-Host '           NO 140304100 lines -> the hook never armed; not evidence' -ForegroundColor Red
         Write-Host '         FREE: walk to another map with the pet out and say whether it'
         Write-Host '         appears there.'
