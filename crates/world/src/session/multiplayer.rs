@@ -2056,4 +2056,82 @@ fn logging_out_leaves_the_field_and_the_later_drop_says_nothing_more() {
         );
     }
 
+    /// **A pick-up is seen by the whole field, and cannot happen twice.** The owner, 2026-09-14:
+    /// *"when one person picks up the drops, all other people that see the drops also see it
+    /// being picked up by that person. There should be no duplicates of drops, multiple people
+    /// cannot pick up the same drop."*
+    #[test]
+    fn a_pick_up_reaches_the_field_and_a_second_taker_gets_nothing() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut ids = Vec::new();
+        for name in ["Cobalt", "Tester2"] {
+            let chr = net::opcode::Character {
+                name: name.to_string(),
+                map_id: 104_040_000,
+                ..Default::default()
+            };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.create_migration(account, id, 0, 0).unwrap();
+            ids.push(id);
+        }
+        let mut picker = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut watcher = Session::joining(store, config, fields.clone());
+        picker.claim_for_character(ids[0]);
+        watcher.claim_for_character(ids[1]);
+        picker.on_field_entered();
+        watcher.on_field_entered();
+        let _ = picker.tick(1_000);
+        let _ = watcher.tick(1_000);
+
+        // A meso drop owned by the picker, placed straight into the shared field so the test
+        // is about pick-up visibility and not about combat's distribution walk.
+        let (drop_id, _enter) = fields.with_drops(104_040_000, |d| {
+            d.drop_from_mob(crate::drops::DropFromMob {
+                from_mob: true,
+                map_id: 104_040_000,
+                owner_id: ids[0],
+                item: store::Item::bundle(0, 0),
+                inv_type: store::InventoryType::Etc,
+                meso: 10,
+                x: 0,
+                y: 0,
+                source_x: 0,
+                source_y: 0,
+                now_ms: 1_000,
+                party_id: 0,
+            })
+        });
+
+        let mut body = vec![0u8; 34];
+        body[crate::drops::PICK_UP_OBJECT_ID_AT
+            ..crate::drops::PICK_UP_OBJECT_ID_AT + 4]
+            .copy_from_slice(&drop_id.to_le_bytes());
+
+        // The picker takes it and is told directly.
+        let picked = picker.on_pick_up(0x032C, &body);
+        assert!(
+            picked.iter().any(|r| r.opcode == net::drops::DROP_LEAVE_FIELD),
+            "the picker is sent the leave: {picked:?}"
+        );
+
+        // The watcher hears the SAME leave over the bus on its next tick, with the picker's id.
+        let mail = watcher.tick(2_000);
+        let leaves: Vec<&Reply> =
+            mail.iter().filter(|r| r.opcode == net::drops::DROP_LEAVE_FIELD).collect();
+        assert_eq!(leaves.len(), 1, "the other player sees it leave once: {mail:?}");
+
+        // And a second pick-up of the same id - by either player - finds nothing. The drop
+        // left the shared table when the picker took it, so no duplicate credit is possible.
+        let again = watcher.on_pick_up(0x032C, &body);
+        assert!(
+            again.iter().all(|r| r.opcode != net::drops::DROP_LEAVE_FIELD),
+            "a drop already taken cannot be taken again: {again:?}"
+        );
+        assert_eq!(
+            fields.with_drops(104_040_000, |d| d.get(drop_id).is_some()),
+            false,
+            "the drop is gone from the shared field"
+        );
+    }
 }
