@@ -121,7 +121,6 @@ mod tests {
         store.create_migration(account, made.id, 0, 0).unwrap();
         let skills = std::path::Path::new("../../gm-handbook/skills.txt");
         let config = Config {
-            set_field_probe: true,
             firstjob: crate::firstjob::CombatTable::load(skills),
             ..Config::default()
         };
@@ -170,7 +169,7 @@ mod tests {
         made.mp = 113;
         store.save_character_progress(&made).unwrap();
         store.create_migration(account, made.id, 0, 0).unwrap();
-        let mut config = Config { set_field_probe: true, ..Config::default() };
+        let mut config = Config::default();
         config.equips.insert(
             1_002_003,
             crate::config::EquipTemplate { inc_mhp: 5, inc_mmp: 3, ..Default::default() },

@@ -51,16 +51,11 @@ pub struct Config {
     /// connection. `net::advertise`.
     pub advertise: std::sync::Arc<net::advertise::Advertiser>,
 
-    /// Play the game: answer the migration hello, portal walks, and field entry.
+    /// Whether the channel answers packets at all. **On, and it should stay on.**
     ///
-    /// **The name is a fossil and the doc that went with it was badly stale.** It was written
-    /// when this flag sent the fixed head of a `SetField` and nothing after, and said "it
-    /// cannot put a character in a map - `characterData` is `0` and the branch that does
-    /// carry a character calls an 18525-byte record decoder nobody has read yet". All of that
-    /// has been untrue since 2026-08-19: the record decoder is read, a character stands on
-    /// map 1, and this flag now drives everything the channel does.
-    ///
-    /// With it on the server answers:
+    /// With it clear, `Session::handle` and `Session::tick` return nothing for *every*
+    /// packet: the migration hello goes unanswered and the client sits on "Connecting..."
+    /// looking exactly like a server that is not running.
     ///
     /// | in | out |
     /// |---|---|
@@ -68,15 +63,19 @@ pub struct Config {
     /// | `0x00D1` transfer field | `SetField` for the portal's target map and arrival portal |
     /// | `0x00DC` field entered | every NPC on the map, then a `UserAvatarModified` attempt |
     ///
-    /// **Still off by default**, because it is the whole game path and nothing on it
-    /// authenticates anybody.
+    /// **It was `false` until 2026-09-14, reached by `--set-field-probe`**, on the reasoning
+    /// that "it is the whole game path and nothing on it authenticates anybody". Nothing on
+    /// it authenticates anybody still (`CLAUDE.md`), but the default bought no safety: the
+    /// shipped `tools/installer/start-server.ps1` passed the flag unconditionally, and so did
+    /// all sixty test sites and `tools/test-server.ps1`. **Sixty-one callers, every one of
+    /// them turning it on.** What the default actually did was cost the owner a manual launch on
+    /// 2026-08-20, when a launcher line without `-SetFieldProbe` left the character on the
+    /// select screen and read as a server bug for a whole run.
     ///
-    /// That default is also a trap, and it has cost one of the owner's manual launches: without
-    /// `--set-field-probe`, `Session::handle` returns nothing for *every* packet, the
-    /// migration hello goes unanswered, and the client sits on "Connecting..." looking like
-    /// a server that is not running. `tools/test-server.ps1` takes `-SetFieldProbe` and
-    /// `STATUS.md`'s test plan says so in the command line itself.
-    pub set_field_probe: bool,
+    /// A default nobody chooses is not a safety measure, it is a trap with a docstring. The
+    /// off case is now `--silent-channel`, which has to be asked for by name, and its one
+    /// real use is eliminating the channel as a variable.
+    pub answer_packets: bool,
 
     /// **What this channel does when a claiming connection's address is not the one the
     /// migration was minted for** - `--migration-peer-policy`. `Require` (the default since
@@ -2291,7 +2290,7 @@ impl Default for Config {
             db_path: PathBuf::from("maplecw.db"),
             world_id: 0,
             channel_id: 0,
-            set_field_probe: false,
+            answer_packets: true,
             peer_policy: store::migration::PeerPolicy::Require,
             inventory_slots: None,
             chairs: HashMap::new(),

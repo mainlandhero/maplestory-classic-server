@@ -63,8 +63,9 @@
 
     So this run is T11, T10 and the rest, all single-client, in that order.
 
-    -SetFieldProbe is NOT optional: without it Session::handle returns nothing for EVERY
-    packet and the client sits on "Connecting...". Run -Stop before relaunching.
+    -SetFieldProbe is no longer needed and is ignored - the channel answers by default
+    since 2026-09-14. Old launch lines that carry it still work. The off case is
+    -SilentChannel, and you have to ask for it. Run -Stop before relaunching.
 
     DO NOT PASS -HeapFix. It armed, it held, and it was irrelevant - 10 deaths of that
     family across the archive and FIFTY-SIX sites carry the same ladder.
@@ -398,7 +399,7 @@
     T20 (2026-09-08, REWRITTEN AFTER THE 12:01 RUN). THE OVERNIGHT RUN - SURVIVE, do not
     measure. The owner: "our goal is to leave the client running overnight without it exiting."
 
-      -SetFieldProbe -PoolSentry -SentryQuiet -SentryRepair -GuardPage -PinPatches
+      -PoolSentry -SentryQuiet -SentryRepair -GuardPage -PinPatches
 
     -GuardBucket now DEFAULTS to 0x20+0x40. Do not type it.
 
@@ -514,7 +515,7 @@
     0x40 class one-slot-per-page and decommits on free, so a stale pointer into a freed 0x40
     slot faults at the writer on any clock. Recipe now:
 
-      -SetFieldProbe -ServersOnly -PoolSentry -SentryRepair -SentryWriteWatch -GuardPage
+      -ServersOnly -PoolSentry -SentryRepair -SentryWriteWatch -GuardPage
       -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,140ca61d0:hits=400"
 
     In the hook log: the sentry heartbeat gains a "guard page: N served, M freed, K live, C
@@ -544,7 +545,7 @@
     tested). AGAIN, same recipe; the first re-hit has come at catch #3 both times, so expect a
     pinned-page window with a re-hit under it about ten minutes in. The probe cap is 400:
 
-      -SetFieldProbe -ServersOnly -PoolSentry -SentryRepair -SentryWriteWatch -PinPatches
+      -ServersOnly -PoolSentry -SentryRepair -SentryWriteWatch -PinPatches
       -Probe "watch@1415db360:ret,141b2a280:rdx=0,140ca61d0:hits=400"
 
     (A) -SentryRepair writes a confirmed damaged header back to the slot size, so the pool's
@@ -702,7 +703,7 @@
          (Jr. Balrog 800020 and 700004 are summonType 0 too; the sack's other mobs are 1,
           a 0.4 s pop. Both are Summon.img entries in this client.)
 
-     TM. THE OUTFIT IS IN THE DECO TAB, AND THE CHAT SAYS "UBEL". -SetFieldProbe.
+     TM. THE OUTFIT IS IN THE DECO TAB, AND THE CHAT SAYS "UBEL"..
          The owner, 2026-09-11 04:12: the Ubel set opened, the chat drew the U-umlaut as a box,
          and the Deco tab was empty. The four equips had gone to the EQUIP tab by their
          leading digit; the client keeps a cash equip (WZ info/cash = 1 - every backported
@@ -723,7 +724,7 @@
          Deco tab: it should go to the Cash Inventory like a Cash-tab item does (0x0B
          with tab 6). Say what happens.
 
-     TL. BAG -> LOCKER, WITH EVERY CASH ITEM CARRYING A SERIAL. -SetFieldProbe.
+     TL. BAG -> LOCKER, WITH EVERY CASH ITEM CARRYING A SERIAL..
          Run 6 (04:03) measured the prediction: "nothing moves back" and NO 0x03E1 in
          world-ch0.log after the entry reload - the client sent nothing, because every item
          in the Cash tab had come from the bag restore with +0x38 = 0, and the double-
@@ -993,7 +994,7 @@
             slot validator FUN_140253980 is category-only and would pass a cap, so the gate
             is one of the others (FUN_140397db0 is the level/stat/job check). Static reading
             is not going to settle which one, so this run MEASURES it - launch with:
-              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,1417dd7e0:hits=12,140397db0:hits=12,142cc5b00:hits=12"
+              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,1417dd7e0:hits=12,140397db0:hits=12,142cc5b00:hits=12"
             then double-click ONE hair-hat in the Deco tab, once, and say when. I read
             client-patched\maplecw-hook.log:
               WATCH 1417dd7e0 and 140397db0 fire, 142cc5b00 does not -> the requirement
@@ -1607,12 +1608,11 @@
          takes is the address of a server.
 
          Do this instead. Start the servers ONCE, then run the launcher TWICE:
-             powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -ServersOnly
+             powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -ServersOnly
              (or just double-click start-servers.cmd, which passes exactly that plus
-              -PoolSentry. **-SetFieldProbe is not optional**: without it the channel
-              answers nothing, picking a character hangs on "Connecting...", and the
-              run plan is not printed either. This line said -ServersOnly alone until
-              2026-09-09, and it cost the owner a launch.)
+              -PoolSentry. -SetFieldProbe used to be mandatory here and is now the
+              default; this line carried -ServersOnly alone until 2026-09-09 and cost
+              The owner a launch, which is the reason the default moved.)
              C:\MapleCW\target\release\maplecw-launcher.exe      <- sign in as maplecw
              C:\MapleCW\target\release\maplecw-launcher.exe      <- sign in as tester
           THE STUB IS NOW INSTRUMENTED FOR THIS. The launcher writes
@@ -1934,7 +1934,7 @@
 
     THE FREE MEASUREMENT NOBODY HAS TAKEN
     -------------------------------------
-    Every -SetFieldProbe run dumps the client's own EXP curve on the positive control's
+    Every run dumps the client's own EXP curve on the positive control's
     first hit:  python tools/decode_dump.py --exp-curve
     Compare it against data/exp-curve.txt. If they disagree, the client wins.
 
@@ -2153,15 +2153,16 @@ param(
     # which is the outcome that would redirect the hunt rather than end it.
     [switch]$PetFlags,
     [switch]$PetGates,
-    # Answer the migration hello with the fixed head of a SetField, and swap the probe for
-    # the two watches that make the answer readable. See research/msexe-stage-setfield.md.
+    # ON BY DEFAULT SINCE 2026-09-14, and accepted only so that every launch line already
+    # written down keeps working. It used to be the switch that made the channel answer at
+    # all, and forgetting it left the client on "Connecting..." looking like a dead server -
+    # which cost a manual launch on 2026-08-20 and was nearly repeated today.
     #
-    # This CANNOT put a character in a map - characterData is 0 and the branch that carries
-    # a character needs an 18525-byte record decoder nobody has read. It answers exactly one
-    # question: does 0x01A0 reach FUN_142097f80? Both of that handler's early returns are
-    # silent, so without the watches the run cannot tell an ignored packet from one that
-    # never arrived, which is the whole reason for spending the launch.
-    # EVERY -SetFieldProbe run also dumps the EXP curve, and it costs nothing.
+    # Nobody ever wanted it off: all 61 callers in the tree passed it, the shipped
+    # installer/start-server.ps1 included. A default nobody chooses is not a safety measure.
+    # -SilentChannel is the off case now, and it has to be asked for by name.
+    #
+    # The run still dumps the EXP curve, and it costs nothing.
     #
     # 143AC2400 is 121 u64s, the experience needed for levels 1..120. It lives in the
     # ZERO-INITIALISED TAIL of .data - vsize 0xa2aa8, rsize 0x67400 - so it has no bytes on
@@ -2177,6 +2178,10 @@ param(
     # experiment (login::session::LIST_RESEND_THRESHOLD_MS, plan step TL).
     [switch]$NoListResend,
     [switch]$SetFieldProbe,
+    # The channel answers NOTHING: every packet, the migration hello included, gets an empty
+    # reply, so the client hangs on "Connecting..." on purpose. This was the DEFAULT until
+    # 2026-09-14. Its one honest use is eliminating the channel as a variable.
+    [switch]$SilentChannel,
     # OFF by default, and it is an EXPERIMENT rather than a fix.
     #
     # Three bytes at 14019b504 in the mapped image: the client's free reads the 64-bit pool
@@ -2387,6 +2392,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# **The channel answers unless -SilentChannel says otherwise.** Until 2026-09-14 this was
+# $SetFieldProbe's job and it had to be typed on every launch line; leaving it off produced a
+# client stuck on "Connecting..." and one wasted launch. -SetFieldProbe is still accepted -
+# it is in STATUS.md, in the fixture notes and in the owner's paste buffer - and now means nothing
+# on its own. Everything downstream still reads $SetFieldProbe, so it is simply forced on.
+if (-not $SilentChannel) { $SetFieldProbe = $true }
 
 # -SetFieldProbe swaps two of the four watch slots. The other two are not negotiable:
 # 1415db360:ret and 141b2a280:rdx=0 keep the client alive and unblocked, and dropping
@@ -3061,7 +3073,8 @@ foreach ($ch in 0..($Channels - 1)) {
     # Same list the login server advertises, built from the same two numbers, so the two
     # cannot drift into advertising a channel nobody can enter.
     $chArgs += @('--channels', $channelList)
-    if ($SetFieldProbe) { $chArgs += '--set-field-probe' }
+    # The channel answers by default now; only the deliberate silence needs a flag.
+    if ($SilentChannel) { $chArgs += '--silent-channel' }
     if ($NoMobs) { $chArgs += '--no-mobs' }
     if ($MobLimit -gt 0) { $chArgs += @('--mob-limit', "$MobLimit") }
     if ($ShopRows -gt 0) { $chArgs += @('--shop-rows', "$ShopRows") }
@@ -3140,7 +3153,7 @@ function Show-TestPlan {
         Write-Host '        moves but unhittable -> same; say so'
         Write-Host '        client DIES at the spawn -> the appear-option word' -ForegroundColor Red
         Write-Host ''
-        Write-Host '  TM. THE OUTFIT IS IN THE DECO TAB; THE CHAT SAYS "UBEL". -SetFieldProbe.' -ForegroundColor Magenta
+        Write-Host '  TM. THE OUTFIT IS IN THE DECO TAB; THE CHAT SAYS "UBEL"..' -ForegroundColor Magenta
         Write-Host '      04:12: the Ubel set went to the EQUIP tab by leading digit; the'
         Write-Host '      client keeps cash equips (info/cash = 1) in tab 6, Deco. The'
         Write-Host '      server now places by the WZ flag, restores Deco on field entry,'
@@ -3152,7 +3165,7 @@ function Show-TestPlan {
         Write-Host '      Then in the shop, double-click Ubel''s Clothes (Deco tab):'
         Write-Host '        goes to the Cash Inventory -> 0x0B with tab 6 works'
         Write-Host ''
-        Write-Host '  TL. BAG -> LOCKER, EVERY CASH ITEM NOW CARRIES A SERIAL. -SetFieldProbe.' -ForegroundColor Magenta
+        Write-Host '  TL. BAG -> LOCKER, EVERY CASH ITEM NOW CARRIES A SERIAL..' -ForegroundColor Magenta
         Write-Host '      Run 6 (04:03): "nothing moves back" and NO 0x03E1 in world-ch0.log -'
         Write-Host '      the client sent nothing: bag-restored items had +0x38 = 0 and'
         Write-Host '      the double-click builder skips those. Now every Cash-tab body'
@@ -3303,7 +3316,7 @@ function Show-TestPlan {
         Write-Host '      i) THE HAIR-HATS STILL DO NOT GO ON, and still NO 0x0107 - islot was' -ForegroundColor Yellow
         Write-Host '         not the gate. The equip path FUN_1417dd7e0 has a dozen exits before'
         Write-Host '         the 0x0107 builder; this run MEASURES which. Launch with:'
-        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,1417dd7e0:hits=12,140397db0:hits=12,142cc5b00:hits=12"' -ForegroundColor White
+        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,1417dd7e0:hits=12,140397db0:hits=12,142cc5b00:hits=12"' -ForegroundColor White
         Write-Host '         then double-click ONE hair-hat in the Deco tab, once; say when.'
         Write-Host '           1417dd7e0 + 140397db0 fire, 142cc5b00 not -> requirement check'
         Write-Host '           1417dd7e0 fires, 140397db0 not -> an earlier exit; I read it'
@@ -3419,7 +3432,7 @@ function Show-TestPlan {
         Write-Host '         If it comes back invisible, THAT run needs the switch (it cannot'
         Write-Host '         be half-pasted, and the last -Probe attempt read zero because'
         Write-Host '         nobody was watching):'
-        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -PinPatches -PetGates' -ForegroundColor Cyan
+        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetGates' -ForegroundColor Cyan
         Write-Host '           142826340 from 0x141ecde63 | 140f80830 from 0x141ecde7e'
         Write-Host '           1409bd2f0 from 0x141ecdec6 | 142cc1e40 from 0x141ecdf10 (gate 11)' -ForegroundColor Yellow
         Write-Host '         FREE: every pet test has been on map 1010 - walk to another map'
@@ -4254,19 +4267,19 @@ function Show-TestPlan {
         Write-Host '  grants LEAF POINTS, the currency the cash shop charges; !nx buys'
         Write-Host '  nothing. !help lists them all.'
     } else {
-        # THIS BRANCH IS A TRAP UNLESS IT SAYS SO. Without -SetFieldProbe the LOGIN server is
-        # fine - character list, create, delete all work - but the CHANNEL answers nothing at
-        # all, so picking a character hangs on "Connecting...". That looked like a server bug
-        # for a whole launch on 2026-08-20. The steps below are a real run; they are just not
-        # THIS run, and today's plan lives entirely in the other branch.
-        Write-Host '  NO -SetFieldProbe, SO THE WORLD IS OFF.' -ForegroundColor Red
+        # This branch used to be reachable by FORGETTING -SetFieldProbe, and that is how it
+        # cost a launch on 2026-08-20: the login server is fine, so it reads as a server bug
+        # rather than a missing flag. Since 2026-09-14 it takes -SilentChannel, asked for by
+        # name, so nobody arrives here by accident. The steps below are a real run; they are
+        # just not THIS run, and today's plan lives entirely in the other branch.
+        Write-Host '  -SilentChannel: THE WORLD IS OFF, AND YOU ASKED FOR THAT.' -ForegroundColor Red
         Write-Host '  Login, character list, create and delete all work. But the CHANNEL' -ForegroundColor Red
         Write-Host '  answers NOTHING - Session::handle returns empty for every packet -' -ForegroundColor Red
-        Write-Host '  so picking a character will hang on "Connecting...". That is this' -ForegroundColor Red
-        Write-Host '  flag, not a bug. The cash shop plan is NOT printed on this branch.' -ForegroundColor Red
-        Write-Host '  Relaunch with -SetFieldProbe to get into the world. THIS LINE:' -ForegroundColor Red
+        Write-Host '  so picking a character will hang on "Connecting...". That is the' -ForegroundColor Red
+        Write-Host '  flag doing its job. The run plan is NOT printed on this branch.' -ForegroundColor Red
+        Write-Host '  Drop -SilentChannel to get into the world. THIS LINE:' -ForegroundColor Red
         Write-Host ''
-        Write-Host ("    powershell -ExecutionPolicy Bypass -File `"{0}\tools\test-server.ps1`" -SetFieldProbe -ServersOnly" -f $root) -ForegroundColor Cyan
+        Write-Host ("    powershell -ExecutionPolicy Bypass -File `"{0}\tools\test-server.ps1`" -ServersOnly" -f $root) -ForegroundColor Cyan
         Write-Host ''
         Write-Host '  THE RUN PLAN IS ON THAT BRANCH TOO, so on this one you are reading' -ForegroundColor Red
         Write-Host '  neither the world nor the plan. Written out in full because an' -ForegroundColor Red
