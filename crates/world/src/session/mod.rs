@@ -514,6 +514,7 @@ mod reactor;
 mod multiplayer;
 mod npc;
 mod party;
+mod groupchat;
 mod pet;
 mod pools;
 mod rates;
@@ -941,6 +942,11 @@ impl Session {
             // with, so both party opcodes get a specific refusal. `session::party`.
             net::party::CLIENT_PARTY_REQUEST | net::party::CLIENT_PARTY_INVITE_ANSWER => {
                 return self.on_party_request(opcode, body.get(2..).unwrap_or(&[]))
+            }
+            // Party chat. `session::groupchat`; the send sets no latch, so an unbuilt kind
+            // may go unanswered.
+            net::groupmessage::CLIENT_GROUP_MESSAGE => {
+                return self.on_group_message(body.get(2..).unwrap_or(&[]))
             }
             net::notice::CLIENT_LOG_OUT => return self.on_log_out(),
             net::script::CLIENT_SCRIPT_REPLY => {

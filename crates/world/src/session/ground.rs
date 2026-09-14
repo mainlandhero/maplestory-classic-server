@@ -452,8 +452,22 @@ impl Session {
         // The two locks are independent, so reading the drop's party id, then the party, then
         // taking, never holds one across the other.
         let party_id = self.fields.with_drops(map, |d| d.get(object_id).map(|dr| dr.party_id));
+        // **Under "Party Leader" pick-up rights the roster the drop resolves against is the
+        // leader alone** - the killer still takes it through the owner rule. Under "All" it
+        // is every current member. `crate::party::Party::pickup_rights`.
         let party_members: Vec<u32> = match party_id.filter(|&p| p != 0) {
-            Some(p) => self.fields.parties().party(p).map(|party| party.members.clone()).unwrap_or_default(),
+            Some(p) => self
+                .fields
+                .parties()
+                .party(p)
+                .map(|party| {
+                    if party.pickup_rights == crate::party::PICKUP_LEADER_ONLY {
+                        vec![party.leader]
+                    } else {
+                        party.members.clone()
+                    }
+                })
+                .unwrap_or_default(),
             None => Vec::new(),
         };
         let outcome = match by_pet {

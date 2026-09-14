@@ -546,6 +546,13 @@ pub struct PartyBlock {
     pub name: String,
     /// `party+0x4D8`; arm `0x2D` names it. **[D]** Sent as the create sends it: false.
     pub is_public: bool,
+    /// `party+0x4D9`: the item pick-up-rights mode, **`1` = Party Leader, `0` = All**. Read
+    /// 2026-09-14 off `FUN_142d1d130`, the function that names the mode: `test dl, dl` picks
+    /// string `0x011C` *'Party Leader'* when non-zero and `0x011D` *'All'* when zero
+    /// (`142d1d14b`..`142d1d16c`). Arm `0x2D` stores this byte at `party+0x4D9`
+    /// (`1413bc68d`, the same address the join arm's block reader fills) and shows
+    /// *"changed to %s"* when it differs from the old one. **[L]**
+    pub leader_only_pickup: bool,
 }
 
 /// Write a [`PartyBlock`] in the client's order. The layout is on the struct.
@@ -561,7 +568,43 @@ pub fn write_party_block(w: &mut PacketWriter, p: &PartyBlock) {
     w.zeros(120); //                         1406f3031
     w.str(&p.name); //                       1406f303e
     w.u8(u8::from(p.is_public)); //          1406f3088
-    w.u8(0); //                              1406f309b  party+0x4D9
+    w.u8(u8::from(p.leader_only_pickup)); // 1406f309b  party+0x4D9, the pick-up rights
+}
+
+/// **`0x2D` - the party's status changed: `str name, u8 isPublic, u8 leaderOnlyPickup`.**
+///
+/// This IS the pick-up-rights reply. The owner, 2026-09-14: *"I just tried in the party menu to
+/// change 'Pick-up rights', but nothing happened."* The arm (`0x1413bc63e`) reads the triple
+/// through `FUN_1406f2560`, stores both bytes into `party+0x4D8`/`+0x4D9` **[L]**, and then:
+///
+/// ```asm
+/// 1413bc661  movzx esi, byte [party+0x4D9]        ; the OLD rights
+/// 1413bc68d  mov   [party+0x4D9], dl              ; the NEW rights, from the packet
+/// 1413bc693  cmp   al, bl ; je 1413bc742          ; isPublic unchanged -> skip 0x118/0x119
+/// 1413bc742  cmp   dl, sil ; je 1413bc74e         ; rights unchanged -> no line
+/// 1413bc747  xor   ecx, ecx
+/// 1413bc749  call  142d1d130                      ; (0, rights): 0x011A "The party's item
+///                                                 ;  pick-up rights changed to %s."
+/// 1413bc74e  call  1411bb850                      ; refresh the party window
+/// ```
+///
+/// So `name` is the party's name (the block reader puts the same string at `party+0x4D0`),
+/// `is_public` should be sent as the block sends it so the public/private line stays quiet,
+/// and the rights byte is what draws the line and relabels "Pick-Up Rights:". The earlier
+/// note in `research/party-result-0x00A5.md` that "there is no standalone rights-changed
+/// packet" read the `0x118`/`0x119` half of this arm and stopped before `1413bc73b`.
+///
+/// The request has no value in it to honour: the `pickup` button's builder `FUN_1413b9d90`
+/// writes a null name and a constant `word 1` (`1413b9df6`) into its payload and nothing
+/// else - the owner's two clicks were byte-identical - so the button is a **toggle** and the
+/// server flips the mode.
+pub fn party_status(name: &str, is_public: bool, leader_only_pickup: bool) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(result::PUBLIC_PRIVATE);
+    w.str(name); //                          1406f257d
+    w.u8(u8::from(is_public)); //            1406f25bc  party+0x4D8
+    w.u8(u8::from(leader_only_pickup)); //   1406f25cc  party+0x4D9
+    w.into_vec()
 }
 
 /// `0x13` - *"'%s' has joined the party."* / *"You have joined the party."*: `str name`, then

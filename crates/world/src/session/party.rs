@@ -350,18 +350,21 @@ impl super::Session {
                          narration is not built, the window refresh above carries the new leader"
                     ));
                 }
-                // The pick-up-rights mode changed. No client packet narrates it on its own, so
-                // push the window (0x0D) to every member; the value is stored in party state.
+                // The pick-up-rights mode toggled. `0x2D` IS the client's rights-changed
+                // packet (`net::party::party_status`): every member's client stores the byte,
+                // says "The party's item pick-up rights changed to Party Leader / All" and
+                // relabels the window. Until 2026-09-14 this pushed a bare 0x0D, whose block
+                // carried a constant 0 in that byte - which is "nothing happened".
                 Effect::PickupRightsChanged { party, rights } => {
                     if let Some(block) = self.party_block(*party) {
+                        let leader_only = *rights == crate::party::PICKUP_LEADER_ONLY;
                         for member in self.recipients_for(*party, None) {
                             let reply = Reply {
                                 opcode: net::party::PARTY_RESULT,
-                                body: net::party::party_state(Some(&block)),
+                                body: net::party::party_status(&block.name, block.is_public, leader_only),
                                 what: format!(
-                                    "PartyResult PARTY_STATE (0x0D) to character {member}: \
-                                     pick-up rights of party {party} set to {rights} [stored; the \
-                                     client has no standalone rights-changed packet]"
+                                    "PartyResult 0x2D to character {member}: party {party} pick-up rights -> {} (byte {rights}); the client shows 'The party''s item pick-up rights changed to ...' and relabels the window",
+                                    if leader_only { "Party Leader" } else { "All" }
                                 ),
                             };
                             self.deliver(member, actor, reply, &mut out);
@@ -517,10 +520,16 @@ impl super::Session {
             let p = parties.party(party)?;
             (p.name.clone(), p.leader, p.members.clone())
         };
+        let leader_only_pickup = self
+            .fields
+            .parties()
+            .party(party)
+            .is_some_and(|p| p.pickup_rights == crate::party::PICKUP_LEADER_ONLY);
         let mut block = net::party::PartyBlock {
             party_id: party,
             leader_char_id: leader,
             name,
+            leader_only_pickup,
             ..Default::default()
         };
         if members.len() > net::party::PARTY_SEATS {
