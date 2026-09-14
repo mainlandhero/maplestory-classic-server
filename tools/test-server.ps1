@@ -1201,26 +1201,36 @@
                          not what this pet code reads; say so
               the pet takes your OWN dropped item                           -> the byte is
                          ignored; paste the pet pick-up line
-         v) NEW 2026-09-14 (round 9) - DOES THE PET EVER GET FRAMES?
-            -PetParentOff: the rewrite took (user+0x3fd0 = 0 on all 3555 samples) and the
-            Husky stayed invisible. The re-parent theory is dead. Seven things measured
-            or forced now, and the sprite is still not on screen - so the last question
-            is whether there is anything IN it.
-            The frames go through FUN_141ec87b0, whose core is: decode the action from
-            moveAction (0 for us), look up that action's frame list, LAZY-LOAD it from the
-            WZ template through FUN_140cd8da0, and if the list is STILL empty fall into
-            FUN_141ec86c0 and try action 2. Every earlier measurement fits that loader
-            returning zero frames: a visible, positioned, opaque, drawn, EMPTY layer.
-              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetLoad
-            Paste the counts and r8 on 140cd8da0:
-              140cd8da0 then 141ec86c0   -> the loader produced NO FRAMES for that action;
-                         r8 says which. The bug is between the template and the WZ names
-              141ec86c0, no 140cd8da0    -> the action index was rejected before loading;
-                         moveAction 0 is out of range for this pet and is back in play
-              140cd8da0, no 141ec86c0    -> frames loaded and it still does not draw; the
-                         sprite has content and the fault is presentation (layer rect)
-              neither                    -> FUN_141ec87b0 returned at its top
-              no 140304100 lines         -> the hook never armed; not evidence
+         v) NEW 2026-09-14 (round 10) - THE PET LAYER NEVER GETS A Z. SEND IT DOWN THE
+            ARM THAT SETS ONE.
+            -PetLoad: the frame loader ran six times (actions 5,1,2,0,8,3, template
+            5000006) and the fallback never fired - the pet HAS frames. And your
+            Character Info screenshot draws the Husky's body, so the assets and the
+            animation machinery are fine. Only the FIELD presentation is wrong.
+            Two corrections from that: the name tag has its OWN layer (positioned
+            relative to the pet's, z 0x2325), so it proves the pet layer's position,
+            not that the pet layer draws; and FUN_141ecaa40 is the pet's position
+            vector, not a canvas insert.
+            Then the find. vtbl+0x198 is put_z - the generic field-object code computes
+            z = (layer*3000 - y)*10 - 0x3fff8ada and calls it at once. The pet's LAND
+            arm (stance 0 - ours, since moveAction 0 decodes to it) never calls it: the
+            z that FUN_141eca710 computes is passed to FUN_141ecaa40 in edx, which never
+            reads it, and the layer keeps the z=0 it was created with. The FLYING arm
+            (stance 1, FUN_141ec22f0) DOES call put_z on the pet's layer, and the Husky
+            has a 2-frame fly animation.
+            So: one byte, server side, no client patch. -PetMoveAction 30 makes
+            FUN_141ec7e90 return 1 and the pet takes the arm that sets z. This is a
+            LOCALISING experiment, not a fix - a Husky should not fly.
+              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetMoveAction 30
+            (Stop the running servers first - the world binary has to relink.)
+            Summon the Husky. The screen is the reading:
+              THE HUSKY APPEARS, hovering/flying  -> the land arm's missing put_z is the
+                         bug. Then the real question: what sets z on a real server - most
+                         likely a packet we never send - and that is a server fix
+              still invisible                      -> z is not it either; the two arms
+                         share whatever is wrong, and it is in the insert path
+              it appears but at the top-left / far away -> z was it AND the position
+                         origin differs between arms; say where
             FREE, same run: walk to another map with the pet out and say whether it
             appears there.
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
@@ -2357,6 +2367,10 @@ param(
     # same number on its own. A run at 125, the maximum, can: the bag either shows a
     # scrollbar or it does not. That is the run that settled it.
     [int]$InventorySlots = 0,
+    # The moveAction byte a summoned pet gets in 0x0277 (0 = the normal value). 30 is the
+    # one-byte experiment that sends the client down the only pet arm that sets the pet
+    # layer's z. See Config::pet_move_action and plan step v).
+    [int]$PetMoveAction = -1,
     # Cap how many rows a shop counter sends. 0 means no cap.
     #
     # On 2026-08-20 Lucy's counter went out with twelve rows and the client threw a C++
@@ -3426,6 +3440,7 @@ foreach ($ch in 0..($Channels - 1)) {
     if ($MobLimit -gt 0) { $chArgs += @('--mob-limit', "$MobLimit") }
     if ($ShopRows -gt 0) { $chArgs += @('--shop-rows', "$ShopRows") }
     if ($InventorySlots -gt 0) { $chArgs += @('--inventory-slots', "$InventorySlots") }
+    if ($PetMoveAction -ge 0) { $chArgs += @('--pet-move-action', "$PetMoveAction") }
     $p = Start-Process -FilePath $worldExe -WorkingDirectory $root -PassThru @spawn `
         -ArgumentList $chArgs `
         -RedirectStandardOutput $chLog -RedirectStandardError "$chLog.err"
@@ -3758,25 +3773,24 @@ function Show-TestPlan {
         Write-Host '                         -> paste that inbound body'
         Write-Host '           pet never goes for drops -> keys not read; say so'
         Write-Host '           pet takes YOUR OWN drop -> paste the pet pick-up line' -ForegroundColor Yellow
-        Write-Host '      v) DOES THE PET EVER GET FRAMES?' -ForegroundColor Yellow
-        Write-Host '         -PetParentOff: the rewrite took (user+0x3fd0 = 0 on all 3555'
-        Write-Host '         samples) and the Husky stayed invisible. Re-parent is dead.'
-        Write-Host '         Seven things measured or forced; the sprite is still missing.'
-        Write-Host '         So: is there anything IN it? FUN_141ec87b0 decodes the action'
-        Write-Host '         from moveAction (0), looks up that action''s frame list, LAZY-'
-        Write-Host '         LOADS it from the WZ template via FUN_140cd8da0, and if the list'
-        Write-Host '         is STILL empty falls into FUN_141ec86c0 and tries action 2.'
-        Write-Host '         Every measurement so far fits that loader returning ZERO frames.' -ForegroundColor Yellow
-        Write-Host '         Summon at once, 10s, quit:'
-        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetLoad' -ForegroundColor Cyan
-        Write-Host '         Paste the counts and r8 on 140cd8da0:'
-        Write-Host '           140cd8da0 then 141ec86c0 -> NO FRAMES for that action; r8 says' -ForegroundColor Yellow
-        Write-Host '                         which. The bug is template vs WZ node names'
-        Write-Host '           141ec86c0, no 140cd8da0 -> the action index was rejected;'
-        Write-Host '                         moveAction 0 is back in play'
-        Write-Host '           140cd8da0, no 141ec86c0 -> frames loaded, still blank; the'
-        Write-Host '                         fault is presentation (the layer rect)'
-        Write-Host '           NO 140304100 lines -> the hook never armed; not evidence' -ForegroundColor Red
+        Write-Host '      v) THE PET LAYER NEVER GETS A Z. SEND IT DOWN THE ARM THAT DOES.' -ForegroundColor Yellow
+        Write-Host '         -PetLoad: the frame loader ran six times and the fallback never'
+        Write-Host '         fired - the pet HAS frames - and your Character Info screenshot'
+        Write-Host '         draws its body. Only the FIELD presentation is wrong.'
+        Write-Host '         The find: vtbl+0x198 is put_z. Field objects compute'
+        Write-Host '         z = (layer*3000-y)*10 - 0x3fff8ada and call it at once. The pet''s'
+        Write-Host '         LAND arm (stance 0 = ours) never does: FUN_141eca710 computes z'
+        Write-Host '         and FUN_141ecaa40 drops it, so the layer keeps z=0. The FLYING' -ForegroundColor Yellow
+        Write-Host '         arm (stance 1) DOES call put_z, and the Husky has a fly anim.'
+        Write-Host '         One byte, server side, no client patch. LOCALISING, not a fix:'
+        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetMoveAction 30' -ForegroundColor Cyan
+        Write-Host '         (Stop the running servers first - the world binary must relink.)'
+        Write-Host '         Summon the Husky. The screen is the reading:'
+        Write-Host '           IT APPEARS, hovering -> the missing put_z is the bug; next is' -ForegroundColor Yellow
+        Write-Host '                         what sets z on a real server (a packet we skip)'
+        Write-Host '           still invisible -> z is not it; the fault is in the insert path'
+        Write-Host '           appears but top-left / far away -> z was it AND the origin'
+        Write-Host '                         differs between arms; say where'
         Write-Host '         FREE: walk to another map with the pet out and say whether it'
         Write-Host '         appears there.'
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
