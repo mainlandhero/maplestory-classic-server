@@ -82,6 +82,10 @@
 param(
     [string]$OutDir,
     [switch]$SkipBuild,
+    # Skip staging the client. The result CANNOT serve patches and must not be deployed - a
+    # launcher checking its version against it is refused and will not start the game. For
+    # checking this script in seconds.
+    [switch]$NoClient,
     [switch]$NoZip
 )
 
@@ -202,6 +206,84 @@ function Show-BuildIdentity([string]$dir, [string[]]$names) {
     Write-Host '   (times are UTC, the same zone the startup line uses)'
 }
 
+# **The client the server publishes for patching, staged and GATE-PATCHED.**
+#
+# The owner, 2026-09-14: *"Make sure that the server release zip includes the client, and that
+# start-server.ps1 and start-servers.cmd includes the --client-dir relative to where the script
+# is, the server files have the exact structure as extracted from the zip."*
+#
+# This is what `maplecw-auth --client-dir` serves: a launcher hashes its own folder, compares
+# against this one, and downloads only what differs. It goes to `client\` at the ROOT of the
+# payload, beside the scripts, so `--client-dir "$PSScriptRoot\client"` resolves with no
+# configuration anywhere - the structure as extracted IS the structure the scripts assume.
+#
+# TWO THINGS MAKE IT THE RIGHT BYTES, and getting either wrong costs every player a download
+# on every launch, forever:
+#
+#  * **The exe is gate-patched here.** The launcher patches one byte of MapleStory.exe (the
+#    Nexon Launcher gate) before it checks its version, so a canonical copy with the UNPATCHED
+#    byte disagrees with every prepared client: fetch 76 MB, re-patch, disagree again. Patching
+#    the staged copy - not client-patched\ itself - makes the canonical match what a prepared
+#    launcher produces, deterministically, whether or not this box has launched the game.
+#  * **Volatile files are left out**, the same set `patchset::is_volatile` ignores: logs, hook
+#    markers, dumps, the client's own screenshots, the .orig/.disabled backups, and grap64.dll,
+#    which is the launcher's own stub and has one owner. They would be ignored by the manifest
+#    anyway; excluding them keeps ~20 MB of screenshots and backups out of the zip.
+#
+# The payload's own version is not computed here on purpose: it is the SHA-256 of the manifest
+# `patchset` builds, and a second implementation of that in PowerShell is a thing that can
+# drift. maplecw-auth prints it at startup ("CLIENT PATCHES: ... version <id>"), which is the
+# one place it is computed.
+function Add-ClientForPatching([string]$stageRoot, [string]$source) {
+    $dest = Join-Path $stageRoot 'client'
+    Write-Host "staging the client for patching from $source" -ForegroundColor Cyan
+    Write-Host '  (this is the slow part - a few hundred MB)'
+
+    # /XD and /XF mirror patchset::is_volatile. robocopy exits 0-7 for success.
+    $xd = @('grap', 'grap.disabled', 'dumps', 'previous-runs')
+    $xf = @('maplecw-hook.*', '*.orig', '*.bak', '*.before-patch', '*.log', '*.err',
+            '*.maplecw-part', 'Maple_A_*.jpg', 'grap64.dll', 'maplecw-launcher*')
+    $args = @($source, $dest, '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/R:1', '/W:1')
+    $args += '/XD'; $args += $xd
+    $args += '/XF'; $args += $xf
+    & robocopy @args | Out-Null
+    if ($LASTEXITCODE -ge 8) { Fail "robocopy failed copying the client ($LASTEXITCODE)" }
+
+    $exe = Join-Path $dest 'MapleStory.exe'
+    if (-not (Test-Path $exe)) { Fail "no MapleStory.exe in the staged client at $dest" }
+
+    # The Nexon Launcher gate: 0xd9038a, 75 -> EB. Verified against the exact instruction pair
+    # before writing, and refused otherwise - every address here is absolute, so writing one
+    # byte into a build these offsets were not measured on would corrupt it.
+    # crates/launcher/src/client.rs owns the same constants.
+    $fs = [System.IO.File]::Open($exe, 'Open', 'ReadWrite')
+    try {
+        $buf = New-Object byte[] 4
+        $fs.Position = 0xd90388
+        [void]$fs.Read($buf, 0, 4)
+        $hex = ($buf | ForEach-Object { $_.ToString('x2') }) -join ' '
+        if ($hex -eq '85 c0 eb 05') {
+            Write-Host '  the staged client is already gate-patched'
+        } elseif ($hex -eq '85 c0 75 05') {
+            $fs.Position = 0xd9038a
+            $fs.WriteByte(0xEB)
+            Write-Host '  gate-patched the staged MapleStory.exe (75 -> EB), so it matches what' -ForegroundColor Green
+            Write-Host '  a prepared launcher produces and no client re-downloads it every launch'
+        } else {
+            Fail @"
+the staged MapleStory.exe is not the build these offsets were measured on: expected
+'85 c0 75 05' at 0xd90388, found '$hex'. Refusing to publish a client whose gate byte cannot
+be set - every launcher would disagree with it and download the exe on every launch.
+"@
+        }
+    }
+    finally { $fs.Close() }
+
+    $n = (Get-ChildItem $dest -Recurse -File | Measure-Object).Count
+    $mb = ((Get-ChildItem $dest -Recurse -File | Measure-Object -Property Length -Sum).Sum) / 1MB
+    Write-Host ("  staged {0:N0} client file(s), {1:N0} MB" -f $n, $mb)
+}
+
 # ---------------------------------------------------------------- stage
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Path (Join-Path $stage 'bin') -Force | Out-Null
@@ -210,6 +292,12 @@ foreach ($b in $binaries) { Copy-Item (Join-Path $rel $b) (Join-Path $stage 'bin
 Show-BuildIdentity (Join-Path $stage 'bin') $binaries
 Copy-Item $handbook (Join-Path $stage 'gm-handbook') -Recurse -Force
 Copy-Item (Join-Path $repo 'data') (Join-Path $stage 'data') -Recurse -Force
+if ($NoClient) {
+    Write-Host 'NO CLIENT (-NoClient): this payload cannot serve patches, and a launcher' -ForegroundColor Yellow
+    Write-Host '  pointed at it will refuse to start the game. For testing this script only.' -ForegroundColor Yellow
+} else {
+    Add-ClientForPatching $stage (Join-Path $repo 'client-patched')
+}
 # **The sign-in certificate travels with the server, and that is what makes the client need no
 # configuration.** crates/auth/src/tls.rs mints a self-signed certificate only when auth-cert.pem
 # is ABSENT and reloads it otherwise, and crates/launcher/build.rs compiles that certificate's

@@ -57,6 +57,15 @@ param(
     # It must match crates\auth\src\lib.rs DEFAULT_PORT and the launcher's DEFAULT_AUTH_PORT,
     # which a test in the launcher pins against each other.
     [int]$AuthPort = 8480,
+    # **The client this server publishes for patching.** Empty means "the client\ folder
+    # beside this script", which is where the payload puts it - so the structure as extracted
+    # from MapleCW-server.zip needs no configuration at all.
+    #
+    # Every launcher hashes its own client folder, asks this server for the manifest of this
+    # one, and downloads only the files that differ. A launcher that CANNOT confirm its version
+    # refuses to start the game (the owner chose blocking over warn-only), which is why a missing
+    # folder is a loud warning below rather than a silent omission.
+    [string]$ClientDir,
     # Kept so an old command line is told what changed rather than silently ignored.
     [string]$Account,
     # Serve a connection that cannot be tied to a launcher sign-in as THIS account instead of
@@ -182,12 +191,35 @@ Add-Watched 'login server' $login 'login.log'
 # Every launcher pins its fingerprint, which is printed below once the service has written
 # it. This block used to say the password crossed the wire in plain text; since 2026-09-05
 # it does not - crates/auth/src/tls.rs and crates/tlspin.
+# **Where the client being published lives.** Relative to THIS SCRIPT, not to the working
+# directory: the payload extracts as `bin\`, `client\`, `data\`, `gm-handbook\` and these
+# scripts at the root, and a server started by double-clicking start-servers.cmd from anywhere
+# must still find it.
+$clientRoot = if ($ClientDir) { $ClientDir } else { Join-Path $root 'client' }
 $authArgs = @('--db', "$db", '--bind', "$Bind", '--port', "$AuthPort")
+if (Test-Path (Join-Path $clientRoot 'MapleStory.exe')) {
+    $authArgs += @('--client-dir', "$clientRoot")
+} else {
+    # Not fatal here - the rest of the server is still worth running - but every player is
+    # about to be blocked, so it is said in the words they will report back.
+    Write-Host ''
+    Write-Host 'NO CLIENT TO PUBLISH, SO NOBODY CAN PLAY.' -ForegroundColor Red
+    Write-Host ("  Expected a client folder at {0}" -f $clientRoot) -ForegroundColor Red
+    Write-Host '  Every launcher checks its version against this server before starting the' -ForegroundColor Red
+    Write-Host '  game and REFUSES to start when it cannot be confirmed, so players will see' -ForegroundColor Red
+    Write-Host '  "this server publishes no client". Re-extract MapleCW-server.zip so that' -ForegroundColor Red
+    Write-Host '  client\ sits beside this script, or pass -ClientDir <path>.' -ForegroundColor Red
+    Write-Host ''
+}
 $auth = Start-Process -FilePath (Join-Path $bin 'maplecw-auth.exe') -WorkingDirectory $root `
     -ArgumentList $authArgs -PassThru -NoNewWindow `
     -RedirectStandardOutput (Join-Path $root 'auth.log') `
     -RedirectStandardError  (Join-Path $root 'auth.log.err')
 Write-Host "sign-in       pid $($auth.Id)  $($Bind):$AuthPort  <- the launcher signs in here (TLS)"
+if ($authArgs -contains '--client-dir') {
+    Write-Host ("client        publishing {0}" -f $clientRoot)
+    Write-Host '              launchers patch from here; auth.log prints the version it serves'
+}
 if ($AuthPort -ne 8480) {
     Write-Host "              NOT the default 8480 - every client needs this in the launcher's" -ForegroundColor Yellow
     Write-Host "              Sign-in port box, or auth_port in maplecw-launcher.toml" -ForegroundColor Yellow
