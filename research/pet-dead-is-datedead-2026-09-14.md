@@ -94,10 +94,68 @@ never consulted. It is kept non-zero because a pet image that *does* carry `limi
 otherwise be dead the instant it is summoned. **An inert variable is not a tested one** - the
 same trap `CLAUDE.md` records for the timestamp filter and the `0x00D5` burst.
 
-## 4. What is still open
+## 4. Round 1 confirmed, and it was only half the problem
 
-The pet being dead explains the refusal to move and the tooltip. It does **not** by itself
-explain the earlier measurement in `research/pet-not-drawn-2026-09-13.md`, where all eleven
-visibility gates passed and `FUN_141ecde00` was measured wanting to SHOW the pet. Whether a
-live pet now draws, and whether it picks up drops, is what the next run is for - and those are
-two separate readings, not one.
+The owner, with the tooltip open: **"Water of Life Dries Up: 1/1/2077 00:00 UTC"** and the normal
+description back. The item is alive. The pet summons. **It still does not draw and it still
+does not pick up.** The pre-registered reading for that outcome was "TWO bugs, not one", and
+that is what this is.
+
+`research/fixtures/pet-alive-datedead-2077-summons-and-moves-but-does-not-draw-world-ch0.log`
+is that run.
+
+## 5. What the run rules out, without spending another launch
+
+| ruled out | how |
+|---|---|
+| the packet | all fourteen fields of `0x0277` decode to what we meant, 50 bytes exactly: charId 215, petIdx 0, activated 1, init 1, itemId 5000006, "Husky", the serial, x 77, y 65, moveAction 0, foothold 154, hue -1, itemId again, wonderGrade 0, giantRate 0, nameTag 0, chatBalloon 0 |
+| the position | the pet is at (77, 65) and the owner's last `0x00D9` before the summon ends at x = 77. It is at their feet, not off-screen |
+| the object | `0x0202` arrives **166 times** after the summon. The pet exists, ticks and walks |
+| the art | `Item/Pet/5000006.img` still has all 22 action nodes and every frame keeps its `_outlink` |
+| the archive rewrite | **the inventory icon is the control.** It is the same shape of node - a 1x1 placeholder plus `_outlink` into `Item/Pet/_Canvas` - and it draws in the owner's screenshot. So outlink resolution survives `backport_install.py`'s rewrite for this exact image |
+| a client fault | no `CLIENT FAULT` in the hook log, and the one `0x008F` ELog predates the summon |
+
+## 6. The correction that makes the next run worth spending
+
+`research/pet-not-drawn-2026-09-13.md` reads `FUN_141ecde00` as a verdict, and the `-PetGates`
+and `-PetFlags` runs were designed against that reading. **It is a sync**, and the tail says so:
+
+```text
+141ecde15  xor  r14d, r14d          ; r14 = 0
+141ecde1f  mov  edi, r14d           ; edi = DESIRED = hidden
+141ecde27  lea  ebp, [r14+1]        ; ebp = 1
+   ... eleven gates; EVERY failure jumps to 141ecdf15 with edi still 0 ...
+141ecdf0b  call 142cc1e40
+141ecdf12  cmove edi, ebp           ; gate 11 returns 0 -> DESIRED = 1 = VISIBLE
+141ecdf15  ebp = the renderable's CURRENT state, or 0 when pet+0x3c8 is null
+141ecdf56  cmp  ebp, edi / je       ; EQUAL -> return, touch nothing
+141ecdf8f  call 14159b0a0(pet+0x40, edi)   ; only on a change, and rdx IS the verdict
+```
+
+So "`14159b0a0` was never called" - the run-2 result the whole hunt rests on - does **not** mean
+the pet was refused. It means *desired equalled current*, and that has two opposite readings:
+
+* every gate passed, desired 1, and the client **already had the pet visible**, or
+* a gate failed, desired 0, and the pet was already hidden.
+
+The 2026-09-13 note picks the second and never states the first. Both fit every byte of that
+capture. And the `-PetFlags` design inherits a second flaw: it watched the two **setters** of
+`+0x24ac` / `+0x24b0` and read "no setter fired" as "the fields are zero". That is the
+`mob+0x42c` blind spot again - a field can be written through a pointer no setter-watch sees.
+
+`-PetSync` replaces both. Four watches, one capture, and it can come back false:
+
+```text
+141ecde00:hits=6000                the ladder runs for the pet at all
+142cc1e49:peek=24ac:hits=6000      gate 11 READ, not inferred: reaching the second compare
+                                   proves +0x24b0 == 0, and peek prints +0x24ac. No call has
+                                   happened at that address, so called-from still reads the
+                                   ladder's 0x141ecdf10
+14159b0a0:hits=6000                the sync changed something, and rdx says to what
+140304100:hits=200                 positive control
+```
+
+The outcome that would close the ladder for good is **`142cc1e49` with peek 0 and no
+`14159b0a0`**: desired 1, current 1, the client already believes the pet is visible, and the
+failure is in drawing rather than in visibility. The outcome that reopens it is `142cc1e49`
+absent, or its peek non-zero.
