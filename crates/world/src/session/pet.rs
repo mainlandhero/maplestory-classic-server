@@ -213,7 +213,7 @@ impl Session {
             serial: net::pet::pet_serial(chr.id, item_id).get(),
             x,
             y: landing.as_ref().map_or(y, |l| l.y),
-            move_action: 0,
+            move_action: self.config.pet_move_action.unwrap_or(0),
             foothold: landing.map_or(0, |l| u16::try_from(l.foothold).unwrap_or(0)),
         }
     }

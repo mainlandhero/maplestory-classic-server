@@ -31,6 +31,9 @@ maplecw-world - one channel of the MapleCW game world
                    from the address the migration was minted for. require (default)
                    refuses it - the off-box half of only-the-launcher-client-enters;
                    record logs it and lets it through, as every run before 2026-09-05 did.
+  --pet-move-action N  the moveAction byte a summoned pet gets in 0x0277, instead of
+                   0. A test lever: 30 sends the client down the stance-1 arm, the
+                   only pet arm that gives the pet's layer a z. See Config::pet_move_action
   --inventory-slots N  give every inventory N slots instead of the character's own,
                    so a client run can read the number off the screen (1..=100).
                    Go UNDER the 30 default: the window is 5x6 with a scrollbar,
@@ -195,6 +198,13 @@ fn main() -> ExitCode {
                             Ok(())
                         }
                     })
+            }),
+            "--pet-move-action" => value().and_then(|v| {
+                v.parse::<u8>()
+                    .map(|n| {
+                        config.pet_move_action = Some(n);
+                    })
+                    .map_err(|e| format!("--pet-move-action {v}: {e}"))
             }),
             "--mob-limit" => value().and_then(|v| {
                 v.parse()

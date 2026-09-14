@@ -10831,6 +10831,38 @@ fn a_double_click_on_the_husky_summons_it_and_a_second_puts_it_away() {
     assert!(!s.pet_is_active(5_000_006));
 }
 
+/// `--pet-move-action` reaches the wire and nothing else moves. The default body carries
+/// `moveAction` 0 at offset 33 (after charId 4, petIdx 4, activated 1, init 1, itemId 4, the
+/// 2+5 string, serial 8, x 2, y 2); with the lever set to 30 that one byte is 30 and the
+/// foothold that follows it is unchanged. One variable, so the run that uses it is a
+/// measurement. `Config::pet_move_action` says why 30.
+#[test]
+fn the_pet_move_action_lever_changes_exactly_one_byte_of_the_summon() {
+    fn summon(lever: Option<u8>) -> Vec<u8> {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Wisp".to_string(), ..Default::default() };
+        let id = store.create_character(account_id, 0, &chr).unwrap().id;
+        store.create_migration(account_id, id, 0, 0).unwrap();
+        store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+        let mut item_names = std::collections::HashMap::new();
+        item_names.insert(5_000_006u32, "Husky".to_string());
+        let config = Config { item_names, pet_move_action: lever, ..Config::default() };
+        let mut s = Session::new(store.clone(), Arc::new(config));
+        s.claim_for_character(id);
+        s.last_position = Some((300, -50));
+        let out = s.on_pet_activate(&hex("509a18140100"));
+        out.iter().find(|r| r.opcode == net::pet::PET_ACTIVATED).expect("a PetActivated").body.clone()
+    }
+    let plain = summon(None);
+    let flown = summon(Some(30));
+    assert_eq!(plain[33], 0, "the default moveAction");
+    assert_eq!(flown[33], 30, "the lever");
+    assert_eq!(plain.len(), flown.len());
+    let differing: Vec<usize> = (0..plain.len()).filter(|&i| plain[i] != flown[i]).collect();
+    assert_eq!(differing, vec![33], "exactly one byte differs, and it is moveAction");
+}
+
 /// **A pet takes a mob's drop and nothing else.** The owner, 2026-09-13: *"turn every pet into a
 /// vacuum pet ... provided that they are from a mob death drop ... offload most of the pet
 /// driven operations on the client."* The client decides what the pet reaches for (the pet

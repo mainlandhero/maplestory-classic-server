@@ -109,6 +109,22 @@ pub struct Config {
     /// `net::opcode::MIN_INVENTORY_SLOTS`.
     pub inventory_slots: Option<u16>,
 
+    /// **A test lever, not a game rule:** the `moveAction` byte a summoned pet is given in
+    /// `0x0277`, for one run. `--pet-move-action N`. `None` sends the normal `0`.
+    ///
+    /// The client stores that byte at `pet+0x2d8` and `FUN_141ebe350` decodes it - bit 0 the
+    /// facing, `(v >> 1) - 1` an index into a fifteen-entry stance table - and `FUN_141ec7e90`
+    /// turns the result into a bool for `CPet::SetStance`: **0 for every ordinary value, 1
+    /// only when the table gives 8, which is `moveAction` 30 or 31**. Stance 0 is the land
+    /// arm, and on 2026-09-14 that arm was read all the way down: it positions the pet's layer
+    /// but **never calls the layer's `put_z` (`vtbl+0x198`)**, because the field z that
+    /// `FUN_141eca710` computes is passed to `FUN_141ecaa40` in `edx`, which never reads it.
+    /// Stance 1 - the flying arm, `FUN_141ec22f0` - does call `put_z`, and the Husky has a
+    /// two-frame `fly` animation. So `30` here is the one-byte experiment that says whether
+    /// the missing z is why a summoned pet is invisible on the field while the Character Info
+    /// window draws the same pet perfectly. `research/pet-draw-chain-2026-09-14.md` §12.
+    pub pet_move_action: Option<u8>,
+
     /// Where every portal leads, keyed by `(map, portal name)`.
     ///
     /// Generated from the client's own `Map.wz` by `tools/dump_portals.py` - the data is the
@@ -2293,6 +2309,7 @@ impl Default for Config {
             answer_packets: true,
             peer_policy: store::migration::PeerPolicy::Require,
             inventory_slots: None,
+            pet_move_action: None,
             chairs: HashMap::new(),
             portals: HashMap::new(),
             portal_index: HashMap::new(),

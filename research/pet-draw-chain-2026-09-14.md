@@ -399,3 +399,37 @@ The one thing found and not yet run down: `FUN_141eca710` computes a proper fiel
 calls `layer->vtbl[0x320](8, v)` and `vtbl[0x300](2)` on it - is the open question, and it is a
 vtable-slot question that needs the Gr2D interface layout rather than another launch.
 
+
+
+---
+
+# `put_z` is `vtbl+0x198`, and the pet's land arm never calls it
+
+Found by following the field-object z constant rather than the pet: `0x140d0ce7d` computes
+`z = (layer*3000 - y)*10 - 0x3fff8ada` for a generic field object and the wrapper at
+`0x140d0cce8` applies it as `layer->vtbl[0x198](layer, z)` **[L]**. So `+0x198` is `put_z`.
+
+Every `vtbl[0x198]` call in the pet code **[L]**:
+
+| where | value | arm |
+|---|---|---|
+| `FUN_141ec2690` @ `141ec26f3` | `rsi+1` | the `pet[0x7d]` arm - nested under another object |
+| `FUN_141ec2690` @ `141ec2885` | `1` | the `pet[0x7b]` arm - nested |
+| `FUN_141ec22f0` @ `141ec23d6` | `param_4` (3) | the **flying** arm, stance 1 |
+| `FUN_141b054f0` @ `141b084fc` | `0x2325` | the **name tag's own** layer, for `0x3eb` |
+
+The free-standing land arm - `pet[0x7d]==0`, `pet[0x7b]==0`, `pet[0x77]!=0`, stance 0, ours -
+is not in that table. It calls `FUN_141ecaa40(pet, z, &vector)` with the z `FUN_141eca710`
+computed, and `FUN_141ecaa40` never reads `edx` (`rcx->rdi`, `r8->rbx`, `rdx` unspilled and
+untouched until reused as scratch at `141ecaac4`). The layer was created by
+`DAT_143add050->vtbl[0x168](0,0,0,0,0, ...)`. **In our arm the pet's layer keeps z = 0 for its
+whole life**, while the tag hanging off it sits at `0x2325` and draws.
+
+Whether z = 0 is what hides it is not established - it is [I] - and the flying arm is the
+one-byte way to find out without a client patch: `moveAction` 30 decodes to 8, `FUN_141ec7e90`
+returns 1, `SetStance(1)` takes `FUN_141ec22f0`, which calls `put_z` and has its own insert
+path, and the Husky has a two-frame `fly`. `--pet-move-action` / `-PetMoveAction 30` is that
+lever, one byte on the wire (`the_pet_move_action_lever_changes_exactly_one_byte_of_the_summon`).
+It is a localising experiment: a Husky should not fly, and if it appears the real question
+becomes what sets z on a real server - most likely a packet this one never sends.
+
