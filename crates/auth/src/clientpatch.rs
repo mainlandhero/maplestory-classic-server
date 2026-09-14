@@ -44,8 +44,49 @@ pub struct ClientPatchSource {
 
 impl ClientPatchSource {
     /// Scan `root` and hold its manifest. Returns the error rather than serving a wrong one.
+    ///
+    /// **It also checks that `root` is actually a client**, and that is not belt-and-braces.
+    /// The owner, 2026-09-14: *"the server should give an error upon start up if it cannot find the
+    /// proper client folder along with the files that it is looking for."*
+    ///
+    /// The failure this prevents is the quiet one. A scan of an empty or wrong directory
+    /// succeeds and yields an empty manifest - and an empty manifest makes
+    /// `Manifest::plan` return nothing to fetch, so **every launcher in the world would be told
+    /// it is up to date** and would start against a server whose data it does not match. A
+    /// missing folder is loud; a folder that is merely not a client would have been silent, and
+    /// silent-and-wrong is the shape this project keeps paying for.
+    ///
+    /// Two markers, chosen because they are what a client cannot be without rather than a
+    /// magic file count: the executable, and at least one file under `Data` (the WZ archives,
+    /// which are the whole reason patching exists).
     pub fn open(root: &Path) -> std::io::Result<ClientPatchSource> {
+        if !root.is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("{} is not a directory", root.display()),
+            ));
+        }
         let manifest = Manifest::scan(root)?;
+        if manifest.get("MapleStory.exe").is_none() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "{} has no MapleStory.exe, so it is not a client folder. Publishing it \
+                     would tell every launcher it is already up to date",
+                    root.display()
+                ),
+            ));
+        }
+        if !manifest.entries.iter().any(|e| e.path.starts_with("Data/")) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "{} has no Data\\ archives, so it is not a complete client. Publishing it \
+                     would tell every launcher it is already up to date",
+                    root.display()
+                ),
+            ));
+        }
         let rendered = manifest.render();
         Ok(ClientPatchSource {
             root: root.to_path_buf(),
@@ -149,6 +190,15 @@ mod tests {
         }
     }
 
+    /// `expect_err` needs `Debug` on the Ok type, and a scanned client is not worth deriving
+    /// it for - it would print 773 MB of manifest into a failure message.
+    fn err_of(r: std::io::Result<ClientPatchSource>, what: &str) -> String {
+        match r {
+            Ok(_) => panic!("expected a refusal: {what}"),
+            Err(e) => e.to_string(),
+        }
+    }
+
     fn source(t: &Temp) -> ClientPatchSource {
         ClientPatchSource::open(&t.0).unwrap()
     }
@@ -172,6 +222,7 @@ mod tests {
     fn nothing_outside_the_client_folder_can_be_asked_for() {
         let t = Temp::new("escape");
         t.file("MapleStory.exe", b"exe");
+        t.file("Data/Base/Base.wz", b"base");
         // A neighbour of the client folder - the shape of a real secret on a server box.
         std::fs::write(t.0.parent().unwrap().join("maplecw-secret.db"), b"secrets").unwrap();
         let s = source(&t);
@@ -189,15 +240,42 @@ mod tests {
         let _ = std::fs::remove_file(t.0.parent().unwrap().join("maplecw-secret.db"));
     }
 
+    /// **The silent failure this exists to prevent.** An empty or wrong folder scans fine and
+    /// yields an empty manifest, and an empty manifest tells every launcher it is already up to
+    /// date - a server publishing nothing, and every client believing it matches.
+    #[test]
+    fn a_folder_that_is_not_a_client_is_refused_at_startup() {
+        let t = Temp::new("notaclient");
+        // Nothing at all.
+        let e = err_of(ClientPatchSource::open(&t.0), "an empty folder is not a client");
+        assert!(e.contains("MapleStory.exe"), "{e}");
+
+        // The exe but no WZ - an install that copied one file, or a half-finished unzip.
+        t.file("MapleStory.exe", b"exe");
+        let e = err_of(ClientPatchSource::open(&t.0), "no Data is not a complete client");
+        assert!(e.contains("Data"), "{e}");
+
+        // Both markers: accepted.
+        t.file("Data/Base/Base.wz", b"base");
+        let s = ClientPatchSource::open(&t.0).expect("a client folder");
+        assert_eq!(s.manifest().entries.len(), 2);
+
+        // A path that does not exist at all names itself rather than a generic error.
+        let missing = t.0.join("nope");
+        let e = err_of(ClientPatchSource::open(&missing), "a missing folder");
+        assert!(e.contains("nope"), "{e}");
+    }
+
     /// A file that exists on disk but is volatile is not in the manifest, so it is not served
     /// either - the same rule from both directions.
     #[test]
     fn a_volatile_file_is_neither_listed_nor_servable() {
         let t = Temp::new("volatile");
         t.file("MapleStory.exe", b"exe");
+        t.file("Data/Base/Base.wz", b"base");
         t.file("maplecw-hook.log", b"log");
         let s = source(&t);
-        assert_eq!(s.manifest().entries.len(), 1);
+        assert_eq!(s.manifest().entries.len(), 2, "the log is not part of the version");
         assert!(s.file("maplecw-hook.log").is_none());
     }
 
