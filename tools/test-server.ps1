@@ -1201,31 +1201,47 @@
                          not what this pet code reads; say so
               the pet takes your OWN dropped item                           -> the byte is
                          ignored; paste the pet pick-up line
-         v) NEW 2026-09-14 - THE PET WAS DEAD, AND IT WAS dateDead. Measured in the
-            client, no run spent on it. FUN_1402cf680 decides deadness in three rows:
-            limitedLife > 0 -> dead iff remainLife <= 0; life == 0 -> ALIVE and nothing
-            else is read; otherwise -> dead iff dateDead >= 150842304000000000, which is
-            ITEM_NEVER_EXPIRES byte for byte. We were sending exactly that sentinel as
-            dateDead in every pet body. 5000006's image has no limitedLife and life 7, so
-            it took row 3 and the client called it a doll - "Cannot move because the magic
-            duration has ended", and the tooltip switched to the WZ's descD, "the water of
-            life has dried up". dateDead is 2077-01-01 now. remainLife 1e9 stays, but it is
-            INERT for this pet (row 1 never fires), so last round eliminated nothing - it
-            tested a field the client never read. research/pet-dead-is-datedead-2026-09-14.md.
-            Summon the Husky, stand and watch ten seconds, then walk it over a drop:
-              tooltip is the normal description again, no "water of life"  -> the item is
-                         alive; that half is settled
-              still "the water of life has dried up"                       -> dateDead is
-                         not the only gate; paste the tooltip text exactly
-              the pet is VISIBLE                                           -> deadness was
-                         the whole of the invisibility too and the 11-gate hunt is closed
-              alive tooltip but STILL invisible                            -> two bugs, not
-                         one. That is the useful answer, and -PetGates is the next run
-              it walks over a drop and the item lands in your bag          -> pick-up works
-              visible and alive but it ignores drops                       -> paste the
-                         inbound lines from world-ch0.log after the walk-over
-            FREE, same run: every pet test so far has been on map 1010. Walk to another map
-            with the pet out and say whether it appears there.
+         v) NEW 2026-09-14 (round 2) - THE PET IS ALIVE NOW AND STILL DOES NOT DRAW,
+            SO THERE WERE TWO BUGS. Round 1 was right and is closed: dateDead was the
+            ITEM_NEVER_EXPIRES sentinel, which FUN_1402cf680 reads as "this pet is a
+            doll". Your tooltip now says "Water of Life Dries Up: 1/1/2077" with the
+            normal description, the pet summons and its 0x0202 move reports arrive 166
+            times - so the object exists, is alive, is positioned beside you (77,65 -
+            the same x your last move ended on) and walks. It is simply not drawn, and
+            it does not pick up.
+            Ruled out WITHOUT a launch this round: the art (Item/Pet/5000006.img still
+            has all 22 action nodes and their _outlinks), the archive (your inventory
+            icon is the SAME kind of 1x1-plus-outlink node and it draws - that is the
+            positive control), the position, and the packet (all 14 fields of 0x0277
+            decode to exactly what we meant, 50 bytes, nothing shifted).
+            What is left is the client's own show/hide sync, FUN_141ecde00 - and the
+            reading of it changed when I disassembled the tail properly. It is a SYNC:
+            edi starts at 0 (hidden), every failing gate leaves it 0, and only gate 11
+            returning 0 sets edi = 1. Then it compares edi against the CURRENT state and
+            returns without touching anything if they agree. So "nothing happened" has
+            two opposite meanings and the old runs cannot tell them apart.
+            -PetSync arms all four watches that separate them, in ONE capture (the old
+            -PetFlags is an alias and now points here; it watched the two SETTERS, and
+            "no setter fired" is not "the field is zero"). Summon within a few seconds
+            of entering the field, stand still ten seconds, quit:
+              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetSync
+            Paste the counts and the peek values. What each says:
+              141ecde00 absent                     -> the ladder never runs for the pet;
+                         everything built on it is void and that is the big result
+              142cc1e49 absent, 141ecde00 present  -> +0x24b0 is non-zero or a gate below
+                         11 closed; gate 11 is NOT settled after all
+              142cc1e49 present, peek non-zero     -> +0x24ac hides it; a field to chase
+              142cc1e49 peek 0, 14159b0a0 rdx=1    -> the sync SHOWED it and it is still
+                         invisible: the bug is in drawing, not visibility
+              142cc1e49 peek 0, no 14159b0a0       -> the client already thinks it is
+                         visible. Same answer, stronger: the ladder is innocent and the
+                         hunt moves to the renderable at pet+0x3c8
+              14159b0a0 rdx=0                      -> something re-hides it; called-from
+                         names who
+              no lines at all from 140304100       -> the hook never armed; the run
+                         proves nothing and is not evidence either way
+            FREE, same run: every pet test has been on map 1010. Walk to another map with
+            the pet out and say whether it appears there.
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -2148,10 +2164,12 @@ param(
     # clean zeros that looked like an answer and were an unarmed instrument, which is the
     # failure mode `CLAUDE.md` calls the most expensive on this project. One word cannot be
     # half-pasted. research/pet-not-drawn-2026-09-13.md.
-    # **-PetFlags**: watch the two session-flag accessors that gate 11 reads. See the block
-    # that sets $Probe for how to read the result - including what "neither fires" means,
-    # which is the outcome that would redirect the hunt rather than end it.
-    [switch]$PetFlags,
+    # **-PetSync** (was -PetFlags, and the alias still works): read the pet show/hide sync
+    # end to end in ONE capture - the ladder runs, gate 11's two flags, and whether the sync
+    # ever changes anything. It replaces the setter watch, which could only ever say that
+    # nobody CALLED a setter and not what the fields hold. See the block that sets $Probe.
+    [Alias('PetFlags')]
+    [switch]$PetSync,
     [switch]$PetGates,
     # ON BY DEFAULT SINCE 2026-09-14, and accepted only so that every launch line already
     # written down keeps working. It used to be the switch that made the channel answer at
@@ -2502,32 +2520,55 @@ if (-not $SilentChannel) { $SetFieldProbe = $true }
 #
 # So: passing -InventorySlots means the bag is the variable, and the bag gets the watches.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    if ($PetFlags) {
-        # **Which of the two session flags hides the pet, what it was set to, and by whom.**
+    if ($PetSync) {
+        # **THE WHOLE PET SHOW/HIDE SYNC, IN ONE CAPTURE.** Four watches, and every claim
+        # below is checkable inside this single run - deliberately, because CLAUDE.md's rule
+        # is that a conclusion must not be assembled from two sessions.
         #
-        # The 2026-09-14 -PetGates run settled that gate 11 of FUN_141ecde00 is the blocker:
-        # all four ladder watches fired, the deepest (142cc1e40 from 0x141ecdf10) 2428 times,
-        # and that gate is
-        #     FUN_142cc1e40(session) { return session[0x24b0] != 0 || session[0x24ac] != 0; }
-        #     test eax,eax / cmove edi,ebp    ; eax == 0 -> edi = 1 = VISIBLE
-        # so the pet is hidden iff one of those two fields is non-zero. Both are zeroed by the
-        # session's own initialiser, so something SET one.
+        # FUN_141ecde00 is a SYNC, not a verdict, and its registers are unambiguous:
+        #     141ecde15  xor r14d, r14d          r14 = 0
+        #     141ecde1f  mov edi, r14d           edi = DESIRED = hidden
+        #     141ecde27  lea ebp, [r14+1]        ebp = 1
+        #     ... every gate that fails jumps to 141ecdf15 with edi still 0 ...
+        #     141ecdf0b  call 142cc1e40
+        #     141ecdf12  cmove edi, ebp          gate 11 returns 0 -> DESIRED = 1 = VISIBLE
+        #     141ecdf15  ebp = the renderable's CURRENT state (or 0 if there is none)
+        #     141ecdf56  cmp ebp, edi / je       equal -> return, touch nothing
+        #     141ecdf8f  call 14159b0a0(pet+0x40, edi)   <- ONLY on a change; rdx IS the verdict
         #
-        # These two are the only writers, and they are tiny accessors:
-        #   142cc1c30  sets session+0x24ac   <- reachable ONLY from inbound opcode 0x02E2
-        #   142cc1d00  sets session+0x24b0   <- inbound 0x02E3, or a vtable call from the UI
-        # We send neither opcode, so the expectation is that 0x24b0 is set locally. The watch
-        # logs rdx, which is the VALUE being written, and called-from, which names the writer.
+        # 141ecde00:hits=6000   the ladder ran for the pet at all. rcx is the pet. It fires
+        #                       about thirty times a second while one is out, so a summon in
+        #                       the first seconds gives thousands of samples.
+        # 142cc1e49:peek=24ac   gate 11, READ RATHER THAN INFERRED. 142cc1e40 is
+        #                       `[rcx+0x24b0] != 0 || [rcx+0x24ac] != 0`, and 142cc1e49 is the
+        #                       second compare - reaching it PROVES +0x24b0 is 0, and peek
+        #                       prints +0x24ac. No call has happened yet at that address, so
+        #                       called-from still reads the ladder's 0x141ecdf10.
+        #                       The old -PetFlags watched the two SETTERS instead, and "no
+        #                       setter fired" is not "the field is zero" - the same blind spot
+        #                       that hid mob+0x42c behind a lea'd pointer.
+        # 14159b0a0:hits=6000   the sync CHANGED something, and rdx says to what.
+        # 140304100:hits=200    the equip decode at world entry. POSITIVE CONTROL: no lines at
+        #                       all means the hook never armed and nothing here proves anything.
         #
         # READ IT LIKE THIS:
-        #   neither fires   -> no field was ever set, so the polarity reading above is wrong
-        #                      and the verdict is decided somewhere else. That is a real
-        #                      answer and it redirects the whole hunt.
-        #   142cc1d00 fires -> rdx is the value and called-from is the culprit. If called-from
-        #                      is 0x1410924d5 it is the vtable path (FUN_141092480, slot 2 of
-        #                      the table at 0x143379de8); if 0x141090dcc it is the CLEAR.
-        #   142cc1c30 fires -> something really is sending 0x02E2, which we do not build.
-        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142cc1c30:hits=200,142cc1d00:hits=200,142cc1e30:hits=200,142cc1cf0:hits=200'
+        #   141ecde00 absent                  -> the ladder never ran for the pet; the sync is
+        #                      not the mechanism and everything built on it is void
+        #   142cc1e49 absent while 141ecde00 fires
+        #                                     -> +0x24b0 is NON-ZERO, or a gate before 11
+        #                      closed. Re-run -PetGates to say which; gate 11 is not settled
+        #   142cc1e49 fires, peek non-zero    -> +0x24ac is the blocker. A field to chase, and
+        #                      the first thing to ask is what sets it, since we send no 0x02E2
+        #   142cc1e49 fires, peek 0, and 14159b0a0 fires with rdx=1
+        #                                     -> the sync turned the pet VISIBLE and it still
+        #                      is not on screen: the bug is in DRAWING, not visibility
+        #   142cc1e49 fires, peek 0, and 14159b0a0 never fires from 0x141ecdf8f
+        #                                     -> desired 1 equals current 1: the client ALREADY
+        #                      thinks the pet is visible. Same conclusion as above and stronger -
+        #                      the ladder is innocent, closed, and the hunt moves to the
+        #                      renderable at pet+0x3c8
+        #   14159b0a0 fires with rdx=0        -> something re-hides it; called-from names who
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141ecde00:hits=6000,142cc1e49:peek=24ac:hits=6000,14159b0a0:hits=6000,140304100:hits=200:dump=143AC2400/968'
     } elseif ($PetGates) {
         # The client's pet show/hide (FUN_141ecde00) is a ladder of gates and every failure
         # jumps to the same label, so the DEEPEST of these that is entered names how far it
@@ -3411,30 +3452,34 @@ function Show-TestPlan {
         Write-Host '                         -> paste that inbound body'
         Write-Host '           pet never goes for drops -> keys not read; say so'
         Write-Host '           pet takes YOUR OWN drop -> paste the pet pick-up line' -ForegroundColor Yellow
-        Write-Host '      v) NEW - THE PET WAS DEAD, AND IT WAS dateDead. Measured in the' -ForegroundColor Yellow
-        Write-Host '         client, no run spent. FUN_1402cf680 has three rows: limitedLife>0'
-        Write-Host '         -> remainLife<=0; life==0 -> ALIVE, nothing else read; otherwise'
-        Write-Host '         -> dead iff dateDead >= 150842304000000000, which is our own'
-        Write-Host '         ITEM_NEVER_EXPIRES byte for byte - and that is what we sent as'
-        Write-Host '         dateDead. The Husky has no limitedLife and life 7, so it took'
-        Write-Host '         row 3 and the client called it a doll. dateDead is 2077 now.'
-        Write-Host '         remainLife 1e9 stays but is INERT here, so last round eliminated'
-        Write-Host '         NOTHING - it tested a field the client never read.' -ForegroundColor Yellow
-        Write-Host '         Summon the Husky, watch 10s, then walk it over a drop:'
-        Write-Host '           tooltip is the normal description again -> the item is alive'
-        Write-Host '           still "the water of life has dried up" -> paste it exactly' -ForegroundColor Yellow
-        Write-Host '           the pet is VISIBLE -> deadness was the invisibility too, and'
-        Write-Host '                         the 11-gate hunt is closed'
-        Write-Host '           alive but STILL invisible -> TWO bugs; that is the useful' -ForegroundColor Yellow
-        Write-Host '                         answer, and -PetGates is the next run'
-        Write-Host '           it walks over a drop and the item lands in the bag -> pick-up'
-        Write-Host '           alive + visible but ignores drops -> paste the inbound lines' -ForegroundColor Yellow
-        Write-Host '         If it comes back invisible, THAT run needs the switch (it cannot'
-        Write-Host '         be half-pasted, and the last -Probe attempt read zero because'
-        Write-Host '         nobody was watching):'
-        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetGates' -ForegroundColor Cyan
-        Write-Host '           142826340 from 0x141ecde63 | 140f80830 from 0x141ecde7e'
-        Write-Host '           1409bd2f0 from 0x141ecdec6 | 142cc1e40 from 0x141ecdf10 (gate 11)' -ForegroundColor Yellow
+        Write-Host '      v) THE PET IS ALIVE NOW AND STILL DOES NOT DRAW - TWO BUGS.' -ForegroundColor Yellow
+        Write-Host '         Round 1 is closed and it was right: dateDead was our own'
+        Write-Host '         ITEM_NEVER_EXPIRES sentinel, which the client reads as "this pet'
+        Write-Host '         is a doll". The tooltip now says 1/1/2077 and the pet summons,'
+        Write-Host '         walks and sends 166 move reports - it just is not drawn.'
+        Write-Host '         Ruled out with NO launch: the art, the archive (your inventory'
+        Write-Host '         icon is the same 1x1+outlink node and it draws - the control),'
+        Write-Host '         the position, and all 14 fields of the 0x0277 packet.'
+        Write-Host '         FUN_141ecde00 is a SYNC, not a verdict: edi starts HIDDEN, only' -ForegroundColor Yellow
+        Write-Host '         gate 11 sets it to 1, and it returns untouched when desired =='
+        Write-Host '         current. So "nothing happened" has two opposite meanings and the'
+        Write-Host '         old runs cannot tell them apart. -PetSync separates them in ONE'
+        Write-Host '         capture. Summon at once, stand still 10s, quit:'
+        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetSync' -ForegroundColor Cyan
+        Write-Host '         Paste the counts AND the peek values. What each means:'
+        Write-Host '           no 141ecde00 -> the ladder never runs for the pet; the whole'
+        Write-Host '                         mechanism is void. That is the big result'
+        Write-Host '           no 142cc1e49 -> +0x24b0 non-zero or a lower gate closed;'
+        Write-Host '                         gate 11 is not settled after all' -ForegroundColor Yellow
+        Write-Host '           142cc1e49 peek NON-ZERO -> +0x24ac hides it; a field to chase'
+        Write-Host '           142cc1e49 peek 0 + 14159b0a0 rdx=1 -> it was SHOWN and is still'
+        Write-Host '                         invisible: the bug is DRAWING, not visibility' -ForegroundColor Yellow
+        Write-Host '           142cc1e49 peek 0 + NO 14159b0a0 -> the client already thinks it'
+        Write-Host '                         is visible. Same answer, stronger; the hunt moves'
+        Write-Host '                         to the renderable at pet+0x3c8'
+        Write-Host '           14159b0a0 rdx=0 -> something re-hides it; called-from names who'
+        Write-Host '           NO 140304100 lines -> the hook never armed and this run is not' -ForegroundColor Red
+        Write-Host '                         evidence either way. Say so and relaunch'
         Write-Host '         FREE: every pet test has been on map 1010 - walk to another map'
         Write-Host '         with the pet out and say whether it appears there.'
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
