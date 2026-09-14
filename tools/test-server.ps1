@@ -2148,6 +2148,10 @@ param(
     # clean zeros that looked like an answer and were an unarmed instrument, which is the
     # failure mode `CLAUDE.md` calls the most expensive on this project. One word cannot be
     # half-pasted. research/pet-not-drawn-2026-09-13.md.
+    # **-PetFlags**: watch the two session-flag accessors that gate 11 reads. See the block
+    # that sets $Probe for how to read the result - including what "neither fires" means,
+    # which is the outcome that would redirect the hunt rather than end it.
+    [switch]$PetFlags,
     [switch]$PetGates,
     # Answer the migration hello with the fixed head of a SetField, and swap the probe for
     # the two watches that make the answer readable. See research/msexe-stage-setfield.md.
@@ -2486,7 +2490,33 @@ $ErrorActionPreference = 'Stop'
 #
 # So: passing -InventorySlots means the bag is the variable, and the bag gets the watches.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    if ($PetGates) {
+    if ($PetFlags) {
+        # **Which of the two session flags hides the pet, what it was set to, and by whom.**
+        #
+        # The 2026-09-14 -PetGates run settled that gate 11 of FUN_141ecde00 is the blocker:
+        # all four ladder watches fired, the deepest (142cc1e40 from 0x141ecdf10) 2428 times,
+        # and that gate is
+        #     FUN_142cc1e40(session) { return session[0x24b0] != 0 || session[0x24ac] != 0; }
+        #     test eax,eax / cmove edi,ebp    ; eax == 0 -> edi = 1 = VISIBLE
+        # so the pet is hidden iff one of those two fields is non-zero. Both are zeroed by the
+        # session's own initialiser, so something SET one.
+        #
+        # These two are the only writers, and they are tiny accessors:
+        #   142cc1c30  sets session+0x24ac   <- reachable ONLY from inbound opcode 0x02E2
+        #   142cc1d00  sets session+0x24b0   <- inbound 0x02E3, or a vtable call from the UI
+        # We send neither opcode, so the expectation is that 0x24b0 is set locally. The watch
+        # logs rdx, which is the VALUE being written, and called-from, which names the writer.
+        #
+        # READ IT LIKE THIS:
+        #   neither fires   -> no field was ever set, so the polarity reading above is wrong
+        #                      and the verdict is decided somewhere else. That is a real
+        #                      answer and it redirects the whole hunt.
+        #   142cc1d00 fires -> rdx is the value and called-from is the culprit. If called-from
+        #                      is 0x1410924d5 it is the vtable path (FUN_141092480, slot 2 of
+        #                      the table at 0x143379de8); if 0x141090dcc it is the CLEAR.
+        #   142cc1c30 fires -> something really is sending 0x02E2, which we do not build.
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142cc1c30:hits=200,142cc1d00:hits=200,142cc1e30:hits=200,142cc1cf0:hits=200'
+    } elseif ($PetGates) {
         # The client's pet show/hide (FUN_141ecde00) is a ladder of gates and every failure
         # jumps to the same label, so the DEEPEST of these that is entered names how far it
         # got. Only calls whose called-from is the ladder count - all four are shared:
