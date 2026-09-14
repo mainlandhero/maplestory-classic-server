@@ -264,6 +264,29 @@ pub const PET_ITEM_LEN: usize = 1 + 18 + 48;
 /// (`Pet.encode`: `encodeInt(getHue()); // -1`). **[L]** for the test, **[R]** for the value.
 pub const PET_HUE_UNDYED: u32 = 0xFFFF_FFFF;
 
+/// **How much life a summoned pet is told it has left.** One billion.
+///
+/// It was `0`, on a doc line that read *"0 - not a limited-life pet"* - and that sentence was
+/// an **[R]** claim, taken from the reference server, about a field this client reads into a
+/// protected triple at `pet+0x8a`. `CLAUDE.md` scores that source 1-of-8 and says to treat its
+/// claims as candidates.
+///
+/// On 2026-09-14 the client stated its own verdict out loud: *"Cannot move because the magic
+/// duration has ended. Use the Water of Life to revive them."* So a summoned pet was DEAD, and
+/// had been all along - `info/life 0` had merely suppressed the message, which is why the same
+/// pet was previously just silently invisible. The client's own show/hide ladder was measured
+/// wanting to SHOW it, so deadness is enforced somewhere else and this is the field that most
+/// plausibly drives it.
+///
+/// **This is a candidate, not a measurement**, and the run that follows is what settles it.
+/// The other candidate is `dateDead`, which is already the well-attested MapleStory permanent
+/// filetime, so it is the weaker suspect and is deliberately left alone - one variable.
+///
+/// A billion rather than `u32::MAX`: it is large in every unit this could be (31 years of
+/// seconds, nonsense-but-harmless in days), stays positive if the client reads it as `i32`,
+/// and leaves room above it for arithmetic that subtracts elapsed time without wrapping.
+pub const PET_REMAIN_LIFE: u32 = 1_000_000_000;
+
 /// **`petSkill`: the bitmask of skills a pet has learned**, and the client's own numbering.
 ///
 /// The tooltip prints a line per skill the pet's IMAGE declares and then, for each, either
@@ -377,7 +400,7 @@ pub fn pet_item_with_state(item_id: u32, name: &str, cash_sn: Option<std::num::N
     b.extend_from_slice(&ITEM_NEVER_EXPIRES.to_le_bytes()); //  14030460f  raw[8] dateDead
     b.extend_from_slice(&0u16.to_le_bytes()); //                140304617  u16  petAttribute
     b.extend_from_slice(&PET_SKILLS_LEARNED_AT_START.to_le_bytes()); // 14030462e u16 petSkill
-    b.extend_from_slice(&0u32.to_le_bytes()); //                140304645  u32  remainLife
+    b.extend_from_slice(&PET_REMAIN_LIFE.to_le_bytes()); //     140304645  u32  remainLife
     b.extend_from_slice(&0u16.to_le_bytes()); //                14030467e  u16  attribute
     b.push(active); //                                          14030469b  u8   active
     b.extend_from_slice(&PET_HUE_UNDYED.to_le_bytes()); //      1403046da  u32  petHue
@@ -709,7 +732,12 @@ mod pet_tests {
         // read "This is an unregistered pet."; a zero hue makes it read "Your pet has been dyed!".
         assert_eq!(&b[46..48], &1u16.to_le_bytes(), "petSkill: Item Pouch, learned from the start");
         assert_eq!(PET_SKILLS_LEARNED_AT_START, PET_SKILL_ITEM_POUCH, "Meso Magnet is innate and has no bit");
-        assert_eq!(&b[48..52], &0u32.to_le_bytes(), "remainLife");
+        assert_eq!(
+            &b[48..52],
+            &PET_REMAIN_LIFE.to_le_bytes(),
+            "remainLife, and it must not be 0 - the client answered a 0 here with \"the magic \
+             duration has ended\" and refused to move or draw the pet"
+        );
         assert_eq!(&b[52..54], &0u16.to_le_bytes(), "attribute");
         assert_eq!(b[54], 0, "active");
         assert_eq!(&b[55..59], &PET_HUE_UNDYED.to_le_bytes(), "petHue: undyed, not colour 0");
