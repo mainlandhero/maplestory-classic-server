@@ -433,3 +433,37 @@ lever, one byte on the wire (`the_pet_move_action_lever_changes_exactly_one_byte
 It is a localising experiment: a Husky should not fly, and if it appears the real question
 becomes what sets z on a real server - most likely a packet this one never sends.
 
+
+
+---
+
+# `-PetMoveAction 30`: the flying arm draws nothing either
+
+`research/fixtures/pet-moveaction-30-flying-arm-still-invisible-world-ch0.log`: byte 33 of the
+`0x0277` body is 30, 90 pet-move reports follow, and the Husky is still not on screen. So the
+missing `put_z` in the land arm is not it - **both arms share the fault**.
+
+## 13. The working presenter, found
+
+`FUN_140cd8da0`, the frame loader, has seven callers and one of them is **`FUN_1414bc3f0`** -
+the Character Info window's pet drawer, the code behind the body in the owner's screenshot. Same
+loader, same template (`FUN_141ed3540(itemId)`), same `CreateLayer` (`DAT_143add050->vtbl[0x168]`
+with five zero ints - 231 functions do exactly that, mobs included), same `InsertCanvas`
+(`vtbl[0x258](canvas, VARIANT delay, ...)` per frame), same `0x1e0 / 0x310 / 0x318 / 0x330`
+afterwards. **It draws. `CPet` does not.**
+
+What the two do differently to the layer, as vtable offsets **[L]**:
+
+| | panel `FUN_1414bc3f0` | field `CPet` (`Init` + `FUN_141ec87b0`) |
+|---|---|---|
+| before inserting | `vtbl[0x200](-1)` | `vtbl[0x268](VARIANT(VT_I4, -2), &out)` |
+| position | `vtbl[0x238](&vector)` from `FUN_142bf6010(wnd)` - window-relative | `vtbl[0x238](VARIANT(pet+0x3b8))` - field-relative |
+| z | `vtbl[0x198](1)` | nothing in the land arm; `(3)` in the flying arm |
+| after inserting | - | `vtbl[0x300](2)`, `vtbl[0x320](8, v)`, `vtbl[0x280](0x20, BSTR, v)` |
+
+Those slots cannot be named from the client side; the engine is `Gr2D_DX11.dll` (the three
+IIDs the client raises on - layer `cec7c86d-…`, vector `db126d03-…`, root `33ea76e5-…` - are
+all in it, and it carries no RTTI or type library for its own classes). It is being imported
+into the Ghidra project so the implementations behind `0x268`, `0x300`, `0x320` and `0x280`
+can be read directly. That is the next step, and it is not a launch.
+
