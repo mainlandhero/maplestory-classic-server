@@ -303,6 +303,158 @@ pub fn stub_gameguard(client_dir: &Path, stub: &Path) -> Result<Steps, String> {
 }
 
 // ---------------------------------------------------------------------------------------
+
+/// Where the mode-5 launcher gate's conditional jump sits in `MapleStory.exe`, as a **file**
+/// offset. VA `0x140d90d8a`, section `.text`.
+pub const NEXON_GATE_OFFSET: u64 = 0xd9038a;
+
+/// The four bytes at `NEXON_GATE_OFFSET - 2`, unpatched: `test eax,eax` then `jne +5`.
+///
+/// **This is the build check, and it is the whole safety of the patch.** Every address in
+/// this project is absolute, so applying it to a different build of the client writes one
+/// byte into whatever happens to be there. Four bytes is a weak signature on its own; what
+/// makes it strong enough is that it is read at a fixed offset and both the instruction pair
+/// and its operand must match.
+pub const NEXON_GATE_UNPATCHED: [u8; 4] = [0x85, 0xC0, 0x75, 0x05];
+
+/// The same four bytes once the jump is unconditional: `jmp +5`.
+pub const NEXON_GATE_PATCHED: [u8; 4] = [0x85, 0xC0, 0xEB, 0x05];
+
+/// **One byte, so the client starts on a machine where the Nexon Client Manager will not.**
+///
+/// The owner, 2026-09-14, after it was measured on the machine that could not start the game at
+/// all: *"can we make sure that every build from now on for the client includes this patch?"*
+///
+/// # What it is
+///
+/// `main` (`FUN_142c42f30`) contains one gate:
+///
+/// ```text
+/// if ((mode == 5) && (FUN_140d90d70() == '\0')) {
+///     FUN_141804a70(local_820, 0x23000001);
+///     _CxxThrowException(...);        // CNexonLauncherException - does not return
+/// }
+/// ```
+///
+/// `-NXLDEBUG` sets mode 5, so every launch this project makes goes through it.
+/// `FUN_140d90d70` makes one call through a runtime-resolved pointer, passing the service
+/// code `"59822"` - the Nexon Client Manager's startup - and returns whether it worked. On a
+/// machine where it does not, the client dies before it opens a socket, before GameGuard
+/// init, showing *"Nexon Launcher failed to load. Please visit http://maplestory.nexon.net
+/// for support."* and nothing else.
+///
+/// The patch turns that function's `jne` into a `jmp`, so the success path is taken whatever
+/// the answer was. The CNM init is still **called**, and the flag byte at `0x143ac88e8` that
+/// the success path sets is still set; the only thing that changes is that a refusal is no
+/// longer fatal.
+///
+/// # Why it is safe to apply everywhere, including where the check passes
+///
+/// On a machine where the CNM starts, the patch skips a branch that was never going to be
+/// taken - the client is byte-for-byte in the same state. That is what makes this a
+/// **standard patch** rather than a per-machine workaround, and it is why it lives here
+/// beside [`stub_gameguard`] instead of in the installer.
+///
+/// # Why here and not in `tools/make-installer.ps1`
+///
+/// The same reason the payload ships the client **unstubbed**: one code path. A payload
+/// patched at packaging time would only reach new installs, would make the shipped client
+/// undiffable against a fresh Nexon one, and would leave two places that know this offset.
+/// Applied at Start Game it reaches every machine that already has the game, with no
+/// 562 MB download.
+///
+/// # How it was established
+///
+/// Measured, in this order: the RTTI walk found exactly one `ThrowInfo` carrying
+/// `.?AVCNexonLauncherException@@` and exactly one code reference to it, at `0x142c43163`
+/// inside `main` - so the dialog has one throw site. The client was then started by hand with
+/// the launcher out of the picture and produced the same dialog, and the byte was flipped on
+/// that machine and the game started. What is still inference and always will be from here:
+/// the dialog's wording is not plaintext in the executable, so "this exception draws that
+/// box" rests on the type's name and on the patch working, not on the string.
+///
+/// # No 76 MB backup
+///
+/// [`stub_gameguard`] keeps `grap64.dll.orig` because it *replaces* a file. This changes one
+/// byte in a 76 MB executable, verifies the exact instruction pair before writing, and
+/// refuses anything else - and the step it returns names the undo. A copy of the client per
+/// install would cost more than it protects.
+pub fn patch_nexon_launcher_gate(client_dir: &Path) -> Result<Steps, String> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    let mut steps = Steps::new();
+    let exe = client_dir.join(crate::paths::CLIENT_EXE_NAME);
+
+    // **A read that fails is a warning, never a refusal.** The exe's existence is already
+    // checked a step earlier, so what reaches here is a file that is too short, locked, or
+    // otherwise unlike the client - and none of those is a reason to stop a launch that would
+    // work on any machine whose Nexon Client Manager starts. Returning `Err` here made every
+    // `prepare` test fail against its short stand-in exe, which is the same failure a real
+    // machine with an odd client would have seen.
+    let mut found = [0u8; 4];
+    let read = (|| -> std::io::Result<()> {
+        let mut f = std::fs::File::open(&exe)?;
+        f.seek(SeekFrom::Start(NEXON_GATE_OFFSET - 2))?;
+        f.read_exact(&mut found)
+    })();
+    if let Err(e) = read {
+        steps.push(format!(
+            "WARNING: could not check the Nexon Launcher gate in {}: {e}. Not patched. The              client still starts on any machine where the Nexon Client Manager does",
+            exe.display()
+        ));
+        return Ok(steps);
+    }
+
+    if found == NEXON_GATE_PATCHED {
+        steps.push(
+            "the Nexon Launcher gate is already patched - the client will start even where the \
+             Nexon Client Manager will not"
+                .into(),
+        );
+        return Ok(steps);
+    }
+    if found != NEXON_GATE_UNPATCHED {
+        // Not an error: a client this patch does not recognise still runs, and on most
+        // machines the gate it skips would have passed anyway. Refusing the LAUNCH over it
+        // would turn a cosmetic mismatch into a lockout.
+        steps.push(format!(
+            "WARNING: not patching the Nexon Launcher gate - expected {} at offset 0x{:x} of \
+             {}, found {}. This is a different build of the client, and one byte written into \
+             a build these offsets were not measured on would corrupt it. The client will \
+             still start on any machine where the Nexon Client Manager does",
+            hex4(NEXON_GATE_UNPATCHED),
+            NEXON_GATE_OFFSET - 2,
+            crate::paths::CLIENT_EXE_NAME,
+            hex4(found)
+        ));
+        return Ok(steps);
+    }
+
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&exe)
+        .map_err(|e| format!("could not open {} for writing: {e}", exe.display()))?;
+    f.seek(SeekFrom::Start(NEXON_GATE_OFFSET))
+        .map_err(|e| format!("could not seek in {}: {e}", exe.display()))?;
+    f.write_all(&[0xEB])
+        .map_err(|e| format!("could not write the launcher gate in {}: {e}", exe.display()))?;
+    f.flush().map_err(|e| format!("could not flush {}: {e}", exe.display()))?;
+
+    steps.push(format!(
+        "Nexon Launcher gate patched: one byte at offset 0x{:x}, jne -> jmp, so a client whose \
+         Nexon Client Manager refuses to start no longer dies with \"Nexon Launcher failed to \
+         load\". Harmless where it starts. Undo by writing 0x75 back at that offset",
+        NEXON_GATE_OFFSET
+    ));
+    Ok(steps)
+}
+
+fn hex4(b: [u8; 4]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect::<Vec<_>>().join(" ")
+}
+
+// ---------------------------------------------------------------------------------------
 // The hook's marker files
 // ---------------------------------------------------------------------------------------
 
@@ -810,6 +962,84 @@ fn local_civil_from_unix(unix: u64) -> Option<(u16, u16, u16, u16, u16, u16)> {
 
 #[cfg(test)]
 mod tests {
+
+    /// A stand-in for the client: a file with the gate's four bytes at the right offset and
+    /// nothing else that matters. Hand-built rather than copied from the real 76 MB
+    /// executable so the test runs on a machine with no client.
+    fn client_with_gate_bytes(dir: &Path, gate: [u8; 4]) -> PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        let mut bytes = vec![0u8; (super::NEXON_GATE_OFFSET + 16) as usize];
+        let at = (super::NEXON_GATE_OFFSET - 2) as usize;
+        bytes[at..at + 4].copy_from_slice(&gate);
+        let exe = dir.join(crate::paths::CLIENT_EXE_NAME);
+        std::fs::write(&exe, &bytes).unwrap();
+        exe
+    }
+
+    fn gate_bytes(exe: &Path) -> [u8; 4] {
+        let bytes = std::fs::read(exe).unwrap();
+        let at = (super::NEXON_GATE_OFFSET - 2) as usize;
+        bytes[at..at + 4].try_into().unwrap()
+    }
+
+    #[test]
+    fn the_launcher_gate_is_patched_from_jne_to_jmp() {
+        let temp = TempDir::new("gate");
+        let dir = temp.path().to_path_buf();
+        let exe = client_with_gate_bytes(&dir, super::NEXON_GATE_UNPATCHED);
+
+        let steps = super::patch_nexon_launcher_gate(&dir).unwrap();
+        assert_eq!(gate_bytes(&exe), super::NEXON_GATE_PATCHED);
+        assert!(steps[0].contains("jne -> jmp"), "{steps:?}");
+    }
+
+    /// Idempotent: Start Game runs this every launch.
+    #[test]
+    fn patching_an_already_patched_client_changes_nothing() {
+        let temp = TempDir::new("gate2");
+        let dir = temp.path().to_path_buf();
+        let exe = client_with_gate_bytes(&dir, super::NEXON_GATE_PATCHED);
+        let before = std::fs::read(&exe).unwrap();
+
+        let steps = super::patch_nexon_launcher_gate(&dir).unwrap();
+        assert_eq!(std::fs::read(&exe).unwrap(), before, "the file was rewritten");
+        assert!(steps[0].contains("already patched"), "{steps:?}");
+    }
+
+    /// **The build check.** Every address here is absolute, so a different client must not be
+    /// written to - and the launch must not be refused over it either.
+    #[test]
+    fn a_client_whose_bytes_do_not_match_is_left_alone_and_still_launches() {
+        let temp = TempDir::new("gate3");
+        let dir = temp.path().to_path_buf();
+        let exe = client_with_gate_bytes(&dir, [0x48, 0x83, 0xEC, 0x28]);
+        let before = std::fs::read(&exe).unwrap();
+
+        let steps = super::patch_nexon_launcher_gate(&dir).unwrap();
+        assert_eq!(std::fs::read(&exe).unwrap(), before, "a foreign build was WRITTEN to");
+        assert!(steps[0].starts_with("WARNING"), "{steps:?}");
+        assert!(steps[0].contains("48 83 ec 28"), "{steps:?}");
+    }
+
+    /// A client that cannot be read is WARNED about and never refused.
+    ///
+    /// `prepare` checks the executable exists a step earlier, so anything reaching here is a
+    /// file that is short, locked or simply not this build - and refusing the launch over it
+    /// would lock somebody out of a game that would have run. The first version returned
+    /// `Err` and took all eight `prepare` tests down with it, against their short stand-in
+    /// exe: exactly the machine this must not break.
+    #[test]
+    fn a_client_that_cannot_be_read_warns_and_does_not_stop_the_launch() {
+        let temp = TempDir::new("gate4");
+        let dir = temp.path().to_path_buf();
+        let steps = super::patch_nexon_launcher_gate(&dir).expect("never an error");
+        assert!(steps[0].starts_with("WARNING"), "{steps:?}");
+
+        // And a file that exists but is far too short takes the same path.
+        std::fs::write(dir.join(crate::paths::CLIENT_EXE_NAME), b"not a 76 MB executable").unwrap();
+        let steps = super::patch_nexon_launcher_gate(&dir).expect("never an error");
+        assert!(steps[0].starts_with("WARNING"), "{steps:?}");
+    }
     use super::*;
     use crate::testutil::TempDir;
 
