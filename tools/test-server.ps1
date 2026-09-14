@@ -1199,39 +1199,29 @@
                          not what this pet code reads; say so
               the pet takes your OWN dropped item                           -> the byte is
                          ignored; paste the pet pick-up line
-         v) NEW 2026-09-13 - PETS: MOVEMENT, COMMANDS, AND A CLEAN TOOLTIP. Four changes,
-            all from the client's own WZ, none verified on screen:
-              * the pet's move report (0x0202) is now forwarded to the map as 0x0278, so a
-                SECOND player sees your pet walk. Not echoed to you - your client drew it.
-              * pet commands are ORDINARY CHAT (measured: typing "bad" sends only 0x00E7), so
-                the chat line is unchanged and the pet's trick is sent beside it. The words,
-                the odds, the animation and the lines are all read out of the WZ -
-                tools/dump_pets.py, 2405 rows for 12 pets. The Husky knows: sit, bad/no/
-                badgirl/badboy, stupid/ihateyou/baddog/dummy, poop, talk/chat/say/bark,
-                up/stand/rise, down, hand, iloveyou. Whole message only - "sit down over
-                there" is a sentence, not a command.
-              * every pet now declares NO skills (pickupItem/sweepForDrop/longRange all 0) and
-                has learned none, so the "unregistered" lines are gone. The vacuum is inert
-                until the Cash Shop can sell a pet skill - that is not built.
-              * the dye line should be gone (hue -1).
-            AND the skills: the client's own table (FUN_141ed1ad0) gives the order and the
-            keys - Item Pouch is info/pickupItem, and Meso Magnet is innate (in no arm of the
-            table at all). A pet now DECLARES Item Pouch and has LEARNED it; the other four
-            (Auto HP/MP, Auto Move, Expanded Auto Move) are the 100 LP items 5190000..5190003
-            already in the Pets tab, and learning one is NOT built - using one sent no packet
-            at all, so if you try it again, say exactly what the screen did.
-            Summon the Husky, then:
-              hover it in the Cash tab: Meso Magnet AND Item Pouch, neither "unregistered",
-                         and NO "dyed" line -> fixed; if not, paste the tooltip text
-              type sit, then bad, then poop: the pet plays a trick and says a line, and your
-                         message still appears as normal chat -> commands work. Say which
-                         words did nothing, if any
-              type "sit down over there": it must NOT react -> the whole-message rule holds
-              type sit ten times: sometimes it succeeds and sometimes it sulks (the odds are
-                         the WZ's - 40% at level 1 for sit) -> the roll works
-              if the client DIES on a command, paste client-exit.log and the 0x0279 line -
-                         the interact index is the one inferred field
-              second client on the same map: does the pet walk on the other screen?
+         v) 2026-09-13 - WHICH GATE HIDES THE PET (and I was wrong last round). I told you
+            the pet was drawing because its move report arrives 504 times after a summon.
+            That was an INFERENCE and your screen says it is wrong: a pet ticks, walks and
+            reports its position without being drawn. The run-2 watches had already measured
+            the truth - the client decides "hidden" on every frame. The pickup failure is
+            probably the same bug: a hidden pet will not run its loot logic.
+            Eight of the eleven gates are now settled from the file (an obfuscated getter, a
+            morph test, two that literally cannot fail, and the map's fieldLimit is not it -
+            1010 carries 4, which is the SUMMON limit, not NoPet). Four remain, and every
+            failing gate jumps to the same label, so the DEEPEST watch that fires names it.
+            CAPS ARE LARGE THIS TIME - in run 2 two of them were spent before you summoned.
+            Summon the Husky within a few seconds of entering the field, stand still ten
+            seconds, quit:
+              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,142826340:hits=6000,140f80830:hits=6000,1409bd2f0:hits=6000,142cc1e40:hits=6000"
+            Then paste the counts, and say which of these called-from values appear at all -
+            ONLY these four are the ladder; every other caller is noise:
+              142826340 called-from=0x141ecde63   gates 1..3 passed
+              140f80830 called-from=0x141ecde7e   gate 4 passed
+              1409bd2f0 called-from=0x141ecdec6   gate 5 passed
+              142cc1e40 called-from=0x141ecdf10   gates 8..10 passed -> gate 11 hides it
+            FREE, same run: every test so far has been on map 1010. Walk to another map with
+            the pet out (the server re-sends it on every field entry) and say whether it
+            appears there. If it does, the gate is map state and that halves the search.
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3308,20 +3298,16 @@ function Show-TestPlan {
         Write-Host '                         -> paste that inbound body'
         Write-Host '           pet never goes for drops -> keys not read; say so'
         Write-Host '           pet takes YOUR OWN drop -> paste the pet pick-up line' -ForegroundColor Yellow
-        Write-Host '      v) NEW - PETS: MOVEMENT, COMMANDS, CLEAN TOOLTIP. Pet moves are now' -ForegroundColor Yellow
-        Write-Host '         forwarded to the map (0x0278); pet commands are ordinary chat and the'
-        Write-Host '         trick is sent beside the line (words/odds/lines all from the WZ);'
-        Write-Host '         pets declare and know NO skills, so no "unregistered" lines; hue -1.'
-        Write-Host '         A pet now starts with Meso Magnet + Item Pouch, both LEARNED (the'
-        Write-Host '         skill bit order is the client''s own table, not the reference''s).'
-        Write-Host '         Summon the Husky, then:'
-        Write-Host '           hover it: Meso Magnet AND Item Pouch, no "unregistered", no' -ForegroundColor Yellow
-        Write-Host '                         "dyed" line -> fixed; else paste the tooltip'
-        Write-Host '           type sit / bad / poop: it acts AND your chat still shows -> works'
-        Write-Host '           type "sit down over there": it must NOT react'
-        Write-Host '           type sit x10: it should sometimes sulk (40% at level 1)'
-        Write-Host '           client dies on a command -> paste client-exit.log + the 0x0279' -ForegroundColor Yellow
-        Write-Host '           second client on the map: does the pet walk on their screen?'
+        Write-Host '      v) WHICH GATE HIDES THE PET - and I was WRONG last round: the move' -ForegroundColor Yellow
+        Write-Host '         report does not prove it draws. The client decides "hidden" every'
+        Write-Host '         frame; the pickup failure is probably the same bug. 8 of 11 gates'
+        Write-Host '         are settled from the file; 4 remain. CAPS ARE LARGE THIS TIME.'
+        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,142826340:hits=6000,140f80830:hits=6000,1409bd2f0:hits=6000,142cc1e40:hits=6000"' -ForegroundColor Cyan
+        Write-Host '         Summon at once, stand still 10s, quit. Say which of THESE appear:'
+        Write-Host '           142826340 from 0x141ecde63 | 140f80830 from 0x141ecde7e'
+        Write-Host '           1409bd2f0 from 0x141ecdec6 | 142cc1e40 from 0x141ecdf10 (gate 11)' -ForegroundColor Yellow
+        Write-Host '         FREE: every test has been on map 1010 - walk to another map with the'
+        Write-Host '         pet out and say whether it appears there.'
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'

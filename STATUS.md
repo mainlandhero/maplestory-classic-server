@@ -189,6 +189,21 @@ or 40 and never exactly 30 - matching `= 30` still means "nobody ever touched it
 the ceiling was already answered with *"already at the maximum of 150 slots"* rather than failing,
 so nothing else changes.
 
+**2026-09-13 (RETRACTION): the pet does NOT draw, and "0x0202 proves it draws" was an inference.**
+The owner: *"Husky still does not render, and Husky does not pick up items or mesos."* The claim in the
+2026-09-13 tooltip entry - that the pet is on screen because its move report arrives 504 times after
+the summon - is **withdrawn**. A pet object ticks, walks and reports its position without being
+drawn; movement and visibility are separate in this client, and the run-2 watches had already
+measured the visibility half (`FUN_14159b0a0` never called from the ladder, so the verdict never
+left "hidden"). The move packets prove only that the object exists and runs, which the name tag
+already proved. `CLAUDE.md`'s rule applies: the screen wins over a proxy. **The pickup failure is
+probably downstream** - a hidden pet will not run its loot logic - so the gate is the thing to find.
+Three more gates settled without a launch: gate 1 is an obfuscated boolean getter that `CPet::Init`
+never writes; gate 4 is a morph test; gate 5 is one byte at `*(user+0xa8)+0x2d9`. Also eliminated:
+the map's `fieldLimit` (1010 carries `4` = SummonLimit; `NoPet` is `0x8000`, and 1000 carries `0`).
+Plan step TO(v) is the four-watch run with **large caps**, chosen so the `called-from` inside the
+ladder names the depth. `research/pet-not-drawn-2026-09-13.md`, the retraction section.
+
 **2026-09-13: the pet skill table is the client's, and a pet starts with Meso Magnet and Item
 Pouch.** The owner: *"the Husky should by default come with Meso Magnet and Item Pouch. Currently it is
 missing the Item Pouch skill by default"* - the previous round cleared Nexon's own `pickupItem` and
