@@ -516,3 +516,36 @@ that was wrong was a field whose comment said `giantRate` and whose meaning nobo
 Left in place: `--pet-move-action`, as a lever, default 0 - `moveAction 0` is correct and the
 lever documents why. The eleven fixtures under `research/fixtures/pet-*` are the record.
 
+
+
+---
+
+# Confirmed on screen
+
+The owner, with the build carrying `PET_SIZE_PERCENT = 100`: *"Nice, the new build does render the
+Husky!"* - life-size, at their feet, on Henesys Hunting Ground I, tag underneath. The `0x0277`
+body of that run has bytes 46-47 = `64 00`
+(`research/fixtures/pet-renders-giantrate-100-world-ch0.log`). **Closed.**
+
+## The portal crash, as reported, and what the log says about it
+
+The owner: *"Going into a map with another person while the pet is summoned crashes the client."*
+That was the run **before** the fix - `giantRate 0` and `moveAction 30` - kept as
+`research/fixtures/pet-moveaction30-giant0-portal-into-occupied-map-heap-fault-{world-ch0,hook}.log`,
+dump `dumps/maplecw-crash-950712-c0000374-1.dmp`.
+
+```text
+23:33:19       Tester2 (214) joins; 23:33:25 walks west00 into 10001010
+23:33:34.536   the owner !map 10001000 with the pet out - survives; 0x0277 re-sent at 35.053
+23:33:39.505   the owner walks west00 -> 10001010, SetField sent
+23:33:39.926   CLIENT FAULT 0xc0000374 - heap corruption - 14 C++ throws before it
+```
+
+Between the SetField and the fault the server sent **only `0x03E4` MobCtrlAcks for the old
+map's mobs**. No `0x00DC` came back, so no UserEnterField for Tester2 was ever sent. The other
+player was not on the wire when the client died; it died in its own field teardown with a pet
+that was **scaled to zero percent** - a zero-sized surface is the textbook heap corrupter -
+and in the flying arm. Whether the fix removes it is the next run, and it is a one-line
+reproduction: pet out, Tester2 in 10001010, walk west00. If it crashes on the fixed build, the
+dump is the instrument, not another theory.
+

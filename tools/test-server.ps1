@@ -1224,32 +1224,30 @@
                          not what this pet code reads; say so
               the pet takes your OWN dropped item                           -> the byte is
                          ignored; paste the pet pick-up line
-         v) NEW 2026-09-14 (round 11) - THE PET WAS DRAWN AT ZERO PERCENT.
-            -PetMoveAction 30 changed nothing (byte 33 went out as 30, 90 pet moves),
-            so the flying arm fails too and z was not it. The find came from reading
-            the graphics engine itself - Gr2D_DX11.dll is in the Ghidra project now, and
-            the layer interface's vtable is at 0x153657c98 in it:
-              vtbl+0x2b0  get_visible (the byte at layer+0x110 - what -PetSync read)
-              vtbl+0x300  flags |= v          vtbl+0x318  flags &= ~v
-              vtbl+0x320  set property (key, value)
-            CPet's animation setter calls vtbl[0x300](2) and vtbl[0x320](8, v) - a
-            SCALE - whenever the short at pet+0x230 is not 100. And pet+0x230 is where
-            CPet::Init stores the u16 read at 0x141ebacbb: the field the reference calls
-            giantRate. It is the pet's SIZE IN PERCENT, and this server has sent 0 since
-            the packet was written. The Husky was visible, opaque, positioned, framed -
-            and drawn at zero percent. The name tag has its own layer, so it drew; the
-            Character Info window never applies that field, so it drew. The mob-size
-            bug again: a 0 meant as "unset" that the client reads as zero percent.
-            net::pet::PET_SIZE_PERCENT = 100 now. One byte. Stop the servers first (the
-            world binary must relink), then the plain launch - no switches:
-              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"
-            Summon the Husky:
-              IT IS THERE, life-size          -> done. Then walk it over a mob drop and
-                         say whether it picks up; that half was never separable before
-              there, but huge or tiny         -> the unit is right and the number is not;
-                         say roughly how big against your character
-              still nothing                   -> paste the 0x0277 body line from
-                         world-ch0.log; bytes 46-47 must read 64 00
+         v) 2026-09-14 - THE HUSKY RENDERS. giantRate is the pet's size in percent; we
+            sent 0 for eleven runs and 100 draws it life-size at your feet. CLOSED.
+            (research/pet-draw-chain-2026-09-14.md is the whole record.)
+            TWO THINGS ARE OPEN, and they need one run each:
+            (1) THE PORTAL CRASH. You reported a heap fault walking into Tester2's map
+            with the pet out. That run was the OLD build - giantRate 0 (a 0%-scaled
+            layer, which is exactly the kind of zero-sized surface that corrupts a
+            heap) AND moveAction 30. The log says the other player was not involved:
+            between your SetField (23:33:39.505) and the fault (39.926) the server sent
+            only MobCtrlAcks for the OLD map, nothing about Tester2. The client died in
+            its own field teardown with a 0%-scaled pet. The dump is
+            dumps\maplecw-crash-950712-c0000374-1.dmp. So: repeat it on THIS build -
+            pet out, Tester2 in 10001010, walk west00 from 10001000:
+              no crash                 -> it was the zero-scale layer; closed with the fix
+              crash again              -> paste client-exit.log's last lines and the new
+                         dump name; that becomes a dump analysis, not a guess
+            (2) PICK-UP. Kill a mob near the Husky, then drop something of your own:
+              it takes the mob's drop, no click       -> works; say how far it reaches
+              it walks to it and nothing happens      -> paste the inbound lines after
+                         the walk-over from world-ch0.log ("named no live drop" or not)
+              it never goes for drops                 -> the pet WZ keys are not what
+                         this client reads; say so
+              it takes YOUR OWN drop                  -> the not-for-pets byte is ignored;
+                         paste the pet pick-up line
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -3803,26 +3801,23 @@ function Show-TestPlan {
         Write-Host '                         -> paste that inbound body'
         Write-Host '           pet never goes for drops -> keys not read; say so'
         Write-Host '           pet takes YOUR OWN drop -> paste the pet pick-up line' -ForegroundColor Yellow
-        Write-Host '      v) THE PET WAS DRAWN AT ZERO PERCENT.' -ForegroundColor Yellow
-        Write-Host '         -PetMoveAction 30 changed nothing, so z was not it. The find came'
-        Write-Host '         from the graphics engine: Gr2D_DX11.dll is in Ghidra now, and the'
-        Write-Host '         layer vtable (0x153657c98) reads plainly - 0x300 sets flags,'
-        Write-Host '         0x320 sets a keyed property. CPet calls vtbl[0x300](2) and'
-        Write-Host '         vtbl[0x320](8, v) - a SCALE - whenever the short at pet+0x230 is'
-        Write-Host '         not 100, and pet+0x230 is the u16 the packet calls giantRate.' -ForegroundColor Yellow
-        Write-Host '         It is the pet SIZE IN PERCENT. We have sent 0 since day one. The'
-        Write-Host '         Husky was visible, opaque, framed, positioned - at zero percent.'
-        Write-Host '         The tag has its own layer; the info window never applies it.'
-        Write-Host '         The mob-size bug again. PET_SIZE_PERCENT = 100 now. One byte.'
-        Write-Host '         STOP THE SERVERS FIRST (the world binary must relink), then the'
-        Write-Host '         plain launch, no switches:'
-        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"' -ForegroundColor Cyan
-        Write-Host '         Summon the Husky:'
-        Write-Host '           IT IS THERE, life-size -> done. Then walk it over a mob drop' -ForegroundColor Yellow
-        Write-Host '                         and say whether it picks up'
-        Write-Host '           there but huge/tiny -> right unit, wrong number; say how big'
-        Write-Host '           still nothing -> paste the 0x0277 body line from world-ch0.log;'
-        Write-Host '                         bytes 46-47 must read 64 00' -ForegroundColor Red
+        Write-Host '      v) THE HUSKY RENDERS - giantRate is the size in percent, 0 for' -ForegroundColor Green
+        Write-Host '         eleven runs, 100 now. CLOSED. Two things open, one run each:'
+        Write-Host '         (1) THE PORTAL CRASH was on the OLD build - giantRate 0 (a 0%-scaled' -ForegroundColor Yellow
+        Write-Host '         layer, a classic heap corrupter) AND moveAction 30. The log says'
+        Write-Host '         Tester2 was not involved: between your SetField and the fault the'
+        Write-Host '         server sent only old-map MobCtrlAcks. Repeat it on THIS build -'
+        Write-Host '         pet out, Tester2 in 10001010, walk west00 from 10001000:'
+        Write-Host '           no crash -> it was the zero-scale layer; closed with the fix'
+        Write-Host '           crash again -> paste client-exit.log tail + the new dump name;' -ForegroundColor Yellow
+        Write-Host '                         that becomes a dump analysis'
+        Write-Host '         (2) PICK-UP: kill a mob near the Husky, then drop something of'
+        Write-Host '         your own:'
+        Write-Host '           takes the mob drop, no click -> works; say how far it reaches'
+        Write-Host '           walks to it, nothing happens -> paste the inbound lines after' -ForegroundColor Yellow
+        Write-Host '                         the walk-over (world-ch0.log)'
+        Write-Host '           never goes for drops -> the WZ keys are not what it reads'
+        Write-Host '           takes YOUR OWN drop -> the not-for-pets byte is ignored' -ForegroundColor Yellow
         Write-Host '      e) NEW - FRIEREN ASKS WHICH VERSION: opening the Frieren' -ForegroundColor Yellow
         Write-Host '         coupon opens a 3-row menu (normal / Ringlets / Sleep, hair'
         Write-Host '         icons). The CHOICE spends the coupon; End Chat keeps it.'

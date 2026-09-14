@@ -1,0 +1,190 @@
+INFO  Using log config file: jar:file:/C:/Users/user/Desktop/ghidra_12.1.2_PUBLIC/Ghidra/Framework/Generic/lib/Generic.jar!/generic.log4j.xml (LoggingInitialization)  
+INFO  Using log file: C:\Users\user\AppData\Roaming\ghidra\ghidra_12.1.2_PUBLIC\application.log (LoggingInitialization)  
+INFO  Loading user preferences: C:\Users\user\AppData\Roaming\ghidra\ghidra_12.1.2_PUBLIC\preferences (Preferences)  
+INFO  Searching for classes... (ClassSearcher)  
+INFO  Class search complete (684 ms) (ClassSearcher)  
+INFO  Initializing SSL Context (DefaultSSLContextInitializer)  
+INFO  Initializing Random Number Generator... (SecureRandomFactory)  
+INFO  Random Number Generator initialization complete: SHA1PRNG (SecureRandomFactory)  
+INFO  Trust manager disabled, cacerts have not been set (DefaultTrustManagerFactory)  
+INFO  Headless startup complete (3009 ms) (AnalyzeHeadless)  
+INFO  Class searcher loaded 59 extension points (20 false positives) (ClassSearcher)  
+INFO  HEADLESS Script Paths:
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\MicrosoftCodeAnalyzer\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\SwiftDemangler\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\WildcardAssembler\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\SystemEmulation\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Processors\JVM\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Processors\PIC\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\FunctionID\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\FileFormats\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Processors\DATA\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\GnuDemangler\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\PyGhidra\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\Base\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Processors\Atmel\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Debug\Debugger\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\BytePatterns\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Processors\8051\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Debug\Debugger-rmi-trace\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\BSim\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\Decompiler\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\PDB\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\VersionTracking\ghidra_scripts
+    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\DecompilerDependent\ghidra_scripts (HeadlessAnalyzer)  
+INFO  HEADLESS: execution starts (HeadlessAnalyzer)  
+INFO  Opening existing project: C:\MapleCW\research\ghidra\msexe (HeadlessAnalyzer)  
+INFO  Opening project: C:\MapleCW\research\ghidra\msexe (HeadlessProject)  
+INFO  REPORT: Processing input files:  (HeadlessAnalyzer)  
+INFO       project: C:\MapleCW\research\ghidra\msexe (HeadlessAnalyzer)  
+INFO  IMPORTING: file:///C:/MapleCW/client-patched/Gr2D_DX11.dll (HeadlessAnalyzer)  
+INFO  Using Loader: Portable Executable (PE) (ProgramLoader)  
+INFO  Using Language/Compiler: x86:LE:64:default:windows (ProgramLoader)  
+INFO  Using Library Search Path: [., C:\Windows\SysWOW64, C:\Program Files\Eclipse Adoptium\jdk-21.0.6.7-hotspot\bin, C:\Windows\Sun\Java\bin, C:\Windows\system32, C:\Windows, C:\Program Files\Eclipse Adoptium\jdk-25.0.3.9-hotspot\bin, c:\program files\python312\scripts\, c:\program files\python312\, C:\Windows\System32\Wbem, C:\Windows\system32\windowspowershell\v1.0\, C:\Windows\system32\openssh\, c:\program files\putty\, c:\program files\microsoft vs code\bin, C:\Program Files\dotnet\, C:\Program Files\Git\cmd, C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common, C:\Program Files\NVIDIA Corporation\NVIDIA App\NvDLISR, C:\Users\user\.cargo\bin, C:\Users\user\AppData\Local\Microsoft\WindowsApps, C:\Program Files\Python312, C:\Program Files\Git\mingw64\bin] (ProgramLoader)  
+INFO  TLS callbacks at 1535d1050 (TLSDirectory)  
+INFO  TLS callbacks at 1800d77f0 (TLSDirectory)  
+INFO  TLS callbacks at 1800a9818 (TLSDirectory)  
+WARN  Invalid or missing function at 1800bea08 (ExportDataDirectory)  
+WARN  Invalid or missing function at 1800a0bb4 (ExportDataDirectory)  
+INFO  Additional info:
+Loading file:///C:/MapleCW/client-patched/Gr2D_DX11.dll?MD5=ccfcf23ca885af21959f76736a46df09...
+------------------------------------------------
+
+Searching 21 paths for library ADVAPI32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/advapi32.dll
+Loading file:///C:/Windows/System32/advapi32.dll?MD5=31fabe19532416eea3b63e1d34d863a9...
+Using existing exports file: C:\Users\user\AppData\Roaming\ghidra\ghidra_12.1.2_PUBLIC\symbols\win64\advapi32.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 21 paths for library D3D11.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/d3d11.dll
+Loading file:///C:/Windows/System32/d3d11.dll?MD5=0addce211b17811b5e4d3bd2ae274132...
+Index 4 out of bounds for length 4
+Created exports file: C:\Users\user\AppData\Roaming\ghidra\ghidra_12.1.2_PUBLIC\symbols\win64\d3d11.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 21 paths for library KERNEL32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/kernel32.dll
+Loading file:///C:/Windows/System32/kernel32.dll?MD5=40db0cc600f32984a675debd451a3ad4...
+Using existing exports file: C:\Users\user\AppData\Roaming\ghidra\ghidra_12.1.2_PUBLIC\symbols\win64\kernel32.exports
+WARNING: Existing exports file may not be an exact match.
+Library not saved to project.
+------------------------------------------------
+
+Searching 21 paths for library OLE32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/ole32.dll
+Loading file:///C:/Windows/System32/ole32.dll?MD5=447cf821f21c88773db812f4b32d8a70...
+[ole32.dll]: failed to create WEVTResource at 180115218: Failed to resolve data length for WEVTResource
+Using existing exports file: C:\Users\user\AppData\Roaming\ghidra\ghidra_12.1.2_PUBLIC\symbols\win64\ole32.exports
+WARNING: Existing exports file may not be an exact match.
+Library not saved to project.
+------------------------------------------------
+
+Searching 21 paths for library OLEAUT32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/oleaut32.dll
+Loading file:///C:/Windows/System32/oleaut32.dll?MD5=9153fbc6d2f35b00703617a2bf535f05...
+Using existing exports file: C:\Users\user\AppData\Roaming\ghidra\ghidra_12.1.2_PUBLIC\symbols\win64\oleaut32.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 21 paths for library USER32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/user32.dll
+Loading file:///C:/Windows/System32/user32.dll?MD5=e3934f79991ede68fe75a0d2a4be9353...
+[user32.dll]: failed to create WEVTResource at 1800bca70: Failed to resolve data length for WEVTResource
+Using existing exports file: C:\Users\user\AppData\Roaming\ghidra\ghidra_12.1.2_PUBLIC\symbols\win64\user32.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 21 paths for library WINMM.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/winmm.dll
+Loading file:///C:/Windows/System32/winmm.dll?MD5=0059946611d1e824621bb881211acbd4...
+[winmm.dll]: failed to create WEVTResource at 180021310: Failed to resolve data length for WEVTResource
+Using existing exports file: C:\Users\user\AppData\Roaming\ghidra\ghidra_12.1.2_PUBLIC\symbols\win64\winmm.exports
+Library not saved to project.
+------------------------------------------------
+
+Applying C:\Users\user\AppData\Roaming\ghidra\ghidra_12.1.2_PUBLIC\symbols\win64\winmm.exports
+Applying cached symbols from D3D11.DLL
+Applying C:\Users\user\AppData\Roaming\ghidra\ghidra_12.1.2_PUBLIC\symbols\win64\kernel32.exports
+Applying C:\Users\user\AppData\Roaming\ghidra\ghidra_12.1.2_PUBLIC\symbols\win64\user32.exports
+Applying C:\Users\user\AppData\Roaming\ghidra\ghidra_12.1.2_PUBLIC\symbols\win64\advapi32.exports
+Applying C:\Users\user\AppData\Roaming\ghidra\ghidra_12.1.2_PUBLIC\symbols\win64\ole32.exports
+Applying C:\Users\user\AppData\Roaming\ghidra\ghidra_12.1.2_PUBLIC\symbols\win64\oleaut32.exports
+Linking the External Programs of 'Gr2D_DX11.dll' to imported libraries...
+  [WINMM.DLL] -> not found in project
+  [D3D11.DLL] -> not found in project
+  [KERNEL32.DLL] -> not found in project
+  [USER32.DLL] -> not found in project
+  [ADVAPI32.DLL] -> not found in project
+  [OLE32.DLL] -> not found in project
+  [OLEAUT32.DLL] -> not found in project
+------------------------------------------------
+
+ (ProgramLoader)  
+INFO  IMPORTING: Loaded 0 additional files (HeadlessAnalyzer)  
+INFO  ANALYZING all memory and code: file:///C:/MapleCW/client-patched/Gr2D_DX11.dll (HeadlessAnalyzer)  
+WARN  Ignoring leading '_' chars on no-return name '___raise_securityfailure' specified in file: C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\Base\data\PEFunctionsThatDoNotReturn (NoReturnFunctionAnalyzer)  
+WARN  Ignoring leading '_' chars on no-return name '___report_rangecheckfailure' specified in file: C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\Base\data\PEFunctionsThatDoNotReturn (NoReturnFunctionAnalyzer)  
+INFO  Skipping PDB processing: failed to locate PDB file in configured locations (PdbUniversalAnalyzer)  
+INFO  Use a script to set the PDB file location. I.e.,
+    PdbAnalyzer.setPdbFileOption(currentProgram, new File("/path/to/pdb/file.pdb")); or
+    PdbUniversalAnalyzer.setPdbFileOption(currentProgram, new File("/path/to/pdb/file.pdb"));
+Or set the symbol server search configuration using:    PdbPlugin.saveSymbolServerServiceConfig(...);
+ This must be done using a pre-script (prior to analysis). (PdbUniversalAnalyzer)  
+INFO  Packed database cache: C:\Users\user\AppData\Local\ghidra\packed-db-cache (PackedDatabaseCache)  
+INFO  Unprocessed TypeDescriptor: void (__cdecl *)(class CWzGr2D & __ptr64,class Screen & __ptr64,class nfx::pooled_texture const & __ptr64) (TypeDescriptorModel)  
+INFO  Unprocessed TypeDescriptor: void (__cdecl *)(class CWzGr2D & __ptr64,class Screen & __ptr64,class nfx::pooled_texture const & __ptr64) (TypeDescriptorModel)  
+INFO  Unprocessed TypeDescriptor: char * __ptr64 (TypeDescriptorModel)  
+INFO  Unprocessed TypeDescriptor: char * __ptr64 (TypeDescriptorModel)  
+INFO  Unprocessed TypeDescriptor: void * __ptr64 (TypeDescriptorModel)  
+INFO  Unprocessed TypeDescriptor: void * __ptr64 (TypeDescriptorModel)  
+INFO  Unprocessed TypeDescriptor: void (__cdecl *)(struct nfx::render_context & __ptr64,unsigned int,unsigned int) (TypeDescriptorModel)  
+INFO  Unprocessed TypeDescriptor: void (__cdecl *)(struct nfx::render_context & __ptr64,unsigned int,unsigned int) (TypeDescriptorModel)  
+INFO  Unprocessed TypeDescriptor: char * __ptr64 (TypeDescriptorModel)  
+INFO  Unprocessed TypeDescriptor: char * __ptr64 (TypeDescriptorModel)  
+INFO  Unprocessed TypeDescriptor: void * __ptr64 (TypeDescriptorModel)  
+INFO  Unprocessed TypeDescriptor: void * __ptr64 (TypeDescriptorModel)  
+INFO  Applied data type archive: windows_vs12_64 (ApplyDataArchiveAnalyzer)  
+INFO  Applied data type archive: windows_vs12_64 (ApplyDataArchiveAnalyzer)  
+ERROR Could not create Data at address 1535ad210 (DemangledVariable)  
+INFO  -----------------------------------------------------
+    ASCII Strings                              0.502 secs
+    Apply Data Archives                        0.214 secs
+    Call Convention ID                         0.340 secs
+    Call-Fixup Installer                       0.159 secs
+    Create Address Tables                      0.628 secs
+    Create Address Tables - One Time           1.756 secs
+    Create Function                            0.093 secs
+    Data Reference                             1.084 secs
+    Decompiler Switch Analysis                22.760 secs
+    Demangler Microsoft                        0.133 secs
+    Disassemble                                0.013 secs
+    Disassemble Entry Points                  11.400 secs
+    Embedded Media                             0.021 secs
+    External Entry References                  0.000 secs
+    Function ID                                3.828 secs
+    Function Start Search                      0.131 secs
+    Non-Returning Functions - Discovered       2.998 secs
+    Non-Returning Functions - Known            0.035 secs
+    PDB Universal                              0.014 secs
+    Reference                                  0.920 secs
+    Scalar Operand References                  3.593 secs
+    Shared Return Calls                        0.763 secs
+    Stack                                     23.107 secs
+    Subroutine References                      0.638 secs
+    Subroutine References - One Time           0.022 secs
+    Windows x86 PE Exception Handling          1.000 secs
+    Windows x86 PE RTTI Analyzer               2.095 secs
+    Windows x86 Thread Environment Block (TEB) Analyzer     0.010 secs
+    WindowsResourceReference                   0.723 secs
+    x86 Constant Reference Analyzer           18.166 secs
+-----------------------------------------------------
+     Total Time   97 secs
+-----------------------------------------------------
+ (AutoAnalysisManager)  
+INFO  REPORT: Analysis succeeded for file: file:///C:/MapleCW/client-patched/Gr2D_DX11.dll (HeadlessAnalyzer)  
+INFO  /Gr2D_DX11.dll: file created (USER) (LocalFileSystem)  
+INFO  REPORT: Save succeeded for: /Gr2D_DX11.dll (msexe:/Gr2D_DX11.dll) (HeadlessAnalyzer)  
+INFO  REPORT: Import succeeded (HeadlessAnalyzer)  
