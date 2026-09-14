@@ -1209,10 +1209,13 @@
             morph test, two that literally cannot fail, and the map's fieldLimit is not it -
             1010 carries 4, which is the SUMMON limit, not NoPet). Four remain, and every
             failing gate jumps to the same label, so the DEEPEST watch that fires names it.
-            CAPS ARE LARGE THIS TIME - in run 2 two of them were spent before you summoned.
+            THE 20:40 RUN CAME BACK EMPTY BECAUSE IT WAS LAUNCHED WITHOUT THE -Probe STRING:
+            the hook log shows the script's DEFAULT watches, so all four gate watches read
+            zero and the zero meant "nobody was watching". That is why it is a SWITCH now -
+            -PetGates - which cannot be half-pasted. The caps are large too.
             Summon the Husky within a few seconds of entering the field, stand still ten
             seconds, quit:
-              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,142826340:hits=6000,140f80830:hits=6000,1409bd2f0:hits=6000,142cc1e40:hits=6000"
+              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -PinPatches -PetGates
             Then paste the counts, and say which of these called-from values appear at all -
             ONLY these four are the ladder; every other caller is noise:
               142826340 called-from=0x141ecde63   gates 1..3 passed
@@ -3319,7 +3322,10 @@ function Show-TestPlan {
         Write-Host '         report does not prove it draws. The client decides "hidden" every'
         Write-Host '         frame; the pickup failure is probably the same bug. 8 of 11 gates'
         Write-Host '         are settled from the file; 4 remain. CAPS ARE LARGE THIS TIME.'
-        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,142826340:hits=6000,140f80830:hits=6000,1409bd2f0:hits=6000,142cc1e40:hits=6000"' -ForegroundColor Cyan
+        Write-Host '         USE THE SWITCH - the last run was launched without the -Probe' -ForegroundColor Yellow
+        Write-Host '         string, got the DEFAULT watches, and all four read zero because'
+        Write-Host '         nobody was watching:'
+        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe -PinPatches -PetGates' -ForegroundColor Cyan
         Write-Host '         Summon at once, stand still 10s, quit. Say which of THESE appear:'
         Write-Host '           142826340 from 0x141ecde63 | 140f80830 from 0x141ecde7e'
         Write-Host '           1409bd2f0 from 0x141ecdec6 | 142cc1e40 from 0x141ecdf10 (gate 11)' -ForegroundColor Yellow
