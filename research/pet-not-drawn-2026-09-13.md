@@ -126,3 +126,56 @@ hundreds of times.
 Nothing. The one field where this server knowingly differs from the reference is the **hue**: it
 sends `0` where `Pet.encode` annotates `-1`. That is a candidate, but it is a guess, the gauntlet
 above is the measured mechanism, and a guess costs the same launch as the measurement.
+
+
+---
+
+# RETRACTION and round 3, same day
+
+The owner, after the tooltip round: *"Husky still does not render, and Husky does not pick up items or
+mesos."*
+
+## R1. What I got wrong
+
+`research/pet-tooltip-and-commands-2026-09-13.md` §0 says the pet draws, on the strength of
+`0x0202` arriving 504 times after the summon and never before. **That was an inference, not a
+measurement, and it is wrong.** A pet object can tick, walk and report its position without being
+drawn: movement and visibility are different code in this client, and the run-2 watches had
+already measured the visibility half - `FUN_14159b0a0` was never called from the ladder, so the
+verdict never left "hidden". The move packets only prove the object exists and is running, which
+the name tag already proved.
+
+The rule this breaks is the one `CLAUDE.md` states twice: *when a report's negative contradicts
+what is on screen, the screen wins*, and a conclusion drawn from a proxy is not a measurement of
+the thing itself. §0 of that note is withdrawn; **the gate hunt below is open**, and the pickup
+failure is very likely downstream of it - a hidden pet is not going to run its loot logic.
+
+## R2. Three more gates settled, still without a launch
+
+| gate | call site | function | verdict |
+|---|---|---|---|
+| 1 | `141ecde22` | `FUN_1409d6150(pet+0x630)` | an **obfuscated boolean getter** - the `^0x2a` / `0x9a65` scheme this client uses for protected fields, with a tamper report attached. `CPet::Init` never writes `pet+0x630`, so it reads whatever the constructor left, and passing is the ordinary case **[D]** |
+| 4 | `141ecde5e` | `FUN_142826340` -> `FUN_141715f80(user)` | a **morph** test: `user+0x3c18`'s vtable `+0xa0` returning `0x1a`, `0x1b`, `0x1c` or `0x20`. The owner is not morphed **[L]** |
+| 5 | `141ecde7e` | `FUN_140f80830` -> `FUN_14182ffd0(localUser)` | one byte: `*(u8*)(*(u64*)(user+0xa8) + 0x2d9)`. What sets it is unknown **[L]** |
+
+Also checked and **not** the answer: the map's `fieldLimit`. Map 1010 (where every test has been)
+carries `4`, and the reference's `FieldOption` puts `NoPet` at `0x8000` - `4` is `SummonLimit`.
+Map 1000 carries `0`. So no map has forbidden the pet. **[L]/[R]**
+
+## R3. The run that names it
+
+Every failing gate jumps to `0x141ecdf15`. So the deepest of these four that is entered **with its
+ladder `called-from`** says how far execution got, and the gate after it is the blocker:
+
+| watch | ladder `called-from` | it appearing means |
+|---|---|---|
+| `142826340` | `0x141ecde63` | gates 1-3 passed |
+| `140f80830` | `0x141ecde7e` | gate 4 passed |
+| `1409bd2f0` | `0x141ecdec6` | gate 5 passed (6 and 7 are proven passes) |
+| `142cc1e40` | `0x141ecdf10` | gates 8-10 passed, so **gate 11** is the blocker |
+
+**The caps must be large.** In run 2 two of these spent their 40 hits on unrelated callers within a
+second of entering the field; they are shared functions and the ladder itself runs about thirty
+times a second while a pet is out, so a few thousand hits is a few seconds of pet.
+
+Free in the same run: **summon on a different map**. Every test so far has been on 1010.
