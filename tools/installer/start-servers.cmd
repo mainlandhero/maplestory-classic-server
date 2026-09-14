@@ -30,13 +30,22 @@ rem      maplecw-launcher.toml
 rem    - the inbound firewall rule on this machine
 set "AUTHPORT=8480"
 rem  --------------------------------------------------------------------------
+rem  The client this server publishes for patching. %~dp0 is THIS FILE's folder,
+rem  so the default is the client\ folder that MapleCW-server.zip extracts beside
+rem  this script - no configuration needed if you unzipped it as one piece.
+rem
+rem  Every launcher checks its client against this one before starting the game
+rem  and downloads only the files that differ. A launcher that cannot confirm its
+rem  version REFUSES to start, so if this folder is missing nobody can play.
+set "CLIENTDIR=%~dp0client"
+rem  --------------------------------------------------------------------------
 
 set "HERE=%~dp0"
 echo Starting the MapleCW server from %HERE%
 echo Close this window to stop it.
 echo.
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%HERE%start-server.ps1" -AuthPort %AUTHPORT%
+powershell -NoProfile -ExecutionPolicy Bypass -File "%HERE%start-server.ps1" -AuthPort %AUTHPORT% -ClientDir "%CLIENTDIR%"
 
 rem Reached only if the script returned on its own - a server exiting early, or
 rem Ctrl+C. On a window close nothing here runs, and nothing here needs to.

@@ -13,9 +13,33 @@ WHAT IS IN HERE, AND WHAT IS NOT
     bin\maplecw-useradd.exe   accounts, GM status, codes
     gm-handbook\              game tables extracted from the client's WZ
     data\                     shops, drops, quest scripts, the EXP curve
+    client\                   THE CLIENT THIS SERVER PUBLISHES - see below
 
-Not here, and not needed here: the game client, its 450 MB of WZ data, the
-launcher, grap64.dll. Those are the CLIENT machine's payload.
+Not here, and not needed here: the launcher, or grap64.dll. Those are the
+CLIENT machine's payload.
+
+
+THE client\ FOLDER IS NOT FOR RUNNING - IT IS WHAT PLAYERS PATCH AGAINST
+------------------------------------------------------------------------
+
+Every launcher hashes its own client folder, asks this server which version it
+should be on, and downloads only the files that differ. That is why a WZ change
+costs a player a few megabytes instead of the whole 560 MB package again.
+
+    start-servers.cmd  ->  start-server.ps1  ->  maplecw-auth --client-dir client\
+
+The path is worked out from where the SCRIPT is, so as long as you unzipped
+this as one piece it needs no configuration. If you moved things around, pass
+-ClientDir <path> to start-server.ps1 (start-servers.cmd has a CLIENTDIR line
+near the top for exactly this).
+
+**If that folder is missing, nobody can play.** A launcher that cannot confirm
+its version refuses to start the game rather than run a client whose data
+disagrees with this server. The startup window says so in red if it cannot find
+it, and auth.log prints the version it is publishing when it can.
+
+Do not edit anything inside client\. It is compared byte for byte: a file you
+change here becomes a file every player downloads.
 
 Also not here: maplecw.db. See "BRINGING AN EXISTING DATABASE" below.
 
