@@ -1201,42 +1201,34 @@
                          not what this pet code reads; say so
               the pet takes your OWN dropped item                           -> the byte is
                          ignored; paste the pet pick-up line
-         v) NEW 2026-09-14 (round 5) - FIVE THINGS MEASURED WORKING, PET STILL BLANK.
-            -PetEnable killed my last hypothesis and it killed it cleanly, which is
-            what it was built to be able to do:
-              140f8abc0  6000 hits, [user+0x100+0x5ac] = 0x00000000 on EVERY one, so
-                         the gate is shut and the disable call CANNOT fire
-              141ec7970  0 hits - it did not fire, exactly as that predicts
-              140eeba60  2950 hits, and 1281 of them carry 0xffffff, alpha 0, fully
-                         transparent - but NOT ONE of those is the pet. Correlated by
-                         layer pointer: the pet's layer was touched exactly ONCE, with
-                         0xffffffff, opaque. Transparency is dead too
-              140304100  36 hits - the hook armed
-            The running total, each on its own capture: the item is alive; the sync has
-            it VISIBLE (2964 gate-11 reads of 0, no transition); the frames go in
-            (141ecaa40 x11, pet+0x3d8 = 0); the enable flag is never zeroed; the layer
-            is opaque. The sprite and the layer both come from the client's own Gr2D
-            root, the same singleton everything else that draws uses.
-            So the pet is built correctly and is not on screen. Widening the same
-            instrument again is the mistake CLAUDE.md names, so this changes the
-            question: what is the layer ATTACHED to? Init does
-              141ebbe68  call FUN_141b054f0(pet, pet[0x26], &layer, ..., 0x3eb, ...)
-            and pet[0x26] is pet+0x130. Null there means the layer is registered into
-            nothing while every other measurement still reads perfect. Nobody has
-            looked at it.
-              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetLayer
-            Paste rdx on 141b054f0 (called-from 0x141ebbe6d is ours), the peek on
-            141ec7880, and the counts:
-              141b054f0 rdx=0                -> the layer is attached to NOTHING. Bug
-              no 141b054f0 from 0x141ebbe6d  -> Init never registered the layer at all
-              rdx non-zero but the peek goes 0 later
-                                             -> attached at birth, detached after; give
-                         me the first timestamp where it changes
-              rdx non-zero, peek steady, 141ec87b0 fires
-                                             -> attachment is fine too and I am out of
-                         structural leads. Say so; the next move is a Ghidra pass on
-                         FUN_141b054f0 itself, not another launch
-              no 140304100 lines             -> the hook never armed; not evidence
+         v) NEW 2026-09-14 (round 6) - THE LAYER IS DRAWN. THE PET HAS ITS OWN ALPHA.
+            -PetLayer cleared attachment: the registration fired once from the pet's own
+            call site with rdx = 0x3fda6968, which derefs to "Husk" - pet[0x26] is the
+            pet's NAME, not a parent - and the peek held that same value across all 690
+            samples.
+            The Ghidra pass on FUN_141b054f0 then reframed the problem twice over.
+            FIRST: the constant Init passes it, 0x3eb, selects the string
+            "UI/NameTag.img/pet/%d". That call BUILDS THE NAME TAG, and Init hands it
+            pet+0x3c8 - the pet's own layer - to build it in. The tag is on your screen.
+            So the pet's layer is attached, visible and DRAWN, proved by its own child,
+            and the only thing missing is the sprite inside it.
+            SECOND, and this is the candidate: the tail of Init, at 141ebc1b2, computes
+              edx = *(int *)(DAT_143ac87a0 + 0x58) * 255 / 100
+              mov dword [rdi + 0x3c0], edx        <- the pet's ALPHA
+            A zero percentage there is an invisible sprite in a layer that still draws
+            its name-tag child, which is exactly the screen. It is a DIFFERENT mechanism
+            from the layer colour (FUN_140eeba60) that -PetEnable already cleared, and
+            nobody has ever read it. pet+0x3c0 is written once and read by nothing in
+            any pet function dumped so far, so the render consumes it.
+              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetAlpha
+            Paste rdx on 141ebc1b2 and the peek on 141ec7880:
+              rdx=0 or peek 0        -> THE PET IS DRAWN AT ALPHA ZERO. That is the bug
+              rdx small, non-zero    -> it is faint rather than absent; say whether you
+                         can see ANYTHING where the tag is, even a smudge
+              rdx=0xff, peek=0xff    -> alpha is fine and this is eliminated too
+              141ebc1b2 never fires  -> DAT_143ac87a0 was null and the block was skipped;
+                         the peek is then the only evidence, so paste it either way
+              no 140304100 lines     -> the hook never armed; not evidence
             FREE, same run: every pet test has been on map 1010 - walk to another map
             with the pet out and say whether it appears there.
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
@@ -2175,10 +2167,13 @@ param(
     # on all 6000 samples, 141ec7970 never fired, and the pet's layer was set OPAQUE once
     # and never touched again. Both that hypothesis and the transparency one are dead.
     [switch]$PetEnable,
-    # **-PetLayer**: every step of the pet's own setup has now been measured working, so
-    # this stops asking about the pet and asks about the ATTACHMENT - what the layer is
-    # registered into. See the $Probe block.
+    # **-PetLayer**: ANSWERED 2026-09-14 - pet[0x26] is the pet's NAME ("Husk..."), not a
+    # parent, and it is steady. Attachment is fine. Kept as the control that says so.
     [switch]$PetLayer,
+    # **-PetAlpha**: CPet::Init computes an ALPHA into pet+0x3c0 as (config * 255) / 100
+    # from a global whose value nobody has read. Zero there is an invisible sprite inside
+    # a layer that still draws its name-tag child - which is the screen. See the $Probe.
+    [switch]$PetAlpha,
     [switch]$PetGates,
     # ON BY DEFAULT SINCE 2026-09-14, and accepted only so that every launch line already
     # written down keeps working. It used to be the switch that made the channel answer at
@@ -2529,7 +2524,52 @@ if (-not $SilentChannel) { $SetFieldProbe = $true }
 #
 # So: passing -InventorySlots means the bag is the variable, and the bag gets the watches.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    if ($PetLayer) {
+    if ($PetAlpha) {
+        # **THE PET HAS ITS OWN ALPHA, AND NOBODY HAS EVER READ IT.**
+        #
+        # Two things came out of the Ghidra pass on FUN_141b054f0, and the first reframes
+        # the whole problem:
+        #
+        # 1. `0x3eb` - the constant Init passes it - selects the string
+        #    `UI/NameTag.img/pet/%d`. That call BUILDS THE PET'S NAME TAG, and Init hands it
+        #    pet+0x3c8, the pet's own layer, as the layer to use. The tag is on the owner's
+        #    screen. So the pet's layer is attached, visible and being DRAWN - proved by its
+        #    own child - and the thing that is missing is only the sprite inside it.
+        #
+        # 2. The tail of Init, at 141ebc1b2:
+        #        eax = 0x51eb851f; imul ecx; sar edx,5      ; edx = iVar24 * 255 / 100
+        #        mov dword [rdi + 0x3c0], edx               ; <- the pet's ALPHA
+        #    where iVar24 is *(int *)(DAT_143ac87a0 + 0x58) - a global config PERCENTAGE.
+        #    (+0x5c is the other arm, and it is unreachable: it needs user->vtbl[0x50] to
+        #    return 0 and that function is `mov eax,1; ret`.)
+        #
+        # A zero percentage there gives alpha 0: an invisible sprite in a layer that still
+        # draws its name-tag child. That is exactly the screen, and it is a DIFFERENT
+        # mechanism from FUN_140eeba60, the layer colour, which -PetEnable already cleared.
+        # pet+0x3c0 is written once in Init and read by nothing in any pet function dumped
+        # so far, so whatever consumes it is in the render.
+        #
+        # 141ebc1b2:hits=50     THE ALPHA, at the instant it is written. rdx IS the value,
+        #                       0..255. If this never fires, DAT_143ac87a0 was null and the
+        #                       block was skipped, which is its own answer
+        # 141ec7880:peek=3c0    the same field over the pet's whole life, ~700 samples, so a
+        #                       value that is right at Init and clobbered later cannot hide
+        # 141ecf340:hits=200    the last call in Init and the only one never examined
+        # 140304100:hits=200    positive control
+        #
+        # READ IT LIKE THIS:
+        #   141ebc1b2 rdx=0, or the peek reads 0
+        #                                 -> THE PET IS DRAWN AT ALPHA ZERO. That is the bug,
+        #                      and the next question is what the config at DAT_143ac87a0+0x58
+        #                      is meant to hold and who fills it
+        #   rdx small but non-zero        -> it is drawn faint, not absent; say whether you
+        #                      can see anything at all where the tag is
+        #   rdx=0xff / peek=0xff          -> alpha is fine and this is eliminated too
+        #   141ebc1b2 never fires         -> DAT_143ac87a0 is null, the alpha keeps whatever
+        #                      the constructor left, and the peek is then the only evidence
+        #   no 140304100 lines            -> the hook never armed; not evidence
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141ebc1b2:hits=50,141ec7880:peek=3c0:hits=6000,141ecf340:hits=200,140304100:hits=200:dump=143AC2400/968'
+    } elseif ($PetLayer) {
         # **STOP ASKING ABOUT THE PET; ASK WHAT ITS LAYER IS ATTACHED TO.**
         #
         # Five things are now measured working, each on its own capture: the item is alive
@@ -3600,30 +3640,28 @@ function Show-TestPlan {
         Write-Host '                         -> paste that inbound body'
         Write-Host '           pet never goes for drops -> keys not read; say so'
         Write-Host '           pet takes YOUR OWN drop -> paste the pet pick-up line' -ForegroundColor Yellow
-        Write-Host '      v) FIVE THINGS MEASURED WORKING, PET STILL BLANK.' -ForegroundColor Yellow
-        Write-Host '         -PetEnable killed my last hypothesis, cleanly: [user+0x100+0x5ac]'
-        Write-Host '         read 0 on all 6000 samples so the gate is shut, and 141ec7970'
-        Write-Host '         never fired. 140eeba60 hit 2950 times and 1281 carried 0xffffff'
-        Write-Host '         (alpha 0) - but NONE on the pet: its layer was touched ONCE,'
-        Write-Host '         with 0xffffffff, opaque. Transparency is dead too.'
-        Write-Host '         Running total, each on its own capture: alive; sync says VISIBLE;' -ForegroundColor Yellow
-        Write-Host '         frames go in; enable flag never zeroed; layer opaque. Sprite and'
-        Write-Host '         layer both come from the client Gr2D root everything else uses.'
-        Write-Host '         So it is built correctly and is not on screen. Widening the same'
-        Write-Host '         instrument again is the documented mistake, so CHANGE THE'
-        Write-Host '         QUESTION: what is the layer ATTACHED to? Init does'
-        Write-Host '           141ebbe68 call FUN_141b054f0(pet, pet[0x26], &layer, ...)'
-        Write-Host '         and a null pet[0x26] attaches it to nothing while everything'
-        Write-Host '         else still measures perfect. Summon at once, 10s, quit:'
-        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetLayer' -ForegroundColor Cyan
-        Write-Host '         Paste rdx on 141b054f0 (ours is called-from 0x141ebbe6d), the'
-        Write-Host '         peek on 141ec7880, and the counts:'
-        Write-Host '           141b054f0 rdx=0 -> attached to NOTHING. That is the bug' -ForegroundColor Yellow
-        Write-Host '           no 141b054f0 from 0x141ebbe6d -> never registered at all'
-        Write-Host '           rdx ok but the peek goes 0 later -> detached after birth;'
-        Write-Host '                         give me the first timestamp it changes'
-        Write-Host '           all three fine -> attachment is fine and I am OUT of structural' -ForegroundColor Yellow
-        Write-Host '                         leads. Next move is Ghidra on 141b054f0, not a run'
+        Write-Host '      v) THE LAYER IS DRAWN. THE PET HAS ITS OWN ALPHA.' -ForegroundColor Yellow
+        Write-Host '         -PetLayer cleared attachment: pet[0x26] derefs to "Husk" - it is'
+        Write-Host '         the pet NAME, not a parent - and it held steady all 690 samples.'
+        Write-Host '         Ghidra on FUN_141b054f0 then reframed it twice.'
+        Write-Host '         FIRST: 0x3eb selects "UI/NameTag.img/pet/%d". That call BUILDS' -ForegroundColor Yellow
+        Write-Host '         THE NAME TAG, and Init hands it the pet''s OWN layer to build in.'
+        Write-Host '         The tag is on your screen - so that layer is attached, visible'
+        Write-Host '         and DRAWN, proved by its own child. Only the sprite is missing.'
+        Write-Host '         SECOND, the candidate - the tail of Init at 141ebc1b2:'
+        Write-Host '           edx = *(int *)(DAT_143ac87a0 + 0x58) * 255 / 100'
+        Write-Host '           mov dword [rdi + 0x3c0], edx      <- the pet ALPHA'
+        Write-Host '         Zero there = an invisible sprite in a layer that still draws its'
+        Write-Host '         tag. Different mechanism from the layer colour already cleared,'
+        Write-Host '         and nobody has read it. Summon at once, 10s, quit:'
+        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetAlpha' -ForegroundColor Cyan
+        Write-Host '         Paste rdx on 141ebc1b2 and the peek on 141ec7880:'
+        Write-Host '           rdx=0 or peek 0 -> DRAWN AT ALPHA ZERO. That is the bug' -ForegroundColor Yellow
+        Write-Host '           rdx small non-zero -> faint, not absent; say if you can see'
+        Write-Host '                         ANYTHING where the tag is, even a smudge'
+        Write-Host '           rdx=0xff, peek=0xff -> alpha is fine; eliminated too'
+        Write-Host '           141ebc1b2 never fires -> the global was null and the block was'
+        Write-Host '                         skipped; paste the peek either way'
         Write-Host '           NO 140304100 lines -> the hook never armed; not evidence' -ForegroundColor Red
         Write-Host '         FREE: walk to another map with the pet out and say whether it'
         Write-Host '         appears there.'
