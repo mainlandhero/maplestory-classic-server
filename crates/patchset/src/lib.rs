@@ -165,8 +165,24 @@ pub fn is_volatile(rel: &str) -> bool {
     if name.starts_with("maplecw-hook.") {
         return true;
     }
+    // **grap64.dll is the LAUNCHER's, not the client payload's.** It is the GameGuard stub,
+    // compiled into the launcher binary and written over this file on every Start Game when
+    // the bytes differ (`launcher::client::stub_gameguard`). Versioning it here would give one
+    // file two owners: the patcher would fetch the canonical copy, the launcher would overwrite
+    // it with its own on the next launch, and the launch after that would fetch it again -
+    // 476 KB of churn forever, the same shape as the MapleStory.exe trap in the module docs.
+    // Its version travels with the launcher, which is the thing that produces it.
+    if name == "grap64.dll" {
+        return true;
+    }
     // The backup the GameGuard stubbing leaves, and any other .orig it keeps.
     if name.ends_with(".orig") || name.ends_with(".before-patch") || name.ends_with(".bak") {
+        return true;
+    }
+    // A half-written patch file. `launcher::clientpatch` writes to this name and renames over
+    // the target, so one only exists if a patch was interrupted - and a leftover must not turn
+    // up in the next scan as a file the server has never heard of.
+    if name.ends_with(".maplecw-part") {
         return true;
     }
     // Logs, crash reports and the screenshots the client drops beside itself (Maple_A_*.jpg).
@@ -429,13 +445,17 @@ mod tests {
         );
     }
 
-    /// The stub and the gate patch ARE versioned - they are the launcher's output and the
-    /// canonical client is a prepared one, so `grap64.dll` itself is not volatile.
+    /// **Two owners for one file is the bug this prevents.** `grap64.dll` is the launcher's
+    /// own stub, rewritten on every Start Game; `MapleStory.exe` comes from the payload and the
+    /// launcher only flips one idempotent byte in it, so that one IS versioned.
     #[test]
-    fn the_installed_stub_is_versioned_even_though_its_backup_is_not() {
-        assert!(!is_volatile("grap64.dll"), "the stub in place is part of the version");
-        assert!(is_volatile("grap64.dll.orig"), "its backup is not");
-        assert!(!is_volatile("MapleStory.exe"));
+    fn the_gameguard_stub_is_the_launchers_and_the_exe_is_the_payloads() {
+        assert!(is_volatile("grap64.dll"), "the launcher writes this one; it has one owner");
+        assert!(is_volatile("grap64.dll.orig"), "and its backup is per machine");
+        assert!(
+            !is_volatile("MapleStory.exe"),
+            "the exe is the client's version; the gate patch is idempotent so it does not churn"
+        );
     }
 
     #[test]

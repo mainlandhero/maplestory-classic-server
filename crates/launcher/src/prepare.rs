@@ -13,7 +13,9 @@
 //! 5. **archive** the previous `maplecw-hook.log` - never delete it;
 //! 6. write the hook's four marker files;
 //! 7. write **or delete** the client-credential marker;
-//! 8. `ShellExecuteW` the client with `-NXLDEBUG <ip> <port>`.
+//! 8. **confirm the client's version with the server and patch it if it is behind** - the
+//!    only step that can refuse a launch over something outside the folder, `crate::clientpatch`;
+//! 9. `ShellExecuteW` the client with `-NXLDEBUG <ip> <port>`.
 
 use std::path::Path;
 
@@ -267,6 +269,60 @@ pub fn prepare_and_launch(
             Level::Info,
             format!("{} resolves to {} - the client is given the address, not the name", typed.ip.trim(), plan.ip),
         );
+    }
+
+    // **THE VERSION GATE.** The owner, 2026-09-14: *"an integrity check that reaches out to the
+    // server to make sure that this is the correct version that the client should be running
+    // on. Older clients will be forced to patch."*
+    //
+    // Here, and not earlier, for two reasons. It is after `prepare`, so the launcher's own
+    // patch steps - the GameGuard stub, the Nexon gate byte - have already run and the folder
+    // is in the same prepared state as the canonical client the server publishes; comparing
+    // before them would diff against a client that is about to change. And it is after the
+    // address is resolved, so the patch server and the game server are the same host by
+    // construction.
+    //
+    // **Blocking is deliberate and it is a real trade** (the owner chose it over warn-only): an
+    // unreachable patch server, or one started without `--client-dir`, stops play entirely.
+    // `crate::clientpatch` carries that note and every refusal says which case it is.
+    match layout.auth_fingerprint {
+        Some(pin) => {
+            let outcome = crate::clientpatch::check_and_patch(
+                &layout.client_dir,
+                &plan.ip,
+                layout.auth_port,
+                &pin,
+                log,
+            )
+            .map_err(|e| format!("{e}
+
+(The client was NOT launched.)"))?;
+            if let crate::clientpatch::Outcome::Patched { version, files, bytes } = &outcome {
+                log(
+                    Level::Good,
+                    format!(
+                        "client updated to version {version}: {files} file(s), {:.1} MB. Only                          what changed was downloaded",
+                        *bytes as f64 / (1024.0 * 1024.0)
+                    ),
+                );
+            }
+            // Always, so the log ends with the version that was confirmed - the same reason
+            // every server process prints its build stamp.
+            log(
+                Level::Good,
+                format!("running client version {} - confirmed by the server", outcome.version()),
+            );
+        }
+        // No pin, no TLS, no way to ask - and the answer to "which version should I run" must
+        // not come from an unauthenticated source. Same refusal as sign-in gives.
+        None => {
+            return Err(format!(
+                "{}
+
+(The client was NOT launched: its version could not be confirmed.)",
+                crate::session::NOT_PINNED
+            ))
+        }
     }
 
     // BEFORE the client, and after everything else: a client launched at a dead port sits on
