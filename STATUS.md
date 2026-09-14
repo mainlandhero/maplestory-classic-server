@@ -37,6 +37,48 @@ like a server that is not running. It cost one of the owner's manual launches on
 and stakes a login claim the login server matches to the process that owns the socket; the
 game socket itself carries no credential and never has. Say so in every progress report.
 
+**2026-09-13, release: the launcher checks its own client folder, one live login claim per
+account, and a superseded launch is thrown off the channel.** Three changes, all from one
+thread that started with a second machine failing to start the client at all.
+
+* **`crates/launcher/src/integrity.rs`** reads the PE import tables of every module in the
+  client folder on every Start Game and reports two things into the launcher log: a DLL that
+  is **missing**, and one **borrowed** from that machine's PATH rather than shipped. The
+  second is the finding that cannot be made on the machine where the client works. The real
+  folder measures self-contained - 29 modules, 56 ms, nothing borrowed - so the owner's constraint
+  (*"we should not have any dependencies on the actual install of MapleStory"*) is now a
+  measurement. It reports and never refuses. Blind to `LoadLibrary` and registry lookups, and
+  it says so in its own output. `--check-client [folder]` asks without launching.
+* **One live login claim per account** (`crates/store/src/claims.rs`). Staking deletes
+  `WHERE account_id = ? AND token_hash <> ?` - your own earlier launches, never anybody
+  else's, so the otter/owl eviction bug in that module's header stays fixed. This is what
+  the live log of 2026-09-13 needed: one person signed in six times from one address, and
+  from the fourth connection every one was refused with *"4 login claims are live and the
+  evidence presented did not pick one out"*. The guard was right; their own retries were the
+  other claims.
+* **A superseded launch is disconnected** (`crates/store/src/kick.rs`, `crates/world/src/server.rs`).
+  Deleting the claim only stopped the old client being recognised at its *next* login; one
+  already in the world kept its channel socket. The sign-in now queues a kick in the same
+  transaction, and the channel obeys it within two seconds. One row per account with a
+  **timestamp, not a flag** - a connection obeys only a kick newer than the moment it joined,
+  which is what stops the sign-in disconnecting the client it just authorised. Every
+  deliberate close now returns `Close::Server(reason)` and the accept loop logs
+  **`DISCONNECTED BY THE SERVER: <reason>`**; a socket failure stays a separate line, because
+  os error 10054 is the client crashing. The channel had no server-initiated disconnects at
+  all before this.
+
+**Not covered, and worth knowing before somebody reports it as a bug:** the login socket is
+not disconnected, only the channel - a player at character select on the superseded launch
+stays there. No notice packet is sent before the close; nothing in this client has been
+decoded as *"you were disconnected"* and inventing one is how a client freezes. And an
+existing database can still hold several live claims for one account: nothing migrates them,
+and each account collapses to one the next time it signs in.
+
+**Still open from the same day:** the summoned pet does not render, and does not pick up
+items or mesos. Four watches will name the gate - `-PetGates`. And Joanne's machine still
+cannot start the client; the server log shows only their launcher's reachability probe, so it
+dies before any socket. 2480 tests pass.
+
 **2026-09-10, night: THE HYBRID BUILD IS INSTALLED - the modern client's Signature Style
 Collection (206 items) is in `client-patched/Data`, and the Cash Shop's Special tab sells it,
 badged NEW. THE SHOP TAB IS SEEN ON SCREEN** - the owner, with a screenshot: *"The items actually
