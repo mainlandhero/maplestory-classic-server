@@ -1201,36 +1201,29 @@
                          not what this pet code reads; say so
               the pet takes your OWN dropped item                           -> the byte is
                          ignored; paste the pet pick-up line
-         v) NEW 2026-09-14 (round 6) - THE LAYER IS DRAWN. THE PET HAS ITS OWN ALPHA.
-            -PetLayer cleared attachment: the registration fired once from the pet's own
-            call site with rdx = 0x3fda6968, which derefs to "Husk" - pet[0x26] is the
-            pet's NAME, not a parent - and the peek held that same value across all 690
-            samples.
-            The Ghidra pass on FUN_141b054f0 then reframed the problem twice over.
-            FIRST: the constant Init passes it, 0x3eb, selects the string
-            "UI/NameTag.img/pet/%d". That call BUILDS THE NAME TAG, and Init hands it
-            pet+0x3c8 - the pet's own layer - to build it in. The tag is on your screen.
-            So the pet's layer is attached, visible and DRAWN, proved by its own child,
-            and the only thing missing is the sprite inside it.
-            SECOND, and this is the candidate: the tail of Init, at 141ebc1b2, computes
-              edx = *(int *)(DAT_143ac87a0 + 0x58) * 255 / 100
-              mov dword [rdi + 0x3c0], edx        <- the pet's ALPHA
-            A zero percentage there is an invisible sprite in a layer that still draws
-            its name-tag child, which is exactly the screen. It is a DIFFERENT mechanism
-            from the layer colour (FUN_140eeba60) that -PetEnable already cleared, and
-            nobody has ever read it. pet+0x3c0 is written once and read by nothing in
-            any pet function dumped so far, so the render consumes it.
-              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetAlpha
-            Paste rdx on 141ebc1b2 and the peek on 141ec7880:
-              rdx=0 or peek 0        -> THE PET IS DRAWN AT ALPHA ZERO. That is the bug
-              rdx small, non-zero    -> it is faint rather than absent; say whether you
-                         can see ANYTHING where the tag is, even a smudge
-              rdx=0xff, peek=0xff    -> alpha is fine and this is eliminated too
-              141ebc1b2 never fires  -> DAT_143ac87a0 was null and the block was skipped;
-                         the peek is then the only evidence, so paste it either way
-              no 140304100 lines     -> the hook never armed; not evidence
-            FREE, same run: every pet test has been on map 1010 - walk to another map
-            with the pet out and say whether it appears there.
+         v) NEW 2026-09-14 (round 7) - THE SPRITE IS BEING RE-PARENTED ONTO SOMETHING
+            THE USER OWNS. -PetAlpha: 0xff at the write and on all 357 samples. Alpha is
+            fine. Six things measured right now, and the layer is provably DRAWN because
+            the name tag is its child. Only the sprite is missing.
+            The function that places the sprite, FUN_141eca710, has two arms: the normal
+            one, and one taken when user+0x3fd0 is non-zero that hands the sprite the
+            object at user+0x3fd8 with z=1. The -PetFrames capture shows 141ecaa40 called
+            from inside it with rdx=1 - THE SECOND ARM WAS TAKEN. So the client thinks
+            The owner's character owns something the pet should ride on - a vehicle, chair,
+            morph - and the sprite goes there instead of the field. The owner is riding
+            nothing, so if the client believes they are, a packet of ours said so.
+            [D] from one register; -PetParent makes it [L]:
+              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetParent
+            Paste the 142934760 lines (rdx, called-from, and the OPCODE being dispatched)
+            and the two peeks:
+              142934760 fires with rdx non-zero before the summon
+                                        -> the opcode on that line is the packet that told
+                         the client they are riding. That becomes a server fix
+              peek 3ed0 non-zero, setter silent -> the field is the bug, writer unnamed
+              peek 3ed0 = 0 everywhere  -> my read is wrong; paste 3ed8 anyway
+              no 140304100 lines        -> the hook never armed; not evidence
+            FREE, same run: walk to another map with the pet out and say whether it
+            appears there.
          e) NEW 2026-09-12 - FRIEREN ASKS WHICH VERSION. Nexon ships Frieren's set as
             normal / Ringlets / Sleep (nexon.com/maplestory/news/sale/44291), so opening the
             Frieren Outfit Set Coupon (the Cash Shop's / the Collection's, 5681543) now
@@ -2170,10 +2163,13 @@ param(
     # **-PetLayer**: ANSWERED 2026-09-14 - pet[0x26] is the pet's NAME ("Husk..."), not a
     # parent, and it is steady. Attachment is fine. Kept as the control that says so.
     [switch]$PetLayer,
-    # **-PetAlpha**: CPet::Init computes an ALPHA into pet+0x3c0 as (config * 255) / 100
-    # from a global whose value nobody has read. Zero there is an invisible sprite inside
-    # a layer that still draws its name-tag child - which is the screen. See the $Probe.
+    # **-PetAlpha**: ANSWERED 2026-09-14 - 0xff at the write and on all 357 samples after.
     [switch]$PetAlpha,
+    # **-PetParent**: FUN_141eca710 hands the pet's sprite a USER-owned object at
+    # user+0x3fd8 whenever user+0x3fd0 is non-zero, and the -PetFrames capture shows that
+    # branch WAS taken (rdx=1 from 0x141eca9fc). This reads both fields and watches the
+    # one setter of user+0x3fd0. See the $Probe block.
+    [switch]$PetParent,
     [switch]$PetGates,
     # ON BY DEFAULT SINCE 2026-09-14, and accepted only so that every launch line already
     # written down keeps working. It used to be the switch that made the channel answer at
@@ -2524,7 +2520,49 @@ if (-not $SilentChannel) { $SetFieldProbe = $true }
 #
 # So: passing -InventorySlots means the bag is the variable, and the bag gets the watches.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    if ($PetAlpha) {
+    if ($PetParent) {
+        # **THE SPRITE IS BEING RE-PARENTED ONTO SOMETHING THE USER OWNS.**
+        #
+        # Six things are measured right: alive, sync VISIBLE, frames inserted, enable flag
+        # never zeroed, layer opaque, alpha 0xff - and the layer is provably DRAWN, because
+        # the name tag is its child. Only the sprite is missing. FUN_141eca710, the function
+        # that places the sprite, has two arms (research/msexe-pet-frames.c):
+        #
+        #   if (user == 0 || *(int *)(user + 0x3fd0) == 0)
+        #       NORMAL: variant = the global DAT_143ad4a38, z computed from the position
+        #   else if (*(void **)(user + 0x3fd8) != 0)
+        #       variant = VT_UNKNOWN(user+0x3fd8 object), z = 1        <- rdx=1
+        #   FUN_141ecaa40(pet, z, &variant)  -> sprite->vtbl[0x40](&variant)
+        #
+        # The -PetFrames capture has 141ecaa40 called from 0x141eca9fc with rdx=1. THAT IS
+        # THE SECOND ARM. So user+0x3fd0 is non-zero on the owner's character and the pet's
+        # sprite is being attached to whatever lives at user+0x3fd8 - a vehicle, a chair,
+        # a morph, something that is drawn INSTEAD of the field for a rider. The owner is riding
+        # nothing, so if the client thinks they are, we told it so, in the SetField record or
+        # a stat change. This is [D] from one register value; the run below makes it [L].
+        #
+        # 142934760:hits=50       THE ONLY SETTER of user+0x3fd0 (a virtual, slot 66 of a
+        #                         200-slot vtable). rdx is the value, called-from is who
+        # 140f8abc0:peek=3ed0     user+0x3fd0 READ - rcx there is user+0x100, so +0x3ed0
+        #                         lands on it. ~6000 samples
+        # 140f80830:peek=3ed8     user+0x3fd8, the object, same trick from gate 5's rcx.
+        #                         Only the calls with called-from=0x141ecde7e are the
+        #                         ladder's and carry user+0x100 in rcx; ignore the rest
+        # 140304100:hits=200      positive control
+        #
+        # READ IT LIKE THIS:
+        #   142934760 fires, rdx non-zero, before the summon
+        #                                   -> paste called-from and the opcode being
+        #                      dispatched: that names the PACKET that told the client the owner
+        #                      is riding something. Then it is a server fix
+        #   peek 3ed0 non-zero, 142934760 silent
+        #                                   -> set by a path that is not the virtual; the
+        #                      field is still the bug, the writer is not yet named
+        #   peek 3ed0 = 0 everywhere        -> the arm was taken for another reason and my
+        #                      read of FUN_141eca710 is wrong; paste the 3ed8 peek anyway
+        #   no 140304100 lines              -> the hook never armed; not evidence
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142934760:hits=50,140f8abc0:peek=3ed0:hits=6000,140f80830:peek=3ed8:hits=6000,140304100:hits=200:dump=143AC2400/968'
+    } elseif ($PetAlpha) {
         # **THE PET HAS ITS OWN ALPHA, AND NOBODY HAS EVER READ IT.**
         #
         # Two things came out of the Ghidra pass on FUN_141b054f0, and the first reframes
@@ -3640,28 +3678,27 @@ function Show-TestPlan {
         Write-Host '                         -> paste that inbound body'
         Write-Host '           pet never goes for drops -> keys not read; say so'
         Write-Host '           pet takes YOUR OWN drop -> paste the pet pick-up line' -ForegroundColor Yellow
-        Write-Host '      v) THE LAYER IS DRAWN. THE PET HAS ITS OWN ALPHA.' -ForegroundColor Yellow
-        Write-Host '         -PetLayer cleared attachment: pet[0x26] derefs to "Husk" - it is'
-        Write-Host '         the pet NAME, not a parent - and it held steady all 690 samples.'
-        Write-Host '         Ghidra on FUN_141b054f0 then reframed it twice.'
-        Write-Host '         FIRST: 0x3eb selects "UI/NameTag.img/pet/%d". That call BUILDS' -ForegroundColor Yellow
-        Write-Host '         THE NAME TAG, and Init hands it the pet''s OWN layer to build in.'
-        Write-Host '         The tag is on your screen - so that layer is attached, visible'
-        Write-Host '         and DRAWN, proved by its own child. Only the sprite is missing.'
-        Write-Host '         SECOND, the candidate - the tail of Init at 141ebc1b2:'
-        Write-Host '           edx = *(int *)(DAT_143ac87a0 + 0x58) * 255 / 100'
-        Write-Host '           mov dword [rdi + 0x3c0], edx      <- the pet ALPHA'
-        Write-Host '         Zero there = an invisible sprite in a layer that still draws its'
-        Write-Host '         tag. Different mechanism from the layer colour already cleared,'
-        Write-Host '         and nobody has read it. Summon at once, 10s, quit:'
-        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetAlpha' -ForegroundColor Cyan
-        Write-Host '         Paste rdx on 141ebc1b2 and the peek on 141ec7880:'
-        Write-Host '           rdx=0 or peek 0 -> DRAWN AT ALPHA ZERO. That is the bug' -ForegroundColor Yellow
-        Write-Host '           rdx small non-zero -> faint, not absent; say if you can see'
-        Write-Host '                         ANYTHING where the tag is, even a smudge'
-        Write-Host '           rdx=0xff, peek=0xff -> alpha is fine; eliminated too'
-        Write-Host '           141ebc1b2 never fires -> the global was null and the block was'
-        Write-Host '                         skipped; paste the peek either way'
+        Write-Host '      v) THE SPRITE IS RE-PARENTED ONTO SOMETHING THE USER OWNS.' -ForegroundColor Yellow
+        Write-Host '         -PetAlpha: 0xff at the write and on all 357 samples. Alpha is'
+        Write-Host '         fine. Six things measured right, and the layer is provably DRAWN'
+        Write-Host '         (the name tag is its child). Only the sprite is missing.'
+        Write-Host '         FUN_141eca710 places the sprite and has two arms; the second,'
+        Write-Host '         taken when user+0x3fd0 != 0, hands the sprite the object at'
+        Write-Host '         user+0x3fd8 with z=1. The -PetFrames capture shows exactly that' -ForegroundColor Yellow
+        Write-Host '         call (rdx=1 from 0x141eca9fc). So the client thinks your character'
+        Write-Host '         owns something the pet rides on - vehicle, chair, morph - and the'
+        Write-Host '         sprite goes there instead of the field. You ride nothing, so if'
+        Write-Host '         the client believes you do, one of OUR packets said so.'
+        Write-Host '         Summon at once, 10s, quit:'
+        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -PetParent' -ForegroundColor Cyan
+        Write-Host '         Paste the 142934760 lines (rdx, called-from AND the opcode on the'
+        Write-Host '         line) and the two peeks:'
+        Write-Host '           142934760 rdx non-zero before the summon -> the OPCODE on that' -ForegroundColor Yellow
+        Write-Host '                         line is the packet that said you are riding.'
+        Write-Host '                         That is a server fix'
+        Write-Host '           peek 3ed0 non-zero, setter silent -> field is the bug, writer'
+        Write-Host '                         unnamed'
+        Write-Host '           peek 3ed0 = 0 everywhere -> my read is wrong; paste 3ed8 anyway'
         Write-Host '           NO 140304100 lines -> the hook never armed; not evidence' -ForegroundColor Red
         Write-Host '         FREE: walk to another map with the pet out and say whether it'
         Write-Host '         appears there.'
