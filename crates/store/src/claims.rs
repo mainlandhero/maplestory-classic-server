@@ -1065,6 +1065,33 @@ impl Store {
             "DELETE FROM login_claims WHERE account_id = ?1 AND token_hash <> ?2",
             rusqlite::params![account_id, token_hash],
         )?;
+
+        // **And throw the superseded launch off the channel it may still be playing on.**
+        //
+        // The owner, 2026-09-13: *"If someone were to login again on an account which there is an
+        // active client connection with the server on a channel, can we disconnect that
+        // client?"* Deleting the claim only stops the OLD client being recognised at its next
+        // login connection; a client already in the world holds a socket and keeps playing on
+        // it, because the channel never re-reads the claim. So the sign-in queues a
+        // disconnect and `crates/world` carries it out - `crate::kick`.
+        //
+        // In THIS transaction, not after it: a crash between the two would leave a claim
+        // replaced and nobody thrown off, which is the state that reads on screen as two
+        // clients on one account.
+        //
+        // The request is stamped `now`, and a channel connection only obeys a kick that is
+        // newer than the moment it joined - so the client this sign-in is about to start is
+        // not disconnected by the sign-in that authorised it. That is the whole trap in this
+        // feature and it is handled in `kick.rs`, with the test named after it.
+        if superseded > 0 {
+            crate::kick::request_kick_in(
+                &tx,
+                account_id,
+                "this account signed in again, and one launch at a time is the rule - \
+                 store::claims, one live claim per account",
+                now,
+            )?;
+        }
         tx.execute(
             "INSERT INTO login_claims
                  (account_id, token_hash, created_at, expires_at, peer, launch_hash,
@@ -1654,6 +1681,49 @@ mod tests {
         assert_eq!(r.resolved(), None, "the superseded token still works: {}", r.why());
         let r = store.resolve_login_claim(&ClaimEvidence::with_token(second)).unwrap();
         assert_eq!(r.resolved().expect("the newest sign-in").claim.account_id, wisp);
+    }
+
+    /// **The cross-process half of it**: superseding a claim queues the disconnect that
+    /// `crates/world` carries out.
+    ///
+    /// Deleting the claim alone would only stop the old client being recognised at its *next*
+    /// login connection. A client already in the world is holding a channel socket and the
+    /// channel never re-reads the claim, so without this row it would keep playing.
+    #[test]
+    fn a_sign_in_that_supersedes_a_claim_queues_a_disconnect_for_that_account() {
+        let (store, wisp, other) = store_with_accounts();
+        let joined = Store::now() - 60;
+
+        let first = login(&store, "wisp");
+        store.stake_login_claim(wisp, &first, LOGIN_CLAIM_TTL_SECS).unwrap();
+        assert_eq!(
+            store.kick_since(wisp, joined).unwrap(),
+            None,
+            "a FIRST sign-in must throw nobody off - this is the line that would make every \
+             launch disconnect the launch before it"
+        );
+
+        let second = login(&store, "wisp");
+        store.stake_login_claim(wisp, &second, LOGIN_CLAIM_TTL_SECS).unwrap();
+
+        let kick = store.kick_since(wisp, joined).unwrap().expect("the superseded launch");
+        assert_eq!(kick.account_id, wisp);
+        assert!(kick.reason.contains("signed in again"), "{}", kick.reason);
+        assert_eq!(store.kick_since(other, joined).unwrap(), None, "nobody else is affected");
+
+        // And the client this sign-in is about to start is not the one thrown off.
+        assert_eq!(store.kick_since(wisp, kick.requested_at + 1).unwrap(), None);
+    }
+
+    /// A re-stake of the SAME token is one sign-in refreshing itself, not a second launch, so
+    /// it must not disconnect the client it belongs to.
+    #[test]
+    fn re_staking_the_same_token_queues_no_disconnect() {
+        let (store, wisp, _other) = store_with_accounts();
+        let token = login(&store, "wisp");
+        store.stake_login_claim(wisp, &token, LOGIN_CLAIM_TTL_SECS).unwrap();
+        store.stake_login_claim(wisp, &token, LOGIN_CLAIM_TTL_SECS).unwrap();
+        assert_eq!(store.kick_since(wisp, Store::now() - 60).unwrap(), None);
     }
 
     /// **The failure this was reported from**, in the shape the live server logged it.

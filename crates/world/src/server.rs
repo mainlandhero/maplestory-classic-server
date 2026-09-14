@@ -54,6 +54,29 @@ const TICK_MS: u64 = 100;
 /// itself underneath a player who is still in the map.
 const PRESENCE_RENEW_MS: u64 = 15_000;
 
+/// How often a connection asks whether the server wants it gone.
+///
+/// Two seconds, not every tick: the question is a SELECT on an indexed primary key, but it is
+/// asked by every connection on the channel and the answer changes at human speed - somebody
+/// pressing Login. Two seconds is the delay between that press and the old client's socket
+/// closing, which is well inside the time the new client spends loading.
+const KICK_POLL_MS: u64 = 2_000;
+
+/// **How a connection ended**, so the accept loop can say who ended it.
+///
+/// The owner, 2026-09-13: *"Make sure every disconnect initiated by the server is logged clearly
+/// in the server channel logs."* The point of making this a type rather than a log call at
+/// the point of decision is that a future disconnect cannot be added without choosing one of
+/// these arms, and both arms are logged. A bare `return Ok(())` now means "the client went
+/// away", and nothing else can borrow that meaning by accident.
+#[derive(Debug)]
+enum Close {
+    /// The socket closed from the far end: the player quit, changed channel, or crashed.
+    Client,
+    /// **The server ended it**, for the reason given. Always logged, always as a disconnect.
+    Server(String),
+}
+
 fn send(
     stream: &mut TcpStream,
     tx: &mut Framer<ByteShiftCipher>,
@@ -75,7 +98,7 @@ fn connection(
     // Every connection on this channel shares one set of fields: mobs keep their
     // positions when a player leaves, and a second player sees the same field.
     fields: Arc<crate::fields::Fields>,
-) -> std::io::Result<()> {
+) -> std::io::Result<Close> {
     stream.set_nodelay(true)?;
 
     // NOT the login greeting. A channel connection has `conn+0x48 == 0`, so the client
@@ -177,10 +200,47 @@ fn connection(
     let mut presence_renewed_ms: u64 = 0;
     let presence_holder = store::holder_key(launch_pid, peer_ip.as_deref());
 
+    // **Has anybody asked for this player to be thrown off since they joined?**
+    //
+    // Set at the migration hello, which is the first and only point at which this connection
+    // learns which account it is - the channel socket carries no credentials. The watch stamps
+    // that instant, so a kick queued BEFORE this connection joined is not ours: that is what
+    // stops the sign-in that authorised this launch from disconnecting it. `store::kick`.
+    let mut kicks: Option<store::KickWatch> = None;
+    let mut kick_checked_ms: u64 = 0;
+
     let mut buf = [0u8; 8192];
     loop {
+        // Asked here rather than in the timeout branch below, because that branch only runs
+        // when nothing arrived: a client that is moving, attacking or chatting can keep the
+        // socket busy for a long time, and it is exactly the player who is doing something who
+        // needs to be thrown off cleanly.
+        if let Some(watch) = kicks {
+            let now_ms = started.elapsed().as_millis() as u64;
+            if now_ms.saturating_sub(kick_checked_ms) >= KICK_POLL_MS {
+                kick_checked_ms = now_ms;
+                match watch.poll(&store) {
+                    Ok(Some(kick)) => {
+                        return Ok(Close::Server(format!(
+                            "account {} was asked to be disconnected: {}. The request was made \
+                             at unix {} and this connection joined at unix {}",
+                            kick.account_id, kick.reason, kick.requested_at, watch.joined_at
+                        )));
+                    }
+                    Ok(None) => {}
+                    // A table that will not read must not throw anybody out. Same call this
+                    // file already makes about the presence lease.
+                    Err(e) => log(&format!(
+                        "KICK: could not read the disconnect requests for account {}: {e}. \
+                         This connection stays",
+                        watch.account_id
+                    )),
+                }
+            }
+        }
+
         let read = match stream.read(&mut buf) {
-            Ok(0) => return Ok(()),
+            Ok(0) => return Ok(Close::Client),
             Ok(n) => n,
             Err(e)
                 if e.kind() == std::io::ErrorKind::WouldBlock
@@ -267,6 +327,23 @@ fn connection(
 
             if opcode == CLIENT_MIGRATION_HELLO {
                 describe_hello(&mut session, payload);
+                // The account is known from here on, so this is where the disconnect watch
+                // starts. Deliberately NOT tied to the presence lease below: that lease can
+                // fail to be taken (somebody else holds it, or the table would not read) and
+                // this player is served anyway, so a kick must still reach them.
+                if kicks.is_none() {
+                    if let Some(claimed) = session.claimed() {
+                        let watch = store.watch_for_kicks(claimed.account_id);
+                        log(&format!(
+                            "   KICK WATCH: account {} joined at unix {}. A disconnect \
+                             requested from here on - by a second sign-in on this account, \
+                             say - closes this connection within {} ms. One requested BEFORE \
+                             this instant belongs to an earlier launch and is ignored",
+                            watch.account_id, watch.joined_at, KICK_POLL_MS
+                        ));
+                        kicks = Some(watch);
+                    }
+                }
                 // The hello is the first and only point at which this connection learns WHICH
                 // ACCOUNT it is - the channel socket carries no credentials, and the account
                 // comes out of the migration row the hello claimed. So the lease is taken
@@ -440,7 +517,18 @@ pub fn serve(config: Config) -> std::io::Result<()> {
                     let peer = format!("ch{} #{nth} {peer}", config.channel_id);
                     log(&format!("connection from {peer}"));
                     match connection(stream, store, config, fields) {
-                        Ok(()) => log(&format!("{peer} closed")),
+                        Ok(Close::Client) => log(&format!("{peer} closed")),
+                        // **The one line that says the server did it.** Every deliberate
+                        // disconnect on this channel comes through here, in these words, so
+                        // "did we drop them or did they drop?" is a grep rather than an
+                        // inference from a missing line.
+                        Ok(Close::Server(why)) => log(&format!(
+                            "{peer} DISCONNECTED BY THE SERVER: {why}"
+                        )),
+                        // Not server-initiated: the socket failed or the client sent
+                        // something unframeable. Left distinct on purpose - os error 10054 is
+                        // the client crashing, and calling that a server disconnect would
+                        // bury the real ones.
                         Err(e) => log(&format!("{peer} ended: {e}")),
                     }
                 });
