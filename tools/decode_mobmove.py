@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Decode every `0x02FF` mob-move report in a world log, and ASSERT its total length.
 
-    python tools/decode_mobmove.py world.log
-    python tools/decode_mobmove.py                      # defaults to world.log
+    python tools/decode_mobmove.py world-ch0.log
+    python tools/decode_mobmove.py                      # defaults to world-ch0.log
 
 ## Why this exists
 
@@ -97,7 +97,7 @@ def decode(b):
 
 def main():
     path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "world.log")
+        os.path.dirname(os.path.abspath(__file__)), "..", "world-ch0.log")
     text = open(path, encoding="utf-8", errors="replace").read()
     bodies = [(int(n), h) for n, h in BODY_RE.findall(text)]
     if not bodies:

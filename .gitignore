@@ -113,3 +113,6 @@ crates/**/*.dmp
 /backport/*/wz/
 /backport/*/canvas/
 /backport/*/build/
+
+# The launcher.s client checksum cache - a local optimisation, never shared.
+maplecw-hashes.cache

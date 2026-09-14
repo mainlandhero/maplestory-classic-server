@@ -85,7 +85,7 @@ watch for and what each outcome would mean *before* they launch.
 
 ## A run's output is evidence. Do not destroy it.
 
-`world.log` used to be deleted at the start of every launch. **Four conclusions have turned on
+`world-ch0.log` used to be deleted at the start of every launch. **Four conclusions have turned on
 that file and three of them died before they could be checked** - including one that was
 reported to the owner as decisive, retracted a day later as unmeasurable, and finally proved right
 by a log that only existed because the launcher had stopped deleting them.
@@ -173,7 +173,7 @@ functions, **27 909** would have come back "zero callers" while being reached by
 **And on 2026-08-22 the filter was a *timestamp*, which is the same mistake wearing a clock.**
 The owner's first sentence about the cash shop was *"the opcode is most likely not handled"*. It was
 reported back to them three times, across three sessions, that **no packet was sent at all** -
-"world.log records every inbound packet and there is nothing new in it". `0x00D5` was in that
+"world-ch0.log records every inbound packet and there is nothing new in it". `0x00D5` was in that
 log every time.
 
 It survived because it arrives inside a six-opcode burst with `0x0420`..`0x0426`, and that
@@ -419,7 +419,7 @@ reading either one closely:
 * the **channel migrate opcode** - ten candidates went out, and the dispatch line for
   `0x001A` took **354 ms** where its neighbour took 64 µs. The long one is a socket teardown.
 
-None of these is visible in a single log. `world.log` and `login.log` say what the *server*
+None of these is visible in a single log. `world-ch0.log` and `login.log` say what the *server*
 sent; `client-patched\maplecw-hook.log` says what the *client* did with it. When something
 "did nothing", count the event in both and compare - and remember the dispatch line is
 written on **return**, so a missing one means the handler was entered and never came back.
@@ -544,12 +544,18 @@ Scored against a held-out control it got **1 of 8**. Label every claim from it a
 | | |
 |---|---|
 | `login.log` | every packet both ways on the login connection |
-| `world.log` | the same for **channel 0** — read this for anything past character select |
-| `world-ch1.log` | channel 1. Two channels run by default; channel N logs to `world-ch<N>.log` |
+| `world-ch0.log` | the same for **channel 0** — read this for anything past character select |
+| `world-ch1.log` | channel 1. Two channels run by default; **channel N logs to `world-ch<N>.log`, channel 0 included** |
 | `client-patched\maplecw-hook.log` | `WATCH` lines, session patches, client faults |
 | `client-exit.log` | how the client died |
 | `research/` | decompilation as `msexe-<topic>.c`, findings as `.md` beside it |
 | `previous-runs/` | the last few runs' logs, archived by the launcher instead of deleted. A rolling buffer - gitignored |
+
+**Channel 0's log was called `world.log` until 2026-09-14.** It is `world-ch0.log` now, so a
+two-channel server does not read as one channel plus a mystery file. Anything already in
+`previous-runs/` or `research/fixtures/` keeps the name it was written under - those are
+archived files and a reference to one is not stale, so `...-world.log` in a doc comment or a
+fixture name is correct and was deliberately left alone.
 | `research/fixtures/` | runs worth keeping, named for what they prove. Copy from `previous-runs/` before it rolls |
 | `gm-handbook/` | game data **generated** from the client's WZ — maps, items, mobs, NPCs, portals. Gitignored; regenerate with `tools/dump_names.py` and `tools/dump_portals.py`. Never hand-edit, never commit |
 

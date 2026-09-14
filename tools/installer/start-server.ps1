@@ -23,10 +23,10 @@
     `-WindowStyle Hidden` is still running. The second half is the control, and it is why the
     old script needed a separate stop step.
 
-    Logs land beside the executables as login.log and world.log (and world-ch<N>.log for
+    Logs land beside the executables as login.log and world-ch0.log (and world-ch<N>.log for
     further channels). The previous run's logs are MOVED into previous-runs\, not deleted:
     a run's output is the most expensive data this project produces, and conclusions have
-    died with an overwritten world.log more than once.
+    died with an overwritten world-ch0.log more than once.
 
     THE HOST A CLIENT IS TOLD TO DIAL IS DECIDED PER CONNECTION, NOT HERE. -Bind is what
     the sockets listen on and stays 0.0.0.0. The host written into the migration packet
@@ -269,7 +269,8 @@ if (Test-Path $pinFile) {
 }
 
 for ($ch = 0; $ch -lt $Channels; $ch++) {
-    $chLog = if ($ch -eq 0) { 'world.log' } else { "world-ch$ch.log" }
+    # Every channel named the same way, channel 0 included - see test-server.ps1.
+    $chLog = "world-ch$ch.log"
     # `--set-field-probe` is NOT optional and is always passed here. Its name is a fossil:
     # it now means "the channel answers at all". Without it `Session::handle` returns
     # nothing for every packet, the migration hello goes unanswered, and the client sits on
