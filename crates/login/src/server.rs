@@ -194,9 +194,42 @@ pub fn serve(config: Config) -> std::io::Result<()> {
             log("  is the client token in 0x0073, the process that owns the socket, or the address.");
         }
     }
+    // **EVERY CLAIM FROM BEFORE THIS START IS DROPPED.**
+    //
+    // The owner, 2026-09-13: *"I think upon startup, you should wipe all previous claims."* A claim
+    // says which account a launch belongs to, and a launch cannot outlive the server it was
+    // staked against - the client on the other end is gone. Carrying them across a restart
+    // only ever produced confusion: the list this server printed a minute ago held seven,
+    // four of them the same account, all of them for launches that had ended hours earlier,
+    // and they were what made a legitimate player unresolvable by address.
+    //
+    // **Here, and in no other process.** `start-server.ps1` and `tools/test-server.ps1` both
+    // start the login server FIRST, and nothing can stake a claim until `maplecw-auth` is up
+    // a moment later - so a wipe at this instant cannot destroy a sign-in that has just
+    // happened. Putting it in `maplecw-world`, which starts last, would do exactly that. It
+    // also makes the banner below true: without it, this server would list claims it was
+    // about to make irrelevant.
+    //
+    // The cost, and it is a real one: everybody signs in again after a restart, including a
+    // player whose client is running. Their client token stops matching a live row, so their
+    // next login connection is refused rather than served - which is the correct answer, but
+    // it reads as "the server logged me out" and it is said out loud here for that reason.
+    match store.clear_login_claims() {
+        Ok(0) => log("no claims to clear - this server starts with a clean table"),
+        Ok(n) => log(&format!(
+            "CLEARED {n} login claim(s) staked before this start. A claim belongs to a launch, \
+             and a launch does not outlive the server: everyone signs in again. Nobody else's \
+             data is touched - this drops the attribution rows only"
+        )),
+        Err(e) => log(&format!(
+            "could not clear the login claims: {e} - stale ones from before this start may \
+             still be live, and an account with more than one of them cannot be resolved by \
+             address"
+        )),
+    }
     match store.live_login_claims() {
         Ok(claims) if claims.is_empty() => {
-            log("no login claim is live - run maplecw-launcher and sign in")
+            log("no login claim is live - sign in with maplecw-launcher (every restart clears them)")
         }
         Ok(claims) => {
             log(&format!(
