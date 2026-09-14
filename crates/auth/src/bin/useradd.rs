@@ -72,6 +72,11 @@ fn main() -> std::process::ExitCode {
         }
     }
 
+    // Which build, like every other process here - `store::buildstamp`. This one reads a
+    // live database by hand, so "was that the fixed binary?" is a question somebody will ask
+    // about its output later.
+    println!("{}", store::buildstamp::line());
+
     let store = match Store::open(&db_path) {
         Ok(s) => s,
         Err(e) => {

@@ -23,6 +23,7 @@
 //!   transaction, so two concurrent spends cannot both see the same balance.
 
 pub mod abilityspend;
+pub mod buildstamp;
 pub mod cash;
 pub mod character;
 pub mod claims;
@@ -54,6 +55,7 @@ pub mod skillpoints;
 pub mod storage;
 
 pub use abilityspend::ApSpend;
+pub use buildstamp::{stamp as build_stamp, BuildStamp};
 pub use character::{NameCheck, MAX_CHARACTER_NAME_LEN, MIN_CHARACTER_NAME_LEN};
 pub use claims::{
     ClaimEvidence, ClaimResolution, ClientTokenOutcome, LoginClaim, Presentation, ResolvedBy,
