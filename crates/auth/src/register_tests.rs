@@ -180,7 +180,16 @@ fn the_http_layer_routes_both_endpoints_with_the_right_status_codes() {
     let (svc, store) = service();
     let code = store.create_invite_code(store::INVITE_TTL_SECS).unwrap().code;
     let post = |path: &str, body: String| {
-        handle(&svc, &Request { method: "POST".into(), path: path.into(), body, peer: Some("127.0.0.1".into()) })
+        handle(
+            &svc,
+            &Request {
+                method: "POST".into(),
+                path: path.into(),
+                body,
+                peer: Some("127.0.0.1".into()),
+                query: String::new(),
+            },
+        )
     };
     let r = post("/register", format!(r#"{{"username":"newbie","email":"n@example.test","password":"Passw0rd","code":"{code}"}}"#));
     assert_eq!(r.status, 200, "{}", r.body);

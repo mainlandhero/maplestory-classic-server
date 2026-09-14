@@ -75,21 +75,50 @@ pub struct Request {
     pub body: String,
     /// The peer's address, recorded on a login claim. `store::claims` rule 3.
     pub peer: Option<String>,
+    /// Everything after `?`, empty when there was none.
+    ///
+    /// Kept OUT of `path` deliberately: every route in `handle` matches an exact path, and
+    /// folding the query in would have silently broken all of them the moment one endpoint
+    /// needed a parameter. `/client/file` is that endpoint. `crate::clientpatch::path_param`.
+    pub query: String,
 }
 
-/// One answer. Always JSON, always `Connection: close`.
+/// One answer. Always `Connection: close`.
+///
+/// Usually JSON. Two things made that not enough on 2026-09-14: the client manifest is a text
+/// table (`patchset`), and a client patch is a file of up to 159 MB. So a response may instead
+/// **name a file**, which [`write_response`] streams from disk in 1 MB chunks - `handle` still
+/// does no I/O, it only says which file, and the socket loop is the only thing that opens it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
     pub status: u16,
     pub body: String,
+    /// What `body` is. Ignored when `file` is set.
+    pub content_type: &'static str,
+    /// When set, this file's bytes are the body. Its path has already been checked against
+    /// the manifest by `crate::clientpatch::ClientPatchSource::file`; nothing else may set it.
+    pub file: Option<std::path::PathBuf>,
 }
 
 impl Response {
     fn json(status: u16, body: String) -> Self {
-        Response { status, body }
+        Response { status, body, content_type: "application/json", file: None }
     }
     fn error(status: u16, message: &str) -> Self {
         Response::json(status, error_json(message))
+    }
+    /// A plain-text body - the client manifest.
+    fn text(status: u16, body: String) -> Self {
+        Response { status, body, content_type: "text/plain; charset=utf-8", file: None }
+    }
+    /// Stream a file. The caller must have resolved it through the manifest.
+    fn file(path: std::path::PathBuf) -> Self {
+        Response {
+            status: 200,
+            body: String::new(),
+            content_type: "application/octet-stream",
+            file: Some(path),
+        }
     }
 }
 
@@ -103,6 +132,7 @@ fn reason(status: u16) -> &'static str {
         409 => "Conflict",
         413 => "Payload Too Large",
         429 => "Too Many Requests",
+        503 => "Service Unavailable",
         500 => "Internal Server Error",
         _ => "Error",
     }
@@ -112,6 +142,31 @@ fn reason(status: u16) -> &'static str {
 pub fn handle(service: &AuthService, req: &Request) -> Response {
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/health") => Response::json(200, r#"{"status":"ok"}"#.into()),
+
+        // **The client version, and the files that bring an old one up to date.**
+        //
+        // The owner, 2026-09-14: *"an integrity check that reaches out to the server to make sure
+        // that this is the correct version"*, and patches delivered per file so a client does
+        // not *"re-download everything from a package every time"*. `crate::clientpatch`.
+        //
+        // Both answer 503 when this server was started without `--client-dir`: that is a
+        // different thing from "your client is wrong", and a launcher that blocks on an
+        // unconfirmed version needs to be able to say which.
+        ("GET", p) if p == crate::clientpatch::MANIFEST_PATH => match service.client_patches() {
+            Some(c) => Response::text(200, c.rendered().as_ref().clone()),
+            None => Response::error(503, "this server publishes no client (no --client-dir)"),
+        },
+        ("GET", p) if p == crate::clientpatch::FILE_PATH => match service.client_patches() {
+            None => Response::error(503, "this server publishes no client (no --client-dir)"),
+            Some(c) => {
+                // Refused twice over: the path rules, then the manifest as an allow-list. A
+                // path that is not already a published entry never reaches the disk.
+                match crate::clientpatch::path_param(&req.query).and_then(|rel| c.file(&rel)) {
+                    Some(path) => Response::file(path),
+                    None => Response::error(404, "no such file in this client"),
+                }
+            }
+        },
 
         ("POST", "/login") => match serde_json::from_str::<LoginRequest>(&req.body) {
             // Never echo the body back: it contains the password.
@@ -308,7 +363,10 @@ pub fn read_request<R: Read>(
     if !version.starts_with("HTTP/1.") {
         return Ok(Err(Response::error(400, "not HTTP/1.x")));
     }
-    let path = target.split('?').next().unwrap_or("").to_string();
+    let (path, query) = match target.split_once('?') {
+        Some((p, q)) => (p.to_string(), q.to_string()),
+        None => (target.to_string(), String::new()),
+    };
     let mut content_length = 0usize;
     for line in lines {
         if let Some((name, value)) = line.split_once(':') {
@@ -337,6 +395,7 @@ pub fn read_request<R: Read>(
         path,
         body: String::from_utf8_lossy(&body).into_owned(),
         peer,
+        query,
     }))
 }
 
@@ -347,10 +406,35 @@ where
     C: std::ops::DerefMut + std::ops::Deref<Target = rustls::ConnectionCommon<rustls::server::ServerConnectionData>>,
     T: Read + Write,
 {
+    // **A file is streamed, never read into memory.** The largest thing in a client folder
+    // is a 159 MB WZ archive, and this server answers several launchers at once; buffering one
+    // per connection is how a patch day takes the box down.
+    if let Some(path) = &resp.file {
+        let mut f = std::fs::File::open(path).map_err(|e| format!("open {path:?}: {e}"))?;
+        let len = f.metadata().map_err(|e| format!("stat {path:?}: {e}"))?.len();
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n",
+            resp.content_type
+        );
+        stream.write_all(head.as_bytes()).map_err(|e| format!("send: {e}"))?;
+        let mut buf = vec![0u8; 1024 * 1024];
+        loop {
+            let n = f.read(&mut buf).map_err(|e| format!("read {path:?}: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            stream.write_all(&buf[..n]).map_err(|e| format!("send: {e}"))?;
+        }
+        stream.conn.send_close_notify();
+        stream.flush().map_err(|e| format!("close: {e}"))?;
+        return Ok(());
+    }
+
     let head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         resp.status,
         reason(resp.status),
+        resp.content_type,
         resp.body.len()
     );
     stream.write_all(head.as_bytes()).map_err(|e| format!("send: {e}"))?;
@@ -380,7 +464,52 @@ mod tests {
     }
 
     fn req(method: &str, path: &str, body: &str) -> Request {
-        Request { method: method.into(), path: path.into(), body: body.into(), peer: Some("127.0.0.1".into()) }
+        Request {
+            method: method.into(),
+            path: path.into(),
+            body: body.into(),
+            peer: Some("127.0.0.1".into()),
+            query: String::new(),
+        }
+    }
+
+    /// The patch endpoints, including the one that turns a network string into a server path.
+    #[test]
+    fn the_client_endpoints_publish_a_manifest_and_refuse_everything_off_the_allow_list() {
+        let dir = std::env::temp_dir().join(format!("maplecw-http-client-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Data")).unwrap();
+        std::fs::write(dir.join("MapleStory.exe"), b"exe bytes").unwrap();
+        std::fs::write(dir.join("Data/Base.wz"), b"base").unwrap();
+
+        // Without --client-dir the endpoints say so, and 503 is not 404: "this server has no
+        // client" and "your client asked for a file that does not exist" need different words.
+        let bare = service();
+        assert_eq!(handle(&bare, &req("GET", crate::clientpatch::MANIFEST_PATH, "")).status, 503);
+        assert_eq!(handle(&bare, &req("GET", crate::clientpatch::FILE_PATH, "")).status, 503);
+
+        let source = crate::clientpatch::ClientPatchSource::open(&dir).unwrap();
+        let svc = service().with_client_patches(std::sync::Arc::new(source));
+
+        let m = handle(&svc, &req("GET", crate::clientpatch::MANIFEST_PATH, ""));
+        assert_eq!(m.status, 200);
+        assert_eq!(m.content_type, "text/plain; charset=utf-8");
+        let parsed = patchset::Manifest::parse(&m.body).expect("the launcher must parse it");
+        assert_eq!(parsed.entries.len(), 2, "{:?}", parsed.entries);
+
+        let mut ask = req("GET", crate::clientpatch::FILE_PATH, "");
+        ask.query = "path=Data%2FBase.wz".into();
+        let f = handle(&svc, &ask);
+        assert_eq!(f.status, 200);
+        assert_eq!(f.content_type, "application/octet-stream");
+        assert_eq!(std::fs::read(f.file.expect("a file to stream")).unwrap(), b"base");
+
+        for bad in ["path=../../maplecw.db", "path=nope.wz", "path=C:/Windows/win.ini", ""] {
+            let mut ask = req("GET", crate::clientpatch::FILE_PATH, "");
+            ask.query = bad.into();
+            assert_eq!(handle(&svc, &ask).status, 404, "{bad:?} must be refused");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ---------------------------------------------------------------- dispatch, no socket

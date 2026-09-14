@@ -14,6 +14,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use store::{AuthOutcome, Store};
 
+pub mod clientpatch;
 pub mod http;
 pub mod ratelimit;
 pub mod register;
@@ -128,6 +129,11 @@ pub struct AuthService {
     store: Arc<Store>,
     /// The failure budget for registration and recovery codes. `crate::ratelimit`.
     codes: ratelimit::Limiter,
+    /// The canonical client this server patches launchers up to, when `--client-dir` was
+    /// given. `None` means this server publishes no client: the two `/client/*` endpoints
+    /// answer 503, and a launcher told to block on an unconfirmed version will say so rather
+    /// than guess. `crate::clientpatch`.
+    client: Option<Arc<crate::clientpatch::ClientPatchSource>>,
 }
 
 impl AuthService {
@@ -137,7 +143,21 @@ impl AuthService {
 
     /// [`AuthService::new`] with a chosen code-failure budget, for tests that need a small one.
     pub fn with_limiter(store: Arc<Store>, codes: ratelimit::Limiter) -> Self {
-        Self { store, codes }
+        Self { store, codes, client: None }
+    }
+
+    /// Publish a canonical client from this server. See [`crate::clientpatch`].
+    pub fn with_client_patches(
+        mut self,
+        client: Arc<crate::clientpatch::ClientPatchSource>,
+    ) -> Self {
+        self.client = Some(client);
+        self
+    }
+
+    /// The canonical client, if this server publishes one.
+    pub fn client_patches(&self) -> Option<&Arc<crate::clientpatch::ClientPatchSource>> {
+        self.client.as_ref()
     }
 
     /// Authenticate, issue a token, and **stake the login claim**.

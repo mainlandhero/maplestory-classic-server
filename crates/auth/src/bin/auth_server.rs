@@ -15,6 +15,10 @@ fn main() -> std::process::ExitCode {
     let mut db_path = String::from("maplecw.db");
     let mut port = DEFAULT_PORT;
     let mut bind = String::from("127.0.0.1");
+    // The canonical client this server patches launchers up to. See `auth::clientpatch`: it
+    // should be a PREPARED client folder - GameGuard stubbed, the Nexon gate byte patched -
+    // because that is the state a launcher's own folder is in when it checks itself.
+    let mut client_dir: Option<String> = None;
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -22,6 +26,10 @@ fn main() -> std::process::ExitCode {
         match args[i].as_str() {
             "--db" if i + 1 < args.len() => {
                 db_path = args[i + 1].clone();
+                i += 2;
+            }
+            "--client-dir" if i + 1 < args.len() => {
+                client_dir = Some(args[i + 1].clone());
                 i += 2;
             }
             "--bind" if i + 1 < args.len() => {
@@ -39,7 +47,11 @@ fn main() -> std::process::ExitCode {
                 i += 2;
             }
             "-h" | "--help" => {
-                println!("usage: maplecw-auth [--db <path>] [--bind <addr>] [--port <port>]");
+                println!("usage: maplecw-auth [--db <path>] [--bind <addr>] [--port <port>] [--client-dir <path>]");
+                println!("  --client-dir  publish this client folder: launchers check their own");
+                println!("                copy against it and download only the files that differ.");
+                println!("                Point it at a PREPARED client (stub installed, Nexon");
+                println!("                gate patched) - see auth::clientpatch.");
                 return std::process::ExitCode::SUCCESS;
             }
             other => {
@@ -96,7 +108,30 @@ fn main() -> std::process::ExitCode {
         }
     };
 
-    let service = Arc::new(AuthService::new(Arc::new(store)));
+    let mut service = AuthService::new(Arc::new(store));
+    // Scanned once, here, rather than per request: the real client is 405 files and 773 MB,
+    // about half a second warm, and doing that for every launcher at once would put a stall in
+    // front of every player. A restart is how a new client version is published.
+    if let Some(dir) = &client_dir {
+        match auth::clientpatch::ClientPatchSource::open(std::path::Path::new(dir)) {
+            Ok(source) => {
+                println!("{}", source.describe());
+                service = service.with_client_patches(Arc::new(source));
+            }
+            Err(e) => {
+                // Refused rather than started without it. A server that silently publishes no
+                // client, when it was told to publish one, turns every launcher's version
+                // check into a 503 - and with blocking enabled that is every player locked out
+                // by a typo in a path.
+                eprintln!("--client-dir {dir}: {e}");
+                return std::process::ExitCode::FAILURE;
+            }
+        }
+    } else {
+        println!("CLIENT PATCHES: OFF - no --client-dir, so /client/manifest answers 503 and");
+        println!("  a launcher that requires a confirmed version will refuse to start the game.");
+    }
+    let service = Arc::new(service);
     if let Err(e) = http::serve_on(service, &bind, port, tls) {
         eprintln!("server error: {e}");
         return std::process::ExitCode::FAILURE;
