@@ -157,6 +157,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 name = "auth"
 version = "0.1.0"
 dependencies = [
+ "patchset",
  "rcgen",
  "rpassword",
  "rustls",
@@ -1834,6 +1835,14 @@ dependencies = [
  "base64ct",
  "rand_core",
  "subtle",
+]
+
+[[package]]
+name = "patchset"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "sha2",
 ]
 
 [[package]]
