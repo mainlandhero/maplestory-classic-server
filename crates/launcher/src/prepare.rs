@@ -8,6 +8,7 @@
 //! 2. check the client executable is there;
 //! 2b. check the folder is complete and self-contained - reported, never refused;
 //! 3. stub GameGuard (back up once, install the stub, disable `grap\`);
+//! 3b. patch the Nexon Launcher gate in `MapleStory.exe` - one byte, verified, declined on an unknown build;
 //! 4. make sure the crash-dump directory exists;
 //! 5. **archive** the previous `maplecw-hook.log` - never delete it;
 //! 6. write the hook's four marker files;
@@ -151,6 +152,18 @@ pub fn prepare(
     log(Level::Info, stub.describe());
     for step in client::stub_gameguard(client_dir, stub.path())? {
         log(Level::Good, step);
+    }
+
+    // 3b. The Nexon Launcher gate, one byte in MapleStory.exe.
+    //
+    // Beside the GameGuard stub because it is the same kind of thing - a patch the client
+    // needs to run here, applied at Start Game so there is one code path and no payload to
+    // re-download. It verifies the exact instruction pair before writing and declines
+    // anything it does not recognise, so an unknown build is warned about rather than
+    // corrupted. `client::patch_nexon_launcher_gate` has the measurement.
+    for step in client::patch_nexon_launcher_gate(client_dir)? {
+        let level = if step.starts_with("WARNING") { Level::Warn } else { Level::Good };
+        log(level, step);
     }
 
     // 4. Where a crash dump goes. The hook writes its own, because Windows Error Reporting
