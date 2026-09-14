@@ -25,6 +25,15 @@ part that changed, and the two options this document used to end on were both wr
    This is not ceremony: every patch we apply is at an **absolute virtual address**
    (`0x1415db360`, `0x141b2a280`), so applying them to a different build writes into
    whatever happens to be there. Refuse to launch an unrecognised build and say so.
+   **Built, 2026-09-13, as `crates/launcher/src/integrity.rs`** - though not the hash half.
+   It reads the PE import tables (normal and delay-load) of every module in the folder,
+   follows them through the folder's own modules, and resolves each name against the client's
+   real search path. It reports two things a person on another machine cannot otherwise
+   discover: a DLL that is **missing**, and a DLL that is **borrowed** from that machine's
+   PATH rather than shipped - the one that is invisible on the box where the client works.
+   29 modules, 56 ms on the real client. It reports and never refuses, and it runs on every
+   Start Game; `--check-client [folder]` asks without launching. Blind to `LoadLibrary` and
+   registry lookups, and it says so in its own output.
 2. **Install the stub.** Copy `grap64.dll` into the client directory if it is missing or
    stale. This is what neutralises GameGuard - the client loads our DLL instead of the real
    one, and no service or driver starts.
