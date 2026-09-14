@@ -36,7 +36,8 @@
 //! u32  hue           -1 when undyed; 0 reads as "dyed with colour 0" - `bag::PET_HUE_UNDYED`
 //! u32  itemId again
 //! u16  wonderGrade
-//! u16  giantRate
+//! u16  giantRate      the pet's size in PERCENT - stored at pet+0x230, applied by FUN_141ec87b0
+//!                     as a layer scale whenever it is not 100. 0 draws nothing. PET_SIZE_PERCENT
 //! u8   nameTag
 //! u8   chatBalloon
 //! ```
@@ -126,6 +127,22 @@ pub struct FieldPet {
     pub foothold: u16,
 }
 
+/// **The pet's size, as a percentage. 100 is life-size; 0 is invisible.**
+///
+/// The `u16` at `0x141ebacbb` - the reference calls it `giantRate` - is stored at `pet+0x230`,
+/// and `CPet`'s animation setter `FUN_141ec87b0` reads it back and, **whenever it is not
+/// 100**, sets flag `2` on the pet's layer and `layer->vtbl[0x320](8, value)`: a scale. This
+/// server sent `0` from the day the packet was built, so every summoned pet was drawn at
+/// zero percent - visible, opaque, positioned, framed, and nothing on screen. **[L]**, 2026-09-14,
+/// after eleven runs that measured everything else about the pet as correct.
+///
+/// It is the mob-size bug again (`CLAUDE.md`, "The unit, not the arithmetic"): a `0` meant as
+/// "unset" that the client reads as **zero percent**. The name tag was never affected because
+/// it has its own layer, and the Character Info window draws the same pet through a presenter
+/// that never applies this field - which is how the two of them together said "the assets are
+/// fine and the field is not" before the field itself was read.
+pub const PET_SIZE_PERCENT: u16 = 100;
+
 /// The `0x0277` body that summons `pet` beside character `character_id`.
 pub fn pet_activated(character_id: u32, pet: &FieldPet) -> Vec<u8> {
     let mut w = PacketWriter::new();
@@ -143,7 +160,7 @@ pub fn pet_activated(character_id: u32, pet: &FieldPet) -> Vec<u8> {
     w.u32(crate::bag::PET_HUE_UNDYED); // 141eba974  hue: -1 is undyed - see PET_HUE_UNDYED
     w.u32(pet.item_id); //          141ebab65
     w.u16(0); //                    141ebab71  wonderGrade
-    w.u16(0); //                    141ebacbb  giantRate
+    w.u16(PET_SIZE_PERCENT); //     141ebacbb  giantRate - the SIZE, in percent. 0 is invisible
     w.u8(0); //                     141ebae0a  nameTag
     w.u8(0); //                     141ebaff0  chatBalloon
     w.into_vec()
@@ -244,7 +261,14 @@ mod tests {
         assert_eq!(&b[34..36], &37u16.to_le_bytes(), "foothold");
         assert_eq!(&b[36..40], &crate::bag::PET_HUE_UNDYED.to_le_bytes(), "hue: -1, or the tooltip says the pet was dyed");
         assert_eq!(&b[40..44], &5_000_006u32.to_le_bytes(), "itemId again");
-        assert_eq!(&b[44..50], &[0, 0, 0, 0, 0, 0], "wonderGrade, giantRate, nameTag, chatBalloon");
+        assert_eq!(&b[44..46], &0u16.to_le_bytes(), "wonderGrade");
+        assert_eq!(
+            &b[46..48],
+            &PET_SIZE_PERCENT.to_le_bytes(),
+            "giantRate is the pet SIZE in percent and it must be 100: 0 drew every pet at zero percent - visible, opaque, positioned, framed, and nothing on screen"
+        );
+        assert_eq!(PET_SIZE_PERCENT, 100, "100 is the one value FUN_141ec87b0 treats as unscaled");
+        assert_eq!(&b[48..50], &[0, 0], "nameTag, chatBalloon");
     }
 
     #[test]

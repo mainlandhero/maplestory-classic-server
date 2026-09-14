@@ -467,3 +467,52 @@ all in it, and it carries no RTTI or type library for its own classes). It is be
 into the Ghidra project so the implementations behind `0x268`, `0x300`, `0x320` and `0x280`
 can be read directly. That is the next step, and it is not a launch.
 
+
+
+---
+
+# The answer: `giantRate` is the pet's size in percent, and this server sent 0
+
+`Gr2D_DX11.dll` is in the Ghidra project (`research/ghidra-gr2d-import.log`). The layer
+interface's IID (`cec7c86d-…`) has an ATL map entry with `dw = 0x10`; the QI adjustor thunk for
+`this -= 0x10` sits in exactly one vtable slot, so **the `IWzGr2DLayer` vtable is
+`0x153657c98`**, and its implementations read plainly (`research/gr2d-layer-slots.c`) **[L]**:
+
+```text
+vtbl+0x2b0   get_visible   *out = *(u8 *)(layer + 0x110)        <- what -PetSync read as 1
+vtbl+0x300   flags |= v    on the state block at *(layer + 0x120)
+vtbl+0x318   flags &= ~v
+vtbl+0x320   set property  (key, value) on the same block
+vtbl+0x330   set property  (key, value) via a map at block + 0x20
+```
+
+`CPet`'s animation setter, `FUN_141ec87b0`, after inserting the frames:
+
+```c
+sVar11 = FUN_141ed0120(pet + 0x230);           // a protected short
+...
+if (iVar12 != 100) {                            // iVar12 == that short
+    layer->vtbl[0x300](layer, 2);               // flag: scaled
+    layer->vtbl[0x320](layer, 8, iVar12);       // property 8: the scale
+}
+```
+
+And `pet+0x230` is written **once**, in `CPet::Init` at `0x141ebacc7`, from the `u16` read at
+`0x141ebacbb` - the field the reference names `giantRate`. **It is the pet's size, in percent.
+100 is life-size. This server has sent `0` since the packet was written**, so every summoned
+pet was scaled to zero: visible, opaque, positioned, framed, and nothing on screen.
+
+Why the two controls said what they said: the name tag lives in its own layer, so the scale
+never touched it; the Character Info drawer `FUN_1414bc3f0` loads the same frames but never
+applies `pet+0x230`, so it drew the body life-size.
+
+`net::pet::PET_SIZE_PERCENT = 100`. One byte on the wire, byte 46-47 of the `0x0277` body.
+
+It is `CLAUDE.md`'s "unit, not the arithmetic" bug for the fourth time - the mob size was the
+third: *a 0 meant as "unset" that the client reads as zero percent*. Every earlier round in
+this note was real and correct, and every one measured a step that was working; the thing
+that was wrong was a field whose comment said `giantRate` and whose meaning nobody had read.
+
+Left in place: `--pet-move-action`, as a lever, default 0 - `moveAction 0` is correct and the
+lever documents why. The eleven fixtures under `research/fixtures/pet-*` are the record.
+
