@@ -305,3 +305,47 @@ consumes it.
 the value at the instant it is written (`141ebc1b2`, where `rdx` *is* the number) and again
 across the pet's life (`141ec7880:peek=3c0`), and the run can come back `0xff` and kill it.
 
+
+
+---
+
+# `-PetAlpha` and `-PetParent`: alpha is fine, and the re-parent is real
+
+`research/fixtures/pet-alpha-is-0xff-hook.log`: `141ebc1b2` fired once at the summon with
+`rdx=0xff`, and `141ec7880:peek=3c0` read `0xff` on all 357 samples. §9 is eliminated.
+
+`research/fixtures/pet-reparent-user0x3fd0-set-to-1-at-setfield-from-options-hook.log` **[L]**:
+
+```text
+142934760     1 hit    while dispatching 0x01A0 SetField, rdx=1, called-from 0x142887193
+140f8abc0  6000 hits   [user+0x3fd0] = 0 on the first 39, then 1 on 5961
+140f80830  5286 hits   [user+0x3fd8] = 0x346e8660 on every ladder call - a live object
+```
+
+## 10. Where the 1 comes from
+
+The call site, in the SetField handler's neighbourhood (`FUN_142886870`, 9966 bytes):
+
+```text
+142887178  mov  rcx, [rip+0x1241621]     ; -> 0x143ac87a0 = DAT_143ac87a0
+14288717f  test rcx, rcx
+142887182  je   142887193
+142887184  mov  rax, [r14]
+142887187  mov  edx, [rcx + 0x70]         ; the OPTION
+14288718a  mov  rcx, r14                  ; the user
+14288718d  call [rax + 0x178]             ; -> FUN_142934760(user, option)
+```
+
+`DAT_143ac87a0` is the **same options object** whose `+0x58` supplied the pet alpha percentage
+(100). `+0x70` is 1 on this machine. So at SetField the client applies one of its own
+options, `user+0x3fd0` becomes 1, and from then on `FUN_141eca710` attaches the pet's sprite
+to the object at `user+0x3fd8` instead of taking the normal arm. **It is not a byte we sent.**
+
+What the option means is not established - its writer is a generic loader that a displacement
+grep cannot see (the object is heap-allocated behind a pointer, so `+0x70` writes are
+indistinguishable from every other struct's). `-PetParentOff` tests causation first, with the
+probe's `rdx=0` rewrite on the setter - a client patch, and labelled as one in both copies of
+the plan. If the Husky draws under it, the remaining work is naming the option and choosing
+between fixing the setting, a launcher-side default, and a session patch of the kind the
+launcher already carries.
+
