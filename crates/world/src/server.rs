@@ -8,8 +8,8 @@
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, OnceLock};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use net::handshake::{channel_greeting, CLIENT_RX_IV, CLIENT_TX_IV};
 use net::names::{body_hex, label, opcode_name};
@@ -45,6 +45,19 @@ pub fn log(msg: &str) {
 /// check and an empty drain; the benefit is that a broadcast waits at most a
 /// tenth of a second.
 const TICK_MS: u64 = 100;
+
+/// The one clock the whole channel runs on. See the long note at its use in [`connection`].
+///
+/// A `OnceLock`, so it is set once - by `serve` at startup, or by the first connection if a
+/// test drives `connection` directly - and every caller after that reads the same origin.
+/// [`connection`] measures `now_ms` from it, which is what makes a drop's lifetime, a mob's
+/// respawn and a drop's owner lock agree across the players who share a field.
+static PROCESS_ORIGIN: OnceLock<Instant> = OnceLock::new();
+
+/// The shared origin, initialising it on first read.
+fn process_origin() -> Instant {
+    *PROCESS_ORIGIN.get_or_init(Instant::now)
+}
 
 /// How often a channel connection refreshes the presence lease it holds.
 ///
@@ -180,7 +193,27 @@ fn connection(
     // `WouldBlock`. Both are handled, because getting it wrong drops every idle connection
     // after one interval and looks exactly like the client disconnecting.
     stream.set_read_timeout(Some(std::time::Duration::from_millis(TICK_MS)))?;
-    let started = std::time::Instant::now();
+    // **The channel clock is process-wide, not per-connection**, and that is a bug fix, not a
+    // detail. `now_ms` is the milliseconds this clock reads, and it is the ONLY clock the
+    // shared field state is timed against: a drop's lifetime, a mob's respawn delay, a drop's
+    // owner lock. Those live in `crate::fields`, one set per channel, shared by every
+    // connection - but `now_ms` used to be `Instant::now()` captured HERE, per connection, so
+    // each player measured the field against how long THEIR OWN client had been connected.
+    //
+    // On 2026-09-14 that emptied map 30 of every drop within one tick. Three players: one
+    // connected at 02:54, another at 02:59. A drop the 02:59 player created was stamped at its
+    // clock (~315 s) and expires 120 s later (~435 s); the 02:54 player's tick swept the same
+    // shared drop at ITS clock (~634 s), and 634 >= 435, so the drop was gone ~110 ms after it
+    // landed - before anyone could pick it up. The quest item "did not drop", the party saw
+    // the kill but could not grab it, and it stopped the moment the oldest connection left
+    // (03:07:15 in that log; pick-ups worked from 03:07:24). `crate::fields`, `crate::drops`.
+    //
+    // A single origin for the whole process puts every connection on one timeline, so the
+    // clock that stamps a drop and the clock that sweeps it are the same clock. It is
+    // monotonic, so nothing here goes backwards. Per-connection things (buffs, regen, chatter)
+    // are unaffected: they store `now_ms + duration` and compare with the same `now_ms`, and a
+    // shared origin changes only the baseline, not the elapsed differences they rely on.
+    let started = process_origin();
 
     // **THE PRESENCE LEASE, held for as long as this player is in the world.**
     //
@@ -453,6 +486,10 @@ fn describe_hello(session: &mut Session, payload: &[u8]) {
 
 /// Listen on one channel until the process is stopped.
 pub fn serve(config: Config) -> std::io::Result<()> {
+    // Start the shared channel clock at process startup, so the first drop is timed against a
+    // baseline that predates it rather than against whenever the first player happened to
+    // connect. See [`connection`] and [`process_origin`].
+    let _ = process_origin();
     let config = Arc::new(config);
     let store = Arc::new(
         Store::open(&config.db_path)
@@ -547,4 +584,28 @@ pub fn serve(config: Config) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **The clock two players share is one clock.** This is the whole of the 2026-09-14 drop
+    /// fix: every connection reads `now_ms` from [`process_origin`], and if two reads returned
+    /// two different origins, a drop stamped by one player and swept by another would be timed
+    /// against clocks that disagree - which is exactly what emptied map 30 within one tick when
+    /// the origin was a per-connection `Instant::now()`.
+    #[test]
+    fn the_channel_clock_is_one_shared_origin() {
+        let first = process_origin();
+        let second = process_origin();
+        assert_eq!(first, second, "two connections must measure now_ms from the same instant");
+        // And a moment later it still has not moved: the origin is fixed, not re-sampled.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert_eq!(process_origin(), first);
+        // now_ms is elapsed since that fixed origin, so it only grows.
+        let a = process_origin().elapsed().as_millis();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert!(process_origin().elapsed().as_millis() >= a);
+    }
 }
