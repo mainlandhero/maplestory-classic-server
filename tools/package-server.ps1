@@ -59,6 +59,8 @@
 
       bin\maplecw-login.exe    the login / character-select server
       bin\maplecw-world.exe    one channel; run one per channel
+      bin\maplecw-chat.exe     the world hub the channels dial (loopback 8483) - parties,
+                               party chat, whispers and Maple Chat across channels
       bin\maplecw-auth.exe     sign-in. The launcher POSTs here, so it must be REACHABLE
       bin\maplecw-useradd.exe  accounts, GM status, invite and recovery codes
       gm-handbook\             game tables generated from the client's WZ. The world server
@@ -143,7 +145,7 @@ if (-not (Test-Path (Join-Path $repo 'data'))) { Fail "no data\ in $repo" }
 # A running server holds its own executable open and cargo cannot replace a locked file. The
 # error is "Access is denied (os error 5)" against a path in target-static, which says nothing
 # about servers.
-$running = Get-Process -Name 'maplecw-login', 'maplecw-world', 'maplecw-auth' -ErrorAction SilentlyContinue
+$running = Get-Process -Name 'maplecw-login', 'maplecw-world', 'maplecw-auth', 'maplecw-chat' -ErrorAction SilentlyContinue
 if ($running -and -not $SkipBuild) {
     $names = ($running | ForEach-Object { "$($_.ProcessName) (pid $($_.Id))" }) -join ', '
     Fail @"
@@ -175,7 +177,7 @@ if (-not $SkipBuild) {
 }
 
 $rel = Join-Path $target 'release'
-$binaries = @('maplecw-login.exe', 'maplecw-world.exe', 'maplecw-auth.exe', 'maplecw-useradd.exe')
+$binaries = @('maplecw-login.exe', 'maplecw-world.exe', 'maplecw-chat.exe', 'maplecw-auth.exe', 'maplecw-useradd.exe')
 foreach ($b in $binaries) {
     if (-not (Test-Path (Join-Path $rel $b))) {
         Fail "$rel\$b is missing. Build without -SkipBuild."

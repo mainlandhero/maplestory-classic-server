@@ -157,8 +157,22 @@ machine versus server machine, not service versus service:
   ---------                          -------
   launcher  ── TLS, pinned cert ───▶ auth        (crates/auth,   TCP 8480)
   client    ── Maple protocol ─────▶ login       (crates/login,  TCP 8484)
-                                     channel     (crates/channel, later)
+                                     channel N   (crates/world,  TCP 8485 + N)
+                                       │ dials, loopback only
+                                       ▼
+                                     hub         (crates/world::link, maplecw-chat, TCP 8483)
                                      store       (crates/store, SQLite file)
+```
+
+The hub (2026-09-15) is what crosses channels: each channel process keeps one TCP
+connection to `maplecw-chat`, which relays character-addressed packets to the channel that
+hosts the character, keeps the directory of who is online where, and serialises party
+requests so every channel's party replica applies the same sequence. It is server-internal -
+bound to loopback, never forwarded - and a channel that cannot reach it runs alone, per
+channel, as before. It is not a database and holds nothing that survives a restart; the
+channels re-announce their players when it comes back.
+
+```text
 ```
 
 `crates/store` is SQLite. That is fine for a single box and it is **not** fine over a network

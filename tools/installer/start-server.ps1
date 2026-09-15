@@ -57,6 +57,11 @@ param(
     # It must match crates\auth\src\lib.rs DEFAULT_PORT and the launcher's DEFAULT_AUTH_PORT,
     # which a test in the launcher pins against each other.
     [int]$AuthPort = 8480,
+    # **The world hub (maplecw-chat), 2026-09-15.** The channel processes dial it for
+    # everything that crosses channels: the party registry, party chat, whispers, Maple Chat
+    # invites. It is SERVER-INTERNAL: bound to loopback, never forwarded, never reachable by
+    # a client. The owner picked 8483 - beside 8484 and out of the way of the channels above it.
+    [int]$HubPort = 8483,
     # **The client this server publishes for patching.** Empty means "the client\ folder
     # beside this script", which is where the payload puts it - so the structure as extracted
     # from MapleCW-server.zip needs no configuration at all.
@@ -80,7 +85,7 @@ $bin  = Join-Path $root 'bin'
 $db   = Join-Path $root 'maplecw.db'
 
 function Stop-All {
-    foreach ($n in @('maplecw-login', 'maplecw-world', 'maplecw-auth')) {
+    foreach ($n in @('maplecw-login', 'maplecw-world', 'maplecw-auth', 'maplecw-chat')) {
         Get-Process -Name $n -ErrorAction SilentlyContinue | Stop-Process -Force
     }
 }
@@ -268,6 +273,23 @@ if (Test-Path $pinFile) {
     Write-Host '  (the sign-in service has not written auth-cert-fingerprint.txt yet - read auth.log)' -ForegroundColor Yellow
 }
 
+# THE WORLD HUB, before the channels so their first dial connects. Loopback only: nothing a
+# client sends reaches this port, and no frame on it carries credentials. Its log is
+# chat-hub.log - every channel's link, who is online where, every party request in order.
+# Redirected rather than --log-file: the hub is quiet (a line per player event, none per
+# packet), so it does not need the channels' rolling.
+$hubExe = Join-Path $bin 'maplecw-chat.exe'
+if (Test-Path $hubExe) {
+    $hub = Start-Process -FilePath $hubExe -WorkingDirectory $root `
+        -ArgumentList @('--bind', "127.0.0.1:$HubPort") -PassThru -NoNewWindow `
+        -RedirectStandardOutput (Join-Path $root 'chat-hub.log') `
+        -RedirectStandardError  (Join-Path $root 'chat-hub.log.err')
+    Write-Host "world hub     pid $($hub.Id)  127.0.0.1:$HubPort  (server-internal; parties and chat across channels)"
+    Add-Watched 'world hub' $hub 'chat-hub.log'
+} else {
+    Write-Host "  no bin\maplecw-chat.exe - the channels run without a hub: parties and chat stay per-channel" -ForegroundColor Yellow
+}
+
 for ($ch = 0; $ch -lt $Channels; $ch++) {
     # Every channel named the same way, channel 0 included - see test-server.ps1.
     $chLog = "world-ch$ch.log"
@@ -284,6 +306,7 @@ for ($ch = 0; $ch -lt $Channels; $ch++) {
         '--channels', "$channelList",
         '--advertise', "$Advertise",
         '--set-field-probe',
+        '--link', "127.0.0.1:$HubPort",
         # The channel writes and rolls its own log: 50 MB, then world-chN.log.1 .. .5, the
         # sixth deleted - 300 MB per channel at most, however long it runs. Mob moves and
         # acks are counted once a minute rather than logged per packet (97% of the old file).
@@ -346,7 +369,7 @@ try {
             Write-Host ''
             Write-Host '  Common causes, in the order they actually happen:' -ForegroundColor Red
             Write-Host '    - the port is already taken by something else on this machine' -ForegroundColor Red
-            Write-Host '      (netstat -ano | findstr ":8480 :8484 :8485 :8486")' -ForegroundColor Red
+            Write-Host '      (netstat -ano | findstr ":8480 :8483 :8484 :8485 :8486")' -ForegroundColor Red
             Write-Host '    - the database is not readable, or is on a drive that went away' -ForegroundColor Red
             Write-Host '    - -FallbackAccount naming an account that does not exist' -ForegroundColor Red
             Write-Host ("  Full logs are in {0}" -f $root) -ForegroundColor Red
