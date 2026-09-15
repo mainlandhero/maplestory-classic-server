@@ -30,8 +30,8 @@
 //!                   client on its own when invites are blocked or the inviter is
 //! ```
 //!
-//! Modes 3 and 7 have not been captured; the accept from the invite dialog has not either.
-//! Both are logged with their bytes when they arrive.
+//! Mode 7 IS the accept - captured 01:52:50: `07000000 01000100`, u32 mode 7 then the
+//! messenger id the dialog was given. Mode 3 has not been captured and is logged.
 //!
 //! # The reply: `0x00A3`, `FUN_141183ec0` (`research/msexe-gamestage-cases.txt`)
 //!
@@ -43,9 +43,13 @@
 //! 1  141183f7c  u32, then FUN_141183cc0 (a member leaves?)
 //! 2  141183f92  FUN_141183cc0 with no read
 //! 3  141183fb0  only for the current messenger: u8, str [, str] -> a line in the window
-//! 4  14118400a  FUN_141184360 -> FUN_140425ed0: u32, u32, str, u8, then an AVATAR LOOK
-//!               (FUN_1402ee8d0) - a member and their appearance. NOT built: the look is
-//!               a third encoding this server does not have yet
+//! 4  14118400a  MEMBERS. FUN_141184360 first scans the window's six slots (0x143aca880,
+//!               0x20 apart, occupied when [slot+4] != 0). ALL EMPTY -> it reads SIX
+//!               records, one per slot; otherwise ONE record, the newcomer. Each record,
+//!               FUN_140425ed0: u32 -> [slot+0] (the position), u32 -> [slot+4] (the
+//!               character id; 0 = empty, and the record ENDS there), str name, u8 (0 = no
+//!               look, the record ends), then the avatar look FUN_1402ee8d0 reads - the
+//!               same bytes `opcode::avatar_look` has put on screen since 2026-08-19.
 //! 5  141184017  u32
 //! 6  14118403c  INVITE: u8 flag, u32 inviterId, str inviterName -> FUN_1411838e0, which
 //!               shows the dialog ('Chat invite from', 0x043C) when flag != 0, and when
@@ -75,15 +79,20 @@ pub mod request {
     pub const OPEN: u32 = 0;
     pub const UNKNOWN_3: u32 = 3;
     pub const INVITE: u32 = 5;
-    pub const UNKNOWN_7: u32 = 7;
+    /// The invite dialog's Accept: `u32 messengerId`. Captured 2026-09-15 01:52:50.
+    pub const ENTER: u32 = 7;
     pub const DECLINE: u32 = 8;
 }
 
 /// The reply's `i32` mode.
 pub mod result {
     pub const SELF_ENTER: i32 = 0;
+    pub const MEMBERS: i32 = 4;
     pub const INVITE: i32 = 6;
 }
+
+/// The window has six seats.
+pub const SEATS: usize = 6;
 
 /// A parsed [`CLIENT_MESSENGER`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,6 +101,8 @@ pub enum MessengerRequest {
     Open { invite: Option<String> },
     /// Mode 5.
     Invite { name: String },
+    /// Mode 7: the invite dialog's Accept.
+    Enter { messenger_id: u32 },
     /// Mode 8: the invitee's client declined on its own.
     Decline { messenger_id: u32, name: String },
     /// A mode this server has not decoded; the bytes after the mode.
@@ -109,6 +120,7 @@ pub fn parse_messenger(body: &[u8]) -> Option<MessengerRequest> {
             MessengerRequest::Open { invite }
         }
         request::INVITE => MessengerRequest::Invite { name: r.str().ok()? },
+        request::ENTER => MessengerRequest::Enter { messenger_id: r.u32().ok()? },
         request::DECLINE => MessengerRequest::Decline { messenger_id: r.u32().ok()?, name: r.str().ok()? },
         other => MessengerRequest::Other { mode: other, rest: body.get(4..).unwrap_or(&[]).to_vec() },
     })
@@ -135,9 +147,88 @@ pub fn invite(messenger_id: u32, inviter_id: u32, inviter_name: &str) -> Vec<u8>
     w.into_vec()
 }
 
+/// One seat of a Maple Chat, as mode 4 sends it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Seat {
+    pub character_id: u32,
+    pub name: String,
+    /// `opcode::avatar_look` of the member.
+    pub look: Vec<u8>,
+}
+
+fn write_seat(w: &mut PacketWriter, position: u32, seat: Option<&Seat>) {
+    w.u32(position); //          140425f27 -> [slot+0]
+    match seat {
+        None => w.u32(0), //     140425f31 -> [slot+4] = 0: the record ends
+        Some(s) => {
+            w.u32(s.character_id); //140425f31
+            w.str(&s.name); //   140425f49
+            w.u8(1); //          140425f8b  a look follows
+            w.bytes(&s.look) //  140426186  FUN_1402ee8d0
+        }
+    };
+}
+
+/// Mode 4 with **the whole room** - what a client whose window is empty reads: six records,
+/// one per seat, empty seats as `u32 position, u32 0`.
+pub fn members(messenger_id: u32, seats: &[Option<Seat>; SEATS]) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(messenger_id);
+    w.i32(result::MEMBERS);
+    for (i, seat) in seats.iter().enumerate() {
+        write_seat(&mut w, i as u32, seat.as_ref());
+    }
+    w.into_vec()
+}
+
+/// Mode 4 with **one newcomer** - what a client whose window already has someone in it
+/// reads. Sending this to an empty window would make it read five more records that are
+/// not there; [`members`] is for that window.
+pub fn member_joined(messenger_id: u32, position: u32, seat: &Seat) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(messenger_id);
+    w.i32(result::MEMBERS);
+    write_seat(&mut w, position, Some(seat));
+    w.into_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The accept, the log's own bytes: mode 7 and the id the invite carried.
+    #[test]
+    fn the_captured_accept_parses() {
+        assert_eq!(parse_messenger(&[7, 0, 0, 0, 1, 0, 1, 0]), Some(MessengerRequest::Enter { messenger_id: 0x10001 }));
+    }
+
+    /// Six records for an empty window, an empty seat ending after its zero id; one record
+    /// for a newcomer, with the look after the flag byte.
+    #[test]
+    fn the_member_records_follow_the_readers_shape() {
+        let wisp = Seat { character_id: 215, name: "Wisp".into(), look: vec![0xAA; 20] };
+        let mut seats: [Option<Seat>; SEATS] = Default::default();
+        seats[0] = Some(wisp.clone());
+        let b = members(0x10001, &seats);
+        assert_eq!(&b[..8], &[1, 0, 1, 0, 4, 0, 0, 0]);
+        let mut at = 8;
+        assert_eq!(&b[at..at + 4], &0u32.to_le_bytes(), "seat 0");
+        assert_eq!(&b[at + 4..at + 8], &215u32.to_le_bytes());
+        assert_eq!(&b[at + 8..at + 10], &4u16.to_le_bytes());
+        assert_eq!(&b[at + 10..at + 14], b"Wisp");
+        assert_eq!(b[at + 14], 1, "a look follows");
+        assert_eq!(&b[at + 15..at + 35], &[0xAA; 20]);
+        at += 35;
+        for pos in 1..6u32 {
+            assert_eq!(&b[at..at + 4], &pos.to_le_bytes());
+            assert_eq!(&b[at + 4..at + 8], &[0, 0, 0, 0], "empty: the record ends at the zero id");
+            at += 8;
+        }
+        assert_eq!(at, b.len());
+        let one = member_joined(0x10001, 2, &wisp);
+        assert_eq!(one.len(), 8 + 35);
+        assert_eq!(&one[8..12], &2u32.to_le_bytes());
+    }
 
     /// The owner's open-and-invite, the log's own hex.
     #[test]

@@ -1,19 +1,77 @@
 //! Maple Chat - `0x01FD` in, `0x00A3` out. `net::messenger` has the bytes and the
 //! measured-versus-read status of every mode.
 //!
-//! What is built: an **open with an invitee** opens the opener's window (mode 0, result 0)
-//! and puts the invite dialog on the invitee's client (mode 6), wherever they are - through
-//! the hub when they are on another channel. Everything else the client sends (the accept
-//! from the dialog, the decline, a typed line) is logged with its bytes: it is the capture
-//! the next step needs, and a reply guessed for it has killed this client before.
+//! # What is built
 //!
-//! The messenger id is minted per channel process with the channel in its high half, so two
-//! channels cannot mint the same one; membership is not tracked yet - the accept has not
-//! been captured, so there is nothing to track it with.
+//! * **Open with an invitee** (mode 0): a room is made with the opener in seat 0; the opener
+//!   gets mode 0 / result 0 (the window opens) and then mode 4 with all six seats, so their
+//!   own avatar is drawn; the invitee gets mode 6, the dialog, wherever they are.
+//! * **Accept** (mode 7, captured 01:52:50): the accepter takes a free seat; they get mode
+//!   0 / result 0 and the six-seat mode 4; everyone already in the room gets the one-record
+//!   mode 4 with the newcomer.
+//! * **Invite from inside** (mode 5): mode 6 to the named character with the room's id.
+//!
+//! A typed line and a close have not been captured; they are logged with their bytes.
+//!
+//! # Rooms live in this channel process
+//!
+//! The registry is per process and the id carries the channel in its high half. A member
+//! on another channel can be *invited* (the dialog crosses through the hub) but their
+//! Accept arrives at their own channel, which does not hold the room - it answers with a
+//! non-zero result (the window stays shut) and says so. Moving the registry into the hub,
+//! the way parties were, is the next step once this shape is on a screen.
 
 use super::*;
+use std::sync::Mutex;
 
 static NEXT_MESSENGER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+/// One member as the room remembers them - enough to draw them for a later joiner.
+#[derive(Debug, Clone)]
+struct Member {
+    seat: net::messenger::Seat,
+}
+
+#[derive(Debug, Default)]
+struct Room {
+    seats: [Option<Member>; net::messenger::SEATS],
+}
+
+impl Room {
+    fn seats_for_wire(&self) -> [Option<net::messenger::Seat>; net::messenger::SEATS] {
+        let mut out: [Option<net::messenger::Seat>; net::messenger::SEATS] = Default::default();
+        for (i, m) in self.seats.iter().enumerate() {
+            out[i] = m.as_ref().map(|m| m.seat.clone());
+        }
+        out
+    }
+    fn position_of(&self, character: u32) -> Option<usize> {
+        self.seats.iter().position(|m| m.as_ref().is_some_and(|m| m.seat.character_id == character))
+    }
+    fn free_seat(&self) -> Option<usize> {
+        self.seats.iter().position(Option::is_none)
+    }
+    fn others(&self, character: u32) -> Vec<u32> {
+        self.seats
+            .iter()
+            .flatten()
+            .map(|m| m.seat.character_id)
+            .filter(|&id| id != character)
+            .collect()
+    }
+}
+
+static ROOMS: Mutex<Vec<(u32, Room)>> = Mutex::new(Vec::new());
+
+fn with_room<T>(id: u32, f: impl FnOnce(&mut Room) -> T) -> Option<T> {
+    let mut rooms = ROOMS.lock().unwrap_or_else(|e| e.into_inner());
+    rooms.iter_mut().find(|(rid, _)| *rid == id).map(|(_, r)| f(r))
+}
+
+fn room_of(character: u32) -> Option<u32> {
+    let rooms = ROOMS.lock().unwrap_or_else(|e| e.into_inner());
+    rooms.iter().find(|(_, r)| r.position_of(character).is_some()).map(|(id, _)| *id)
+}
 
 impl Session {
     /// `0x01FD`.
@@ -23,25 +81,87 @@ impl Session {
             return Vec::new();
         };
         let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let me = net::messenger::Seat { character_id: chr.id, name: chr.name.clone(), look: net::opcode::avatar_look(&chr) };
         match req {
             net::messenger::MessengerRequest::Open { invite } => {
                 let id = ((self.config.channel_id + 1) << 16) | NEXT_MESSENGER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let mut out = vec![Reply {
-                    opcode: net::messenger::MESSENGER,
-                    body: net::messenger::self_enter(id, 0),
-                    what: format!("Messenger 0x00A3 mode 0 to character {}: messenger {id:#x} opened, result 0 - the client stores the id and opens the Maple Chat window", chr.id),
-                }];
+                let mut room = Room::default();
+                room.seats[0] = Some(Member { seat: me });
+                let seats = room.seats_for_wire();
+                ROOMS.lock().unwrap_or_else(|e| e.into_inner()).push((id, room));
+                let mut out = vec![
+                    Reply {
+                        opcode: net::messenger::MESSENGER,
+                        body: net::messenger::self_enter(id, 0),
+                        what: format!("Messenger 0x00A3 mode 0 to character {}: messenger {id:#x} opened, result 0 - the client stores the id and opens the Maple Chat window", chr.id),
+                    },
+                    Reply {
+                        opcode: net::messenger::MESSENGER,
+                        body: net::messenger::members(id, &seats),
+                        what: format!("Messenger 0x00A3 mode 4 to character {}: all six seats of {id:#x} - seat 0 is {} with their look, the rest empty. Draws the opener's own avatar", chr.id, chr.name),
+                    },
+                ];
                 if let Some(name) = invite {
                     out.extend(self.messenger_invite(id, &chr, &name));
                 }
                 out
             }
-            net::messenger::MessengerRequest::Invite { name } => {
-                // An invite from inside an open window. The client's id is not in the
-                // request; without membership tracking the invite names a fresh id.
-                let id = ((self.config.channel_id + 1) << 16) | NEXT_MESSENGER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                self.messenger_invite(id, &chr, &name)
+            net::messenger::MessengerRequest::Enter { messenger_id } => {
+                let joined = with_room(messenger_id, |room| {
+                    if let Some(pos) = room.position_of(chr.id) {
+                        return Some((pos, room.seats_for_wire(), Vec::new()));
+                    }
+                    let pos = room.free_seat()?;
+                    room.seats[pos] = Some(Member { seat: me.clone() });
+                    Some((pos, room.seats_for_wire(), room.others(chr.id)))
+                })
+                .flatten();
+                let Some((pos, seats, others)) = joined else {
+                    crate::server::log(&format!(
+                        "   maple chat: character {} ({}) accepted messenger {messenger_id:#x}, which this channel does not hold (another channel's room, gone, or full) - answered result 1, the window stays shut",
+                        chr.id, chr.name
+                    ));
+                    return vec![Reply {
+                        opcode: net::messenger::MESSENGER,
+                        body: net::messenger::self_enter(messenger_id, 1),
+                        what: format!("Messenger 0x00A3 mode 0 to character {}: messenger {messenger_id:#x} result 1 - not here; nothing opens", chr.id),
+                    }];
+                };
+                // Everyone already seated sees the newcomer as one record.
+                for other in &others {
+                    let told = self.deliver_anywhere(
+                        *other,
+                        Reply {
+                            opcode: net::messenger::MESSENGER,
+                            body: net::messenger::member_joined(messenger_id, pos as u32, &me),
+                            what: format!("Messenger 0x00A3 mode 4 to character {other}: {} joined {messenger_id:#x} in seat {pos}, one record with their look", chr.name),
+                        },
+                    );
+                    if !told {
+                        crate::server::log(&format!("   maple chat: member {other} of {messenger_id:#x} is online nowhere this process can reach; not told of the join"));
+                    }
+                }
+                crate::server::log(&format!("   maple chat: {} ({}) joined messenger {messenger_id:#x} in seat {pos}; {} other(s) told", chr.name, chr.id, others.len()));
+                vec![
+                    Reply {
+                        opcode: net::messenger::MESSENGER,
+                        body: net::messenger::self_enter(messenger_id, 0),
+                        what: format!("Messenger 0x00A3 mode 0 to character {}: joined {messenger_id:#x}, result 0 - the window opens", chr.id),
+                    },
+                    Reply {
+                        opcode: net::messenger::MESSENGER,
+                        body: net::messenger::members(messenger_id, &seats),
+                        what: format!("Messenger 0x00A3 mode 4 to character {}: all six seats of {messenger_id:#x} for the freshly opened window", chr.id),
+                    },
+                ]
             }
+            net::messenger::MessengerRequest::Invite { name } => match room_of(chr.id) {
+                Some(id) => self.messenger_invite(id, &chr, &name),
+                None => {
+                    crate::server::log(&format!("   maple chat: {} invites '{name}' but is in no room this channel holds; nothing sent", chr.name));
+                    Vec::new()
+                }
+            },
             net::messenger::MessengerRequest::Decline { messenger_id, name } => {
                 crate::server::log(&format!(
                     "   maple chat: character {} ({}) DECLINED messenger {messenger_id:#x} from '{name}' (the client sent mode 8 on its own - blocked, or invites are off). Nothing is sent back yet",
@@ -51,7 +171,7 @@ impl Session {
             }
             net::messenger::MessengerRequest::Other { mode, rest } => {
                 crate::server::log(&format!(
-                    "   maple chat: 0x01FD mode {mode} from character {} ({}) is NOT decoded - {} byte(s) after the mode: {rest:02x?}. THIS IS THE CAPTURE: if it followed a click on Accept in the invite dialog, it is the accept",
+                    "   maple chat: 0x01FD mode {mode} from character {} ({}) is NOT decoded - {} byte(s) after the mode: {rest:02x?}. THIS IS THE CAPTURE: a typed line or a closed window, whichever you just did",
                     chr.id, chr.name, rest.len()
                 ));
                 Vec::new()

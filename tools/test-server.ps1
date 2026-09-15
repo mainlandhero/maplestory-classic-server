@@ -719,26 +719,26 @@
                           chat-hub.log lists who is online where
               the client DIES on receipt -> the chat-info tail; say which client
            7. /find Tester2 -> "Tester2 is on channel N." as a yellow line
-         MAPLE CHAT (the client's messenger): the owner's invite was captured (00:39:49, 0x01FD
-         = u32 mode 0, u8 1, str "Tester2"). Built, step one of three: the opener gets
-         0x00A3 mode 0 (messenger id, result 0 - the client stores the id and opens the
-         Maple Chat window), and the invitee gets mode 6 (flag 1, the inviter's id and
-         name) wherever they are - which the client's own handler hands to the dialog
-         'Chat invite from'. What the dialog's Accept SENDS has never been captured, so
-         the accept is NOT answered yet: the server logs it as "mode N ... THIS IS THE
-         CAPTURE". Members and their avatars in the window (mode 4) need an avatar-look
-         encoding this server does not have yet - step three.
-           8. invite Tester2 to a Maple Chat again:
-              your Maple Chat window opens, and the invite dialog pops on Tester2 ->
-                          steps one and two work
-              your window opens but nothing on Tester2 -> world-chN.log: was mode 6
-                          delivered ("delivered to N")? if it was, the dialog is
-                          gated on something read wrong; say so
-              nothing opens on yours -> mode 0's result byte; say so
-              a client DIES -> say which; the hook log names the packet
-           9. click Accept on Tester2: nothing is expected to happen yet - the request
-              lands in world-chN.log as "maple chat: 0x01FD mode N ... THIS IS THE
-              CAPTURE", and that line is what builds the next step.
+         MAPLE CHAT: run 7 (01:52) DONE for the open and the dialog - the owner's window
+         opened, Tester2 got the invite, and the Accept was captured (0x01FD mode 7 +
+         the messenger id). Built since: the accept seats Tester2 and answers with mode
+         0 (the window opens) and mode 4 - the room's SIX seats, each with the member's
+         avatar look (the same bytes the character select and 0x0224 draw); the owner gets a
+         one-record mode 4 with the newcomer. The opener now gets the six seats right
+         after their window opens too, which is what was missing when the owner "did not see
+         even their own avatar". A typed line and a closed window are still uncaptured and
+         are logged with their bytes. Rooms live in the channel process (both clients on
+         ONE channel for this run; a cross-channel accept is answered "not here").
+           8. invite Tester2 (same channel), Tester2 clicks Accept:
+              The owner's avatar is in their window from the start; Tester2's window opens
+                          with BOTH avatars; the owner's window gains Tester2 -> fixed
+              windows open, seats empty -> mode 4 was read but the look was not drawn;
+                          say whose window and how many silhouettes
+              Tester2's window does not open -> world-chN.log says "result 1" (the room
+                          was not on that channel) or shows the mode 0 line; say which
+              a client DIES on the accept -> the look inside the seat record; say which
+           9. type a line in the Maple Chat and close the window: both land in
+              world-chN.log as "mode N ... THIS IS THE CAPTURE" - the next step.
          BUDDY CHAT: not built - no capture yet. Open the buddy list once and add someone;
          the bodies land in world-chN.log as UNKNOWN, which is the capture it needs.
 
@@ -3707,10 +3707,12 @@ function Show-TestPlan {
         Write-Host '           "Could not find Tester2." -> not in the directory (chat-hub.log)'
         Write-Host '           a client DIES on receipt -> say which' -ForegroundColor Red
         Write-Host '        6. /find Tester2 -> "Tester2 is on channel N." (a plain line)'
-        Write-Host '        7. Maple Chat: invite Tester2 again. Your window opens AND the'
-        Write-Host '           dialog pops on Tester2 -> steps 1+2 work. Click Accept on'
-        Write-Host '           Tester2: nothing happens yet ON PURPOSE - the accept lands in'
-        Write-Host '           world-chN.log as "mode N ... THIS IS THE CAPTURE".' -ForegroundColor Yellow
+        Write-Host '        7. Maple Chat (same channel): invite Tester2, Accept on Tester2:'
+        Write-Host '           the owner sees their own avatar at once; Tester2''s window opens with'
+        Write-Host '           both; the owner''s gains Tester2 -> fixed'
+        Write-Host '           windows open, seats empty -> the look is not drawn; say whose'
+        Write-Host '           a client DIES on the accept -> say which' -ForegroundColor Red
+        Write-Host '           then type a line and close the window: both are CAPTURES.' -ForegroundColor Yellow
         Write-Host '      Buddy list: NOT built - open it and add someone once; the bytes' -ForegroundColor Yellow
         Write-Host '      land in world-chN.log as UNKNOWN, which is the capture it needs.' -ForegroundColor Yellow
         Write-Host ''
