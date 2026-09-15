@@ -472,6 +472,9 @@ struct Conversation {
 /// socket - still announces exactly one departure. `crate::broadcast::Bus::part`.
 impl Drop for Session {
     fn drop(&mut self) {
+        // The hub's directory: this character no longer plays on this channel. Before
+        // `part`, which is the local equivalent. `session/worldlink.rs`.
+        self.announce_offline_to_link();
         self.fields.bus().part(self.subscriber);
         // **And its mobs go back, or they stop moving for everybody.**
         //
@@ -515,6 +518,7 @@ mod multiplayer;
 mod npc;
 mod party;
 mod groupchat;
+pub mod worldlink;
 mod pet;
 mod pools;
 mod rates;
@@ -653,6 +657,8 @@ impl Session {
         // covers the busy case; this covers the idle one, and between them a
         // broadcast waits at most one tick.
         let mut out = self.collect_mail();
+        // Party requests answered by the hub's echo. `session/worldlink.rs`.
+        out.extend(self.collect_party_outcomes());
         // Expire drops BEFORE the chatter switch is consulted. `chatter_off` turns off NPC
         // idle lines and nothing else; if the sweep sat after it, a run with chatter
         // disabled would leave items on the floor forever and the bug would look like the
@@ -783,6 +789,7 @@ impl Session {
         // middle of one is the kind of reordering that is invisible in a log and
         // fatal on screen.
         out.extend(self.collect_mail());
+        out.extend(self.collect_party_outcomes());
         out
     }
 

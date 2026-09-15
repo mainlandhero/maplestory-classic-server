@@ -26,6 +26,8 @@ maplecw-world - one channel of the MapleCW game world
                    rather than ignored.
   --advertise MODE which HOST a Change Channel answer names: auto (default), list, or
                    one IPv4 address. --help prints the full description.
+  --link ADDR      the world hub (maplecw-chat) to dial for cross-channel parties and
+                   chat (default 127.0.0.1:8483). 'none' runs this channel on its own.
   --migration-peer-policy require|record
                    what to do when the connection claiming a migration does not come
                    from the address the migration was minted for. require (default)
@@ -79,6 +81,9 @@ character select is claimed here. See crates/world/src/lib.rs.";
 
 fn main() -> ExitCode {
     let mut config = Config::default();
+    // The hub is dialled by default: a channel started without one still works, it just
+    // says so in its log and keeps parties and party chat to itself.
+    config.link = Some(std::net::SocketAddr::from(([127, 0, 0, 1], world::link::DEFAULT_HUB_PORT)));
     let mut portals_path = PathBuf::from("gm-handbook/portals.txt");
     let mut npcs_path = PathBuf::from("gm-handbook/npcs.txt");
     let mut fields_path = PathBuf::from("gm-handbook/fields.txt");
@@ -122,6 +127,14 @@ fn main() -> ExitCode {
                 v.parse().map(|b| config.bind = b).map_err(|e| format!("--bind {v}: {e}"))
             }),
             "--db" => value().map(|v| config.db_path = PathBuf::from(v)),
+            "--link" => value().and_then(|v| {
+                if v.eq_ignore_ascii_case("none") {
+                    config.link = None;
+                    Ok(())
+                } else {
+                    v.parse().map(|a| config.link = Some(a)).map_err(|e| format!("--link {v}: {e}"))
+                }
+            }),
             "--world-id" => value().and_then(|v| {
                 v.parse().map(|n| config.world_id = n).map_err(|e| format!("--world-id {v}: {e}"))
             }),
