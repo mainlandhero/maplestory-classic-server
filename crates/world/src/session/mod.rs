@@ -32,11 +32,11 @@ use crate::config::Config;
 /// Pruned 2026-09-06 on the owner's instruction: the per-kind rate setters, `!migsweep`,
 /// `!npcfx`, `!buff`, `!unbuff`, `!buy`, `!locker` and `!kit` are gone.
 const GM_COMMANDS: &str =
-    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !setrates <exp> <meso> <drop> <quest> <party%>, !rates, !job <jobId>, !npcecho [dx], !nx [amount], !lp [amount], !meso [amount], !resetap, !resetsp, !learn [level] | !learn <skillId> <level>, !npcreload [templateId], !hair <hairId>, !face <faceId>, !registrationcode, !recoverycode <email|username>, !help";
+    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !setrates <exp> <meso> <drop> <quest> <party%>, !rates, !job <jobId>, !npcecho [dx], !nx [amount], !lp [amount], !meso [amount], !resetap, !resetsp, !learn [level] | !learn <skillId> <level>, !npcreload [templateId], !hair <hairId>, !face <faceId>, !registrationcode, !recoverycode <email|username>, !online, !track <character>, !help";
 
 /// What a player who is not a GM is shown by `!help`, and all they may run. The owner,
 /// 2026-09-06: *"A player should only be shown commands that they are allowed to execute."*
-const PLAYER_COMMANDS: &str = "Commands: !tool, !scroll, !rates, !help";
+const PLAYER_COMMANDS: &str = "Commands: !tool, !scroll, !rates, !online, !help";
 
 /// One packet to send, plus what it is - the label goes in the log.
 #[derive(Debug, Clone, PartialEq, Eq)]

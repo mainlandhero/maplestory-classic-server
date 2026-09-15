@@ -2001,8 +2001,11 @@
         dispatch. Nothing decoded can.
 
     COMMANDS (GM): !map, !item, !exp, !heal, !job, !learn, !nx, !lp, !resetap, !resetsp,
-    !npcecho, !setrates, !npcreload, !registrationcode, !recoverycode. EVERYONE: !rates and
-    !help - a player's !help shows only those two. PRUNED 2026-09-06 on the owner's instruction:
+    !npcecho, !setrates, !npcreload, !registrationcode, !recoverycode, !track <name> (channel
+    and map of one player, from the world hub's directory). EVERYONE: !rates, !online (who is
+    on, across channels), !tool (four favours a day now - Leaf Points, Level up, Reset AP&SP,
+    and RETURN TO HENESYS for a player stuck in a map; refused free if already there), !scroll,
+    !help - a player's !help shows only those. PRUNED 2026-09-06 on the owner's instruction:
     !kit, !buff, !unbuff, !npcfx, !migsweep, !buy, !locker and the per-kind rate setters
     (!exprate !mesorate !droprate) are GONE; !setrates <exp> <meso> <drop> <quest> <party%> is
     the one rate command (FIVE fields since 2026-09-06: the 4th multiplies quest-completion
@@ -4763,8 +4766,11 @@ function Show-TestPlan {
         Write-Host '     Bowman, Thief and Magician branches. Shop buying. The cash purchase.'
         Write-Host ''
         Write-Host '  COMMANDS (GM): !map !item !exp !heal !job !learn !npcecho !setrates'
-        Write-Host '  !nx !lp !resetap !resetsp !npcreload !registrationcode !recoverycode.'
-        Write-Host '  EVERYONE: !rates and !help - a player''s !help shows only those two.'
+        Write-Host '  !nx !lp !resetap !resetsp !npcreload !registrationcode !recoverycode'
+        Write-Host '  !track <name> (NEW: channel + map of one player). EVERYONE: !rates,'
+        Write-Host '  !online (NEW: who is on, across channels), !tool (NEW 4th favour:'
+        Write-Host '  Return to Henesys, once a day, free refusal if already there), !scroll,'
+        Write-Host '  !help - a player''s !help shows only those.'
         Write-Host '  Pruned 2026-09-06: !kit !buff !unbuff !npcfx !migsweep !buy !locker and'
         Write-Host '  the per-kind rate setters are GONE. !setrates now takes FIVE fields:'
         Write-Host '  <exp> <meso> <drop> <quest> <party%> - quest multiplies turn-in EXP; party%'

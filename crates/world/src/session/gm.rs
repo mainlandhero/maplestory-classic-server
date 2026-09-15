@@ -100,6 +100,10 @@ impl Session {
         let is_gm = self.account_is_gm();
         match name {
             "rates" => return self.gm_rates(),
+            // The owner, 2026-09-14: *"`!online` - available to everyone, list all characters that
+            // are currently online across all channels."* Names and channels only; where
+            // each one IS is `!track`, and that is a GM word.
+            "online" => return self.who_is_online(),
             crate::dailyperks::COMMAND => return self.open_daily_perks(),
             // Same shape as !tool and open to everyone: the owner asked for a command that
             // "functions very similar to !tool" with the Administrator's dialogue.
@@ -171,6 +175,7 @@ impl Session {
             // credentials and go to the GM's screen ONLY - see the two functions.
             "registrationcode" | "regcode" | "invite" => self.gm_registration_code(),
             "recoverycode" => self.gm_recovery_code(arg),
+            "track" => self.gm_track(arg),
             "" => self.gm_ack(format!("Not a command. {GM_COMMANDS}")),
             other => self.gm_ack(format!("!{other} is not a command. {GM_COMMANDS}")),
         }
@@ -1340,6 +1345,69 @@ impl Session {
     /// MapleStory!!` line arrives - and that line is yellow on screen - so yellow is the
     /// expectation. It is an expectation, not a measurement, and the run will settle it.
     /// `net::notice` records that colour is not controllable through this packet.
+    /// **`!online` - everyone playing right now, across every channel.** Public.
+    ///
+    /// The list is the world hub's directory (`crate::link`) merged with this process's own
+    /// announcements, because the hub echoes a channel's arrivals to everyone *else*. With no
+    /// hub linked - a single-channel launch - it falls back to this channel's bus, which is
+    /// then the whole world, and says so. Names and channels only: a player is not told
+    /// where anyone is; that is `!track`, a GM word.
+    ///
+    /// One notice, comma-separated, because the client's notice draws one line and the list
+    /// is short on a server this size. If it ever is not, the count at the front still says
+    /// how many there are.
+    pub(super) fn who_is_online(&self) -> Vec<Reply> {
+        let (names, note): (Vec<String>, &str) = match crate::link::installed() {
+            Some(link) => (
+                link.everyone().into_iter().map(|(_, e)| format!("{} (ch {})", e.name, e.channel + 1)).collect(),
+                "",
+            ),
+            None => (
+                self.bus()
+                    .everyone_here()
+                    .into_iter()
+                    .filter_map(|(id, _)| self.store.character_brief(id).ok().flatten().map(|c| c.name))
+                    .map(|n| format!("{n} (ch {})", self.config.channel_id + 1))
+                    .collect(),
+                " (this channel only - no world hub is linked)",
+            ),
+        };
+        if names.is_empty() {
+            return self.gm_ack(format!("Nobody is online{note}."));
+        }
+        self.gm_ack(format!("Online ({}){note}: {}", names.len(), names.join(", ")))
+    }
+
+    /// **`!track <character>` - where one player is: channel and map.** GM only.
+    ///
+    /// The owner, 2026-09-14: *"`!track <character name>` - available to GMs, track a specific
+    /// player's map location and channel information."* The hub's directory carries the map
+    /// since today - every field entry re-announces it - so a portal walk shows up within the
+    /// time it takes the client to send its `0x00DC`. Without a hub, this channel's bus is
+    /// what there is, and the answer says so.
+    pub(super) fn gm_track(&self, arg: &str) -> Vec<Reply> {
+        let wanted = arg.trim();
+        if wanted.is_empty() {
+            return self.gm_ack("!track: name a character. Try !track the owner.".to_string());
+        }
+        let found: Option<(u32, u32, String)> = match crate::link::installed() {
+            Some(link) => link.find(wanted).map(|(_, e)| (e.channel, e.map, e.name)),
+            None => self.bus().everyone_here().into_iter().find_map(|(id, map)| {
+                let c = self.store.character_brief(id).ok().flatten()?;
+                c.name.eq_ignore_ascii_case(wanted).then(|| (self.config.channel_id, map, c.name))
+            }),
+        };
+        let scope = if crate::link::installed().is_some() { "" } else { " (this channel only - no world hub is linked)" };
+        match found {
+            Some((channel, map, name)) => self.gm_ack(format!(
+                "{name} is on channel {} in map {map}, {}{scope}.",
+                channel + 1,
+                self.map_name(map)
+            )),
+            None => self.gm_ack(format!("{wanted} is not online{scope}.")),
+        }
+    }
+
     pub(super) fn gm_ack(&self, text: String) -> Vec<Reply> {
         self.notice(text)
     }
@@ -1491,6 +1559,60 @@ mod npc_reload_tests {
         b.extend_from_slice(&0u16.to_le_bytes());
         b.push(action as u8);
         b
+    }
+
+    /// **`!online` lists everyone, `!track` says where one of them is - and only a GM may
+    /// track.** The owner, 2026-09-14. With no world hub linked (this test, and a one-channel
+    /// launch) both answer from this channel's bus and say so; with a hub they answer from its
+    /// directory, which `crate::link`'s own tests cover. Names come from the store, not from
+    /// anything the client said.
+    #[test]
+    fn online_lists_everyone_on_the_channel_and_track_is_a_gm_word() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let config = Arc::new(Config::default());
+        let fields = Arc::new(crate::fields::Fields::new());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        store.set_gm("maplecw", true).unwrap();
+        let other = store.create_account("someone", "correct horse battery").unwrap();
+        let mut ids = Vec::new();
+        for (acct, name, map) in [(account, "Wisp", 10_001_000u32), (other, "Tester2", 1_010u32)] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: map, ..Default::default() };
+            let id = store.create_character(acct, 0, &chr).unwrap().id;
+            store.create_migration(acct, id, 0, 0).unwrap();
+            ids.push(id);
+        }
+        let mut gm = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut player = Session::joining(store, config, fields);
+        gm.claim_for_character(ids[0]);
+        player.claim_for_character(ids[1]);
+        gm.on_field_entered();
+        player.on_field_entered();
+
+        // Everyone sees the list, and the list is everyone.
+        for s in [&mut gm, &mut player] {
+            let out = s.handle(&gm_chat("!online"));
+            let said = out.iter().filter(|r| r.opcode == net::notice::CHAT_NOTICE).map(notice_text).collect::<Vec<_>>().join(" ");
+            assert!(said.starts_with("Online (2)"), "{said}");
+            assert!(said.contains("the owner (ch 1)") && said.contains("Tester2 (ch 1)"), "{said}");
+            assert!(said.contains("this channel only"), "no hub is linked here, and it says so: {said}");
+        }
+
+        // The GM can track, case-insensitively, and is told the map by name.
+        let out = gm.handle(&gm_chat("!track tester2"));
+        let said = out.iter().filter(|r| r.opcode == net::notice::CHAT_NOTICE).map(notice_text).collect::<Vec<_>>().join(" ");
+        assert!(said.starts_with("Tester2 is on channel 1 in map 1010"), "{said}");
+        let out = gm.handle(&gm_chat("!track Nobody"));
+        let said = out.iter().filter(|r| r.opcode == net::notice::CHAT_NOTICE).map(notice_text).collect::<Vec<_>>().join(" ");
+        assert!(said.starts_with("Nobody is not online"), "{said}");
+
+        // A player typing !track is not running a command - it is said out loud, like every
+        // other GM word, so the word itself is never confirmed to exist.
+        let out = player.handle(&gm_chat("!track the owner"));
+        assert!(
+            !out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE),
+            "a non-GM must get no notice for !track: {out:?}"
+        );
+        assert!(out.iter().any(|r| r.opcode == net::userchat::USER_CHAT), "it is said as chat instead: {out:?}");
     }
 
     fn notice_text(r: &Reply) -> String {
