@@ -10606,6 +10606,47 @@ fn a_saved_key_layout_is_restored_right_after_the_setfield() {
     assert_eq!(slot(0x10), (4, 8), "and Q is still the factory menu, not a zero");
 }
 
+/// **A controller binding survives a map change, and does not land on the keyboard.** The owner,
+/// 2026-09-14: *"Whenever there are customization to keybindings in the controller settings,
+/// it is not getting saved properly, and when clients switch maps, their controller settings
+/// are completely screwed up."* The delta's second byte is the table - 3 for the controller -
+/// and the 0x05F1 at the next SetField now sends that table READ, the controller's own
+/// factory with the binding on top, instead of a keep gate the client reads as "reset to
+/// keyboard preset 0". The body here is the 17-byte capture from world-ch0.log 00:56:30.
+#[test]
+fn a_controller_binding_is_stored_under_table_3_and_restored_there_after_a_map_change() {
+    let (mut s, store, id) = claimed_session();
+    let controller = [0x00u8, 0x03, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01, 0x08, 0x01, 0xe8, 0x03, 0x00, 0x00];
+    s.on_keymap_change(&controller);
+    // And a keyboard binding on the SAME slot number, so the two tables can be told apart.
+    let mut keyboard = vec![0u8, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 1, 0x08, 1];
+    keyboard.extend_from_slice(&1_001_002u32.to_le_bytes());
+    s.on_keymap_change(&keyboard);
+    let rows = store.keymap(id).unwrap();
+    assert_eq!(rows.len(), 2, "two rows, one per table: {rows:?}");
+    assert_eq!((rows[0].preset, rows[0].key, rows[0].action), (0, 8, 1_001_002));
+    assert_eq!((rows[1].preset, rows[1].key, rows[1].action), (3, 8, 1000));
+
+    let mut chr = s.claimed_character().expect("the claim resolves");
+    let replies = s.go_to_map(&mut chr, 40, 0, "a map change".to_string());
+    let km = replies.iter().find(|r| r.opcode == net::keymap::KEYMAP_INIT).expect("a FuncKeyMappedInit");
+    let b = &km.body;
+    let table = 1 + net::keymap::SLOT_COUNT * 5;
+    assert_eq!(b.len(), net::keymap::KEYMAP_INIT_LEN);
+    for t in 0..net::keymap::PRESET_COUNT {
+        assert_eq!(b[t * table], 0, "table {t} READ - the keep gate is the bug");
+    }
+    let slot = |t: usize, code: usize| {
+        let at = t * table + 1 + code * 5;
+        (b[at], u32::from_le_bytes(b[at + 1..at + 5].try_into().unwrap()))
+    };
+    assert_eq!(slot(3, 8), (1, 1000), "the controller's button 8");
+    assert_eq!(slot(0, 8), (1, 1_001_002), "the keyboard's scan code 8, separately");
+    assert_eq!(slot(3, 0), (5, 53), "controller button 0 is the controller factory's, not keyboard preset 0's");
+    assert_eq!(slot(3, 0x10), (0, 0), "and no Q on the controller");
+    assert_eq!(slot(0, 0x10), (4, 8), "Q is still the keyboard's menu");
+}
+
 /// **An accept with no `yes` branch says nothing.** The owner, 2026-09-13: *"Nina's quest dialogue
 /// seems to be repeated when accepting their 'What Sen wants to eat' quest. They say the same
 /// two dialogues before and after I click 'Accept'."* Quest 1003 has `Say.0` (two lines the

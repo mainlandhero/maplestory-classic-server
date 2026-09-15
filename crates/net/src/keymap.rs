@@ -40,6 +40,41 @@
 //! guessing is every key on a player's keyboard moving, and the failure mode of waiting is the
 //! feature staying exactly as broken as it is today.
 //!
+//! # 4. There are FOUR tables, and the fourth is the controller - 2026-09-14
+//!
+//! The owner: *"Whenever there are customization to keybindings in the controller settings, it is
+//! not getting saved properly, and when clients switch maps, their controller settings are
+//! completely screwed up."*
+//!
+//! The byte after the subtype in a subtype-0 `0x0199` - read and thrown away here as "a flag
+//! that is always 0" - is **the table the delta belongs to**. The builder `FUN_141a0c340`
+//! takes the table pointer in `rcx` and that byte in `dl`; its two callers set them together
+//! **[L]**:
+//!
+//! ```text
+//! 141a00849  imul rcx, rbx, 0x37a ; lea rax,[0x143ad0280] ; movzx edx, bl   ; keyboard preset rbx
+//! 141a008ef  mov  dl, 3           ; lea rcx,[0x143ad1070]                    ; the controller
+//! ```
+//!
+//! Every keyboard capture (20 of them) had 0 there; both captures from the run where the owner
+//! edited the Controller tab had **3**. So every controller binding they saved was merged into
+//! the keyboard table, and the `0x05F1` at the next map change did two wrong things at once:
+//! it put controller buttons' actions on keyboard scan codes 0..0x27, and it sent preset 3 as
+//! *keep* - which is not "leave it alone". The handler **resets all four tables to keyboard
+//! preset 0** before it reads a gate (`0x1419ffc73`, `mov rdx, r12` for every iteration), so
+//! keep on preset 3 hands the controller a keyboard layout. The client's own controller
+//! default is a separate const at `0x143274b20` ([`CLIENT_CONTROLLER_LAYOUT`]), copied into
+//! the preset-3 static once at init (`0x1419ff905`) and never again.
+//!
+//! The 53-entry delta the client sent after that (`world-ch0.log` 2026-09-14 00:58:49) is the
+//! proof: it is exactly the controller default XOR keyboard preset 0 - it opens with the
+//! controller table's first twelve buttons verbatim and goes on to *unbind* Q, W and E, keys a
+//! controller does not have. The client was reporting how far its controller table had been
+//! pushed from its shadow.
+//!
+//! So: [`Change::Bindings`] carries its table, the store keeps one row per (table, key), and
+//! [`restore`] sends all four tables READ, each as its own factory plus its own deltas.
+//!
 //! # Nothing here authenticates
 //!
 //! The channel socket carries no credentials. A layout arrives on the say-so of whoever holds
@@ -393,6 +428,127 @@ pub const CLIENT_PRESETS_1_AND_2: [[Slot; 89]; 2] = [
     ],
 ];
 
+// The CONTROLLER factory table, preset 3, from 0x143274b20 (.rdata) - what the
+// keymap init copies into the preset-3 static at 0x143ad1070, and what the 0x05F1
+// handler does NOT reset it to (it resets every preset to keyboard preset 0). The
+// index is a controller button, not a scan code. 22 of 89 bound. [L]
+pub const CLIENT_CONTROLLER_LAYOUT: [Slot; 89] = [
+    Slot { kind: 5, action: 53 },  // button 0x0
+    Slot { kind: 4, action: 401 },  // button 0x1
+    Slot { kind: 4, action: 400 },  // button 0x2
+    Slot { kind: 5, action: 52 },  // button 0x3
+    Slot { kind: 5, action: 51 },  // button 0x4
+    Slot { kind: 5, action: 50 },  // button 0x5
+    Slot { kind: 4, action: 0 },  // button 0x6
+    Slot { kind: 4, action: 3 },  // button 0x7
+    Slot { kind: 4, action: 2 },  // button 0x8
+    Slot { kind: 4, action: 1 },  // button 0x9
+    Slot { kind: 4, action: 46 },  // button 0xa
+    Slot { kind: 4, action: 14 },  // button 0xb
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 5, action: 53 },  // button 0x18
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 4, action: 5 },  // button 0x1c
+    Slot { kind: 4, action: 9 },  // button 0x1d
+    Slot { kind: 4, action: 8 },  // button 0x1e
+    Slot { kind: 4, action: 55 },  // button 0x1f
+    Slot { kind: 5, action: 53 },  // button 0x20
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 4, action: 22 },  // button 0x24
+    Slot { kind: 4, action: 19 },  // button 0x25
+    Slot { kind: 4, action: 6 },  // button 0x26
+    Slot { kind: 4, action: 4 },  // button 0x27
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+    Slot { kind: 0, action: 0 },
+];
+
+/// The table index the controller's bindings travel under: the fourth of [`PRESET_COUNT`],
+/// `mov dl, 3` at `0x141a008ef` **[L]**. Tables 0..2 are the keyboard's three presets.
+pub const CONTROLLER_TABLE: u8 = 3;
+
+/// **What the client's table `table` holds before any delta**, and therefore the base every
+/// stored delta for that table sits on. `None` for a table index the client does not have,
+/// and for table 0 while [`CLIENT_DEFAULT_LAYOUT`] is unmeasured.
+///
+/// One subtlety, measured 2026-09-14: the `0x05F1` handler resets **every** table to keyboard
+/// preset 0 before its gate, including the controller's. That is what the client's shadow
+/// becomes once it has received a `0x05F1` with keep on table 3, and it is NOT what this
+/// returns for table 3 - this returns the controller's own const, because the shadow a delta
+/// is diffed against is whatever the last `0x05F1` put there, and the last `0x05F1` is ours:
+/// this table plus the stored deltas. Before any `0x05F1` the shadow is the init copy of this
+/// same const. Either way the base is this, provided the server never sends table 3 as keep.
+pub fn factory(table: u8) -> Option<[Slot; SLOT_COUNT]> {
+    match table {
+        0 => CLIENT_DEFAULT_LAYOUT,
+        1 => Some(CLIENT_PRESETS_1_AND_2[0]),
+        2 => Some(CLIENT_PRESETS_1_AND_2[1]),
+        CONTROLLER_TABLE => Some(CLIENT_CONTROLLER_LAYOUT),
+        _ => None,
+    }
+}
+
 /// One binding out of a `0x0199` subtype 0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Binding {
@@ -404,8 +560,9 @@ pub struct Binding {
 /// What a `0x0199` asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
-    /// Subtype 0: key bindings that differ from the client's shadow table.
-    Bindings(Vec<Binding>),
+    /// Subtype 0: key bindings that differ from the client's shadow copy of ONE table -
+    /// keyboard preset 0..2, or [`CONTROLLER_TABLE`]. Module docs §4.
+    Bindings { table: u8, bindings: Vec<Binding> },
     /// Subtype 1: one `u32`, restored by [`KEYMAP_OPT_A`].
     OptA(u32),
     /// Subtype 2: one `u32`, restored by [`KEYMAP_OPT_B`].
@@ -427,10 +584,17 @@ pub fn parse_change(body: &[u8]) -> Option<Change> {
     let subtype = c.u8().ok()?;
     match subtype {
         0 => {
+            // The table this delta is a diff of. `movzx edx, bl` (keyboard preset) or
+            // `mov dl, 3` (controller) at the builder's two call sites; module docs §4. Until
+            // 2026-09-14 this was read and dropped as "a flag that is always 0", and it was
+            // 0 in every capture until somebody opened the Controller tab.
+            let table = c.u8().ok()?;
+            if table as usize >= PRESET_COUNT {
+                return None;
+            }
             // The two `0xFFFFFFFF` words are read and discarded: every capture has had both
             // set to -1 and nothing in the client's builder computes them from the layout.
             // They are preserved in the research file rather than invented here.
-            let _flag = c.u8().ok()?;
             let _a = c.u32().ok()?;
             let _b = c.u32().ok()?;
             let count = c.u8().ok()?;
@@ -448,7 +612,7 @@ pub fn parse_change(body: &[u8]) -> Option<Change> {
                 }
                 out.push(Binding { key, slot: Slot { kind, action } });
             }
-            Some(Change::Bindings(out))
+            Some(Change::Bindings { table, bindings: out })
         }
         1 => Some(Change::OptA(c.u32().ok()?)),
         2 => Some(Change::OptB(c.u32().ok()?)),
@@ -487,7 +651,7 @@ pub const PRESET_COUNT: usize = 4;
 ///
 /// ```text
 /// for preset in 0..4:                      0x1419ffc50  loop head, r15d = preset
-///     (the table is first reset to the const preset 0 the image carries)
+///     (the table is first reset to the const KEYBOARD preset 0 - r12, for all four)
 ///     u8  gate                             0x1419ffcf4  0 = READ, non-zero = keep the reset
 ///     if gate == 0: 89 x { u8 kind; u32 action }        0x1419ffd0b, FUN_1401de920
 ///     (the table is then copied to its shadow at +0x1bd)
@@ -495,31 +659,30 @@ pub const PRESET_COUNT: usize = 4;
 /// if quickslots != 0: 32 x raw 4           0x1419ffdec, 0x143ad13f0..0x143ad1470
 /// ```
 ///
-/// So a body of one gate and one table ends where the client expects the second gate, and
-/// the read past the end is what it rejected. What goes out now: preset 0 as `layout` (the
-/// factory table with the player's saved keys merged), presets 1 and 2 as the image ships
-/// them ([`CLIENT_PRESETS_1_AND_2`]), preset 3 - which has no const table in the image - as
-/// keep, and the quickslot gate as 0. `3 * 446 + 1 + 1 = 1340` bytes.
+/// # And it was three tables and a keep gate until 2026-09-14, which wrecked the controller
+///
+/// "Keep" keeps the RESET, not the table the client had - and the reset is keyboard preset 0
+/// for every index, the controller's included (module docs §4). So all four go out READ now:
+/// `tables[3]` is the controller's, [`CLIENT_CONTROLLER_LAYOUT`] plus its deltas.
 ///
 /// **The quickslot gate is 0 because its 32 values are unmeasured**, not because 0 is known
 /// to be right: 0 skips to `FUN_1401de860` at `0x1419ffe34`, which has not been read. If the
 /// quickslot bar comes up wrong, that call is where to look.
-pub fn keymap_init(layout: &[Slot; SLOT_COUNT]) -> Vec<u8> {
+pub fn keymap_init(tables: &[[Slot; SLOT_COUNT]; PRESET_COUNT]) -> Vec<u8> {
     let mut w = PacketWriter::new();
-    for table in [layout, &CLIENT_PRESETS_1_AND_2[0], &CLIENT_PRESETS_1_AND_2[1]] {
+    for table in tables {
         w.u8(GATE_READ);
         for slot in table.iter() {
             w.u8(slot.kind);
             w.u32(slot.action);
         }
     }
-    w.u8(GATE_KEEP); // preset 3: no const table in the image; the client keeps its reset
     w.u8(0); // quickslots: unmeasured, so not sent
     w.into_vec()
 }
 
-/// The length of [`keymap_init`]'s body: three read tables, one keep gate, the quickslot gate.
-pub const KEYMAP_INIT_LEN: usize = 3 * (1 + SLOT_COUNT * 5) + 1 + 1;
+/// The length of [`keymap_init`]'s body: four read tables and the quickslot gate.
+pub const KEYMAP_INIT_LEN: usize = PRESET_COUNT * (1 + SLOT_COUNT * 5) + 1;
 
 /// `0x05F1` that tells the client to keep every preset as its reset copy of the factory
 /// table. Four keep gates and a zero quickslot gate - the same shape as [`keymap_init`],
@@ -542,29 +705,40 @@ pub fn keymap_opt(value: u32) -> Vec<u8> {
 
 /// The `0x05F1` body to send at login, or `None` if there is nothing safe to send.
 ///
-/// `None` in either of two cases, and in both the caller must send **no packet at all**:
+/// `stored` is every binding the character has saved, each with the table it was saved
+/// against. `None` in either of two cases, and in both the caller must send **no packet at
+/// all**:
 ///
-/// * the character has saved nothing, so there is nothing to restore;
+/// * the character has saved nothing, so there is nothing to restore - the client's own
+///   init copies are exactly the four factories this would send;
 /// * [`CLIENT_DEFAULT_LAYOUT`] has not been measured, so the slots the player never touched
 ///   would go out as zeros and unbind their keyboard.
 ///
+/// A stored row for a table the client does not have is skipped, not fatal: it cannot be
+/// sent anywhere, and refusing the whole restore over it would lose the other three tables.
+///
 /// # Why `None` rather than [`keymap_init_keep`]
 ///
-/// The keep form is a real packet and its no-op path - `0x1419ffd21` onward, past the `jne`
-/// that skips the loop - **has not been read**. Today the server sends nothing at all and the
-/// client is demonstrably fine, so returning `None` preserves a measured-good behaviour
-/// instead of trading it for an unmeasured one to save a branch. `keymap_init_keep` is kept
-/// because it is part of the protocol and the gate byte it carries is the thing most likely
-/// to be got backwards; nothing sends it yet.
-pub fn restore(stored: Option<&[Binding]>) -> Option<Vec<u8>> {
-    let (Some(bindings), Some(mut layout)) = (stored, CLIENT_DEFAULT_LAYOUT) else {
+/// The keep form is a real packet and, as of 2026-09-14, a measured-bad one: keep means
+/// "keep the reset to keyboard preset 0", for all four tables. Today the server sends nothing
+/// at all for a fresh character and the client is demonstrably fine, so returning `None`
+/// preserves a measured-good behaviour. `keymap_init_keep` is kept because it is part of the
+/// protocol and the gate byte it carries is the thing most likely to be got backwards;
+/// nothing sends it.
+pub fn restore(stored: Option<&[(u8, Binding)]>) -> Option<Vec<u8>> {
+    let (Some(bindings), Some(keyboard)) = (stored, CLIENT_DEFAULT_LAYOUT) else {
         return None;
     };
     if bindings.is_empty() {
         return None;
     }
-    apply(&mut layout, bindings);
-    Some(keymap_init(&layout))
+    let mut tables = [keyboard, CLIENT_PRESETS_1_AND_2[0], CLIENT_PRESETS_1_AND_2[1], CLIENT_CONTROLLER_LAYOUT];
+    for (table, b) in bindings {
+        if let Some(t) = tables.get_mut(*table as usize) {
+            t[b.key as usize] = b.slot;
+        }
+    }
+    Some(keymap_init(&tables))
 }
 
 #[cfg(test)]
@@ -582,9 +756,10 @@ mod tests {
     #[test]
     fn the_live_capture_decodes_to_the_three_skills_wisp_named() {
         assert_eq!(WISP_CONFIRM.len(), 29, "the captured body was 29 bytes");
-        let Some(Change::Bindings(b)) = parse_change(WISP_CONFIRM) else {
+        let Some(Change::Bindings { table, bindings: b }) = parse_change(WISP_CONFIRM) else {
             panic!("subtype 0 did not decode");
         };
+        assert_eq!(table, 0, "the keyboard's preset 0");
         assert_eq!(b.len(), 3);
         // 0x1D LCtrl -> Slash Blast, 0x1E A -> Iron Body, 0x2A LShift -> Power Strike.
         assert_eq!(b[0], Binding { key: 0x1D, slot: Slot { kind: 1, action: 1_001_002 } });
@@ -597,7 +772,7 @@ mod tests {
         for n in 0..WISP_CONFIRM.len() {
             let got = parse_change(&WISP_CONFIRM[..n]);
             assert!(
-                !matches!(got, Some(Change::Bindings(ref v)) if v.len() == 3),
+                !matches!(got, Some(Change::Bindings { ref bindings, .. }) if bindings.len() == 3),
                 "a {n}-byte prefix must not decode as the full three bindings"
             );
         }
@@ -619,24 +794,34 @@ mod tests {
         assert_eq!(parse_change(&[3, 4]), None);
     }
 
+    /// The body a restore sends when nothing is stored on top: the four factories.
+    fn factories() -> [[Slot; SLOT_COUNT]; PRESET_COUNT] {
+        [
+            CLIENT_DEFAULT_LAYOUT.expect("measured 2026-09-12"),
+            CLIENT_PRESETS_1_AND_2[0],
+            CLIENT_PRESETS_1_AND_2[1],
+            CLIENT_CONTROLLER_LAYOUT,
+        ]
+    }
+
     #[test]
     fn the_init_body_is_the_length_the_client_reads() {
-        let layout = [Slot::EMPTY; SLOT_COUNT];
-        // 1 gate byte + 89 * (u8 + u32).
-        assert_eq!(keymap_init(&layout).len(), KEYMAP_INIT_LEN);
-        assert_eq!(KEYMAP_INIT_LEN, 1340);
+        // 4 x (1 gate byte + 89 * (u8 + u32)) + the quickslot gate.
+        assert_eq!(keymap_init(&factories()).len(), KEYMAP_INIT_LEN);
+        assert_eq!(KEYMAP_INIT_LEN, 1785);
         // Four gates where the handler reads them, then the quickslot gate. The one-table
-        // form (446 bytes) put the second gate past the end and the client rejected it.
-        let b = keymap_init(&layout);
+        // form (446 bytes) put the second gate past the end and the client rejected it; the
+        // three-and-a-keep form (1340) handed the controller a keyboard layout.
+        let b = keymap_init(&factories());
         let table = 1 + SLOT_COUNT * 5;
-        assert_eq!(b[0], 0, "preset 0: READ");
-        assert_eq!(b[table], 0, "preset 1: READ");
-        assert_eq!(b[2 * table], 0, "preset 2: READ");
-        assert_ne!(b[3 * table], 0, "preset 3: keep - no const table in the image");
-        assert_eq!(b[3 * table + 1], 0, "quickslots: not sent");
-        assert_eq!(b.len(), 3 * table + 2);
-        // Presets 1 and 2 are the image's, byte for byte.
-        for (n, preset) in CLIENT_PRESETS_1_AND_2.iter().enumerate() {
+        for n in 0..PRESET_COUNT {
+            assert_eq!(b[n * table], 0, "table {n}: READ - keep would keep the reset to keyboard preset 0");
+        }
+        assert_eq!(b[4 * table], 0, "quickslots: not sent");
+        assert_eq!(b.len(), 4 * table + 1);
+        // Presets 1 and 2 and the controller are the image's, byte for byte.
+        let shipped = [&CLIENT_PRESETS_1_AND_2[0], &CLIENT_PRESETS_1_AND_2[1], &CLIENT_CONTROLLER_LAYOUT];
+        for (n, preset) in shipped.iter().enumerate() {
             let at = (n + 1) * table + 1;
             for (i, slot) in preset.iter().enumerate() {
                 assert_eq!(b[at + i * 5], slot.kind);
@@ -645,11 +830,71 @@ mod tests {
         }
     }
 
+    /// The two captures from the Controller tab, 2026-09-14 (`world-ch0.log` 00:56:30 and
+    /// 00:58:49): the byte after the subtype is 3, and the 53-entry one opens with the
+    /// controller factory table's own first twelve buttons - the client reporting how far
+    /// its controller table had been pushed from a shadow that our keep gate had made a
+    /// keyboard.
+    #[test]
+    fn a_controller_delta_names_table_3_and_the_factory_matches_the_capture() {
+        let one = [0x00u8, 0x03, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01, 0x08, 0x01, 0xe8, 0x03, 0x00, 0x00];
+        let Some(Change::Bindings { table, bindings }) = parse_change(&one) else { panic!("did not decode") };
+        assert_eq!(table, CONTROLLER_TABLE);
+        assert_eq!(bindings, vec![Binding { key: 8, slot: Slot { kind: 1, action: 1000 } }], "button 8 -> skill 1000");
+
+        // The first 192 hex characters the log kept of the 329-byte body.
+        let head = "0003ffffffffffffffff350005350000000104910100000204900100000305340000000405330000000505320000000604000000000704030000000804020000000904010000000a042e0000000b040e00000010000000000011000000000012";
+        let bytes: Vec<u8> = (0..head.len() / 2).map(|i| u8::from_str_radix(&head[2 * i..2 * i + 2], 16).unwrap()).collect();
+        assert_eq!(bytes[1], CONTROLLER_TABLE);
+        assert_eq!(bytes[10], 53, "53 entries: the controller default XOR keyboard preset 0");
+        for i in 0..12 {
+            let at = 11 + i * 6;
+            let (key, kind) = (bytes[at] as usize, bytes[at + 1]);
+            let action = u32::from_le_bytes(bytes[at + 2..at + 6].try_into().unwrap());
+            assert_eq!(key, i);
+            assert_eq!(CLIENT_CONTROLLER_LAYOUT[key], Slot { kind, action }, "button {key:#x} is the controller factory's");
+        }
+        // ...and then it unbinds Q, W and E - scan codes, on a controller - because the
+        // shadow it was diffed against was keyboard preset 0, where those are menus.
+        for (i, code) in [0x10usize, 0x11].iter().enumerate() {
+            let at = 11 + (12 + i) * 6;
+            assert_eq!(bytes[at] as usize, *code);
+            assert_eq!(&bytes[at + 1..at + 6], &[0, 0, 0, 0, 0]);
+            assert_ne!(CLIENT_DEFAULT_LAYOUT.unwrap()[*code], Slot::EMPTY);
+        }
+        assert_eq!(bytes[95], 0x12, "E is next; the log's 96-byte cap ends on its key byte");
+        assert_eq!(CLIENT_CONTROLLER_LAYOUT.iter().filter(|s| **s != Slot::EMPTY).count(), 22);
+        assert!(CLIENT_CONTROLLER_LAYOUT[0x28..].iter().all(|s| *s == Slot::EMPTY), "buttons stop at 0x27");
+        assert_eq!(parse_change(&[0, 4, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0]), None, "table 4 does not exist");
+    }
+
+    /// A controller delta restores onto the CONTROLLER factory, in the fourth table, and
+    /// leaves the keyboard's three exactly as the image ships them.
+    #[test]
+    fn a_controller_binding_restores_into_table_3_over_the_controller_factory() {
+        let stored = [(CONTROLLER_TABLE, Binding { key: 8, slot: Slot { kind: 1, action: 1000 } })];
+        let body = restore(Some(&stored)).expect("something is stored");
+        let table = 1 + SLOT_COUNT * 5;
+        let slot = |t: usize, code: usize| {
+            let at = t * table + 1 + code * 5;
+            (body[at], u32::from_le_bytes(body[at + 1..at + 5].try_into().unwrap()))
+        };
+        assert_eq!(slot(3, 8), (1, 1000), "button 8 carries the skill");
+        assert_eq!(slot(3, 0), (5, 53), "button 0 keeps its controller default");
+        assert_eq!(slot(3, 0x10), (0, 0), "no Q on a controller");
+        assert_eq!(slot(0, 8), (0, 0), "and the keyboard's scan code 8 is untouched");
+        assert_eq!(slot(0, 0x10), (4, 8), "Q is still the keyboard's menu");
+        assert_eq!(slot(0, 0x1D), (5, 52));
+        // A row for a table the client does not have is skipped, not fatal.
+        let junk = [(9u8, Binding { key: 1, slot: Slot { kind: 1, action: 1 } })];
+        assert_eq!(restore(Some(&junk)).unwrap(), keymap_init(&factories()));
+    }
+
     /// The gate is inverted and this is the test that says so out loud. If someone ever
     /// "fixes" it to the natural reading, this fails rather than a player's keyboard blanking.
     #[test]
     fn zero_means_read_and_nonzero_means_keep() {
-        assert_eq!(keymap_init(&[Slot::EMPTY; SLOT_COUNT])[0], 0);
+        assert_eq!(keymap_init(&factories())[0], 0);
         let keep = keymap_init_keep();
         assert_eq!(keep.len(), PRESET_COUNT + 1, "four keep gates and the quickslot gate");
         assert!(keep[..PRESET_COUNT].iter().all(|&g| g != 0));
@@ -660,7 +905,7 @@ mod tests {
     fn a_delta_merges_onto_the_layout_and_leaves_the_rest_alone() {
         let mut layout = [Slot::EMPTY; SLOT_COUNT];
         layout[0x10] = Slot { kind: 5, action: 42 };
-        let Some(Change::Bindings(b)) = parse_change(WISP_CONFIRM) else { unreachable!() };
+        let Some(Change::Bindings { bindings: b, .. }) = parse_change(WISP_CONFIRM) else { unreachable!() };
         apply(&mut layout, &b);
         assert_eq!(layout[0x1D], Slot { kind: 1, action: 1_001_002 });
         assert_eq!(layout[0x10], Slot { kind: 5, action: 42 }, "an untouched key survives");
@@ -671,7 +916,8 @@ mod tests {
     /// the difference between doing nothing and unbinding every key a player has.
     #[test]
     fn restore_refuses_to_send_a_table_it_cannot_build() {
-        let Some(Change::Bindings(b)) = parse_change(WISP_CONFIRM) else { unreachable!() };
+        let Some(Change::Bindings { bindings: b, .. }) = parse_change(WISP_CONFIRM) else { unreachable!() };
+        let b: Vec<(u8, Binding)> = b.into_iter().map(|b| (0, b)).collect();
         if CLIENT_DEFAULT_LAYOUT.is_none() {
             assert_eq!(restore(Some(&b)), None, "no factory table means send NOTHING");
         }
@@ -692,7 +938,8 @@ mod tests {
         assert_eq!(factory[0x39], Slot { kind: 5, action: 54 }, "Space is the jump");
         assert!(factory.iter().all(|s| matches!(s.kind, 0 | 4 | 5 | 6)), "no skill or item is factory-bound");
 
-        let Some(Change::Bindings(b)) = parse_change(WISP_CONFIRM) else { unreachable!() };
+        let Some(Change::Bindings { bindings: b, .. }) = parse_change(WISP_CONFIRM) else { unreachable!() };
+        let b: Vec<(u8, Binding)> = b.into_iter().map(|b| (0, b)).collect();
         let body = restore(Some(&b)).expect("a saved layout now goes out");
         assert_eq!(body[0], 0, "the READ gate");
         assert_eq!(body.len(), KEYMAP_INIT_LEN);
@@ -712,11 +959,11 @@ mod tests {
     #[test]
     fn restore_sends_the_merged_table_once_the_defaults_exist() {
         // Stands in for CLIENT_DEFAULT_LAYOUT until keymapdump.py fills it in.
-        let mut factory = [Slot::EMPTY; SLOT_COUNT];
-        factory[0x10] = Slot { kind: 4, action: 99 };
-        let Some(Change::Bindings(b)) = parse_change(WISP_CONFIRM) else { unreachable!() };
-        apply(&mut factory, &b);
-        let body = keymap_init(&factory);
+        let mut tables = factories();
+        tables[0][0x10] = Slot { kind: 4, action: 99 };
+        let Some(Change::Bindings { bindings: b, .. }) = parse_change(WISP_CONFIRM) else { unreachable!() };
+        apply(&mut tables[0], &b);
+        let body = keymap_init(&tables);
         assert_eq!(body[0], 0, "the read gate");
         assert_eq!(body.len(), KEYMAP_INIT_LEN);
         // Q keeps its factory binding; LCtrl carries Slash Blast.

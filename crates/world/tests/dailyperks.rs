@@ -370,7 +370,7 @@ fn the_menu_marks_what_has_been_used_without_moving_anything() {
         net::script::npc_menu(ADMIN_TEMPLATE, &world::dailyperks::menu_text([false, true, false, false])),
         "line 1 is marked used and lines 0 and 2 are not"
     );
-    assert!(out[0].what.contains("1 of 3 favours already used"), "{}", out[0].what);
+    assert!(out[0].what.contains("1 of 4 favours already used"), "{}", out[0].what);
 }
 
 // ---------------------------------------------------------------------------------------

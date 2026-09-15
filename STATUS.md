@@ -192,6 +192,28 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-14: the CONTROLLER tab - the fourth table, and a keep gate that was never "leave it
+alone".** The owner: *"Whenever there are customization to keybindings in the controller settings, it is
+not getting saved properly, and when clients switch maps, their controller settings are completely
+screwed up."* The byte after the subtype in a `0x0199` CONFIRM is the **table** - `movzx edx, bl`
+for keyboard preset rbx at `0x141a00849`, `mov dl, 3` with the controller static `0x143ad1070` at
+`0x141a008ef` [L] - and `parse_change` dropped it as "a flag, always 0". It was 0 in twenty captures
+because all twenty were the keyboard tab; both captures from the controller run carry 3. So every
+controller button was stored as a keyboard scan code (Wisp#215's rows were exactly the 22 bound
+slots of the controller factory), and the `0x05F1` at each SetField sent table 3 as keep - which
+keeps the handler's **reset to keyboard preset 0** (`0x1419ffc73`, `mov rdx, r12` for all four
+indexes), not the table the client had. The 53-entry CONFIRM that followed is the controller
+default XOR keyboard preset 0, "unbind Q/W/E" included. The controller's own const is
+`0x143274b20` (`FUN_1401de8d0`, 22 buttons, none past 0x27; `tools/keymapdump.py --exe` reads and
+controls it, `CLIENT_CONTROLLER_LAYOUT`). Now `Change::Bindings { table, .. }`, `character_keymap`
+keyed by `(character_id, preset, key)` with the deployed shape rebuilt in place and the stray rows
+scrubbed (22 from #215, 0 from #213, verified on a copy of the live file), and `keymap_init` sends
+**all four tables READ, 1785 bytes**. Unmeasured: the 1785-byte packet on a screen - the 1340-byte
+one was taken twice today and this is the same shape with a READ table where the keep was. Lost:
+the keyboard rows the controller delta overwrote (LCtrl, A) are factory again - a re-bind. Fixture
+`research/fixtures/keymap-controller-table-3-delta-and-53-entry-xor-world-ch0.log`;
+`research/keyboard-layout-2026-09-08.md` §9. Plan step 6 re-cut.
+
 **2026-09-12, later: the first key-layout restore KILLED THE CLIENT, and the packet is four
 tables, not one.** The owner: *"Client exited immediately upon logging into the game world."* The client
 named the packet: `0x009E CLIENT_PACKET_REJECTED` reason `0x26`, position `0x1c4`, then our `0x05F1`
