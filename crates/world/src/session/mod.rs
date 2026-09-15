@@ -324,6 +324,8 @@ pub struct Session {
     /// A drop with no position at all is refused rather than guessed, because a guessed one
     /// loses the item to a spot the player cannot reach.
     last_position: Option<(i16, i16)>,
+    /// The claimed character's name, read once at claim time for [`Session::log_tag`].
+    log_name: Option<String>,
     /// The stance and facing this character last reported, `(action << 1) | facing`.
     ///
     /// `None` until a move arrives. **Not defaulted to `0`**: that is action 0 facing right,
@@ -580,6 +582,7 @@ impl Session {
             mp_eater_ready_ms: 0,
             skill_ready_ms: std::collections::HashMap::new(),
             last_position: None,
+            log_name: None,
             last_move_action: None,
             active_pet: None,
             banner_shown: None,
@@ -1283,6 +1286,7 @@ impl Session {
                     self.config.world_id, self.config.channel_id
                 ));
             }
+            self.log_name = self.store.character_brief(claimed.character_id).ok().flatten().map(|c| c.name);
             self.claimed = Some(claimed);
             note
         };
@@ -1341,6 +1345,19 @@ impl Session {
     /// The migration this connection claimed, if any.
     pub fn claimed(&self) -> Option<&ClaimedMigration> {
         self.claimed.as_ref()
+    }
+
+    /// **Who this connection is, for the log** - `Wisp#215`, or `nobody` before the migration
+    /// hello has claimed anyone. The owner, 2026-09-14: *"Channel logs need to log the character
+    /// who is sending those opcodes, the server reply opcodes also need to log which character
+    /// this opcode is destined for."* Cached name, one store read per claim, so a packet line
+    /// costs no query.
+    pub fn log_tag(&self) -> String {
+        match (&self.claimed, &self.log_name) {
+            (Some(c), Some(name)) => format!("{name}#{}", c.character_id),
+            (Some(c), None) => format!("#{}", c.character_id),
+            _ => "nobody".to_string(),
+        }
     }
 }
 

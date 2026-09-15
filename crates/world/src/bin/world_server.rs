@@ -11,6 +11,15 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+// Every `println!` in this file is a startup banner line, and once `--log-file` is installed
+// those belong in the same file as everything after them - `world::server::say` writes
+// there, or to stdout when no file is installed. Shadowing the macro is one line; routing
+// fifty-six call sites by hand is fifty-six chances to miss one. `eprintln!` is untouched:
+// an error still goes to stderr, which the launch scripts keep as `<log>.err`.
+macro_rules! println {
+    ($($t:tt)*) => { world::server::say(&format!($($t)*)) };
+}
+
 use world::Config;
 
 const USAGE: &str = "\
@@ -46,6 +55,15 @@ maplecw-world - one channel of the MapleCW game world
                       default now. It is left in the parser because the flag is
                       typed into STATUS.md, the fixture notes and the launch lines,
                       and an unknown argument fails the whole paste.
+  --log-file PATH   write the log to PATH instead of stdout, and ROLL it at 50 MB:
+                   PATH.1 is the newest roll, PATH.5 the oldest, the sixth is
+                   deleted. The launch scripts pass world-chN.log here. Without
+                   it the log is stdout, as before, and nothing can roll it -
+                   whoever redirected stdout owns that file
+  --log-chatter    log every 0x02FF mob move, 0x03E4 ack and inbound 0x0070
+                   report as its own line. Measured 2026-09-14: that is 97% of a
+                   busy channel log. Off, they are COUNTED and the counts printed
+                   once a minute; on, they are logged as every run before did
   --silent-channel  answer NOTHING: Session::handle and Session::tick return empty
                       for every packet, the migration hello included, so a client
                       sits on Connecting... forever. This was the DEFAULT until
@@ -115,6 +133,25 @@ fn main() -> ExitCode {
     let mut reactor_drops_path = PathBuf::from("data/reactor-drops.txt");
     let mut exp_curve_path = PathBuf::from("data/exp-curve.txt");
     let mut quest_reqs_path = PathBuf::from("gm-handbook/questreq.txt");
+    // `--log-file` is honoured before anything else is parsed or printed, so the very first
+    // banner line lands in the file. Everything else keeps its order.
+    {
+        let raw: Vec<String> = std::env::args().skip(1).collect();
+        if let Some(i) = raw.iter().position(|a| a == "--log-file") {
+            match raw.get(i + 1) {
+                Some(path) => {
+                    if let Err(e) = world::server::install_log_file(std::path::Path::new(path)) {
+                        eprintln!("maplecw-world: cannot open --log-file {path}: {e}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+                None => {
+                    eprintln!("--log-file needs a path\n\n{USAGE}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+    }
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -167,6 +204,12 @@ fn main() -> ExitCode {
             // The owner's launch lines - so it keeps working rather than failing an elevated
             // paste with "unknown argument".
             "--set-field-probe" => Ok(()),
+            // Consumed above, before the loop; accepted here so it is not "unknown".
+            "--log-file" => value().map(|_| ()),
+            "--log-chatter" => {
+                world::server::LOG_CHATTER.store(true, std::sync::atomic::Ordering::Relaxed);
+                Ok(())
+            }
             "--silent-channel" => {
                 config.answer_packets = false;
                 Ok(())

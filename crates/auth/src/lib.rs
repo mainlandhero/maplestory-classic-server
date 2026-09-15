@@ -136,6 +136,18 @@ pub struct AuthService {
     client: Option<Arc<crate::clientpatch::ClientPatchSource>>,
 }
 
+/// One timestamped line on stdout - `HH:MM:SS.mmm [peer] what` by convention - which the
+/// launch scripts redirect to `auth.log`. The same shape the login and channel servers use,
+/// so the three logs read alike.
+pub fn log(msg: &str) {
+    use std::io::Write;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let secs = now.as_secs();
+    let (h, m, s) = ((secs / 3600) % 24, (secs / 60) % 60, secs % 60);
+    println!("{h:02}:{m:02}:{s:02}.{:03} {msg}", now.subsec_millis());
+    let _ = std::io::stdout().flush();
+}
+
 impl AuthService {
     pub fn new(store: Arc<Store>) -> Self {
         Self::with_limiter(store, ratelimit::Limiter::default())
@@ -198,8 +210,10 @@ impl AuthService {
     /// tie-breaker for two *machines*; it is never the discriminator, because two clients on
     /// one machine share it.
     pub fn login(&self, req: &LoginRequest, peer: Option<&str>) -> LoginResponse {
+        let from = peer.unwrap_or("?");
         match self.store.authenticate_identity(&req.username, &req.password) {
             Ok(AuthOutcome::Ok { account_id, token }) => {
+                log(&format!("[{from}] sign-in OK: {:?} is account {account_id}", req.username));
                 let (launch_id, client_token) = match self.store.stake_login_claim_with(
                     account_id,
                     &token,
@@ -240,11 +254,19 @@ impl AuthService {
                     client_token,
                 }
             }
-            Ok(AuthOutcome::Disabled) => LoginResponse::Disabled,
-            Ok(AuthOutcome::InvalidCredentials) => LoginResponse::InvalidCredentials,
+            Ok(AuthOutcome::Disabled) => {
+                log(&format!("[{from}] sign-in REFUSED: {:?} is disabled", req.username));
+                LoginResponse::Disabled
+            }
+            Ok(AuthOutcome::InvalidCredentials) => {
+                // The name is logged, the password is not - and the line is the same for an
+                // unknown name and a wrong password, so the log does not enumerate accounts.
+                log(&format!("[{from}] sign-in REFUSED: bad credentials for {:?}", req.username));
+                LoginResponse::InvalidCredentials
+            }
             Err(e) => {
                 // Log the cause for us; tell the caller nothing beyond "no".
-                eprintln!("auth: login error for {:?}: {e}", req.username);
+                eprintln!("auth: login error for {:?} from {from}: {e}", req.username);
                 LoginResponse::InvalidCredentials
             }
         }

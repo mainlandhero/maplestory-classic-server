@@ -283,11 +283,15 @@ for ($ch = 0; $ch -lt $Channels; $ch++) {
         '--channel', "$ch",
         '--channels', "$channelList",
         '--advertise', "$Advertise",
-        '--set-field-probe'
+        '--set-field-probe',
+        # The channel writes and rolls its own log: 50 MB, then world-chN.log.1 .. .5, the
+        # sixth deleted - 300 MB per channel at most, however long it runs. Mob moves and
+        # acks are counted once a minute rather than logged per packet (97% of the old file).
+        '--log-file', "`"$(Join-Path $root $chLog)`""
     )
     $w = Start-Process -FilePath (Join-Path $bin 'maplecw-world.exe') -WorkingDirectory $root `
         -ArgumentList $worldArgs -PassThru -NoNewWindow `
-        -RedirectStandardOutput (Join-Path $root $chLog) `
+        -RedirectStandardOutput (Join-Path $root "$chLog.out") `
         -RedirectStandardError  (Join-Path $root "$chLog.err")
     Write-Host "channel $ch      pid $($w.Id)  $($Bind):$($ChannelPort + $ch)  -> $chLog"
     Add-Watched "channel $ch" $w $chLog

@@ -324,8 +324,16 @@ fn connection(
     };
 
     let response = handle(service, &request);
-    // Log method, path and status only. Bodies carry passwords and tokens.
-    println!("{} {} -> {}", request.method, request.path, response.status);
+    // Log method, path, status and WHO ASKED - the address, never the body: bodies carry
+    // passwords and tokens. The owner, 2026-09-14: *"auth and login logs need IP address logged
+    // next to those actions."*
+    crate::log(&format!(
+        "[{}] {} {} -> {}",
+        request.peer.as_deref().unwrap_or("?"),
+        request.method,
+        request.path,
+        response.status
+    ));
     write_response(&mut stream, &response)
 }
 

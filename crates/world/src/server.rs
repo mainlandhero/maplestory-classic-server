@@ -25,8 +25,165 @@ pub fn log(msg: &str) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
     let secs = now.as_secs();
     let (h, m, s) = ((secs / 3600) % 24, (secs / 60) % 60, secs % 60);
-    println!("{h:02}:{m:02}:{s:02}.{:03} {msg}", now.subsec_millis());
-    let _ = std::io::stdout().flush();
+    say(&format!("{h:02}:{m:02}:{s:02}.{:03} {msg}", now.subsec_millis()));
+}
+
+// ---------------------------------------------------------------------------------------
+// Where the log goes, and how big it may get
+// ---------------------------------------------------------------------------------------
+
+/// A log file is rolled once it passes this. The owner, 2026-09-14: *"introduce automatic log
+/// rotate at 50mb so logs do not go out of control."*
+pub const LOG_ROTATE_BYTES: u64 = 50 * 1024 * 1024;
+
+/// How many rolled files are kept beside the live one: `world-ch0.log.1` is the newest,
+/// `.5` the oldest, and the sixth is deleted. Five rolls at 50 MB is 300 MB of channel log
+/// at most, per channel - a bounded quantity, which is the point.
+pub const LOG_KEEP: usize = 5;
+
+/// The file every line goes to once [`install_log_file`] has run. Until then, and in every
+/// test, lines go to stdout as they always did.
+static LOG_SINK: OnceLock<std::sync::Mutex<LogSink>> = OnceLock::new();
+
+struct LogSink {
+    path: std::path::PathBuf,
+    file: std::fs::File,
+    written: u64,
+}
+
+impl LogSink {
+    fn open(path: &std::path::Path) -> std::io::Result<Self> {
+        let file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+        let written = file.metadata().map(|m| m.len()).unwrap_or(0);
+        Ok(Self { path: path.to_path_buf(), file, written })
+    }
+
+    /// `path.4` -> `path.5`, ..., `path` -> `path.1`, then a fresh `path`. A rename that
+    /// fails is skipped rather than fatal: the worst case is one roll's worth of overwrite,
+    /// and a logger must never take the server down.
+    fn rotate(&mut self) {
+        let _ = self.file.flush();
+        let name = |n: usize| {
+            let mut p = self.path.clone().into_os_string();
+            p.push(format!(".{n}"));
+            std::path::PathBuf::from(p)
+        };
+        let _ = std::fs::remove_file(name(LOG_KEEP));
+        for n in (1..LOG_KEEP).rev() {
+            let _ = std::fs::rename(name(n), name(n + 1));
+        }
+        let _ = std::fs::rename(&self.path, name(1));
+        if let Ok(fresh) = Self::open(&self.path) {
+            *self = fresh;
+        }
+    }
+
+    fn write_line(&mut self, line: &str) {
+        let bytes = line.len() as u64 + 1;
+        if self.written + bytes > LOG_ROTATE_BYTES {
+            self.rotate();
+            let _ = writeln!(self.file, "(rolled at {} bytes - the previous {} are beside this file as .1 .. .{})", LOG_ROTATE_BYTES, LOG_KEEP, LOG_KEEP);
+        }
+        if writeln!(self.file, "{line}").is_ok() {
+            self.written += bytes;
+        }
+        let _ = self.file.flush();
+    }
+}
+
+/// **Send every line from here on to `path`, rolling it at [`LOG_ROTATE_BYTES`].**
+///
+/// `--log-file`. Until this was added the channel wrote to stdout and the launch script
+/// redirected that to `world-chN.log`, which meant nothing in the process could roll the
+/// file - the handle belongs to whoever opened it. Owning the file is what makes a size
+/// limit possible at all. Stdout stays for whatever the process prints before this runs,
+/// and for a run that never passes the flag, which is every test.
+pub fn install_log_file(path: &std::path::Path) -> std::io::Result<()> {
+    let sink = LogSink::open(path)?;
+    let _ = LOG_SINK.set(std::sync::Mutex::new(sink));
+    Ok(())
+}
+
+/// One raw line, untimestamped, to the log file if one is installed and to stdout if not.
+/// The startup banner uses this so it lands in the same file as everything after it.
+pub fn say(line: &str) {
+    if let Some(sink) = LOG_SINK.get() {
+        sink.lock().unwrap_or_else(|e| e.into_inner()).write_line(line);
+    } else {
+        println!("{line}");
+        let _ = std::io::stdout().flush();
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Chatter: the packets that are 97% of a busy log and never decisive on their own
+// ---------------------------------------------------------------------------------------
+
+/// **Log every mob move and every ack as its own line**, the way every run before 2026-09-14
+/// did. Off by default; `--log-chatter` / `-LogChatter` turns it on for a run where the mob
+/// paths ARE the subject.
+///
+/// The owner, 2026-09-14, looking at a 184 MB channel log: *"Can we analyze the junk and stop
+/// logging those junk and focus on the important things?"* Measured on that file
+/// (`Crash Investigation/previous-runs/world-20260912-220618.log`, 818 113 lines): `<- 0x02FF`
+/// was 56.0% of the bytes, `-> 0x03E4` 29.8%, and their `body` lines 11.1% - **97% in one
+/// conversation**, 261 682 mob moves in one session. The client's periodic `<- 0x0070` was the
+/// next 1.7%. Everything anyone has ever read a decision off - user moves, drops, attacks,
+/// SetField, the pet - was the remaining 1.3%.
+///
+/// Those lines have also been evidence: the mob-move lag, the drop site, the pet's foothold
+/// all came out of `0x02FF` bodies. So they are not deleted, they are **counted**, and the
+/// count is printed once a minute per opcode and direction. A run that needs the bodies asks
+/// for them; `research/fixtures/` keeps the ones that already settled something.
+pub static LOG_CHATTER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The routine, high-volume packets that are summarised instead of logged line by line.
+/// **Direction matters**: outbound `0x0070` is an InventoryOperation and is always logged;
+/// only the client's own inbound `0x0070` environment report is chatter.
+pub fn is_chatter(inbound: bool, opcode: u16) -> bool {
+    if inbound {
+        matches!(opcode, net::mobmove::MOB_MOVE_REQUEST | 0x0070)
+    } else {
+        matches!(opcode, net::mobmove::MOB_CTRL_ACK)
+    }
+}
+
+/// How often the chatter counts are printed.
+const CHATTER_SUMMARY_SECS: u64 = 60;
+
+static CHATTER: OnceLock<std::sync::Mutex<Chatter>> = OnceLock::new();
+
+#[derive(Default)]
+struct Chatter {
+    counts: std::collections::BTreeMap<(bool, u16), u64>,
+    since: Option<Instant>,
+}
+
+/// Count one chatter packet, and print the summary when a minute has passed. Returns
+/// `true` when the caller should NOT log the packet itself.
+fn count_chatter(inbound: bool, opcode: u16) -> bool {
+    if LOG_CHATTER.load(std::sync::atomic::Ordering::Relaxed) || !is_chatter(inbound, opcode) {
+        return false;
+    }
+    let chatter = CHATTER.get_or_init(|| std::sync::Mutex::new(Chatter::default()));
+    let mut c = chatter.lock().unwrap_or_else(|e| e.into_inner());
+    *c.counts.entry((inbound, opcode)).or_insert(0) += 1;
+    let since = *c.since.get_or_insert_with(Instant::now);
+    if since.elapsed().as_secs() >= CHATTER_SUMMARY_SECS {
+        let parts: Vec<String> = c
+            .counts
+            .iter()
+            .map(|((inb, op), n)| format!("{} {} x{n}", if *inb { "<-" } else { "->" }, label(*op)))
+            .collect();
+        c.counts.clear();
+        c.since = Some(Instant::now());
+        drop(c);
+        log(&format!(
+            "chatter, last {CHATTER_SUMMARY_SECS} s (counted, not logged - pass --log-chatter for the lines): {}",
+            parts.join(", ")
+        ));
+    }
+    true
 }
 
 /// How often a quiet connection wakes up to let the session send something.
@@ -93,13 +250,19 @@ enum Close {
 fn send(
     stream: &mut TcpStream,
     tx: &mut Framer<ByteShiftCipher>,
+    to: &str,
     opcode: u16,
     packet: &[u8],
     what: &str,
 ) -> std::io::Result<()> {
     let framed = tx.frame(packet);
     stream.write_all(&framed)?;
-    log(&format!("-> {} {what}", label(opcode)));
+    if count_chatter(false, opcode) {
+        return Ok(());
+    }
+    // `to` is who this connection is serving - `Wisp#215` - so a reply line says whose
+    // screen it lands on without the reader having to find the hello above it.
+    log(&format!("-> [{to}] {} {what}", label(opcode)));
     log(&format!("   body {}", body_hex(opcode, &packet[2.min(packet.len())..])));
     Ok(())
 }
@@ -180,7 +343,7 @@ fn connection(
         session = session.with_local_addr(local);
     }
     for reply in session.on_connect() {
-        send(&mut stream, &mut tx, reply.opcode, &reply.packet(), &reply.what)?;
+        send(&mut stream, &mut tx, &session.log_tag(), reply.opcode, &reply.packet(), &reply.what)?;
     }
 
     // A read timeout, and this file used to say a channel needed none. It does now: NPC idle
@@ -333,7 +496,7 @@ fn connection(
                     }
                 }
                 for reply in session.tick(now_ms) {
-                    send(&mut stream, &mut tx, reply.opcode, &reply.packet(), &reply.what)?;
+                    send(&mut stream, &mut tx, &session.log_tag(), reply.opcode, &reply.packet(), &reply.what)?;
                 }
                 continue;
             }
@@ -351,12 +514,15 @@ fn connection(
                 .map(|b| u16::from_le_bytes([b[0], b[1]]))
                 .unwrap_or(0xFFFF);
             let payload = body.get(2..).unwrap_or(&[]);
-            log(&format!(
-                "<- {}, {} byte body {}",
-                label(opcode),
-                payload.len(),
-                body_hex(opcode, payload)
-            ));
+            if !count_chatter(true, opcode) {
+                log(&format!(
+                    "<- [{}] {}, {} byte body {}",
+                    session.log_tag(),
+                    label(opcode),
+                    payload.len(),
+                    body_hex(opcode, payload)
+                ));
+            }
 
             if opcode == CLIENT_MIGRATION_HELLO {
                 describe_hello(&mut session, payload);
@@ -454,7 +620,7 @@ fn connection(
                 }
             }
             for reply in replies {
-                send(&mut stream, &mut tx, reply.opcode, &reply.packet(), &reply.what)?;
+                send(&mut stream, &mut tx, &session.log_tag(), reply.opcode, &reply.packet(), &reply.what)?;
             }
         }
     }
@@ -620,5 +786,53 @@ mod tests {
         let a = process_origin().elapsed().as_millis();
         std::thread::sleep(std::time::Duration::from_millis(5));
         assert!(process_origin().elapsed().as_millis() >= a);
+    }
+
+    /// **The log rolls at the limit and keeps five.** The sink is driven directly with its
+    /// byte count set just under the line, because writing 50 MB in a unit test is not a
+    /// test of anything. Six rolls: `.1` is the newest, `.5` the oldest, the sixth is gone.
+    #[test]
+    fn the_log_file_rolls_at_the_limit_and_keeps_five() {
+        let dir = std::env::temp_dir().join(format!("maplecw-logroll-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("world-ch0.log");
+        let mut sink = LogSink::open(&path).unwrap();
+        sink.write_line("first line, before any roll");
+        for n in 1..=6 {
+            sink.written = LOG_ROTATE_BYTES - 1;
+            sink.write_line(&format!("line that forces roll {n}"));
+        }
+        let live = std::fs::read_to_string(&path).unwrap();
+        assert!(live.contains("rolled at"), "the fresh file says it was rolled: {live}");
+        assert!(live.contains("forces roll 6"), "the line that forced the roll goes in the NEW file");
+        for n in 1..=LOG_KEEP {
+            assert!(path.with_extension(format!("log.{n}")).exists(), "roll .{n} kept");
+        }
+        assert!(!path.with_extension(format!("log.{}", LOG_KEEP + 1)).exists(), "the sixth is deleted");
+        // Six rolls, five kept: the file that held the very first line was rolled first and
+        // is the one that fell off the end. `.5`, the oldest survivor, holds roll 1.
+        let oldest = std::fs::read_to_string(path.with_extension(format!("log.{LOG_KEEP}"))).unwrap();
+        assert!(oldest.contains("forces roll 1"), "{oldest}");
+        let newest = std::fs::read_to_string(path.with_extension("log.1")).unwrap();
+        assert!(newest.contains("forces roll 5"), "{newest}");
+        let everything: String = (1..=LOG_KEEP)
+            .map(|n| std::fs::read_to_string(path.with_extension(format!("log.{n}"))).unwrap())
+            .chain(std::iter::once(live))
+            .collect();
+        assert!(!everything.contains("first line, before any roll"), "the sixth-oldest is gone");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The chatter set is exactly the three, and direction matters: an OUTBOUND 0x0070 is an
+    /// InventoryOperation and must never be summarised away.
+    #[test]
+    fn chatter_is_three_packets_and_outbound_0x0070_is_not_one_of_them() {
+        assert!(is_chatter(true, net::mobmove::MOB_MOVE_REQUEST));
+        assert!(is_chatter(true, 0x0070));
+        assert!(is_chatter(false, net::mobmove::MOB_CTRL_ACK));
+        assert!(!is_chatter(false, 0x0070), "the inventory operation");
+        assert!(!is_chatter(true, net::usermove::CLIENT_USER_MOVE), "user moves have been evidence too often");
+        assert!(!is_chatter(false, net::opcode::SET_FIELD));
     }
 }
