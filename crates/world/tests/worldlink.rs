@@ -62,20 +62,26 @@ fn a_party_created_through_the_hub_is_answered_from_the_echo_and_the_hub_knows_i
     }
     assert!(link.hosts(id), "field entry announced the character to the hub");
 
-    // Create: nothing comes back synchronously - the request went to the hub.
+    // Create: the request goes to the hub, and the CREATED reply comes back from the echo,
+    // never from a local `apply`. **Timing is not asserted here.** `Session::handle` drains
+    // `collect_party_outcomes` at its own tail, and this hub is a loopback socket in the same
+    // process, so the echo can round-trip and be collected inside the very `handle` call that
+    // sent the request - or a tick or two later, if the scheduler runs the other way. Both are
+    // correct; asserting the reply is *absent* from `now` was testing the scheduler, not the
+    // code, and failed about two runs in three. What actually distinguishes the hub path from
+    // a local one is proven below and is deterministic: a request applied locally would never
+    // reach the hub, so the late channel's snapshot carrying this party is the real invariant.
     let mut body = net::party::CLIENT_PARTY_REQUEST.to_le_bytes().to_vec();
     body.extend_from_slice(&hex(CREATE_HEX));
     let now = s.handle(&body);
-    assert!(
-        now.iter().all(|r| r.opcode != net::party::PARTY_RESULT),
-        "with the hub up, the answer waits for the echo: {:?}",
-        now.iter().map(|r| &r.what).collect::<Vec<_>>()
-    );
 
-    // The echo arrives on the link thread, is applied to the replica, and the actor's next
-    // tick turns it into the client's 0x0E.
-    let mut created = None;
+    // The echo becomes the client's `0x00A5`, whether it was ready inside `handle` above or
+    // arrives on the link thread over the next few ticks.
+    let mut created = now.into_iter().find(|r| r.opcode == net::party::PARTY_RESULT);
     for i in 0..100 {
+        if created.is_some() {
+            break;
+        }
         let out = s.tick(1_000 + i * 10);
         if let Some(r) = out.into_iter().find(|r| r.opcode == net::party::PARTY_RESULT) {
             created = Some(r);

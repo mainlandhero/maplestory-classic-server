@@ -1112,6 +1112,13 @@ impl Session {
         // SetField is building. session/keymap.rs.
         let mut out = vec![Reply { opcode: net::opcode::SET_FIELD, body, what }];
         out.extend(self.keymap_replies());
+        // The skill-point pools, after the SetField for the same reason as the keymap: the
+        // record's stat block carries an empty SP table, so the login field's skill window
+        // would read 0 in every pool. This is the login-time SetField; `go_to_map` does the
+        // same on a portal walk and a channel change. session/skills.rs.
+        if let Some(chr) = self.claimed_character() {
+            out.extend(self.skill_point_reply(&chr));
+        }
         out
     }
 

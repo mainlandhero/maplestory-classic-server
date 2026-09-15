@@ -10647,6 +10647,64 @@ fn a_controller_binding_is_stored_under_table_3_and_restored_there_after_a_map_c
     assert_eq!(slot(0, 0x10), (4, 8), "Q is still the keyboard's menu");
 }
 
+/// **A job-advanced character's skill points survive a SetField.** seedling, 2026-09-14:
+/// job-advanced to Bowman (300) at level 12, received the 7 SP in the advancement `0x007C`,
+/// then walked through a portal and they were gone. The stat block in every record carries an
+/// EMPTY SP table (`character_stat_block` pushes one zero byte on the extended branch), so the
+/// new field read every pool as 0; nothing re-sent the real balance. Now a SetField is
+/// followed by the pool packet, exactly as it follows a skill-up.
+#[test]
+fn a_job_advanced_characters_skill_points_are_resent_after_a_setfield() {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let base = net::opcode::Character { name: "purr".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &base).unwrap();
+    // purr's shape: first job, over the level-10 minimum, nothing spent.
+    made.job = 300;
+    made.level = 12;
+    store.save_character_progress(&made).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let mut s = Session::new(store.clone(), Arc::new(Config::default()));
+    s.claim_for_character(made.id);
+
+    let mut chr = s.claimed_character().expect("claimed");
+    let out = s.go_to_map(&mut chr, 40, 0, "a portal walk".to_string());
+    let sf = out.iter().position(|r| r.opcode == net::opcode::SET_FIELD).expect("a SetField");
+    let sp = out
+        .iter()
+        .position(|r| r.opcode == net::stats::STAT_CHANGED && r.what.contains("skill points now"))
+        .expect("the SP pool packet must ride after the SetField");
+    assert!(sp > sf, "the pool packet comes AFTER the SetField that blanked it");
+    let owed = crate::skillpoints::entitlement(crate::skillpoints::Tier::First, 12);
+    assert_eq!(owed, 7, "level 12 first job is owed 7 - seedling's number");
+    assert!(out[sp].what.contains(&format!("tier 1 = {owed}")), "{}", out[sp].what);
+}
+
+/// **A beginner is NOT handed first-job points by the SetField refresh.** `pool_entitlement`
+/// returns a level's worth for any tier, so without the reached-tier gate a level-12 beginner
+/// would get 7 first-job SP they never advanced into.
+#[test]
+fn a_beginner_gets_no_skill_point_packet_after_a_setfield() {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let base = net::opcode::Character { name: "greenhorn".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &base).unwrap();
+    made.job = 0;
+    made.level = 12; // over the minimum, so entitlement(First, 12) would be 7 if it leaked
+    store.save_character_progress(&made).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let mut s = Session::new(store.clone(), Arc::new(Config::default()));
+    s.claim_for_character(made.id);
+
+    let mut chr = s.claimed_character().expect("claimed");
+    let out = s.go_to_map(&mut chr, 40, 0, "a portal walk".to_string());
+    assert!(out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "the SetField still goes");
+    assert!(
+        !out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED && r.what.contains("skill points now")),
+        "a beginner has no pools, so no SP packet - the points are the client's own budget"
+    );
+}
+
 /// **An accept with no `yes` branch says nothing.** The owner, 2026-09-13: *"Nina's quest dialogue
 /// seems to be repeated when accepting their 'What Sen wants to eat' quest. They say the same
 /// two dialogues before and after I click 'Accept'."* Quest 1003 has `Say.0` (two lines the

@@ -254,8 +254,19 @@ impl Session {
     /// this server has shipped twice.
     pub(super) fn skill_point_reply(&self, chr: &net::opcode::Character) -> Vec<Reply> {
         let spent = self.store.skill_points_spent_by_tier(chr.id).unwrap_or_default();
+        // Only pools the character has actually ADVANCED into. `pool_entitlement` returns a
+        // level's worth for any tier - `entitlement(First, 12)` is 7 whether or not the
+        // character is a first job yet - so without this gate a beginner refreshed after a
+        // SetField would be handed 7 first-job points they never earned. `tier_for_job` is
+        // the job's own pool (0 beginner, 1 first job, 2 second, 3 third), and a character
+        // holds every pool up to it. This matters because 2026-09-14 this reply became a
+        // per-SetField refresh (see the callers), not just a post-skill-up packet.
+        let reached = net::stats::tier_for_job(chr.job);
         let mut pools = Vec::new();
         for tier in [1u8, 2] {
+            if tier > reached {
+                continue;
+            }
             let owed = self.pool_entitlement(tier, chr.level);
             let used = spent.iter().find(|(t, _)| *t == tier).map(|(_, n)| *n).unwrap_or(0);
             let left = store::balance(owed, used);

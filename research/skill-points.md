@@ -648,3 +648,49 @@ adding `sp: Some(Sp::Extended(vec![SpPool { job_level: 1, amount: 1 }]))` to the
 
 Step 1's failure modes are three different answers, not one, and 1b tells the two survivable
 ones apart without a second launch. That is the whole point of running it in that order.
+
+---
+
+## 12. The pools were granted at advancement and then WIPED by the next SetField - 2026-09-14
+
+seedling, 2026-09-14: *"job advancing to Bowman at level 12, the game did not grant them the 7
+SP that they need because they're over leveled."*
+
+Measured, not inferred. The advancement `0x007C` was byte-perfect and the log proves it:
+`world-ch0.log` 01:27:56.268, character 218 (purr, account 3), body
+`01 00 01 20800000 2c01 0000 01 01 07000000 00 00` - mask `JOB|SP` = `0x8020`, one pool, tier
+`1`, amount `7`. `entitlement(First, 12) = 1 + 3×2 = 7`, so both the amount and the encoding
+were right, and §7.3's shape "has been on the wire and worked". So the grant itself was **not**
+the bug - which is why "over leveled" was a red herring; the server computes the retroactive
+total correctly.
+
+What wiped it is `character_stat_block` (`crates/net/src/opcode.rs`): on the extended-SP branch
+it writes **`out.push(0); // no SP pools`**. Every login record and every SetField record
+therefore carries an empty SP table, and §5.1 established that the extended arm **clears the
+whole list before reading it**. So the record does not merely omit SP - it *zeroes* it. purr
+advanced at 01:27:56 (7 SP, shown), walked through portal `out02` at 01:28:01 (`SetField`), and
+the pool went to 0 about five seconds later. A relog or a channel change does the same. That is
+exactly the "did not grant" the player saw: they got the points, then the very next field entry
+took them away, before they had spent any (the live DB confirms it - `character_skill_spend`
+empty, no Bowman skills, only the three beginner skills at 3/3/3).
+
+The store already had the right model - `skill_points_available(tier) = entitlement(tier, level)
+− spent`, purr's spent is 0, so available is 7 - and `session::skills::skill_point_reply`
+already builds the correct all-pools `0x007C` and was sent after every skill-up. It was simply
+never sent after a SetField. **This is the "built is not wired" failure exactly.**
+
+The fix mirrors the keymap restore, which rides after every SetField for the same reason (its
+manager belongs to the stage the SetField rebuilds): `skill_point_reply` now rides after every
+SetField too, in `session/field.rs::go_to_map` (portal walks, revive, taxi) and in the
+login-time SetField in `session/mod.rs` (login, channel change). `skill_point_reply` gained a
+reached-tier gate - `tier_for_job(chr.job)` - because `pool_entitlement` returns a level's
+worth for any tier, so without it a level-12 **beginner** refreshed after a SetField would be
+handed 7 first-job points they never advanced into.
+
+The stat block itself still sends `0`, corrected a beat later by the `0x007C`. Threading the
+real pools into the shared record builder would be the tidier fix, but that builder is
+byte-perfect and feeds ~10 call sites (the character-select list included, where SP is not
+shown); the post-SetField packet is the proven, lower-risk pattern and the same one the keymap
+uses. If SP is ever seen to flicker to 0 on a field change, the stat block is where to move it.
+
+Fixture: `research/fixtures/seedling-bowman-lvl12-sp7-granted-then-setfield-wipes-world.log`.
