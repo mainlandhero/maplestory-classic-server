@@ -678,7 +678,7 @@
      TQ. ACROSS CHANNELS: THE WORLD HUB ON 8483. The owner, 2026-09-14: party chat "should be
          broadcasted to all party members across channels", "do not use the database as
          a shared bus", "we can have a chat server hosted on 8483". Built: maplecw-chat,
-         a third process the launcher starts first (log: chat.log). Every channel dials
+         a third process the launcher starts first (log: chat-hub.log). Every channel dials
          it once (--link 127.0.0.1:8483; world-chN.log says "connected to the hub") and:
            - every PARTY REQUEST goes to the hub, which echoes it to every channel in one
              order; each channel applies it to its own copy of the party registry, and
@@ -693,7 +693,7 @@
              alone, exactly as before - nothing waits on the link.
          Two clients, ONE party, put them on DIFFERENT CHANNELS (Change Channel on one):
            1. party chat from either: the other, on the other channel, sees the line
-              -> fixed. Nothing -> chat.log shows whether the hub forwarded a 0x01B1
+              -> fixed. Nothing -> chat-hub.log shows whether the hub forwarded a 0x01B1
               for that character ("not in the directory" means the field entry never
               announced them; world-chN.log has "link:" lines)
            2. the party window on both still lists both after the channel change ->
@@ -716,7 +716,7 @@
               they see "the owner>> hi" (or the client's own whisper line), you see
               "Tester2<< hi" -> fixed; then with them on the OTHER channel -> crosses
               you see "Could not find Tester2." -> the directory did not have them;
-                          chat.log lists who is online where
+                          chat-hub.log lists who is online where
               the client DIES on receipt -> the chat-info tail; say which client
            7. /find Tester2 -> "Tester2 is on channel N." as a yellow line
          BUDDY CHAT: not built - no capture yet. Open the buddy list once and add someone;
@@ -3167,7 +3167,7 @@ $worldExe = Join-Path $root 'target\release\maplecw-world.exe'
 # The world hub, 2026-09-14: cross-channel parties and party chat go through it (port 8483,
 # The owner's number). Started before the channels so they connect on their first dial.
 $chatExe = Join-Path $root 'target\release\maplecw-chat.exe'
-$chatLog = Join-Path $root 'chat.log'
+$chatLog = Join-Path $root 'chat-hub.log'
 $ChatPort = 8483
 $userAdd = Join-Path $root 'target\release\maplecw-useradd.exe'
 $serverLog = Join-Path $root 'login.log'
@@ -3631,18 +3631,18 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
-        Write-Host '  TQ. ACROSS CHANNELS: THE WORLD HUB (maplecw-chat, 8483, chat.log).' -ForegroundColor Magenta
+        Write-Host '  TQ. ACROSS CHANNELS: THE WORLD HUB (maplecw-chat, 8483, chat-hub.log).' -ForegroundColor Magenta
         Write-Host '      Every channel dials it. Party requests are echoed to every'
         Write-Host '      channel in one order (a party now exists across channels);'
         Write-Host '      a packet for someone on another channel is forwarded to them.'
         Write-Host '      Two clients, one party, on DIFFERENT channels:'
-        Write-Host '        1. party chat either way crosses -> fixed; nothing -> chat.log'
+        Write-Host '        1. party chat either way crosses -> fixed; nothing -> chat-hub.log'
         Write-Host '        2. the party window on both still lists both -> registry ok'
         Write-Host '        3. invite someone on the other channel: dialog opens there'
         Write-Host '        4. Pick-up rights: both see "changed to ..." on both channels'
         Write-Host '        5. whisper (/w Tester2 hi), same channel then other channel:'
         Write-Host '           they see the line, you see "Tester2<< hi" -> fixed'
-        Write-Host '           "Could not find Tester2." -> not in the directory (chat.log)'
+        Write-Host '           "Could not find Tester2." -> not in the directory (chat-hub.log)'
         Write-Host '           a client DIES on receipt -> say which' -ForegroundColor Red
         Write-Host '        6. /find Tester2 -> "Tester2 is on channel N." (a plain line)'
         Write-Host '      Buddy list: NOT built - open it and add someone once; the bytes' -ForegroundColor Yellow
