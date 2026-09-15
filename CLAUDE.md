@@ -546,7 +546,7 @@ Scored against a held-out control it got **1 of 8**. Label every claim from it a
 | `login.log` | every packet both ways on the login connection |
 | `world-ch0.log` | the same for **channel 0** — read this for anything past character select |
 | `world-ch1.log` | channel 1. Two channels run by default; **channel N logs to `world-ch<N>.log`, channel 0 included** |
-| `chat.log` | the world hub `maplecw-chat` (port 8483): every channel's link, who is online where, every party request in the order it was applied |
+| `chat-hub.log` | the world hub `maplecw-chat` (port 8483): every channel's link, who is online where, every party request in the order it was applied |
 | `client-patched\maplecw-hook.log` | `WATCH` lines, session patches, client faults |
 | `client-exit.log` | how the client died |
 | `research/` | decompilation as `msexe-<topic>.c`, findings as `.md` beside it |
