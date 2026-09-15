@@ -1187,7 +1187,7 @@ mod tests {
 
         // The owner's captured request, with the client's own idea of the recipient list.
         let mut req = net::groupmessage::CLIENT_GROUP_MESSAGE.to_le_bytes().to_vec();
-        req.extend_from_slice(&[1, 1]);
+        req.extend_from_slice(&[1, 1, 0]); // kind 1, u16 count 1 - the log's own bytes
         req.extend_from_slice(&same_id.to_le_bytes());
         req.extend_from_slice(&5u16.to_le_bytes());
         req.extend_from_slice(b"Hello");

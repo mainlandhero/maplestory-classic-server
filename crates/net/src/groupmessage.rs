@@ -14,11 +14,13 @@
 //! `world-ch0.log` 23:40:10, the line the owner typed:
 //!
 //! ```text
-//! 0x0179  01 01 d6000000 0500 48656c6c6f
-//!         ^  ^  ^        ^    "Hello"
-//!         |  |  |        u16 length + text
-//!         |  |  u32 recipient character id (214, the other member)
-//!         |  u8 recipient count
+//! 0x0179  01 0100 d6000000 0500 48656c6c6f
+//!         ^  ^    ^        ^    "Hello"
+//!         |  |    |        u16 length + text
+//!         |  |    u32 recipient character id (214, the other member)
+//!         |  u16 recipient count - TWO bytes. The first decode of this module read one,
+//!         |      and the owner's second line ("hello party same channel", 33 bytes, 00:27:07)
+//!         |      "did not parse" - the u8 count left a stray 0x00 before the id.
 //!         u8 kind: 1 = party
 //! ```
 //!
@@ -95,8 +97,8 @@ pub struct GroupMessageRequest {
 pub fn parse_group_message(body: &[u8]) -> Option<GroupMessageRequest> {
     let mut r = PacketReader::new(body);
     let kind = r.u8().ok()?;
-    let count = r.u8().ok()?;
-    let mut recipients = Vec::with_capacity(usize::from(count));
+    let count = r.u16().ok()?; // two bytes: both captures read 01 00 here
+    let mut recipients = Vec::with_capacity(usize::from(count).min(64));
     for _ in 0..count {
         recipients.push(r.u32().ok()?);
     }
@@ -133,15 +135,25 @@ pub fn group_message(kind: u8, account_id: u32, character_id: u32, world_id: u8,
 mod tests {
     use super::*;
 
-    /// The owner's own line, byte for byte out of `world-ch0.log`.
+    /// The owner's two lines, byte for byte out of `world-ch0.log` - the hex the log printed, not
+    /// a retyping of it, which is how the first version of this test agreed with a parser
+    /// that read the count as one byte.
     #[test]
-    fn the_captured_hello_parses_as_a_party_line_to_one_member() {
-        let body = [0x01, 0x01, 0xd6, 0x00, 0x00, 0x00, 0x05, 0x00, b'H', b'e', b'l', b'l', b'o'];
+    fn the_captured_lines_parse_as_party_lines_to_one_member() {
+        let hex = |s: &str| -> Vec<u8> { (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect() };
+        let hello = hex("010100d6000000050048656c6c6f");
+        assert_eq!(hello.len(), 14, "the log said 14 bytes");
         assert_eq!(
-            parse_group_message(&body),
+            parse_group_message(&hello),
             Some(GroupMessageRequest { kind: kind::PARTY, recipients: vec![214], text: "Hello".into() })
         );
-        assert_eq!(parse_group_message(&body[..12]), None, "a short text is refused, not padded");
+        let same = hex("010100d6000000180068656c6c6f2070617274792073616d65206368616e6e656c");
+        assert_eq!(same.len(), 33, "the log said 33 bytes");
+        assert_eq!(
+            parse_group_message(&same),
+            Some(GroupMessageRequest { kind: kind::PARTY, recipients: vec![214], text: "hello party same channel".into() })
+        );
+        assert_eq!(parse_group_message(&hello[..13]), None, "a short text is refused, not padded");
         assert_eq!(parse_group_message(&[1]), None);
         assert_eq!(parse_group_message(&[]), None);
     }
