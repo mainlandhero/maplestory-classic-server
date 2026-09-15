@@ -1272,18 +1272,48 @@ mod tests {
             (s, made.id)
         };
         let (mut wisp, wisp_id) = make("Wisp");
-        let (mut tester, _) = make("Tester2");
+        let (mut tester, tester_id) = make("Tester2");
         let hex = |s: &str| -> Vec<u8> { (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect() };
         let mut req = net::messenger::CLIENT_MESSENGER.to_le_bytes().to_vec();
         req.extend_from_slice(&hex("0000000001070054657374657232"));
         let out = wisp.handle(&req);
-        let opened = out.iter().find(|r| r.opcode == net::messenger::MESSENGER).expect("mode 0 to the opener");
-        let id = u32::from_le_bytes(opened.body[..4].try_into().unwrap());
-        assert_eq!(&opened.body[4..], &[0u8; 8], "mode 0, result 0");
+        let mine: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::messenger::MESSENGER).collect();
+        assert_eq!(mine.len(), 2, "mode 0 then mode 4: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+        let id = u32::from_le_bytes(mine[0].body[..4].try_into().unwrap());
+        assert_eq!(&mine[0].body[4..], &[0u8; 8], "mode 0, result 0");
         assert_ne!(id, 0);
+        // The six seats, the owner in seat 0 with their own look - what draws their avatar.
+        let wisp_chr = store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == wisp_id).unwrap();
+        let mut seats: [Option<net::messenger::Seat>; net::messenger::SEATS] = Default::default();
+        seats[0] = Some(net::messenger::Seat { character_id: wisp_id, name: "Wisp".into(), look: net::opcode::avatar_look(&wisp_chr) });
+        assert_eq!(mine[1].body, net::messenger::members(id, &seats));
         let mail = tester.tick(1_000);
         let inv = mail.iter().find(|r| r.opcode == net::messenger::MESSENGER).expect("mode 6 to the invitee");
         assert_eq!(inv.body, net::messenger::invite(id, wisp_id, "Wisp"));
+
+        // Accept (mode 7, the log's bytes): Tester2 takes seat 1, gets mode 0 and all six
+        // seats; the owner gets the one-record mode 4 with Tester2's look.
+        let mut acc = net::messenger::CLIENT_MESSENGER.to_le_bytes().to_vec();
+        acc.extend_from_slice(&7u32.to_le_bytes());
+        acc.extend_from_slice(&id.to_le_bytes());
+        let out = tester.handle(&acc);
+        let theirs: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::messenger::MESSENGER).collect();
+        assert_eq!(theirs.len(), 2, "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+        assert_eq!(theirs[0].body, net::messenger::self_enter(id, 0));
+        let tester_chr = store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == tester_id).unwrap();
+        let t_seat = net::messenger::Seat { character_id: tester_id, name: "Tester2".into(), look: net::opcode::avatar_look(&tester_chr) };
+        seats[1] = Some(t_seat.clone());
+        assert_eq!(theirs[1].body, net::messenger::members(id, &seats), "both seats, in order");
+        let mail = wisp.tick(2_000);
+        let joined = mail.iter().find(|r| r.opcode == net::messenger::MESSENGER).expect("the newcomer to the owner");
+        assert_eq!(joined.body, net::messenger::member_joined(id, 1, &t_seat));
+
+        // An accept for a room this channel does not hold: result 1, nothing opens.
+        let mut acc = net::messenger::CLIENT_MESSENGER.to_le_bytes().to_vec();
+        acc.extend_from_slice(&7u32.to_le_bytes());
+        acc.extend_from_slice(&0x7_0009u32.to_le_bytes());
+        let out = tester.handle(&acc);
+        assert_eq!(out.iter().find(|r| r.opcode == net::messenger::MESSENGER).unwrap().body, net::messenger::self_enter(0x7_0009, 1));
     }
 
     /// **The pick-up-rights button is a toggle, answered with the client's 0x2D.** The owner,
