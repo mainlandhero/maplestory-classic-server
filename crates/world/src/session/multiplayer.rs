@@ -1204,6 +1204,56 @@ mod tests {
         assert!(mail.iter().all(|r| r.opcode != net::groupmessage::GROUP_MESSAGE), "not in the party: {mail:?}");
     }
 
+    /// **A whisper reaches the named character on any map and the sender is told it did;
+    /// an unknown name is told "Could not find".** The owner, 2026-09-15, "Hello Whisper" to
+    /// Tester2 - the request's bytes are the log's, the replies are the handler's arms.
+    #[test]
+    fn a_whisper_reaches_its_target_by_name_and_the_sender_is_answered_either_way() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let config = Arc::new(Config::default());
+        let fields = Arc::new(Fields::new());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let make = |name: &str, map: u32| {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: map, ..Default::default() };
+            let made = store.create_character(account, 0, &chr).unwrap();
+            store.create_migration(account, made.id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(made.id);
+            s.on_field_entered();
+            (s, made.id)
+        };
+        let (mut wisp, wisp_id) = make("Wisp", 104_040_000);
+        let (mut tester, tester_id) = make("Tester2", 100_000_000);
+        let hex = |s: &str| -> Vec<u8> { (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect() };
+        let mut req = net::whisper::CLIENT_WHISPER.to_le_bytes().to_vec();
+        req.extend_from_slice(&hex("069465a11a0700546573746572320d0048656c6c6f2057686973706572"));
+
+        let out = wisp.handle(&req);
+        let sent = out.iter().find(|r| r.opcode == net::whisper::WHISPER).expect("the sender's 0x0A");
+        assert_eq!(sent.body, net::whisper::whisper_sent("Tester2", true), "{}", sent.what);
+        let mail = tester.tick(1_000);
+        let got = mail.iter().find(|r| r.opcode == net::whisper::WHISPER).expect("the target's 0x12");
+        assert_eq!(
+            got.body,
+            net::whisper::whisper_receive("Wisp", wisp_id, u32::try_from(account).unwrap(), 0, 0, "Hello Whisper")
+        );
+        assert_eq!(got.body[0], net::whisper::mode::RECEIVE);
+        let _ = tester_id;
+
+        // Nobody by that name: the sender gets 0x0A with found = 0, nothing else goes anywhere.
+        let mut req = net::whisper::CLIENT_WHISPER.to_le_bytes().to_vec();
+        req.push(6);
+        req.extend_from_slice(&[0u8; 4]);
+        req.extend_from_slice(&6u16.to_le_bytes());
+        req.extend_from_slice(b"Nobody");
+        req.extend_from_slice(&2u16.to_le_bytes());
+        req.extend_from_slice(b"hi");
+        let out = wisp.handle(&req);
+        let sent = out.iter().find(|r| r.opcode == net::whisper::WHISPER).expect("still answered");
+        assert_eq!(sent.body, net::whisper::whisper_sent("Nobody", false));
+        assert!(tester.tick(2_000).iter().all(|r| r.opcode != net::whisper::WHISPER));
+    }
+
     /// **The pick-up-rights button is a toggle, answered with the client's 0x2D.** The owner,
     /// 2026-09-14: *"nothing happened"* - the reply was a bare 0x0D whose block carried a
     /// constant 0 in the rights byte. Each press flips All <-> Party Leader, every member
