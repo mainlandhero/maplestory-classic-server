@@ -44,6 +44,7 @@ pub mod jobbuffs;
 pub mod keymap;
 pub mod message;
 pub mod groupmessage;
+pub mod whisper;
 pub mod mob;
 pub mod mobdamage;
 pub mod mobmove;

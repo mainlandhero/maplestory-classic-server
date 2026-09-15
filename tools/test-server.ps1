@@ -704,12 +704,23 @@
            4. leader clicks Pick-up rights: BOTH clients, both channels, see the
               "changed to ..." line -> the echo reached both
            5. change channel again and look at the party window: still intact
-         WHISPERS AND BUDDY CHAT ride the same hub but are NOT built yet: neither request
-         has ever been captured (no 0x017B / buddy-list body in any log), and a reply
-         guessed from the reference has killed this client three times. On this run,
-         ALSO: whisper someone (/w Name text) and open the buddy list once - the bodies
-         land in world-chN.log as UNKNOWN with their bytes, which is the capture the next
-         step needs.
+         WHISPERS: built from the owner's capture (00:29:35, "Hello Whisper" to Tester2:
+         0x017B = u8 kind 6, u32 tick, str target, str text). The target gets 0x01B3
+         mode 0x12 (the sender's name, id, channel, the text, then the same chat-info
+         block a party line carries; every read is unconditional) wherever they are -
+         other channel included, through the hub; the sender gets mode 0x0A, whose
+         found byte draws "Tester2<< text" (the echo) or "Could not find Tester2."
+         /find is answered with a plain line ("X is on channel 2") - mode 0x09's second
+         field has not been read. Nothing of this has been on a screen.
+           6. whisper the other client (/w Tester2 hi), on the SAME channel first:
+              they see "the owner>> hi" (or the client's own whisper line), you see
+              "Tester2<< hi" -> fixed; then with them on the OTHER channel -> crosses
+              you see "Could not find Tester2." -> the directory did not have them;
+                          chat.log lists who is online where
+              the client DIES on receipt -> the chat-info tail; say which client
+           7. /find Tester2 -> "Tester2 is on channel N." as a yellow line
+         BUDDY CHAT: not built - no capture yet. Open the buddy list once and add someone;
+         the bodies land in world-chN.log as UNKNOWN, which is the capture it needs.
 
      TP. PARTY CHAT, AND THE PICK-UP RIGHTS BUTTON. (Party mesos: DONE, "Party loot
          works".) the owner, 2026-09-14: "Hello" in party chat reached nobody, and Pick-up
@@ -3629,8 +3640,13 @@ function Show-TestPlan {
         Write-Host '        2. the party window on both still lists both -> registry ok'
         Write-Host '        3. invite someone on the other channel: dialog opens there'
         Write-Host '        4. Pick-up rights: both see "changed to ..." on both channels'
-        Write-Host '      Whisper (/w) and the buddy list are NOT built - no capture yet.' -ForegroundColor Yellow
-        Write-Host '      Do one of each on this run; the bytes land in world-chN.log.' -ForegroundColor Yellow
+        Write-Host '        5. whisper (/w Tester2 hi), same channel then other channel:'
+        Write-Host '           they see the line, you see "Tester2<< hi" -> fixed'
+        Write-Host '           "Could not find Tester2." -> not in the directory (chat.log)'
+        Write-Host '           a client DIES on receipt -> say which' -ForegroundColor Red
+        Write-Host '        6. /find Tester2 -> "Tester2 is on channel N." (a plain line)'
+        Write-Host '      Buddy list: NOT built - open it and add someone once; the bytes' -ForegroundColor Yellow
+        Write-Host '      land in world-chN.log as UNKNOWN, which is the capture it needs.' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  TP. PARTY CHAT, AND THE PICK-UP RIGHTS BUTTON. (Party mesos: DONE.)' -ForegroundColor Magenta
         Write-Host '      Party chat (0x0179) went unanswered; it now reaches every other'
