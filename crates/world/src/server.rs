@@ -548,6 +548,19 @@ pub fn serve(config: Config) -> std::io::Result<()> {
     // `crate::fields`.
     let fields = Arc::new(crate::fields::Fields::new());
 
+    // **The world link**, for anything that has to cross channels: the party registry, party
+    // chat, an invite to a character on the other channel. One TCP connection to
+    // `maplecw-chat`, dialled in the background and re-dialled for the life of the process;
+    // a channel that cannot reach the hub says so once and runs alone. `crate::link`.
+    match config.link {
+        Some(addr) => {
+            let link = crate::link::Link::connect(addr, config.channel_id, crate::session::worldlink::link_handler(fields.clone()));
+            crate::link::install(link);
+            log(&format!("world link: dialling the hub at {addr} (--link none runs this channel alone)"));
+        }
+        None => log("world link: OFF (--link none); parties and party chat stay on this channel"),
+    }
+
     let mut nth = 0u64;
     for incoming in listener.incoming() {
         match incoming {

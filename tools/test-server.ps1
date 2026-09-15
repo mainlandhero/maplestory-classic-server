@@ -675,6 +675,42 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
+     TQ. ACROSS CHANNELS: THE WORLD HUB ON 8483. The owner, 2026-09-14: party chat "should be
+         broadcasted to all party members across channels", "do not use the database as
+         a shared bus", "we can have a chat server hosted on 8483". Built: maplecw-chat,
+         a third process the launcher starts first (log: chat.log). Every channel dials
+         it once (--link 127.0.0.1:8483; world-chN.log says "connected to the hub") and:
+           - every PARTY REQUEST goes to the hub, which echoes it to every channel in one
+             order; each channel applies it to its own copy of the party registry, and
+             the channel hosting the clicker answers the client from the echo (a tick
+             later, ~1 ms over loopback). A channel started late gets the whole registry
+             on connect. So a party now EXISTS across channels: invite, join, leave,
+             expel, leader, pick-up rights all cross.
+           - a packet for a character on another channel (party chat, an invite dialog)
+             goes to the hub, which forwards it to the channel that hosts them (the hub
+             keeps who-is-where from each channel's field entries).
+           - no hub (it is down, or --link none): the channel says so once and runs
+             alone, exactly as before - nothing waits on the link.
+         Two clients, ONE party, put them on DIFFERENT CHANNELS (Change Channel on one):
+           1. party chat from either: the other, on the other channel, sees the line
+              -> fixed. Nothing -> chat.log shows whether the hub forwarded a 0x01B1
+              for that character ("not in the directory" means the field entry never
+              announced them; world-chN.log has "link:" lines)
+           2. the party window on both still lists both after the channel change ->
+              the registry crossed; if the member vanished from the leader's window,
+              say which window and which channel changed
+           3. invite a third character who is on the other channel: the dialog opens
+              there -> the invite crossed
+           4. leader clicks Pick-up rights: BOTH clients, both channels, see the
+              "changed to ..." line -> the echo reached both
+           5. change channel again and look at the party window: still intact
+         WHISPERS AND BUDDY CHAT ride the same hub but are NOT built yet: neither request
+         has ever been captured (no 0x017B / buddy-list body in any log), and a reply
+         guessed from the reference has killed this client three times. On this run,
+         ALSO: whisper someone (/w Name text) and open the buddy list once - the bodies
+         land in world-chN.log as UNKNOWN with their bytes, which is the capture the next
+         step needs.
+
      TP. PARTY CHAT, AND THE PICK-UP RIGHTS BUTTON. (Party mesos: DONE, "Party loot
          works".) the owner, 2026-09-14: "Hello" in party chat reached nobody, and Pick-up
          rights did nothing.
@@ -684,10 +720,7 @@
          handler reads u8 kind, u32 account, u32 char, str name, str text, then the same
          chat-info block the reference sends (name, text, ids, world, zeros). The sender
          is not sent a copy: its client draws its own line.
-           ACROSS CHANNELS: NOT YET. Each channel is its own process with its own party
-           registry - a party does not exist across channels today - so a member on the
-           other channel is not on the roster at all. That is a shared-registry job, not a
-           chat one; the log says "not on this channel and was NOT told" when it happens.
+           ACROSS CHANNELS: see TQ - built the same night, through the hub.
          PICK-UP RIGHTS: the button's request carries no value (its builder hardcodes the
          payload - both of the owner's clicks were byte-identical), so it is a TOGGLE, and
          0x2D is the client's own rights-changed packet: str name, u8 isPublic, u8 rights
@@ -3117,6 +3150,11 @@ if (-not $Database) { $Database = Join-Path $root 'maplecw.db' }
 $exe = Join-Path $ClientDir 'MapleStory.exe'
 $loginExe = Join-Path $root 'target\release\maplecw-login.exe'
 $worldExe = Join-Path $root 'target\release\maplecw-world.exe'
+# The world hub, 2026-09-14: cross-channel parties and party chat go through it (port 8483,
+# The owner's number). Started before the channels so they connect on their first dial.
+$chatExe = Join-Path $root 'target\release\maplecw-chat.exe'
+$chatLog = Join-Path $root 'chat.log'
+$ChatPort = 8483
 $userAdd = Join-Path $root 'target\release\maplecw-useradd.exe'
 $serverLog = Join-Path $root 'login.log'
 $worldLog = Join-Path $root 'world-ch0.log'
@@ -3137,6 +3175,9 @@ function Stop-All {
         }
         if (Get-Process maplecw-world -ErrorAction SilentlyContinue) {
             taskkill /F /IM maplecw-world.exe | Out-Null
+        }
+        if (Get-Process maplecw-chat -ErrorAction SilentlyContinue) {
+            taskkill /F /IM maplecw-chat.exe | Out-Null
         }
         # The sign-in service, added 2026-08-29. Without this it survives -Stop and holds
         # target\release\maplecw-auth.exe open, so the NEXT build fails with "Access is
@@ -3484,6 +3525,15 @@ if (Test-Path $authExe) {
 $worldSrv = $null
 # Every channel, not just channel 0. -ServersOnly watches all of them: a channel that dies
 # leaves the login screen working and the world unreachable, which is the confusing half.
+# The hub first. `cargo build -p world` builds it beside maplecw-world (same crate, second
+# binary), so it cannot be stale relative to the channels that dial it.
+Save-PreviousLog $chatLog
+Remove-Item $chatLog -Force -ErrorAction SilentlyContinue
+$chatSrv = Start-Process -FilePath $chatExe -WorkingDirectory $root -PassThru @spawn `
+    -ArgumentList @('--bind', "127.0.0.1:$ChatPort") `
+    -RedirectStandardOutput $chatLog -RedirectStandardError "$chatLog.err"
+Write-Host "world hub (maplecw-chat) on 127.0.0.1:$ChatPort (pid $($chatSrv.Id)), log $chatLog"
+
 $worldAll = @()
 foreach ($ch in 0..($Channels - 1)) {
     $chPort = $ChannelPort + $ch
@@ -3499,6 +3549,7 @@ foreach ($ch in 0..($Channels - 1)) {
     # Same list the login server advertises, built from the same two numbers, so the two
     # cannot drift into advertising a channel nobody can enter.
     $chArgs += @('--channels', $channelList)
+    $chArgs += @('--link', "127.0.0.1:$ChatPort")
     # The channel answers by default now; only the deliberate silence needs a flag.
     if ($SilentChannel) { $chArgs += '--silent-channel' }
     if ($NoMobs) { $chArgs += '--no-mobs' }
@@ -3566,10 +3617,22 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
+        Write-Host '  TQ. ACROSS CHANNELS: THE WORLD HUB (maplecw-chat, 8483, chat.log).' -ForegroundColor Magenta
+        Write-Host '      Every channel dials it. Party requests are echoed to every'
+        Write-Host '      channel in one order (a party now exists across channels);'
+        Write-Host '      a packet for someone on another channel is forwarded to them.'
+        Write-Host '      Two clients, one party, on DIFFERENT channels:'
+        Write-Host '        1. party chat either way crosses -> fixed; nothing -> chat.log'
+        Write-Host '        2. the party window on both still lists both -> registry ok'
+        Write-Host '        3. invite someone on the other channel: dialog opens there'
+        Write-Host '        4. Pick-up rights: both see "changed to ..." on both channels'
+        Write-Host '      Whisper (/w) and the buddy list are NOT built - no capture yet.' -ForegroundColor Yellow
+        Write-Host '      Do one of each on this run; the bytes land in world-chN.log.' -ForegroundColor Yellow
+        Write-Host ''
         Write-Host '  TP. PARTY CHAT, AND THE PICK-UP RIGHTS BUTTON. (Party mesos: DONE.)' -ForegroundColor Magenta
         Write-Host '      Party chat (0x0179) went unanswered; it now reaches every other'
-        Write-Host '      member on this channel, any map, as the client''s 0x01B1. NOT'
-        Write-Host '      across channels: each channel has its own party registry.' -ForegroundColor Yellow
+        Write-Host '      member on this channel, any map, as the client''s 0x01B1 - and'
+        Write-Host '      across channels through the hub (TQ).'
         Write-Host '      Pick-up rights: the button sends no value - it is a TOGGLE - and'
         Write-Host '      0x2D is the client''s rights-changed packet (1 Leader, 0 All).'
         Write-Host '        1. type in party chat: the other client sees it -> fixed;'

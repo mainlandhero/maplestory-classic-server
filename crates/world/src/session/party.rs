@@ -103,7 +103,26 @@ impl super::Session {
                 crate::party::INVITE_TTL_SECS
             ));
         }
+        // **Through the hub when there is one.** The hub echoes the request to every channel
+        // in one order and each applies it to its replica; this session gets the outcome
+        // back through `collect_party_outcomes` a tick later and answers then. Without a hub
+        // (no `--link`, or the hub is down) the request is applied here, synchronously, as it
+        // always was. `session/worldlink.rs`.
+        if self.send_party_request_to_hub(actor, now, &request) {
+            crate::server::log(&format!("   party: {described} by character {actor} sent to the hub; the answer follows its echo"));
+            return Vec::new();
+        }
         let outcome = self.fields.parties().apply(now, actor, request);
+        self.party_outcome_replies(actor, &described, outcome)
+    }
+
+    /// The packets for one applied request - the refusal, or the effects.
+    pub(super) fn party_outcome_replies(
+        &mut self,
+        actor: u32,
+        described: &str,
+        outcome: Result<Vec<crate::party::Effect>, crate::party::Refusal>,
+    ) -> Vec<Reply> {
         match outcome {
             Err(refusal) => {
                 // **A specific refusal, not the blanket one.** `Refusal::result_code` is a
@@ -124,7 +143,7 @@ impl super::Session {
                     ),
                 }]
             }
-            Ok(effects) => self.party_effects(actor, &described, effects),
+            Ok(effects) => self.party_effects(actor, described, effects),
         }
     }
 
@@ -199,11 +218,10 @@ impl super::Session {
                              level {level} and job {job} as fields 4-5 [I]. Opens the invite dialog"
                         ),
                     };
-                    if !self.bus().publish_to_character_anywhere(*target, notify) {
+                    if !self.deliver_anywhere(*target, notify) {
                         crate::server::log(&format!(
-                            "   party: character {target} is not on this channel, so the invite \
-                             dialog was NOT delivered. The invite is recorded; a target on another \
-                             channel will not see it until invites cross channels"
+                            "   party: character {target} is not online on any channel this process can \
+                             reach, so the invite dialog was NOT delivered. The invite is recorded"
                         ));
                     }
                 }
@@ -402,9 +420,9 @@ impl super::Session {
     fn deliver(&self, to: u32, actor: u32, reply: Reply, out: &mut Vec<Reply>) {
         if to == actor {
             out.push(reply);
-        } else if !self.bus().publish_to_character_anywhere(to, reply) {
+        } else if !self.deliver_anywhere(to, reply) {
             crate::server::log(&format!(
-                "   party: character {to} is not on this channel and was NOT told"
+                "   party: character {to} is not online on any channel this process can reach and was NOT told"
             ));
         }
     }

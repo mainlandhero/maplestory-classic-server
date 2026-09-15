@@ -45,6 +45,11 @@ pub struct Config {
     /// refused with a message rather than ignored - see `Session::on_change_channel`.
     pub channels: Vec<std::net::SocketAddrV4>,
 
+    /// **The world hub (`maplecw-chat`) this channel dials**, or `None` to run the channel on
+    /// its own - parties and party chat then stay per-channel, exactly as before 2026-09-14.
+    /// `--link ADDR`, default `127.0.0.1:8483`; `--link none` clears it. `crate::link`.
+    pub link: Option<std::net::SocketAddr>,
+
     /// **Which host a Change Channel answer names** - `--advertise`, the same flag and the
     /// same rule as the login server's, because both write a channel address into a packet
     /// the client dials. `channels` above keeps the ports; this decides the host per
@@ -2365,6 +2370,7 @@ impl Default for Config {
             shops: crate::shops::ShopTable::default(),
             shop_by_template: HashMap::new(),
             channels: Vec::new(),
+            link: None,
             advertise: std::sync::Arc::new(net::advertise::Advertiser::default()),
             map_names: HashMap::new(),
             item_names: HashMap::new(),

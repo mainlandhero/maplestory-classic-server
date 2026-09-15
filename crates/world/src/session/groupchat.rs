@@ -4,13 +4,11 @@
 //! differently than map all chat. This message should be broadcasted to all party members
 //! across channels and maps as long as the client is online."*
 //!
-//! Maps: yes - the line goes to the member wherever they stand
-//! (`Bus::publish_to_character_anywhere`). **Channels: not yet, and the reason is
-//! structural.** Each channel is its own process with its own `Fields`, and the party
-//! registry lives in `Fields` - a party does not exist across channels today, so a member on
-//! the other channel is not on this roster to begin with. Cross-channel delivery needs a
-//! shared party registry and a cross-process mailbox first; until then a member who is not
-//! on this channel is logged as not told, the same way an invite is.
+//! Maps: the line goes to the member wherever they stand. Channels: through the hub
+//! (`crate::link`) - the party registry is the hub-serialised replica every channel holds,
+//! so a member on another channel is on the roster, and `Session::deliver_anywhere` hands
+//! their copy to the hub, which relays it to the channel that hosts them. A member who is
+//! online nowhere this process can reach is logged as not told.
 
 use super::*;
 
@@ -56,17 +54,17 @@ impl Session {
                 body: packet.clone(),
                 what: format!("GroupMessage 0x01B1 (party) to character {member}: {} says '{}'", chr.name, req.text),
             };
-            if self.bus().publish_to_character_anywhere(*member, reply) {
+            if self.deliver_anywhere(*member, reply) {
                 told += 1;
             } else {
                 crate::server::log(&format!(
-                    "   party chat: member {member} is not on this channel (or is between fields) and was NOT told '{}'",
+                    "   party chat: member {member} is online nowhere this process can reach (no hub, or between fields) and was NOT told '{}'",
                     req.text
                 ));
             }
         }
         crate::server::log(&format!(
-            "   party chat: {} -> {told} of {} member(s) on this channel: '{}' (the client listed {:?})",
+            "   party chat: {} -> {told} of {} member(s), here or via the hub: '{}' (the client listed {:?})",
             chr.name,
             members.len(),
             req.text,

@@ -56,6 +56,9 @@ auth.log.err
 world.log
 # One log per channel: channel 0 keeps world.log, the rest are world-ch<N>.log.
 world-ch*.log
+# The world hub (maplecw-chat), 2026-09-14.
+chat.log
+chat.log.err
 world-ch*.log.err
 world.log.err
 

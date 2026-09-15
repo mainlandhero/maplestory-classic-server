@@ -523,6 +523,33 @@ impl Parties {
     // --- reading ------------------------------------------------------------------------
 
     /// The party `who` is in.
+    /// Every party, for the world link's snapshot. Invites are transient and not included.
+    pub fn snapshot(&self) -> Vec<Party> {
+        self.parties.values().cloned().collect()
+    }
+
+    /// The id the next created party will get, so a replica mints the same one.
+    pub fn next_id(&self) -> PartyId {
+        self.next_id
+    }
+
+    /// **Replace everything with a snapshot from the hub.** A channel that connects late (or
+    /// reconnects) has a replica that may have missed requests; the hub's copy is the truth,
+    /// and from here on both apply the same echoed sequence. Outstanding invites are dropped
+    /// - an invite raced across a reconnect fades on the client anyway.
+    pub fn restore(&mut self, parties: Vec<Party>, next_id: PartyId) {
+        self.parties.clear();
+        self.of.clear();
+        self.invites.clear();
+        for p in parties {
+            for m in &p.members {
+                self.of.insert(*m, p.id);
+            }
+            self.parties.insert(p.id, p);
+        }
+        self.next_id = next_id.max(FIRST_PARTY_ID);
+    }
+
     pub fn party_of(&self, who: CharacterId) -> Option<&Party> {
         self.of.get(&who).and_then(|id| self.parties.get(id))
     }

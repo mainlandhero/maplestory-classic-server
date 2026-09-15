@@ -217,6 +217,7 @@ impl Session {
     /// `Bus::enter_field` with the new map, which does the leaving as its first
     /// act so the two halves cannot half-happen.
     pub(super) fn leave_the_field(&mut self) {
+        self.announce_offline_to_link();
         self.bus().leave_field(self.subscriber);
     }
 
@@ -362,6 +363,8 @@ impl Session {
     /// reason to send it, and `Bus::enter_field` excludes the sender.
     pub(super) fn announce_field_entry(&mut self) -> Vec<Reply> {
         let Some(chr) = self.claimed_character() else { return Vec::new() };
+        // And to the hub, so the other channels can find this character. Idempotent.
+        self.announce_online_to_link();
         let presence = self.presence(&chr);
         let here = self.bus().enter_field(self.subscriber, presence);
         if here.is_empty() {

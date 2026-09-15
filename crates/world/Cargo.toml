@@ -12,3 +12,7 @@ store = { path = "../store" }
 [[bin]]
 name = "maplecw-world"
 path = "src/bin/world_server.rs"
+
+[[bin]]
+name = "maplecw-chat"
+path = "src/bin/chat_server.rs"
