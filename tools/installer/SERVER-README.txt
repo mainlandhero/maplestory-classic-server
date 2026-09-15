@@ -84,6 +84,12 @@ SETUP
      !recoverycode <email or username>  a code that lets THAT account set a
                                         new password (Forgot password tab;
                                         24 hours)
+     !track <character>                 which channel and map that player is on
+                                        (from the world hub's directory)
+
+   Every player has !online (who is on, across channels), !rates, !scroll and
+   !tool - four favours a day: Leaf Points, a level, an AP/SP reset, and a
+   teleport to Henesys for anyone stuck in a map. Each is once per UTC day.
 
    The code appears as a chat notice on your screen and nowhere else - the
    server keeps only a hash and never logs it. The same codes come from this

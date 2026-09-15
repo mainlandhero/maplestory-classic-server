@@ -188,12 +188,13 @@ fn the_tool_command_opens_the_three_option_menu() {
     assert_eq!(out[0].opcode, net::script::SCRIPT_MESSAGE);
     // The body is a type-6 box spoken by the Administrator's template - which is the ICON, the
     // portrait beside the text, and not a routing key. Decoded rather than trusted.
-    assert_eq!(out[0].body, net::script::npc_menu(ADMIN_TEMPLATE, &world::dailyperks::menu_text([false; 3])));
-    let text = world::dailyperks::menu_text([false; 3]);
+    assert_eq!(out[0].body, net::script::npc_menu(ADMIN_TEMPLATE, &world::dailyperks::menu_text([false; world::dailyperks::PERKS.len()])));
+    let text = world::dailyperks::menu_text([false; world::dailyperks::PERKS.len()]);
     assert!(text.contains("Gain 1000 Leaf Points"));
     assert!(text.contains("Level up"));
     assert!(text.contains("Reset AP & SP"));
-    assert_eq!(text.matches("#L").count(), 3, "exactly three options, no more");
+    assert!(text.contains("Return to Henesys"));
+    assert_eq!(text.matches("#L").count(), 4, "the three favours and the Henesys escape, no more");
 }
 
 /// **The command is PUBLIC.** The owner, 2026-09-08: *"Introduce a new public command !tool"*. The
@@ -236,7 +237,7 @@ fn clicking_the_placed_administrator_runs_her_own_quest_and_not_the_menu() {
         assert!(!r.what.contains("MENU (type 6)"), "the daily menu answered their click: {}", r.what);
         assert_ne!(
             r.body,
-            net::script::npc_menu(ADMIN_TEMPLATE, &world::dailyperks::menu_text([false; 3])),
+            net::script::npc_menu(ADMIN_TEMPLATE, &world::dailyperks::menu_text([false; world::dailyperks::PERKS.len()])),
             "the daily menu answered their click"
         );
     }
@@ -366,7 +367,7 @@ fn the_menu_marks_what_has_been_used_without_moving_anything() {
     assert_eq!(out.len(), 1);
     assert_eq!(
         out[0].body,
-        net::script::npc_menu(ADMIN_TEMPLATE, &world::dailyperks::menu_text([false, true, false])),
+        net::script::npc_menu(ADMIN_TEMPLATE, &world::dailyperks::menu_text([false, true, false, false])),
         "line 1 is marked used and lines 0 and 2 are not"
     );
     assert!(out[0].what.contains("1 of 3 favours already used"), "{}", out[0].what);
@@ -655,6 +656,63 @@ fn a_character_with_nothing_to_reset_is_refused_without_spending_the_day() {
 }
 
 // ---------------------------------------------------------------------------------------
+// Return to Henesys
+// ---------------------------------------------------------------------------------------
+
+/// **The escape hatch: one SetField to Henesys a day, and never a wasted day.** The owner,
+/// 2026-09-14: *"the player may become stuck in certain maps. There should be an additional
+/// option also limited to once a day to teleport the player directly to Henesys."*
+///
+/// Three things are pinned. Taking it from another map sends a SetField carrying Henesys and
+/// moves the record there. Taking it while already IN Henesys is refused **before** the claim,
+/// so the day is intact - a reload is not a rescue. And a second take on the same day refuses
+/// with the day already spent.
+#[test]
+fn return_to_henesys_moves_the_record_once_a_day_and_never_charges_for_a_no_op() {
+    let (mut s, store, account_id, id) = session();
+    // Somewhere that is not Henesys - "stuck" on Maple Road.
+    let mut chr = character(&store, account_id, id);
+    chr.map_id = 1010;
+    store.save_character_progress(&chr).unwrap();
+    assert_ne!(character(&store, account_id, id).map_id, world::dailyperks::HENESYS);
+
+    let out = take(&mut s, Perk::ReturnToHenesys);
+    assert_well_formed(&out);
+    let log = log_of(&out);
+    assert!(log.contains("ReturnToHenesys PAID"), "{log}");
+    let set_field = out.iter().find(|r| r.opcode == net::opcode::SET_FIELD).expect("the grant IS a SetField");
+    assert!(set_field.what.contains("PAID"), "the receipt rides the SetField's own log line: {}", set_field.what);
+    assert_eq!(character(&store, account_id, id).map_id, world::dailyperks::HENESYS, "the record moved");
+    assert!(
+        !out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE),
+        "no dialogue queued behind a SetField - it would pop up over Henesys with nothing to add"
+    );
+    assert_eq!(
+        store.daily_claim_day(Perk::ReturnToHenesys.scope(), i64::from(id), Perk::ReturnToHenesys.store_key()).unwrap(),
+        Some(store::today()),
+        "the day is spent"
+    );
+
+    // Same day, again: refused, nothing sent but the sentence.
+    let again = take(&mut s, Perk::ReturnToHenesys);
+    assert_well_formed(&again);
+    assert!(log_of(&again).contains("NOTHING PAID"), "{}", log_of(&again));
+    assert!(!again.iter().any(|r| r.opcode == net::opcode::SET_FIELD));
+
+    // A new day, but already standing in Henesys: refused BEFORE the claim, day intact.
+    rewind_claim(&store, account_id, id, Perk::ReturnToHenesys);
+    let no_op = take(&mut s, Perk::ReturnToHenesys);
+    assert_well_formed(&no_op);
+    assert!(log_of(&no_op).contains("NOTHING CLAIMED"), "{}", log_of(&no_op));
+    assert!(!no_op.iter().any(|r| r.opcode == net::opcode::SET_FIELD));
+    assert_eq!(
+        store.daily_claim_day(Perk::ReturnToHenesys.scope(), i64::from(id), Perk::ReturnToHenesys.store_key()).unwrap(),
+        Some(store::today() - 1),
+        "a no-op must not eat the day"
+    );
+}
+
+// ---------------------------------------------------------------------------------------
 // The three together
 // ---------------------------------------------------------------------------------------
 
@@ -677,11 +735,11 @@ fn all_three_can_be_taken_once_each_in_a_day_and_no_more() {
     assert_eq!(banked, LEAF_POINTS_PER_CLAIM);
     assert_eq!(after_all.level, 2);
 
-    // The menu now shows all three used, and every one refuses.
+    // The menu now shows every favour used, and every one refuses.
     let menu = s.handle(&tool());
     assert_eq!(
         menu[0].body,
-        net::script::npc_menu(ADMIN_TEMPLATE, &world::dailyperks::menu_text([true; 3]))
+        net::script::npc_menu(ADMIN_TEMPLATE, &world::dailyperks::menu_text([true; world::dailyperks::PERKS.len()]))
     );
     // **A second click refuses, and this deliberately does not pin which refusal.** There are
     // two shapes - "you already had this today" and the pre-claim "there is nothing to give

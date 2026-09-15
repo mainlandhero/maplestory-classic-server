@@ -228,11 +228,25 @@ pub enum Perk {
     LevelUp,
     /// `!resetap` and `!resetsp`, run together.
     ResetApSp,
+    /// A `SetField` to Henesys - [`HENESYS`], its first spawn point. The owner, 2026-09-14:
+    /// *"Since there may be unexpected outcomes as we implement the server, the player may
+    /// become stuck in certain maps. There should be an additional option also limited to
+    /// once a day to teleport the player directly to Henesys."* An escape hatch, priced at a
+    /// day so it is not a free taxi.
+    ReturnToHenesys,
 }
 
-/// The three, in menu order. **The index into this array IS the `#L` number** - see
-/// [`perk_at`] - so the order is load-bearing rather than cosmetic.
-pub const PERKS: [Perk; 3] = [Perk::LeafPoints, Perk::LevelUp, Perk::ResetApSp];
+/// The four, in menu order. **The index into this array IS the `#L` number** - see
+/// [`perk_at`] - so the order is load-bearing rather than cosmetic. New favours go on the
+/// END: a player's muscle memory for "#L1 is level up" is worth more than a tidy grouping.
+pub const PERKS: [Perk; 4] = [Perk::LeafPoints, Perk::LevelUp, Perk::ResetApSp, Perk::ReturnToHenesys];
+
+/// Where [`Perk::ReturnToHenesys`] lands: Henesys in this client's numbering
+/// (`gm-handbook/maps.txt` row `10001000, Henesys` - **not** the `100000000` of other
+/// versions), at spawn portal 0, which `gm-handbook/portals.txt` puts at (112, 197).
+pub const HENESYS: u32 = 10_001_000;
+/// The spawn point in [`HENESYS`] the escape lands on.
+pub const HENESYS_PORTAL: u8 = 0;
 
 impl Perk {
     /// The string this perk's claim row is keyed on. **Stored in a database**, so it is a
@@ -243,6 +257,7 @@ impl Perk {
             Perk::LeafPoints => "leafpoints",
             Perk::LevelUp => "levelup",
             Perk::ResetApSp => "resetapsp",
+            Perk::ReturnToHenesys => "henesys",
         }
     }
 
@@ -268,7 +283,7 @@ impl Perk {
     pub fn scope(self) -> &'static str {
         match self {
             Perk::LeafPoints => SCOPE_ACCOUNT,
-            Perk::LevelUp | Perk::ResetApSp => SCOPE_CHARACTER,
+            Perk::LevelUp | Perk::ResetApSp | Perk::ReturnToHenesys => SCOPE_CHARACTER,
         }
     }
 
@@ -278,6 +293,7 @@ impl Perk {
             Perk::LeafPoints => "Gain 1000 Leaf Points",
             Perk::LevelUp => "Level up",
             Perk::ResetApSp => "Reset AP & SP",
+            Perk::ReturnToHenesys => "Return to Henesys (if you are stuck)",
         }
     }
 
@@ -316,7 +332,7 @@ pub fn header() -> String {
         .to_string()
 }
 
-/// The whole menu string: the header, a blank line, then **exactly three** lines.
+/// The whole menu string: the header, a blank line, then one line per entry of [`PERKS`].
 ///
 /// `used` is per-perk and in [`PERKS`] order: `true` marks an option already spent today. A
 /// spent option keeps its position and its number - see the module doc for why that matters
@@ -337,6 +353,13 @@ pub fn menu_text(used: [bool; PERKS.len()]) -> String {
         out.push_str(&menu_line(i as u32, &label));
     }
     out
+}
+
+/// The refusal for the escape when the character is already standing in Henesys. Decided
+/// before the claim, so it costs nothing: a teleport to where you already are is a no-op, and
+/// a no-op must not eat the day.
+pub fn already_in_henesys() -> String {
+    "You are already in Henesys! Save this one for a day you are actually stuck.".to_string()
 }
 
 /// The refusal for an option that has already been used today.
@@ -571,7 +594,7 @@ mod tests {
         }
         assert_eq!(perk_at(PERKS.len() as u32), None, "one past the end is not an option");
         assert_eq!(perk_at(u32::MAX), None, "and neither is the client's own -2");
-        assert_eq!(PERKS.len(), 3, "the owner asked for exactly three");
+        assert_eq!(PERKS.len(), 4, "three favours the owner asked for on 2026-09-08 and the Henesys escape of 2026-09-14");
     }
 
     /// **A used option keeps its number.** This is the invariant the module doc argues for,
@@ -579,14 +602,14 @@ mod tests {
     /// spent, `#L1#` names a different perk and the payout follows the wrong line.
     #[test]
     fn a_used_option_keeps_its_line_and_its_number() {
-        let fresh = menu_text([false, false, false]);
+        let fresh = menu_text([false; PERKS.len()]);
         for (i, perk) in PERKS.iter().enumerate() {
             assert!(fresh.contains(&menu_line(i as u32, perk.label())), "{perk:?} is missing");
         }
         // Every one of the eight used/unused combinations still draws three lines, and each
         // perk is still on its own number.
-        for mask in 0u8..8 {
-            let used = [mask & 1 != 0, mask & 2 != 0, mask & 4 != 0];
+        for mask in 0u8..16 {
+            let used = [mask & 1 != 0, mask & 2 != 0, mask & 4 != 0, mask & 8 != 0];
             let text = menu_text(used);
             for (i, perk) in PERKS.iter().enumerate() {
                 assert!(
@@ -594,7 +617,7 @@ mod tests {
                     "mask {mask:03b}: {perk:?} left line {i}"
                 );
             }
-            assert_eq!(text.matches("#L").count(), PERKS.len(), "mask {mask:03b}: three lines");
+            assert_eq!(text.matches("#L").count(), PERKS.len(), "mask {mask:04b}: one line per favour");
             assert_eq!(
                 text.matches("(already used today)").count(),
                 used.iter().filter(|u| **u).count(),
@@ -606,7 +629,7 @@ mod tests {
     /// The menu is one string with the client's own layout: header, blank line, then the list.
     #[test]
     fn the_menu_opens_with_the_header_and_a_blank_line() {
-        let text = menu_text([false; 3]);
+        let text = menu_text([false; PERKS.len()]);
         assert!(text.starts_with(&header()));
         assert!(
             text.starts_with(&format!("{}{LINE_BREAK}{LINE_BREAK}#d#L0#", header())),
@@ -625,7 +648,8 @@ mod tests {
             header(),
             no_such_option(),
             nothing_to_reset(),
-            menu_text([false, true, false]),
+            menu_text([false, true, false, false]),
+            already_in_henesys(),
             leaf_points_line(LEAF_POINTS_PER_CLAIM, 4_200),
             level_up_line(12, 13, 1_003),
             already_max_level(120),

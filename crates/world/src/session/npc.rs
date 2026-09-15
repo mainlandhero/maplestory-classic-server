@@ -1817,6 +1817,22 @@ impl Session {
                 }
                 None
             }
+            crate::dailyperks::Perk::ReturnToHenesys => {
+                // Already there: a SetField to the map you are standing on is a reload, not a
+                // rescue, and it must not eat the day.
+                if chr.map_id == crate::dailyperks::HENESYS {
+                    return Some(crate::dailyperks::already_in_henesys());
+                }
+                // A client whose field table cannot vouch for Henesys would be stranded, not
+                // rescued - the same guard `!map` applies. Refused before the claim.
+                if !self.config.map_exists(crate::dailyperks::HENESYS) {
+                    return Some(
+                        "I cannot find the road to Henesys just now. Nothing has been used up."
+                            .to_string(),
+                    );
+                }
+                None
+            }
             crate::dailyperks::Perk::ResetApSp => {
                 // The same three sources `gm_reset_ap` and `gm_reset_sp` draw from. If all
                 // three are empty the command is a no-op, and a no-op must not eat a day.
@@ -1976,6 +1992,39 @@ impl Session {
                         chr.id, after.ap
                     ),
                 ));
+                Ok(out)
+            }
+            // ---- Return to Henesys --------------------------------------------------
+            //
+            // The grant IS the SetField. `go_to_map` does everything a portal walk does -
+            // hands the mobs over, tells the map we left, moves the record - and the effect
+            // is verified by re-reading the record's map rather than by trusting the call.
+            //
+            // **No Say afterwards, on purpose.** A `SetField` rebuilds the client's whole
+            // screen; a dialogue box queued behind it would pop up over Henesys with nothing
+            // to say that the teleport has not already said. The menu reply holds no latch,
+            // so the SetField alone is a complete answer. The log line carries the receipt.
+            crate::dailyperks::Perk::ReturnToHenesys => {
+                let from = chr.map_id;
+                let mut moved = chr.clone();
+                let out = self.go_to_map(
+                    &mut moved,
+                    crate::dailyperks::HENESYS,
+                    crate::dailyperks::HENESYS_PORTAL,
+                    format!(
+                        "daily perk ReturnToHenesys PAID: {} - the once-a-day escape for character {}, from map {from}",
+                        crate::dailyperks::COMMAND_TYPED, chr.id
+                    ),
+                );
+                let after = self
+                    .claimed_character()
+                    .ok_or_else(|| "your record could not be read back".to_string())?;
+                if after.map_id != crate::dailyperks::HENESYS {
+                    return Err(format!(
+                        "the record still says map {} - the road to Henesys did not take",
+                        after.map_id
+                    ));
+                }
                 Ok(out)
             }
         }

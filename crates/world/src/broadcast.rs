@@ -364,6 +364,13 @@ impl Bus {
         }
     }
 
+    /// **Everyone in a field on this channel**, as `(character, map)`. The fallback `!online`
+    /// uses when no hub is linked, and the source `!track` uses for its own channel.
+    pub fn everyone_here(&self) -> Vec<(u32, u32)> {
+        let inner = self.lock();
+        inner.boxes.values().filter_map(|m| m.presence.as_ref()).map(|p| (p.character, p.map)).collect()
+    }
+
     /// Replace this connection's spawn packet without announcing anything.
     ///
     /// For a change that alters how the character looks to a later arrival - an
