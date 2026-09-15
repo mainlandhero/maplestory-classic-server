@@ -37,6 +37,38 @@ like a server that is not running. It cost one of the owner's manual launches on
 and stakes a login claim the login server matches to the process that owns the socket; the
 game socket itself carries no credential and never has. Say so in every progress report.
 
+**2026-09-15, release: the world hub, and everything social that crosses channels.** What
+this package carries that the 2026-09-13 one did not, in the order a player meets it:
+
+* **A third server process, `maplecw-chat`, on loopback 8483** (`crates/world/src/link.rs`,
+  `bin/chat_server.rs`). Every channel dials it once (`--link`, default on; `none` runs a
+  channel alone). It relays character-addressed packets to the channel that hosts the
+  character, keeps the directory of who is online where, and serialises party requests so
+  every channel's party replica applies one sequence. Not a database - the owner's constraint -
+  and nothing in it survives a restart; the channels re-announce their players. Its log is
+  `chat-hub.log`. `start-server.ps1` starts it first; `package-server.ps1` ships it; it is
+  never opened in the firewall or forwarded. Measured live 2026-09-15: create, invite,
+  accept and pick-up-rights toggles all echoed through it and answered from the echo.
+* **Parties across channels.** The registry is hub-serialised; invite, join, leave, expel,
+  leader change and pick-up rights cross. Pick-up rights is a **toggle** (the button's
+  request carries no value) answered with the client's own `0x2D` - "changed to Party
+  Leader / All"; under Party Leader only the leader (and a drop's killer) takes a party drop.
+* **Party mesos** split like party EXP: 70% to the picker, a copy of the party share to every
+  other member on the map, drawn as the client's yellow *"Spotting Small Change (+n)"*; a
+  player's own dropped mesos are 100% to whoever picks them up. Seen on screen.
+* **Party chat** (`0x0179` -> `0x01B1`, any map, any channel), **whispers** (`0x017B` ->
+  `0x01B3`; the target anywhere, the sender always answered, `/find` as a plain line) and
+  **Maple Chat** (`0x01FD` -> `0x00A3`): open, the invite dialog anywhere, accept, and the
+  window's six seats with each member's avatar look. Rooms still live in the channel process;
+  a typed line and a closed window are the next two captures. The buddy list is not built.
+* **The Cash Shop's two panels** draw and move items both ways; **cash equips live in the
+  Deco tab** (150 slots from the first login) and the chat folds accented names to ASCII.
+* **Summoning sacks**: the mob gets a controller and the summoning circle, then a `0x03E8`.
+
+**Operator-visible changes:** one more process in the window and one more log; 8483 stays
+closed; `chat.log` was renamed `chat-hub.log` before it ever shipped. Everything that was
+true on 2026-09-13 below still is.
+
 **2026-09-13, release: the launcher checks its own client folder, one live login claim per
 account, and a superseded launch is thrown off the channel.** Three changes, all from one
 thread that started with a second machine failing to start the client at all.

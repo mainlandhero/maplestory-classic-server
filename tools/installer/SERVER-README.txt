@@ -9,6 +9,9 @@ WHAT IS IN HERE, AND WHAT IS NOT
 
     bin\maplecw-login.exe     login and character select        TCP 8484
     bin\maplecw-world.exe     one channel; one process each     TCP 8485, 8486
+    bin\maplecw-chat.exe      the world hub the channels dial   TCP 8483, LOOPBACK ONLY
+                              (parties, party chat, whispers and Maple Chat across
+                              channels). Never open or forward 8483: no client uses it.
     bin\maplecw-auth.exe      sign-in. The launcher POSTs here  TCP 8480
     bin\maplecw-useradd.exe   accounts, GM status, codes
     gm-handbook\              game tables extracted from the client's WZ

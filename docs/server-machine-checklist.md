@@ -16,6 +16,7 @@ produces **`out\MapleCW-server.zip`** (about 8 MB). Copy that one file. Its cont
 |---|---|
 | `bin\maplecw-login.exe` | login and character select, listens on **TCP 8484** |
 | `bin\maplecw-world.exe` | one channel per process, **TCP 8485, 8486** (two channels by default; `-Channels N` adds one port each) |
+| `bin\maplecw-chat.exe` | the world hub the channels dial, **loopback 8483 only** - the party registry, party chat, whispers and Maple Chat invites across channels. Server-internal: never opened in the firewall, never forwarded. Its log is `chat-hub.log` |
 | `bin\maplecw-auth.exe` | sign-in over TLS, **TCP 8480**; the launcher talks to this |
 | `bin\maplecw-useradd.exe` | accounts, GM flag, registration and recovery codes from the console |
 | `gm-handbook\` | game tables generated from the client's WZ (maps, mobs, items, portals, footholds, quests). The world server reads these by relative path |
