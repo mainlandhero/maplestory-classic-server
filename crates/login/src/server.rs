@@ -487,9 +487,12 @@ fn connection(
     stream.set_nodelay(true)?;
 
     // The client speaks nothing until it has been greeted, and the greeting is plain.
+    // Every line this connection writes carries its address. The owner, 2026-09-14: *"auth and
+    // login logs need IP address logged next to those actions."*
+    let from = stream.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "?".to_string());
     let hello = greeting(CLIENT_TX_IV, CLIENT_RX_IV);
     stream.write_all(&hello)?;
-    log(&format!("-> greeting, {} bytes", hello.len()));
+    log(&format!("-> [{from}] greeting, {} bytes", hello.len()));
 
     // Two chains, two IVs, and they are not interchangeable: the client encrypts with the
     // one it read from field J and decrypts with the one from field K, and each direction
@@ -531,7 +534,7 @@ fn connection(
         None => session,
     };
     for reply in session.on_connect() {
-        send(&mut stream, &mut tx, &reply.opcode, &reply.packet(), &reply.what)?;
+        send(&mut stream, &mut tx, &from, &reply.opcode, &reply.packet(), &reply.what)?;
     }
 
     // Not a keepalive - the client wants no heartbeat, and that was measured. This only
@@ -545,7 +548,7 @@ fn connection(
             // Windows reports a read timeout as TimedOut, Unix as WouldBlock.
             Err(e) if matches!(e.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
                 for reply in session.on_quiet() {
-                    send(&mut stream, &mut tx, &reply.opcode, &reply.packet(), &reply.what)?;
+                    send(&mut stream, &mut tx, &from, &reply.opcode, &reply.packet(), &reply.what)?;
                 }
                 continue;
             }
@@ -569,7 +572,7 @@ fn connection(
                 .unwrap_or(0xFFFF);
             let payload = &body[2.min(body.len())..];
             log(&format!(
-                "<- {}, {} byte body {}",
+                "<- [{from}] {}, {} byte body {}",
                 label(opcode),
                 payload.len(),
                 body_hex(opcode, payload)
@@ -624,7 +627,7 @@ fn connection(
                     ));
                     std::thread::sleep(std::time::Duration::from_millis(reply.pause_ms));
                 }
-                send(&mut stream, &mut tx, &reply.opcode, &reply.packet(), &reply.what)?;
+                send(&mut stream, &mut tx, &from, &reply.opcode, &reply.packet(), &reply.what)?;
             }
         }
     }
@@ -633,13 +636,14 @@ fn connection(
 fn send(
     stream: &mut TcpStream,
     tx: &mut Framer<MapleCipher>,
+    to: &str,
     opcode: &u16,
     packet: &[u8],
     what: &str,
 ) -> std::io::Result<()> {
     let framed = tx.frame(packet);
     stream.write_all(&framed)?;
-    log(&format!("-> {} {what}", label(*opcode)));
+    log(&format!("-> [{to}] {} {what}", label(*opcode)));
     log(&format!("   body {}", body_hex(*opcode, &packet[2.min(packet.len())..])));
     Ok(())
 }

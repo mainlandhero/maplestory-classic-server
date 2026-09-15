@@ -719,6 +719,26 @@
                           chat-hub.log lists who is online where
               the client DIES on receipt -> the chat-info tail; say which client
            7. /find Tester2 -> "Tester2 is on channel N." as a yellow line
+         MAPLE CHAT (the client's messenger): the owner's invite was captured (00:39:49, 0x01FD
+         = u32 mode 0, u8 1, str "Tester2"). Built, step one of three: the opener gets
+         0x00A3 mode 0 (messenger id, result 0 - the client stores the id and opens the
+         Maple Chat window), and the invitee gets mode 6 (flag 1, the inviter's id and
+         name) wherever they are - which the client's own handler hands to the dialog
+         'Chat invite from'. What the dialog's Accept SENDS has never been captured, so
+         the accept is NOT answered yet: the server logs it as "mode N ... THIS IS THE
+         CAPTURE". Members and their avatars in the window (mode 4) need an avatar-look
+         encoding this server does not have yet - step three.
+           8. invite Tester2 to a Maple Chat again:
+              your Maple Chat window opens, and the invite dialog pops on Tester2 ->
+                          steps one and two work
+              your window opens but nothing on Tester2 -> world-chN.log: was mode 6
+                          delivered ("delivered to N")? if it was, the dialog is
+                          gated on something read wrong; say so
+              nothing opens on yours -> mode 0's result byte; say so
+              a client DIES -> say which; the hook log names the packet
+           9. click Accept on Tester2: nothing is expected to happen yet - the request
+              lands in world-chN.log as "maple chat: 0x01FD mode N ... THIS IS THE
+              CAPTURE", and that line is what builds the next step.
          BUDDY CHAT: not built - no capture yet. Open the buddy list once and add someone;
          the bodies land in world-chN.log as UNKNOWN, which is the capture it needs.
 
@@ -2328,6 +2348,10 @@ param(
     # reply, so the client hangs on "Connecting..." on purpose. This was the DEFAULT until
     # 2026-09-14. Its one honest use is eliminating the channel as a variable.
     [switch]$SilentChannel,
+    # Log every mob move (0x02FF), ack (0x03E4) and inbound 0x0070 report as its own line -
+    # the 97% of a busy channel log that is COUNTED once a minute by default since
+    # 2026-09-14. Pass it for a run where the mob paths are the subject.
+    [switch]$LogChatter,
     # OFF by default, and it is an EXPERIMENT rather than a fix.
     #
     # Three bytes at 14019b504 in the mapped image: the client's free reads the 64-bit pool
@@ -3557,6 +3581,12 @@ foreach ($ch in 0..($Channels - 1)) {
     $chLog = Join-Path $root "world-ch$ch.log"
     Save-PreviousLog $chLog
     Remove-Item $chLog -Force -ErrorAction SilentlyContinue
+    # The rolls too (world-chN.log.1 .. .5 - the server rolls its own file at 50 MB now), and
+    # the stdout stub, so a run starts from an empty slate and nothing is confused for new.
+    foreach ($roll in (Get-ChildItem -Path $root -Filter "world-ch$ch.log.*" -ErrorAction SilentlyContinue)) {
+        if ($roll.Name -match '\.log\.\d+$') { Save-PreviousLog $roll.FullName }
+        Remove-Item $roll.FullName -Force -ErrorAction SilentlyContinue
+    }
     $chArgs = @('--db', "`"$Database`"", '--bind', "127.0.0.1:$chPort", '--channel', "$ch")
     # Every channel is told where every channel listens, because Change Channel (0x00D2)
     # arrives on the CHANNEL connection and has to be answered with the target's address.
@@ -3566,6 +3596,10 @@ foreach ($ch in 0..($Channels - 1)) {
     $chArgs += @('--link', "127.0.0.1:$ChatPort")
     # The channel answers by default now; only the deliberate silence needs a flag.
     if ($SilentChannel) { $chArgs += '--silent-channel' }
+    # The channel writes and ROLLS its own log now (50 MB, five kept). Stdout gets nothing
+    # after the file opens; it is redirected to a .out stub so nothing is lost if it does.
+    $chArgs += @('--log-file', "`"$chLog`"")
+    if ($LogChatter) { $chArgs += '--log-chatter' }
     if ($NoMobs) { $chArgs += '--no-mobs' }
     if ($MobLimit -gt 0) { $chArgs += @('--mob-limit', "$MobLimit") }
     if ($ShopRows -gt 0) { $chArgs += @('--shop-rows', "$ShopRows") }
@@ -3573,7 +3607,7 @@ foreach ($ch in 0..($Channels - 1)) {
     if ($PetMoveAction -ge 0) { $chArgs += @('--pet-move-action', "$PetMoveAction") }
     $p = Start-Process -FilePath $worldExe -WorkingDirectory $root -PassThru @spawn `
         -ArgumentList $chArgs `
-        -RedirectStandardOutput $chLog -RedirectStandardError "$chLog.err"
+        -RedirectStandardOutput "$chLog.out" -RedirectStandardError "$chLog.err"
     if ($ch -eq 0) { $worldSrv = $p }
     $worldAll += $p
     Write-Host "channel $ch on 127.0.0.1:$chPort (pid $($p.Id)), log $chLog"
@@ -3645,6 +3679,10 @@ function Show-TestPlan {
         Write-Host '           "Could not find Tester2." -> not in the directory (chat-hub.log)'
         Write-Host '           a client DIES on receipt -> say which' -ForegroundColor Red
         Write-Host '        6. /find Tester2 -> "Tester2 is on channel N." (a plain line)'
+        Write-Host '        7. Maple Chat: invite Tester2 again. Your window opens AND the'
+        Write-Host '           dialog pops on Tester2 -> steps 1+2 work. Click Accept on'
+        Write-Host '           Tester2: nothing happens yet ON PURPOSE - the accept lands in'
+        Write-Host '           world-chN.log as "mode N ... THIS IS THE CAPTURE".' -ForegroundColor Yellow
         Write-Host '      Buddy list: NOT built - open it and add someone once; the bytes' -ForegroundColor Yellow
         Write-Host '      land in world-chN.log as UNKNOWN, which is the capture it needs.' -ForegroundColor Yellow
         Write-Host ''
