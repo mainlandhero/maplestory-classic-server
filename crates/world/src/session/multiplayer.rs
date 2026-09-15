@@ -1254,6 +1254,38 @@ mod tests {
         assert!(tester.tick(2_000).iter().all(|r| r.opcode != net::whisper::WHISPER));
     }
 
+    /// **Opening a Maple Chat with an invitee opens the opener's window and puts the dialog
+    /// on the invitee's client.** The owner, 2026-09-15 - the request is the log's bytes.
+    #[test]
+    fn opening_a_maple_chat_answers_the_opener_and_invites_the_named_character() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let config = Arc::new(Config::default());
+        let fields = Arc::new(Fields::new());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let make = |name: &str| {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: 104_040_000, ..Default::default() };
+            let made = store.create_character(account, 0, &chr).unwrap();
+            store.create_migration(account, made.id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(made.id);
+            s.on_field_entered();
+            (s, made.id)
+        };
+        let (mut wisp, wisp_id) = make("Wisp");
+        let (mut tester, _) = make("Tester2");
+        let hex = |s: &str| -> Vec<u8> { (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect() };
+        let mut req = net::messenger::CLIENT_MESSENGER.to_le_bytes().to_vec();
+        req.extend_from_slice(&hex("0000000001070054657374657232"));
+        let out = wisp.handle(&req);
+        let opened = out.iter().find(|r| r.opcode == net::messenger::MESSENGER).expect("mode 0 to the opener");
+        let id = u32::from_le_bytes(opened.body[..4].try_into().unwrap());
+        assert_eq!(&opened.body[4..], &[0u8; 8], "mode 0, result 0");
+        assert_ne!(id, 0);
+        let mail = tester.tick(1_000);
+        let inv = mail.iter().find(|r| r.opcode == net::messenger::MESSENGER).expect("mode 6 to the invitee");
+        assert_eq!(inv.body, net::messenger::invite(id, wisp_id, "Wisp"));
+    }
+
     /// **The pick-up-rights button is a toggle, answered with the client's 0x2D.** The owner,
     /// 2026-09-14: *"nothing happened"* - the reply was a bare 0x0D whose block carried a
     /// constant 0 in the rights byte. Each press flips All <-> Party Leader, every member

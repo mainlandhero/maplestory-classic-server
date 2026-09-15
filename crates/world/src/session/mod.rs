@@ -521,6 +521,7 @@ mod npc;
 mod party;
 mod groupchat;
 mod whisper;
+mod messenger;
 pub mod worldlink;
 mod pet;
 mod pools;
@@ -961,6 +962,8 @@ impl Session {
             }
             // Whispers and /find. `session::whisper`.
             net::whisper::CLIENT_WHISPER => return self.on_whisper(body.get(2..).unwrap_or(&[])),
+            // Maple Chat. `session::messenger`.
+            net::messenger::CLIENT_MESSENGER => return self.on_messenger(body.get(2..).unwrap_or(&[])),
             net::notice::CLIENT_LOG_OUT => return self.on_log_out(),
             net::script::CLIENT_SCRIPT_REPLY => {
                 return self.on_script_reply(body.get(2..).unwrap_or(&[]))
