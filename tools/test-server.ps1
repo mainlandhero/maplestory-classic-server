@@ -1963,7 +1963,24 @@
         And as Cobalt, once: Power Strike on Ctrl, Slash Blast on Shift after a relog ->
         the keyboard restore, still unconfirmed since 2026-09-12, is confirmed too.
 
-     7. THE CRASH - a question, not a test.
+     7. SKILL POINTS SURVIVE A MAP CHANGE, 2026-09-14. seedling: job-advanced to Bowman at
+        level 12, got the 7 SP in the advance, then they vanished. Measured: the advance
+        0x007C was correct (tier 1 = 7), but the stat block in every SetField carried an
+        EMPTY SP table, which the client reads as "zero every pool", so the next portal wiped
+        them. Now the pool packet rides after every SetField, like the keymap. As purr (id
+        218, already a level-12 Bowman with 0 spent), open the skill window - Bowman tab:
+          7 SP shown -> walk through a portal, reopen the window:
+            still 7 -> DONE; the fix holds across a field change
+            back to 0 -> the after-SetField 0x007C did not apply; paste the world-ch0.log
+                         lines around the SetField (the "skill points now [tier 1 = 7]" one
+                         should be right after the SET_FIELD)
+          0 SP on the FIRST open, before any portal -> the login SetField's 0x007C is
+                         missing or ordered before the SetField; say so
+        Then spend a point and change channel: the spent count must hold (spend IS persisted;
+        the pool is entitlement - spent). A beginner (ouggh, id 215) must still show its own
+        computed SP and NOT a phantom first-job pool.
+
+     8. THE CRASH - a question, not a test.
         A 1.36 GB dump was written at 00:08 from a fault at 0x14090a6f0, an address that
         appears NOWHERE else in the archive. It is an std::map node walk hitting a bad
         pointer, with 38 C++ throws before it. You said you were "just in the map with
@@ -4818,7 +4835,19 @@ function Show-TestPlan {
         Write-Host '     As Cobalt once: Ctrl Power Strike, Shift Slash Blast after a relog'
         Write-Host '     -> the keyboard restore (unconfirmed since 09-12) is confirmed too.'
         Write-Host ''
-        Write-Host '  7. THE CRASH - a question, not a test.' -ForegroundColor White
+        Write-Host '  7. SKILL POINTS SURVIVE A MAP CHANGE. seedling: advanced to Bowman at' -ForegroundColor White
+        Write-Host '     level 12, got 7 SP, then they vanished. The advance was right; the'
+        Write-Host '     stat block in every SetField carried an EMPTY SP table, so the next'
+        Write-Host '     portal zeroed the pool. Now the pool packet rides after every'
+        Write-Host '     SetField. As purr (id 218, level-12 Bowman, 0 spent), skill window:'
+        Write-Host '       Bowman tab shows 7 -> walk a portal, reopen:'
+        Write-Host '         still 7 -> DONE' -ForegroundColor Green
+        Write-Host '         back to 0 -> after-SetField 0x007C did not apply; paste the log' -ForegroundColor Yellow
+        Write-Host '       0 on the FIRST open (no portal yet) -> the login 0x007C is missing' -ForegroundColor Yellow
+        Write-Host '     Spend one, change channel: the spend must hold. A beginner (ouggh,'
+        Write-Host '     215) must show its OWN computed SP, not a phantom first-job pool.'
+        Write-Host ''
+        Write-Host '  8. THE CRASH - a question, not a test.' -ForegroundColor White
         Write-Host '     A 1.36 GB dump at 00:08, fault 0x14090a6f0 - an address that'
         Write-Host '     appears NOWHERE else in the archive. It is an std::map node walk'
         Write-Host '     hitting a bad pointer, 38 C++ throws before it. You were "just in'

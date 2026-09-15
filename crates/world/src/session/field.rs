@@ -498,6 +498,13 @@ impl Session {
         // `dispatch` already does this. The owner, 2026-09-12: "It did not survive a re-login" -
         // and a portal walk must not be the second way to lose it. session/keymap.rs.
         out.extend(self.keymap_replies());
+        // The skill-point pools ride after the SetField too, and for the same reason as the
+        // keymap: the stat block in the record carries an EMPTY SP table (`character_stat_block`
+        // pushes one zero byte on the extended branch), so the new field's skill window would
+        // read every pool as 0 and grey the `+` buttons. seedling, 2026-09-14: job-advanced to
+        // Bowman at level 12, got the 7 SP in the advance 0x007C, then a portal wiped them.
+        // Now every SetField re-sends the real balance. session/skills.rs.
+        out.extend(self.skill_point_reply(chr));
         out
     }
 

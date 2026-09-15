@@ -1,0 +1,13 @@
+# Slice of world.log 2026-09-14 (seedling/purr, char 218): job advance to Bowman at lvl 12,
+# the SP granted in 0x007C, then the next SetField (portal out02) carrying an empty stat block.
+# Full run archived in Crash Investigation; this is the decisive window only.
+
+01:27:56.267 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from instructor 221: "Congratulations. You are now a Archer. Open your skill window - you have skill points to spend."
+01:27:56.267    body 0000000000dd0000000000000000000000005f00436f6e67726174756c6174696f6e732e20596f7520617265206e6f772061204172636865722e204f70656e20796f757220736b696c6c2077696e646f77202d20796f75206861766520736b69...(+25 bytes, known opcode so capped)
+01:27:56.268 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: job 0 -> 300, AND the skill points [tier 1 = 7]. One packet, mask bit 5 plus the SP bit. The client plays JobChanged itself from this packet - no 0x02D1 is sent, deliberately
+01:27:56.268    body 010001208000002c0100000101070000000000
+01:27:56.288 -> 0x0453 NPC_CHAT (outbound; one NPC's chat balloon) NpcChat: object id 1000, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+01:27:56.289    body e8030000ff0100000000
+...
+01:28:01.812 <- 0x00D1 CLIENT_TRANSFER_FIELD (portal; 0xFFFFFFFF target means resolve the name), 34 byte body 640000001a5200000000000000000000ffffffff05006f757430320e01b500000000
+01:28:01.813 -> 0x01A0 SET_FIELD SetField, portal "out02" -> map 10001050 portal 15, for character 218 (purr), quests: 2 started / 21 completed
