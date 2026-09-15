@@ -330,3 +330,56 @@ keys merged, gate 0; presets 1 and 2 = the image's, gate 0 (`CLIENT_PRESETS_1_AN
 = gate 1 (no const table exists for it - section 7's "garbage" past preset 2); quickslot gate
 0. **1340 bytes.** The quickslot values and the gate-0 path are unmeasured; that is the one
 open reading on the next launch.
+
+## 9. The byte after the subtype is the TABLE, and table 3 is the controller - 2026-09-14
+
+The owner: *"Whenever there are customization to keybindings in the controller settings, it is not
+getting saved properly, and when clients switch maps, their controller settings are completely
+screwed up, without retaining whatever they have set before."*
+
+Section 1 called the byte after the subtype a flag that is always 0, and `parse_change` read it
+and dropped it. Two captures from the run where the owner edited the Controller tab
+(`research/fixtures/keymap-controller-table-3-delta-and-53-entry-xor-world-ch0.log`, 00:56:30
+and 00:58:49) have **3** there. The builder settles what it is **[L]** - `FUN_141a0c340` takes
+the table pointer in `rcx` and that byte in `dl`, and its two callers set them together:
+
+```text
+141a00849  imul rcx, rbx, 0x37a ; lea rax, [0x143ad0280] ; movzx edx, bl    ; keyboard preset rbx
+141a008ef  mov  dl, 3           ; lea rcx, [0x143ad1070]                     ; the controller
+```
+
+So the controller is the fourth table of section 8's loop - the "separate static for preset 3".
+Two things followed from throwing the byte away:
+
+1. every controller delta was merged into the keyboard table, at the same numbers - button 0
+   onto scan code 0, button 0x1d onto LCtrl. Wisp#215's rows in the live database were
+   **exactly the 22 bound slots of the controller factory table**, nothing else;
+2. `0x05F1` sent table 3 as *keep*, and keep does not mean "leave it alone". The handler
+   resets **every** table to keyboard preset 0 before it reads a gate - `0x1419ffc42 cmovne`
+   picks the static for index 3, but `mov rdx, r12` is the same keyboard const for all four
+   iterations - so keep on table 3 hands the controller a keyboard layout at every SetField.
+
+The client's controller default is its own const: `FUN_1401de8d0` is `lea rax, [rip+0x3096249]
+; ret` = **`0x143274b20`**, `.rdata`, 22 of 89 slots bound, none past button 0x27, and the init
+function `0x1419ff6e0` copies it into the preset-3 static once (`0x1419ff905`). The 53-entry
+delta at 00:58:49 is the proof that all of the above is one story: it opens with that table's
+first twelve buttons verbatim and goes on to **unbind Q, W and E** - scan codes, on a controller
+- because the shadow it was diffed against was keyboard preset 0. 53 = the controller default
+XOR keyboard preset 0. `tools/keymapdump.py --exe` now reads and controls the controller table
+too, and emits it as `net::keymap::CLIENT_CONTROLLER_LAYOUT`.
+
+What changed: `Change::Bindings` carries `table`; `character_keymap` is keyed by
+`(character_id, preset, key)` and the deployed one-table shape is rebuilt in place, with the
+stray rows scrubbed (a preset-0 row byte-for-byte equal to a bound controller-factory slot; 22
+removed from Wisp#215, 0 from Cobalt#213, verified on a copy of the live file); `keymap_init`
+sends **all four tables READ**, 1785 bytes, table 3 = the controller const + its deltas.
+
+Two things are not recovered and one is still unmeasured. The keyboard rows a controller delta
+overwrote (the owner's LCtrl and A on 2026-09-14) went back to factory with the scrub - a re-bind.
+Subtype 3 (the selected preset) is still unrestored, section 6. And the 1785-byte shape has not
+been on a screen: the 1340-byte one went out twice on 2026-09-14 and was taken, and this is the
+same packet with one more READ table where a keep gate was.
+
+The lesson is `CLAUDE.md`'s "verify the instrument", pointed the other way: **a field that has
+been constant in every capture is a field nobody has varied, not a flag.** Twenty captures of 0
+were twenty captures of the keyboard tab.

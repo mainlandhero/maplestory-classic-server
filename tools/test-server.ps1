@@ -1931,26 +1931,37 @@
         Making a character here also exercises the create path on a fresh account, which
         nothing has done since the name check went in.
 
-     6. THE KEYBOARD LAYOUT - second try, 2026-09-12. The first try KILLED THE CLIENT at
-        field entry ("Client exited immediately upon logging into the game world"): the
-        client named the packet in a 0x009E CLIENT_PACKET_REJECTED - our 0x05F1, verbatim -
-        and faulted 3 ms later. The 2026-09-08 read of the handler stopped at the slot loop;
-        the handler reads FOUR gated tables (one per preset, cmp r15d,4) and then a quickslot
-        gate, so one table ended where the second gate was expected and the read ran off the
-        end. Now 0x05F1 is 1340 bytes: preset 0 = the factory table (measured off the image,
-        41 bound, Q/W/E/I menus, Ctrl attack, Space jump) with your saved keys on top;
-        presets 1 and 2 as the image ships them; preset 3 keep; quickslots not sent. The
-        save was always fine (three rows on CONFIRM). Log in as Cobalt:
-          you reach the field -> the shape is right; then open KEY BINDINGS:
-            Power Strike on Ctrl, Slash Blast on Shift, Q/W/E/I menus, Space jumps -> done
-            your keys back, OTHER keys moved/blank -> say WHICH; I compare presets
-            every key blank -> gate byte backwards; STOP, say so
-            right in the dialog but keys do nothing -> live copy not taken; say so
-            the QUICKSLOT bar changed -> the quickslot gate 0 path (FUN_1401de860) does
-                       not keep; say what it shows
-          client exits at field entry AGAIN -> paste world-ch0.log's 0x009E line; the reason
-                       and position bytes after "01 00" say which read failed
-          the '.' key attacks -> in your saved delta (attack moved off Ctrl); rebind
+     6. KEY BINDINGS - the CONTROLLER tab, 2026-09-14. You said: "customization to
+        keybindings in the controller settings is not getting saved properly, and when
+        clients switch maps their controller settings are completely screwed up." Measured
+        in world-ch0.log 00:56-00:58: the byte after the subtype in a CONFIRM names the
+        TABLE - 0 for the keyboard, 3 for the controller - and the server threw it away, so
+        every controller button you bound was stored as a keyboard scan code; and the
+        0x05F1 at each map change sent table 3 as "keep", which the client reads as "keep
+        the RESET to keyboard preset 0" (0x1419ffc73 resets all four tables to the keyboard
+        const before any gate). Your controller was handed a keyboard layout at every
+        SetField. The 53-entry CONFIRM the client then sent is the controller factory table
+        XOR keyboard preset 0, including "unbind Q, W, E" - on a controller. Now: the row
+        carries its table, 0x05F1 is 1785 bytes with ALL FOUR tables READ (the controller's
+        = its own const at 0x143274b20, 22 buttons, + your bindings), and Wisp#215's 22
+        stray rows - exactly the controller factory - were scrubbed by a migration verified
+        on a copy of the live database. THE ACCEPTED SHAPE: the 1340-byte packet went out
+        twice today and the client took it; 1785 is the same shape with one more READ table.
+        Log in as the owner, open KEY BINDINGS -> Controller:
+          the tab shows the controller DEFAULTS (not keyboard actions on buttons) -> the
+                       scrub and the init copy are right
+          bind one skill to one button, CONFIRM; walk through a portal; open the tab again:
+            the skill is still on that button, everything else default -> DONE
+            the skill is gone, defaults shown -> the delta did not store as table 3; paste
+                       the "keymap:" log line - it now says WHICH table
+            buttons show keyboard actions (menus, Ctrl attack) -> the READ table for the
+                       controller is not being taken; say so, STOP
+          then the Keyboard tab: Q/W/E/I menus, Ctrl attack, Space jump, nothing on the
+                       1..0 row -> the keyboard table is clean of controller buttons
+          client exits at field entry -> paste world-ch0.log's 0x009E line; the position
+                       byte says which of the four reads failed
+        And as Cobalt, once: Power Strike on Ctrl, Slash Blast on Shift after a relog ->
+        the keyboard restore, still unconfirmed since 2026-09-12, is confirmed too.
 
      7. THE CRASH - a question, not a test.
         A 1.36 GB dump was written at 00:08 from a fault at 0x14090a6f0, an address that
@@ -4787,20 +4798,25 @@ function Show-TestPlan {
         Write-Host '     Making a character here also exercises the create path on a fresh'
         Write-Host '     account, which nothing has done since the name check went in.'
         Write-Host ''
-        Write-Host '  6. THE KEYBOARD LAYOUT - second try. The first KILLED THE CLIENT at' -ForegroundColor White
-        Write-Host '     field entry: it named our 0x05F1 in a 0x009E and faulted. The handler'
-        Write-Host '     reads FOUR gated preset tables + a quickslot gate; we sent one table.'
-        Write-Host '     Now 1340 bytes: preset 0 = factory (Q/W/E/I menus, Ctrl attack, Space'
-        Write-Host '     jump) + your saved keys; presets 1/2 from the image; 3 keep; no'
-        Write-Host '     quickslots. Log in as Cobalt:'
-        Write-Host '       you reach the field -> shape right; open KEY BINDINGS:'
-        Write-Host '         Ctrl Power Strike, Shift Slash Blast, Q/W/E/I menus -> done'
-        Write-Host '         other keys moved/blank -> say WHICH; I compare presets' -ForegroundColor Yellow
-        Write-Host '         every key blank -> gate backwards; STOP, say so' -ForegroundColor Yellow
-        Write-Host '         right in dialog, keys dead -> live copy not taken; say so'
-        Write-Host '         QUICKSLOT bar changed -> the gate-0 path does not keep; say what'
-        Write-Host '       client exits at field entry AGAIN -> paste the 0x009E line' -ForegroundColor Yellow
-        Write-Host '       "." attacks -> in your saved delta; rebind'
+        Write-Host '  6. KEY BINDINGS - the CONTROLLER tab. Your report: not saved, and' -ForegroundColor White
+        Write-Host '     "completely screwed up" after a map change. Measured: the byte after'
+        Write-Host '     the subtype in a CONFIRM is the TABLE (0 keyboard, 3 controller) and'
+        Write-Host '     the server dropped it - your buttons were stored as scan codes - and'
+        Write-Host '     0x05F1 sent table 3 as "keep", which means keep the RESET to keyboard'
+        Write-Host '     preset 0. Every SetField handed the controller a keyboard layout.'
+        Write-Host '     Now: rows carry the table, 0x05F1 is 1785 bytes, all four tables'
+        Write-Host '     READ, the controller one from its own const (22 buttons) + yours;'
+        Write-Host '     Wisp#215''s 22 stray rows scrubbed by a migration (verified on a copy).'
+        Write-Host '     As the owner, KEY BINDINGS -> Controller:'
+        Write-Host '       tab shows controller DEFAULTS, not menus/attack on buttons -> ok'
+        Write-Host '       bind a skill to a button, CONFIRM, take a portal, open again:'
+        Write-Host '         skill still there, rest default -> DONE' -ForegroundColor Green
+        Write-Host '         skill gone -> paste the "keymap:" log line; it names the table' -ForegroundColor Yellow
+        Write-Host '         buttons show keyboard actions -> READ not taken; STOP, say so' -ForegroundColor Yellow
+        Write-Host '       Keyboard tab: Q/W/E/I menus, Ctrl attack, 1..0 row empty -> clean'
+        Write-Host '       client exits at field entry -> paste the 0x009E line' -ForegroundColor Yellow
+        Write-Host '     As Cobalt once: Ctrl Power Strike, Shift Slash Blast after a relog'
+        Write-Host '     -> the keyboard restore (unconfirmed since 09-12) is confirmed too.'
         Write-Host ''
         Write-Host '  7. THE CRASH - a question, not a test.' -ForegroundColor White
         Write-Host '     A 1.36 GB dump at 00:08, fault 0x14090a6f0 - an address that'

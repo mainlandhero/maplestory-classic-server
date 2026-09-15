@@ -24,12 +24,31 @@
 //! rather than columns on `characters`, so this whole feature adds nothing to a row that is
 //! already read on every login.
 //!
+//! # One row per (table, key): the controller is table 3 - 2026-09-14
+//!
+//! The owner: *"Whenever there are customization to keybindings in the controller settings, it is
+//! not getting saved properly, and when clients switch maps, their controller settings are
+//! completely screwed up."* The client keeps FOUR tables - keyboard presets 0..2 and the
+//! controller - and names the table in every delta (`net::keymap` module docs §4). This
+//! module stored one table, so a controller delta overwrote keyboard rows at the same
+//! numbers. [`KeyBinding::preset`] is that table index now, and the primary key includes it.
+//!
+//! The deployed table has no `preset` column and SQLite cannot add one to a primary key, so
+//! [`ensure_tables`] rebuilds it in place the first time it sees the old shape - every old
+//! row becomes preset 0 - and then **scrubs the rows the bug left behind**: a preset-0 row
+//! that is byte-for-byte a bound slot of the controller's factory table is a controller
+//! button that landed on a scan code, not a keyboard binding anyone made (the odds of a
+//! player hand-binding scan code 1 to basic action 401 are what they are). Those rows are
+//! deleted, not moved: a controller row equal to the controller factory is redundant anyway.
+//! What cannot be repaired is a keyboard row the controller delta overwrote - the owner's LCtrl
+//! and A were, on 2026-09-14 - and the scrub puts those back to factory; they re-binds them once.
+//!
 //! # What this crate deliberately does not know
 //!
-//! It does not know the client's factory layout and it does not merge in defaults. It stores
-//! what the player changed and hands it back; `net::keymap::restore` decides what is safe to
-//! put on the wire. `store` cannot call `net`, and the direction of that arrow is what keeps
-//! the inverted gate byte in exactly one place.
+//! It does not merge in defaults. It stores what the player changed and hands it back;
+//! `net::keymap::restore` decides what is safe to put on the wire, and the inverted gate byte
+//! lives in exactly one place. The one factory table this module reads is the controller's,
+//! for the scrub above, and only on the upgrade path.
 //!
 //! # Nothing here authenticates
 //!
@@ -41,11 +60,15 @@ use rusqlite::{Connection, OptionalExtension};
 use crate::db::Store;
 use crate::error::Result;
 
-/// One saved binding: a DirectInput scan code and what sits on it.
+/// One saved binding: which table, a slot in it, and what sits on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KeyBinding {
-    /// DirectInput scan code. The caller has already bounded this against the table size;
-    /// this crate stores what it is given.
+    /// Which of the client's four tables: keyboard preset 0, 1 or 2, or
+    /// `net::keymap::CONTROLLER_TABLE` (3). The caller has already bounded it.
+    pub preset: u8,
+    /// DirectInput scan code for a keyboard table, a button index for the controller's. The
+    /// caller has already bounded this against the table size; this crate stores what it is
+    /// given.
     pub key: u8,
     pub kind: u8,
     pub action: u32,
@@ -63,23 +86,26 @@ pub enum KeymapOption {
     B = 1,
 }
 
-/// Create both tables.
+/// Create both tables, and bring a deployed `character_keymap` up to the (table, key) shape.
 ///
-/// A plain `CREATE TABLE IF NOT EXISTS` is enough because both tables are new - there is no
-/// deployed shape to migrate from, which is the case `crate::migration::ensure_columns` and
-/// `claims::ensure_columns` exist to handle and this one does not have.
+/// `character_keymap_option` is a plain `CREATE TABLE IF NOT EXISTS`. `character_keymap`
+/// shipped on 2026-09-12 keyed by (character_id, key) and is rebuilt here when that shape is
+/// found - module docs. Called per query, like `claims::ensure_columns`, so the unwired state
+/// is impossible rather than fatal; the check is one `PRAGMA` once the column exists.
 pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
+    upgrade_to_four_tables(conn)?;
     conn.execute_batch(
         r#"
-        -- One row per BOUND key. No rows at all means "this character has never saved a
-        -- layout", which is a different thing from "saved an empty one" and decides whether
-        -- 0x05F1 carries the read gate or the keep gate.
+        -- One row per BOUND slot of one table. No rows at all means "this character has
+        -- never saved a layout", which is a different thing from "saved an empty one" and
+        -- decides whether 0x05F1 goes out at all.
         CREATE TABLE IF NOT EXISTS character_keymap (
             character_id INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+            preset       INTEGER NOT NULL DEFAULT 0,
             key          INTEGER NOT NULL,
             kind         INTEGER NOT NULL,
             action       INTEGER NOT NULL,
-            PRIMARY KEY (character_id, key)
+            PRIMARY KEY (character_id, preset, key)
         );
 
         -- The two u32s behind 0x05F2 and 0x05F3, one row each.
@@ -94,8 +120,58 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// The 2026-09-12 shape had no `preset` column. Rebuild it with one - every existing row is
+/// preset 0, which is the only table the old code could have been fed - and scrub the
+/// controller buttons the old code filed under keyboard scan codes. Module docs.
+///
+/// One transaction: a half-rebuilt table is worse than the old one. Returns how many rows
+/// the scrub removed, `0` when there was nothing to upgrade.
+pub(crate) fn upgrade_to_four_tables(conn: &Connection) -> Result<usize> {
+    let mut columns = std::collections::HashSet::new();
+    {
+        let mut stmt = conn.prepare("PRAGMA table_info(character_keymap)")?;
+        for name in stmt.query_map([], |row| row.get::<_, String>(1))? {
+            columns.insert(name?);
+        }
+    }
+    // No table yet, or already the new shape: nothing to do.
+    if columns.is_empty() || columns.contains("preset") {
+        return Ok(0);
+    }
+    conn.execute_batch(
+        r#"
+        BEGIN;
+        CREATE TABLE character_keymap_v2 (
+            character_id INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+            preset       INTEGER NOT NULL DEFAULT 0,
+            key          INTEGER NOT NULL,
+            kind         INTEGER NOT NULL,
+            action       INTEGER NOT NULL,
+            PRIMARY KEY (character_id, preset, key)
+        );
+        INSERT INTO character_keymap_v2 (character_id, preset, key, kind, action)
+            SELECT character_id, 0, key, kind, action FROM character_keymap;
+        DROP TABLE character_keymap;
+        ALTER TABLE character_keymap_v2 RENAME TO character_keymap;
+        COMMIT;
+        "#,
+    )?;
+    let mut scrubbed = 0;
+    for (key, slot) in net::keymap::CLIENT_CONTROLLER_LAYOUT.iter().enumerate() {
+        if slot.kind == 0 && slot.action == 0 {
+            continue;
+        }
+        scrubbed += conn.execute(
+            "DELETE FROM character_keymap
+             WHERE preset = 0 AND key = ?1 AND kind = ?2 AND action = ?3",
+            rusqlite::params![key as i64, slot.kind as i64, slot.action as i64],
+        )?;
+    }
+    Ok(scrubbed)
+}
+
 impl Store {
-    /// Every binding this character has saved, ordered by scan code.
+    /// Every binding this character has saved, every table, ordered by table then slot.
     ///
     /// An empty vector means nothing has ever been saved. The caller must treat that as
     /// "leave the client alone", not as "send an empty layout".
@@ -103,14 +179,15 @@ impl Store {
         let conn = self.conn();
         ensure_tables(&conn)?;
         let mut stmt = conn.prepare(
-            "SELECT key, kind, action FROM character_keymap
-             WHERE character_id = ?1 ORDER BY key",
+            "SELECT preset, key, kind, action FROM character_keymap
+             WHERE character_id = ?1 ORDER BY preset, key",
         )?;
         let rows = stmt.query_map([character_id], |r| {
             Ok(KeyBinding {
-                key: r.get::<_, i64>(0)? as u8,
-                kind: r.get::<_, i64>(1)? as u8,
-                action: r.get::<_, i64>(2)? as u32,
+                preset: r.get::<_, i64>(0)? as u8,
+                key: r.get::<_, i64>(1)? as u8,
+                kind: r.get::<_, i64>(2)? as u8,
+                action: r.get::<_, i64>(3)? as u32,
             })
         })?;
         let mut out = Vec::new();
@@ -137,17 +214,19 @@ impl Store {
         for b in bindings {
             if b.kind == 0 && b.action == 0 {
                 n += tx.execute(
-                    "DELETE FROM character_keymap WHERE character_id = ?1 AND key = ?2",
-                    rusqlite::params![character_id, b.key as i64],
+                    "DELETE FROM character_keymap
+                     WHERE character_id = ?1 AND preset = ?2 AND key = ?3",
+                    rusqlite::params![character_id, b.preset as i64, b.key as i64],
                 )?;
             } else {
                 n += tx.execute(
-                    "INSERT INTO character_keymap (character_id, key, kind, action)
-                     VALUES (?1, ?2, ?3, ?4)
-                     ON CONFLICT(character_id, key)
+                    "INSERT INTO character_keymap (character_id, preset, key, kind, action)
+                     VALUES (?1, ?2, ?3, ?4, ?5)
+                     ON CONFLICT(character_id, preset, key)
                      DO UPDATE SET kind = excluded.kind, action = excluded.action",
                     rusqlite::params![
                         character_id,
+                        b.preset as i64,
                         b.key as i64,
                         b.kind as i64,
                         b.action as i64
@@ -217,9 +296,9 @@ mod tests {
     /// The three bindings from the owner's live client, as `net::keymap` decoded them.
     fn wisps_three() -> Vec<KeyBinding> {
         vec![
-            KeyBinding { key: 0x1D, kind: 1, action: 1_001_002 }, // LCtrl  Slash Blast
-            KeyBinding { key: 0x1E, kind: 1, action: 1_001_000 }, // A      Iron Body
-            KeyBinding { key: 0x2A, kind: 1, action: 1_001_001 }, // LShift Power Strike
+            KeyBinding { preset: 0, key: 0x1D, kind: 1, action: 1_001_002 }, // LCtrl  Slash Blast
+            KeyBinding { preset: 0, key: 0x1E, kind: 1, action: 1_001_000 }, // A      Iron Body
+            KeyBinding { preset: 0, key: 0x2A, kind: 1, action: 1_001_001 }, // LShift Power Strike
         ]
     }
 
@@ -243,12 +322,12 @@ mod tests {
         let (store, chr) = store_with_character();
         store.apply_keymap_delta(chr, &wisps_three()).unwrap();
         store
-            .apply_keymap_delta(chr, &[KeyBinding { key: 0x10, kind: 4, action: 77 }])
+            .apply_keymap_delta(chr, &[KeyBinding { preset: 0, key: 0x10, kind: 4, action: 77 }])
             .unwrap();
         let got = store.keymap(chr).unwrap();
         assert_eq!(got.len(), 4, "the three earlier bindings survived: {got:?}");
-        assert!(got.contains(&KeyBinding { key: 0x10, kind: 4, action: 77 }));
-        assert!(got.contains(&KeyBinding { key: 0x1D, kind: 1, action: 1_001_002 }));
+        assert!(got.contains(&KeyBinding { preset: 0, key: 0x10, kind: 4, action: 77 }));
+        assert!(got.contains(&KeyBinding { preset: 0, key: 0x1D, kind: 1, action: 1_001_002 }));
     }
 
     #[test]
@@ -256,12 +335,12 @@ mod tests {
         let (store, chr) = store_with_character();
         store.apply_keymap_delta(chr, &wisps_three()).unwrap();
         store
-            .apply_keymap_delta(chr, &[KeyBinding { key: 0x1D, kind: 1, action: 1_001_000 }])
+            .apply_keymap_delta(chr, &[KeyBinding { preset: 0, key: 0x1D, kind: 1, action: 1_001_000 }])
             .unwrap();
         let got = store.keymap(chr).unwrap();
         assert_eq!(got.len(), 3);
-        assert_eq!(got[0], KeyBinding { key: 0x1D, kind: 1, action: 1_001_000 });
-        assert_eq!(got[2], KeyBinding { key: 0x2A, kind: 1, action: 1_001_001 });
+        assert_eq!(got[0], KeyBinding { preset: 0, key: 0x1D, kind: 1, action: 1_001_000 });
+        assert_eq!(got[2], KeyBinding { preset: 0, key: 0x2A, kind: 1, action: 1_001_001 });
     }
 
     /// The client's own clear-to-zero. Without this a key could never be UNbound again: the
@@ -271,7 +350,7 @@ mod tests {
         let (store, chr) = store_with_character();
         store.apply_keymap_delta(chr, &wisps_three()).unwrap();
         store
-            .apply_keymap_delta(chr, &[KeyBinding { key: 0x1E, kind: 0, action: 0 }])
+            .apply_keymap_delta(chr, &[KeyBinding { preset: 0, key: 0x1E, kind: 0, action: 0 }])
             .unwrap();
         let got = store.keymap(chr).unwrap();
         assert_eq!(got.len(), 2, "the cleared key left no row behind: {got:?}");
@@ -299,6 +378,76 @@ mod tests {
         store.apply_keymap_delta(chr, &wisps_three()).unwrap();
         assert_eq!(store.clear_keymap(chr).unwrap(), 3);
         assert_eq!(store.keymap(chr).unwrap(), Vec::new());
+    }
+
+    /// The bug of 2026-09-14, in one test: a controller button and a keyboard key with the
+    /// same number are two rows, and clearing one leaves the other.
+    #[test]
+    fn the_controller_table_and_the_keyboard_table_do_not_share_a_slot() {
+        let (store, chr) = store_with_character();
+        store.apply_keymap_delta(chr, &wisps_three()).unwrap();
+        // Button 0x1D on the controller -> some skill. Scan code 0x1D is LCtrl.
+        let button = KeyBinding { preset: 3, key: 0x1D, kind: 1, action: 1000 };
+        assert_eq!(store.apply_keymap_delta(chr, &[button]).unwrap(), 1);
+        let got = store.keymap(chr).unwrap();
+        assert_eq!(got.len(), 4, "four rows, not three: {got:?}");
+        assert!(got.contains(&KeyBinding { preset: 0, key: 0x1D, kind: 1, action: 1_001_002 }), "LCtrl kept Slash Blast");
+        assert_eq!(got[3], button, "ordered by table, the controller's row is last");
+        // Unbinding the button does not touch LCtrl.
+        store.apply_keymap_delta(chr, &[KeyBinding { preset: 3, key: 0x1D, kind: 0, action: 0 }]).unwrap();
+        assert_eq!(store.keymap(chr).unwrap(), wisps_three());
+    }
+
+    /// The deployed table, keyed by (character_id, key), with exactly what the bug left in
+    /// The owner's: their keyboard rows, plus controller buttons filed under scan codes. After the
+    /// upgrade the keyboard rows are preset 0 and the controller's are gone.
+    #[test]
+    fn the_old_one_table_shape_is_rebuilt_and_the_stray_controller_rows_scrubbed() {
+        let store = Store::open_in_memory().unwrap();
+        let account = store.create_account("wisp", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Cobalt".to_string(), ..Default::default() };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        {
+            let conn = store.conn();
+            conn.execute_batch(
+                "CREATE TABLE character_keymap (
+                    character_id INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+                    key INTEGER NOT NULL, kind INTEGER NOT NULL, action INTEGER NOT NULL,
+                    PRIMARY KEY (character_id, key));",
+            )
+            .unwrap();
+            for (key, kind, action) in [
+                (0x2Ai64, 1i64, 1_001_001i64), // LShift Power Strike: a real keyboard row
+                (0x34, 5, 52),                 // '.' basic 52: a real keyboard row
+                (0x00, 5, 53),                 // controller button 0, filed under scan code 0
+                (0x01, 4, 401),                // button 1
+                (0x1D, 4, 9),                  // button 0x1D - which overwrote LCtrl's Slash Blast
+                (0x08, 1, 1000),               // button 8 -> skill 1000: the owner's own controller binding
+            ] {
+                conn.execute(
+                    "INSERT INTO character_keymap (character_id, key, kind, action) VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![id, key, kind, action],
+                )
+                .unwrap();
+            }
+            assert_eq!(upgrade_to_four_tables(&conn).unwrap(), 3, "three factory controller buttons scrubbed");
+            assert_eq!(upgrade_to_four_tables(&conn).unwrap(), 0, "and the second call finds the new shape");
+        }
+        let got = store.keymap(id).unwrap();
+        assert_eq!(
+            got,
+            vec![
+                KeyBinding { preset: 0, key: 0x08, kind: 1, action: 1000 },
+                KeyBinding { preset: 0, key: 0x2A, kind: 1, action: 1_001_001 },
+                KeyBinding { preset: 0, key: 0x34, kind: 5, action: 52 },
+            ],
+            "the two keyboard rows survive as preset 0; button 8's skill cannot be told from a \
+             keyboard binding and stays - on scan code 8, which is the '7' key - and LCtrl is \
+             simply gone, back to factory"
+        );
+        // And the rebuilt table takes a controller row beside a keyboard one.
+        store.apply_keymap_delta(id, &[KeyBinding { preset: 3, key: 0x08, kind: 1, action: 1000 }]).unwrap();
+        assert_eq!(store.keymap(id).unwrap().len(), 4);
     }
 
     #[test]

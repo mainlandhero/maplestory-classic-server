@@ -52,6 +52,16 @@ STATIC_BASE = 0x140000000
 SINGLETON_FN = 0x1401DE850
 MANAGER = 0x143274460
 SHADOW_OFF = 0x1BD
+# The CONTROLLER factory table, 2026-09-14. `FUN_1401de8d0` is `lea rax, [rip + 0x3096249]
+# ; ret`, the same shape as FUN_1401de850, and the keymap init function 0x1419ff6e0 copies
+# 0x1bd bytes from it into the preset-3 static at 0x143ad1070 (0x1419ff905). The 0x05F1
+# handler then RESETS that static to keyboard preset 0 (0x1419ffc42 `cmovne` picks the
+# static for preset 3, but `mov rdx, r12` is the keyboard const for all four), which is why a
+# keep gate on preset 3 hands a keyboard layout to the controller. [L]
+CONTROLLER = 0x143274B20
+# The buttons the controller table binds by default - the controller delta the owner's client
+# sent on 2026-09-14 (world-ch0.log 00:58:49, 53 entries) opens with exactly these, in order.
+KNOWN_CONTROLLER = {0: (5, 53), 1: (4, 401), 2: (4, 400), 6: (4, 0), 11: (4, 14)}
 SLOTS = 89
 SLOT_LEN = 5
 
@@ -128,6 +138,7 @@ def main_exe(as_rust):
     preset 0. The rebase control does not apply to a file.
     """
     presets = [file_table(MANAGER + p * SHADOW_OFF) for p in range(3)]
+    controller = file_table(CONTROLLER)
     for p, table in enumerate(presets):
         bound, missing = controls(table)
         print("preset %d at %#x: %d slot(s) bound, kinds %s, Q/W/E/I %s"
@@ -143,8 +154,14 @@ def main_exe(as_rust):
           % (bound, SLOTS, "OK" if ok_shape else "FAILED"))
     print("CONTROL known  : Q W E I all bound in preset 0                  %s"
           % ("OK" if ok_known else "FAILED, unbound: " + " ".join(missing)))
+    c_bound = sum(1 for k, a in controller if k or a)
+    c_known = [i for i, want in KNOWN_CONTROLLER.items() if controller[i] != want]
+    c_high = [i for i, (k, a) in enumerate(controller) if (k or a) and i > 0x27]
+    ok_ctrl = c_bound == 22 and not c_known and not c_high
+    print("CONTROL ctrl   : controller table at %#x, %d bound (want 22), none past button 0x27, "
+          "five known buttons %s" % (CONTROLLER, c_bound, "OK" if ok_ctrl else "FAILED " + str(c_known)))
     print()
-    if not (ok_shape and ok_known):
+    if not (ok_shape and ok_known and ok_ctrl):
         print("REFUSING TO EMIT A TABLE: a control failed, so preset 0 is not the factory layout.")
         return 1
     if as_rust:
@@ -168,11 +185,25 @@ def main_exe(as_rust):
                 print("        Slot { kind: %d, action: %d },%s" % (kind, action, note))
             print("    ],")
         print("];")
+        print()
+        print("// The CONTROLLER factory table, preset 3, from 0x143274b20 (.rdata) - what the")
+        print("// keymap init copies into the preset-3 static at 0x143ad1070, and what the 0x05F1")
+        print("// handler does NOT reset it to (it resets every preset to keyboard preset 0). The")
+        print("// index is a controller button, not a scan code. 22 of 89 bound. [L]")
+        print("pub const CLIENT_CONTROLLER_LAYOUT: [Slot; %d] = [" % SLOTS)
+        for i, (kind, action) in enumerate(controller):
+            print("    Slot { kind: %d, action: %d },%s" % (kind, action, ("  // button %#x" % i) if (kind or action) else ""))
+        print("];")
         return 0
     print("%-5s %-8s %s" % ("code", "key", "preset 0 (factory)"))
     for i, (k, a) in enumerate(factory):
         if k or a:
             print("%#04x  %-8s type=%d action=%d" % (i, NAMES.get(i, ""), k, a))
+    print()
+    print("%-5s %s" % ("btn", "controller (preset 3 factory)"))
+    for i, (k, a) in enumerate(controller):
+        if k or a:
+            print("%#04x  type=%d action=%d" % (i, k, a))
     return 0
 
 

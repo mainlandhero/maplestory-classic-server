@@ -20,6 +20,16 @@
 //!
 //! So this returns no reply. If that is ever wrong, the symptom is a UI that freezes the
 //! instant CONFIRM is clicked, and the fix is the nine-byte unlock the catch-all arm sends.
+//!
+//! # Four tables, and the controller is one of them - 2026-09-14
+//!
+//! The owner: *"Whenever there are customization to keybindings in the controller settings, it is
+//! not getting saved properly, and when clients switch maps, their controller settings are
+//! completely screwed up."* A delta names its table (`net::keymap` §4); this module stored
+//! all of them as the keyboard's and sent the controller's back as *keep*, which the client
+//! reads as "keep the reset to keyboard preset 0". Every SetField therefore handed the
+//! controller a keyboard layout and put the controller's buttons on scan codes. Now the row
+//! carries the table and the `0x05F1` sends all four tables READ.
 
 use net::keymap::{Binding, Change, Slot};
 use store::keymap::{KeyBinding, KeymapOption};
@@ -46,15 +56,21 @@ impl Session {
         };
 
         match change {
-            Change::Bindings(bindings) => {
+            Change::Bindings { table, bindings } => {
                 let rows: Vec<KeyBinding> = bindings
                     .iter()
-                    .map(|b| KeyBinding { key: b.key, kind: b.slot.kind, action: b.slot.action })
+                    .map(|b| KeyBinding { preset: table, key: b.key, kind: b.slot.kind, action: b.slot.action })
                     .collect();
+                let which = if table == net::keymap::CONTROLLER_TABLE {
+                    "the CONTROLLER table".to_string()
+                } else {
+                    format!("keyboard preset {table}")
+                };
                 match self.store.apply_keymap_delta(chr.id, &rows) {
                     Ok(n) => crate::server::log(&format!(
-                        "keymap: {} binding(s) from character {} ({}) merged, {} row(s) changed. \
-                         This is a DELTA against the client's shadow table, not a full layout.",
+                        "keymap: {} binding(s) for {which} from character {} ({}) merged, {} row(s) \
+                         changed. This is a DELTA against the client's shadow of that one table, \
+                         not a full layout.",
                         rows.len(),
                         chr.id,
                         chr.name,
@@ -101,10 +117,11 @@ impl Session {
             return Vec::new();
         };
         let stored = self.store.keymap(chr.id).unwrap_or_default();
-        let bindings: Vec<Binding> = stored
+        let bindings: Vec<(u8, Binding)> = stored
             .iter()
-            .map(|b| Binding { key: b.key, slot: Slot { kind: b.kind, action: b.action } })
+            .map(|b| (b.preset, Binding { key: b.key, slot: Slot { kind: b.kind, action: b.action } }))
             .collect();
+        let controller = bindings.iter().filter(|(t, _)| *t == net::keymap::CONTROLLER_TABLE).count();
 
         let mut out = Vec::new();
         match net::keymap::restore(Some(&bindings)) {
@@ -112,13 +129,14 @@ impl Session {
                 opcode: net::keymap::KEYMAP_INIT,
                 body,
                 what: format!(
-                    "FuncKeyMappedInit: four gated preset tables - preset 0 READ with all {} \
-                     slots, {} of them from this character's saved layout; presets 1 and 2 \
-                     READ as the image ships them; preset 3 keep; quickslots not sent. One \
-                     table alone was rejected by the client (0x009E) on 2026-09-12. Nothing \
-                     authenticates.",
+                    "FuncKeyMappedInit: four tables, all READ with {} slots each - keyboard \
+                     presets 0..2 and the CONTROLLER table, each the image's factory with this \
+                     character's saved bindings on top ({} keyboard, {controller} controller); \
+                     quickslots not sent. One table alone was rejected by the client (0x009E) \
+                     on 2026-09-12; a keep gate on the controller table handed it a keyboard \
+                     layout on 2026-09-14. Nothing authenticates.",
                     net::keymap::SLOT_COUNT,
-                    bindings.len()
+                    bindings.len() - controller
                 ),
             }),
             // Not an error, and the two reasons need different work, so say which.
