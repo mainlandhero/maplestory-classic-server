@@ -73,7 +73,9 @@
 
       The client and its 450 MB of WZ - that is the CLIENT machine's payload, and
       `tools/make-installer.ps1` builds it.
-      maplecw-launcher.exe and grap64.dll - also client side.
+      grap64.dll - client side (compiled into the launcher).
+      maplecw-launcher.exe IS in bin\ since 2026-09-16 - not to run here, but for
+      maplecw-auth --launcher to publish, so every player's launcher updates itself.
       maplecw.db - accounts and characters are real state. A fresh box makes its own; an
       existing one should be COPIED BY HAND, with its -wal and -shm files, because SQLite in
       WAL mode keeps recent writes in the sidecar and copying the .db alone silently loses
@@ -166,7 +168,10 @@ if (-not $SkipBuild) {
         # that the dev scripts then run without anyone noticing the difference.
         $env:RUSTFLAGS = '-C target-feature=+crt-static'
         $env:CARGO_TARGET_DIR = $target
-        & cargo build --release -p login -p world -p auth
+        # The launcher too: it ships in bin\ so maplecw-auth can publish it and every
+        # player's launcher can replace itself (the owner, 2026-09-16). Same static CRT as the
+        # rest, which is also what make-installer.ps1 builds the client-side copy with.
+        & cargo build --release -p login -p world -p auth -p launcher
         if ($LASTEXITCODE -ne 0) { Fail 'cargo build failed' }
     }
     finally {
@@ -177,7 +182,7 @@ if (-not $SkipBuild) {
 }
 
 $rel = Join-Path $target 'release'
-$binaries = @('maplecw-login.exe', 'maplecw-world.exe', 'maplecw-chat.exe', 'maplecw-auth.exe', 'maplecw-useradd.exe')
+$binaries = @('maplecw-login.exe', 'maplecw-world.exe', 'maplecw-chat.exe', 'maplecw-auth.exe', 'maplecw-useradd.exe', 'maplecw-launcher.exe')
 foreach ($b in $binaries) {
     if (-not (Test-Path (Join-Path $rel $b))) {
         Fail "$rel\$b is missing. Build without -SkipBuild."

@@ -224,6 +224,20 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-16: the launcher updates itself.** The owner: *"The launcher that we have should have the
+ability to patch itself should we need to. Currently it doesn't seem able to do that."* It could
+not - the version gate covered `client\` and the launcher lives beside it. Now the server package
+ships `bin\maplecw-launcher.exe`, `start-server.ps1` passes it to `maplecw-auth --launcher`, and
+auth publishes a one-entry manifest + the file (`/launcher/manifest`, `/launcher/file` -
+`auth::launcherpatch`). At Start Game, before anything else, the launcher hashes its own exe;
+if it differs it downloads, verifies size+SHA-256, renames itself to `.old`, renames the new one
+onto its path, starts it with `--updated-from <old>` and closes; the new one deletes the old
+(`launcher::selfupdate`). A server without `--launcher` is a warning, not a refusal. Sign-in is
+redone in the new window (the claim was the old process's). **One last manual install** of the
+setup package is needed on each client machine: a launcher without this code cannot update
+itself. Tests: the swap on a stand-in file, the decision and the verification, both endpoints
+over real TLS through the launcher's own fetchers, and the 503-means-none case. Plan step 9.
+
 **2026-09-16: every pet is a vacuum pet - both halves this time.** The owner: *"Can we turn all pets into
 vacuum pets, so they loot from long range similar to current Luna Petite pets in modern
 MapleStory?"* The 09-13 attempt set the WZ keys and the same day's skill-item work zeroed them

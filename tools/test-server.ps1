@@ -2092,7 +2092,25 @@
           is built when it opens. If it is ever grey again, say whether Character Info was
           opened BEFORE the summon; that is the only measurement left on it.
 
-     9. THE CRASH - a question, not a test.
+     9. THE LAUNCHER UPDATES ITSELF - 2026-09-16. You: "the launcher should have the ability
+        to patch itself." The server package now ships bin\maplecw-launcher.exe and
+        maplecw-auth publishes it (--launcher); at Start Game, before the client is touched,
+        the launcher hashes its own exe against the server's and swaps itself if they differ.
+        ONE LAST MANUAL INSTALL: the launcher on D:\MapleCW (built 00:29) predates this and
+        cannot update itself - install out\MapleCW-setup.zip over it once more. Then, with a
+        server deployed from the matching MapleCW-server.zip, press Start Game:
+          "launcher version <16 hex> confirmed with the server"          -> DONE (up to date)
+          "updating it (8.x MB)", the window closes, a NEW window opens at sign-in with
+                       "launcher updated: the previous executable ... was removed" in its log,
+                       and no maplecw-launcher.exe.old left in D:\MapleCW      -> DONE
+          "publishes no launcher ... Going on with the one you have"     -> the deployed
+                       server has no bin\maplecw-launcher.exe: it is an older package
+          the window closes and NOTHING opens -> the new exe failed to start; look for
+                       maplecw-launcher.exe.old beside it and say what the folder holds
+          it updates on EVERY Start Game -> the server's copy and the installed one differ
+                       by build; say so, that means two builds of the same source in play
+
+    10. THE CRASH - a question, not a test.
         A 1.36 GB dump was written at 00:08 from a fault at 0x14090a6f0, an address that
         appears NOWHERE else in the archive. It is an std::map node walk hitting a bad
         pointer, with 38 C++ throws before it. You said you were "just in the map with
@@ -5016,7 +5034,18 @@ function Show-TestPlan {
         Write-Host '       SHOW PET INFO: worked on the second look. Grey again? say whether the' -ForegroundColor DarkGray
         Write-Host '         window was opened BEFORE the summon - the only measurement left' -ForegroundColor DarkGray
         Write-Host ''
-        Write-Host '  9. THE CRASH - a question, not a test.' -ForegroundColor White
+        Write-Host '  9. THE LAUNCHER UPDATES ITSELF. Server package ships bin\maplecw-launcher' -ForegroundColor White
+        Write-Host '     .exe, auth publishes it, the launcher swaps itself at Start Game. ONE'
+        Write-Host '     LAST MANUAL INSTALL of MapleCW-setup.zip over D:\MapleCW (the 00:29 one'
+        Write-Host '     cannot self-update). Then Start Game:'
+        Write-Host '       "launcher version ... confirmed" -> DONE' -ForegroundColor Green
+        Write-Host '       "updating it", window closes, NEW window opens, "previous ... removed"' -ForegroundColor Green
+        Write-Host '         in its log, no .old left -> DONE' -ForegroundColor Green
+        Write-Host '       "publishes no launcher" -> the server is an older package' -ForegroundColor Yellow
+        Write-Host '       closes and nothing opens -> say what the folder holds' -ForegroundColor Yellow
+        Write-Host '       updates EVERY time -> two builds of one source in play; say so' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  10. THE CRASH - a question, not a test.' -ForegroundColor White
         Write-Host '     A 1.36 GB dump at 00:08, fault 0x14090a6f0 - an address that'
         Write-Host '     appears NOWHERE else in the archive. It is an std::map node walk'
         Write-Host '     hitting a bad pointer, 38 C++ throws before it. You were "just in'

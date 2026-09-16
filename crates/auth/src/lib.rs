@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use store::{AuthOutcome, Store};
 
 pub mod clientpatch;
+pub mod launcherpatch;
 pub mod http;
 pub mod ratelimit;
 pub mod register;
@@ -134,6 +135,10 @@ pub struct AuthService {
     /// answer 503, and a launcher told to block on an unconfirmed version will say so rather
     /// than guess. `crate::clientpatch`.
     client: Option<Arc<crate::clientpatch::ClientPatchSource>>,
+    /// The launcher this server hands out, when `--launcher` was given. `None`: the two
+    /// `/launcher/*` endpoints answer 503 and a launcher goes on with the one it has - a
+    /// missing launcher publication must not lock anyone out. `crate::launcherpatch`.
+    launcher: Option<Arc<crate::launcherpatch::LauncherSource>>,
 }
 
 /// One timestamped line on stdout - `HH:MM:SS.mmm [peer] what` by convention - which the
@@ -155,7 +160,7 @@ impl AuthService {
 
     /// [`AuthService::new`] with a chosen code-failure budget, for tests that need a small one.
     pub fn with_limiter(store: Arc<Store>, codes: ratelimit::Limiter) -> Self {
-        Self { store, codes, client: None }
+        Self { store, codes, client: None, launcher: None }
     }
 
     /// Publish a canonical client from this server. See [`crate::clientpatch`].
@@ -170,6 +175,17 @@ impl AuthService {
     /// The canonical client, if this server publishes one.
     pub fn client_patches(&self) -> Option<&Arc<crate::clientpatch::ClientPatchSource>> {
         self.client.as_ref()
+    }
+
+    /// Publish a launcher executable from this server. See [`crate::launcherpatch`].
+    pub fn with_launcher_patches(mut self, launcher: Arc<crate::launcherpatch::LauncherSource>) -> Self {
+        self.launcher = Some(launcher);
+        self
+    }
+
+    /// The published launcher, if any.
+    pub fn launcher_patches(&self) -> Option<&Arc<crate::launcherpatch::LauncherSource>> {
+        self.launcher.as_ref()
     }
 
     /// Authenticate, issue a token, and **stake the login claim**.

@@ -42,6 +42,8 @@ enum Msg {
     Registered(RegisterReply),
     Recovered(RecoverReply),
     LaunchFinished(Result<(), String>),
+    /// This executable was replaced and the new one is starting; the window must close.
+    LauncherReplaced { version: String, bytes: u64 },
 }
 
 /// Which of the three things the window is doing.
@@ -102,6 +104,9 @@ pub struct LauncherApp {
     log: Vec<LogLine>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
+    /// Set when the launcher has replaced itself: close on the next frame, so the old
+    /// executable can be deleted by the new one. `crate::selfupdate`.
+    close_after_update: bool,
 }
 
 impl LauncherApp {
@@ -136,6 +141,7 @@ impl LauncherApp {
             log: Vec::new(),
             tx,
             rx,
+            close_after_update: false,
         };
         app.announce_layout();
         // Slightly roomier text than the default; the log pane is the point of the window.
@@ -148,6 +154,9 @@ impl LauncherApp {
     /// Say what was found, and what is missing, before anybody presses anything. A wrong path
     /// guess has to be visible rather than mysterious.
     fn announce_layout(&mut self) {
+        if let Some(note) = crate::selfupdate::startup_note() {
+            self.push(Level::Good, note.to_string());
+        }
         self.push(Level::Info, format!("launcher: {}", self.layout.exe_dir.display()));
         self.push(Level::Info, format!("paths from: {}", self.layout.source.label()));
         // The game folder gets its own line naming its source, because a remembered choice
@@ -513,6 +522,28 @@ impl LauncherApp {
                 let _ = tx.send(Msg::Log(level, text));
                 ctx.request_repaint();
             };
+            // **The launcher checks ITSELF first.** The owner, 2026-09-16: *"The launcher that we
+            // have should have the ability to patch itself."* Before the client is touched,
+            // so a launcher that is about to be replaced has done nothing half-way. A server
+            // that publishes no launcher is a warning and the launch goes on; an update
+            // installs the new executable, starts it, and this window closes.
+            if let Some(pin) = layout.auth_fingerprint {
+                if let Ok(resolved) = plan.resolved() {
+                    match crate::selfupdate::check_and_update(&resolved.ip, layout.auth_port, &pin, &mut emit) {
+                        Ok(crate::selfupdate::Outcome::Replaced { version, bytes }) => {
+                            let _ = tx.send(Msg::LauncherReplaced { version, bytes });
+                            ctx.request_repaint();
+                            return;
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            let _ = tx.send(Msg::LaunchFinished(Err(format!("{e}\n\n(The client was NOT launched.)"))));
+                            ctx.request_repaint();
+                            return;
+                        }
+                    }
+                }
+            }
             let result = prepare::prepare_and_launch(
                 &layout,
                 &plan,
@@ -584,6 +615,18 @@ impl LauncherApp {
                         Err(e) => self.fail(e),
                     }
                 }
+                Msg::LauncherReplaced { version, bytes } => {
+                    self.launching = false;
+                    self.remember_settings();
+                    self.status = Some((
+                        Level::Good,
+                        format!(
+                            "launcher updated to {version} ({:.1} MB) - the new launcher is opening; sign in again there",
+                            bytes as f64 / (1024.0 * 1024.0)
+                        ),
+                    ));
+                    self.close_after_update = true;
+                }
             }
         }
     }
@@ -628,6 +671,9 @@ fn colour(level: Level) -> Color32 {
 impl eframe::App for LauncherApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain();
+        if self.close_after_update {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading(WINDOW_TITLE);
