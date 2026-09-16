@@ -365,12 +365,19 @@
           open dialog and is undecoded. Accept and Decline are logged and answered with
           nothing rather than with a guess; a guessed body killed a client THIS SAME DAY.
 
-      (k) SHANKS - CONFIRMED ON A SCREEN 2026-09-09. The owner: "I did test Shank, it did work."
-          They sail Southperry to Lith Harbor and no longer says "no template for NPC 15".
-          DO NOT SPEND A LAUNCH RE-TESTING THE SAIL.
-          One branch is not separately attested: the FREE trip for a player who has finished
-          "Mai's Final Training" - an extra line saying they have heard about you, and the meso
-          count must NOT move. Worth a look only if such a character is already to hand.
+      (k) SHANKS - THE PAID SAIL IS CONFIRMED (2026-09-09); THE FREE ONE WAS REBUILT
+          2026-09-16. The owner: "the dialogue that they'll waive it because you have finished
+          Mai's Final Training does not show. However, Shanks does correctly waive the fee
+          and TP the players." The line was sent in the same batch as the SetField and
+          field entry tore it down. Now Yes puts the waiver on ITS OWN box ("Hold on -
+          you're the one who finished Mai's training...") and moves nobody; the boat sails
+          when that box is dismissed (OK or Esc, either). And the waiver is for BEGINNERS
+          ONLY: a Swordsman who finished Mai pays the 1000 like anyone else, no box.
+            1. a Beginner who finished Mai's Final Training says Yes: the waiver box, and
+               you are STILL in Southperry -> as designed. Dismiss it: Lith Harbor, mesos
+               unchanged, no grey fare line -> fixed
+            2. the same with a first-job character: no waiver box, straight to Lith Harbor,
+               the grey "lost mesos (-1000)" line -> as designed
 
       (l) THE FARE LINE MUST BE GREY, NOT RED. Any fare - Shanks or a taxi - prints a grey
           chat line "You have lost mesos (-1000)". A RED "You have received Meso Penalty"
@@ -4486,11 +4493,11 @@ function Show-TestPlan {
         Write-Host '           the trade WINDOW is mode 4, whose body is undecoded. It is'
         Write-Host '           answered with nothing rather than a guess - a guessed body'
         Write-Host '           killed a client yesterday.'
-        Write-Host '       (k) SHANKS - CONFIRMED ON A SCREEN 2026-09-09. They sail Southperry' -ForegroundColor Green
-        Write-Host '           to Lith Harbor. Do NOT re-test the sail.' -ForegroundColor Green
-        Write-Host '           One branch is not separately attested: the FREE trip for a'
-        Write-Host '           player who finished Mai Final Training - an extra line, and'
-        Write-Host '           the mesos must NOT move. Only if such a character is to hand.'
+        Write-Host '       (k) SHANKS'' FREE TRIP WAS REBUILT 2026-09-16 (the paid sail is fine).' -ForegroundColor Magenta
+        Write-Host '           The waiver line was torn down by the SetField it shipped with.'
+        Write-Host '           Beginner who finished Mai, Yes -> the waiver box, still in'
+        Write-Host '           Southperry; dismiss it -> Lith Harbor, mesos unchanged -> fixed'
+        Write-Host '           A first-job character who finished Mai -> NO box, pays 1000.'
         Write-Host '       (l) THE FARE LINE MUST BE GREY. Any fare - Shanks or a taxi -' -ForegroundColor Yellow
         Write-Host '           prints a grey chat line "You have lost mesos (-1000)".'
         Write-Host '           A RED "You have received Meso Penalty" means the old path is'

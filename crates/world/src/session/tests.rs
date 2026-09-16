@@ -7579,6 +7579,78 @@ fn phils_job_guide_is_a_selectable_menu_and_the_pick_rides() {
     assert!(s.conversation.is_none());
 }
 
+/// **Shanks' waiver is a box of its own, and the boat leaves when it is dismissed.**
+///
+/// The owner, 2026-09-16: *"the dialogue that they'll waive it because you have finished Mai's
+/// Final Training does not show. However, Shanks does correctly waive the fee and TP the
+/// players."* The line shipped in the same batch as the `SetField` and field entry tore it
+/// down. This pins the fix at the packet level: the Yes reply carries the Say and **no
+/// SetField**; the dismissal carries the SetField and **no script**. And the waiver is for
+/// Beginners only - the same character as a Swordsman pays and gets no box.
+#[test]
+fn shanks_waiver_is_its_own_box_and_the_boat_sails_on_dismissal() {
+    let mut npcs = std::collections::HashMap::new();
+    npcs.insert(
+        crate::shanks::HOME_MAP,
+        vec![net::opcode::FieldNpc { object_id: 1000, template_id: crate::shanks::TEMPLATE, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 }],
+    );
+    let fields = [crate::shanks::HOME_MAP, crate::shanks::DESTINATION_MAP].into_iter().collect();
+
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Sailor".to_string(), ..Default::default() };
+    let made = store.create_character(account_id, 0, &chr).unwrap();
+    store.set_character_map(made.id, crate::shanks::HOME_MAP).unwrap();
+    store.add_mesos(made.id, 5_000).unwrap();
+    store.start_quest(made.id, crate::shanks::MAIS_FINAL_TRAINING).unwrap();
+    store.complete_quest(made.id, crate::shanks::MAIS_FINAL_TRAINING).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let mut s = Session::new(store.clone(), Arc::new(Config { npcs, fields, ..Config::default() }));
+    s.claim_for_character(made.id);
+    let row = |store: &Arc<Store>| store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == made.id).unwrap();
+    let names = |out: &[Reply]| out.iter().map(|r| r.what.clone()).collect::<Vec<_>>();
+
+    // ---- click: the yes/no that quotes the fare ------------------------------------------
+    let out = s.handle(&npc_click(1000));
+    assert_eq!(out.len(), 1, "{:?}", names(&out));
+    assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_YES_NO);
+    assert_eq!(s.conversation.as_ref().unwrap().path, crate::shanks::ASK_PATH);
+
+    // ---- Yes: the waiver box ALONE - no SetField in this batch ---------------------------
+    let out = s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_YES));
+    assert_eq!(out.len(), 1, "the box and nothing else: {:?}", names(&out));
+    assert_eq!(out[0].opcode, net::script::SCRIPT_MESSAGE);
+    assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_SAY);
+    assert!(out[0].what.contains("FREE"), "{}", out[0].what);
+    assert_eq!(row(&store).map_id, crate::shanks::HOME_MAP, "nobody moved yet");
+    assert_eq!(store.mesos(made.id).unwrap(), 5_000);
+    let convo = s.conversation.clone().expect("parked for the dismissal");
+    assert_eq!(convo.path, crate::shanks::ANNOUNCE_PATH);
+    assert!(!convo.awaiting_yes_no);
+
+    // ---- dismiss (Esc, the harder case): the SetField, no script, no fare line -----------
+    let out = s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_CLOSED));
+    assert!(out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "{:?}", names(&out));
+    assert!(!out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE), "no script beside a SetField: {:?}", names(&out));
+    assert!(!out.iter().any(|r| r.opcode == net::message::MESSAGE), "no 'lost mesos (-0)' line: {:?}", names(&out));
+    assert_eq!(row(&store).map_id, crate::shanks::DESTINATION_MAP);
+    assert_eq!(store.mesos(made.id).unwrap(), 5_000, "free");
+    assert!(s.conversation.is_none());
+
+    // ---- the same player as a Swordsman: no box, pays, sails on the Yes -----------------
+    let mut adv = row(&store);
+    adv.job = 100;
+    store.save_character_progress(&adv).unwrap();
+    store.set_character_map(made.id, crate::shanks::HOME_MAP).unwrap();
+    s.handle(&npc_click(1000));
+    let out = s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_YES));
+    assert!(!out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE), "no waiver box for a Swordsman: {:?}", names(&out));
+    assert!(out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "{:?}", names(&out));
+    assert!(out.iter().any(|r| r.opcode == net::message::MESSAGE && r.what.contains("1000")), "the grey fare line: {:?}", names(&out));
+    assert_eq!(store.mesos(made.id).unwrap(), 4_000, "a first-job character pays");
+    assert_eq!(row(&store).map_id, crate::shanks::DESTINATION_MAP);
+}
+
 /// **Without the proof the instructor refuses, and refusing changes nothing.**
 ///
 /// The mirror of the walk above, and the reason it is a separate test: a chain that can be
