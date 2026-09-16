@@ -56,6 +56,12 @@ executable to `.old`, renames the new one onto its path, starts it with `--updat
 (`launcher::selfupdate`). Sign in again in the new window - the claim belonged to the old
 process and the password is never on disk. A server that publishes no launcher is a warning,
 not a refusal: an old server must not lock players out of a launcher that was working.
+**The update carries the stub with it** (2026-09-16): `grap64.dll` beside the launcher used
+to win over the copy compiled in, so a guard-page change shipped in a new launcher reached no
+installed client until the setup zip was re-run. Now the newer of the two wins - the file if
+it was modified after the launcher's executable (a developer's fresh build), otherwise the
+launcher's copy, which is written over the file (`stub::resolve`, "rewritten with the
+launcher's copy" in the log). A self-updated launcher is newer than everything beside it.
 
 ## Replace the marker files with one config
 
