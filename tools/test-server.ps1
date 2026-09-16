@@ -2040,12 +2040,18 @@
             it stays on the floor                        -> paste the "pet pick-up" log lines
             the tooltip says "unregistered" for Auto Move -> the client package was not
                        rebuilt/installed (python tools\backport_install.py --install, client closed)
-          A FULL TAB (2026-09-16): the pet retrying a drop that has no slot no longer
-          prints "Your bag would not take it" - the owner's chat log was four lines of it per
-          drop. Its request is still unlocked (the 0x0070), so the pet keeps trying other
-          drops. Your OWN click on that drop still prints the line once.
-            pet over a drop for a full tab: chat log quiet, drop stays -> fixed
-            click it yourself: one "Your bag would not take it" line  -> as designed
+          A FULL TAB (2026-09-16): our yellow "Your bag would not take it" chat line is
+          GONE. A refused pick-up - yours or the pet's - now sends the client's own
+          0x0089 sub-mode -1, and the CLIENT draws "You can't get anymore items." in the
+          message area where the EXP line draws, at most once every 2 seconds (its own
+          latch, FUN_142dada50), so the pet's retries cannot spam anything. The 0x0070
+          unlock still goes first, so later pick-ups keep working.
+            pet over a drop for a full tab: "You can't get anymore items." in the
+              message area, NOTHING in the chat log, drop stays -> fixed
+            click it yourself: the same line, same place                -> fixed
+            the line in the CHAT LOG, or a yellow one anywhere -> the old build
+            no line at all, drop stays -> paste the 0x0089 from world-chN.log (3 bytes,
+              00 00 FF); if it is there, the latch flush is not reached - say so
           SKILLS: use Auto HP on the Husky. Your 23:34 try KILLED THE CLIENT: the put-away
           half of the re-summon was 11 bytes and the owner's handler reads a 12th, a reason
           byte the remote handler never did (the client named the packet in a 0x009E). It is
@@ -5005,9 +5011,11 @@ function Show-TestPlan {
         Write-Host '         only when it walks onto it -> keys declared, pet code ignores them' -ForegroundColor Yellow
         Write-Host '         stays on the floor -> paste the "pet pick-up" log lines' -ForegroundColor Yellow
         Write-Host '         tooltip says unregistered -> package not rebuilt/installed' -ForegroundColor Yellow
-        Write-Host '       FULL TAB (2026-09-16): the pet retrying a drop with no slot no longer'
-        Write-Host '         prints "Your bag would not take it"; your own click still does, once.'
-        Write-Host '         pet over it: chat quiet, drop stays -> fixed; click it: one line' -ForegroundColor Yellow
+        Write-Host '       FULL TAB (2026-09-16): our yellow chat line is GONE. A refused pick-up'
+        Write-Host '         (yours or the pet''s) is the CLIENT''s "You can''t get anymore items."'
+        Write-Host '         in the message area where EXP draws, at most once per 2 s.'
+        Write-Host '         pet over it / click it: that line, chat log EMPTY, drop stays -> fixed' -ForegroundColor Yellow
+        Write-Host '         yellow or in the chat log -> old build; no line -> paste the 0x0089' -ForegroundColor Yellow
         Write-Host '       SKILLS: Auto HP. Your 23:34 try KILLED THE CLIENT: the put-away half'
         Write-Host '         of the re-summon lacked the reason byte the OWNER reads. Fixed.'
         Write-Host '         Expect ONE summon animation. Client exits there -> paste 0x009E' -ForegroundColor Yellow

@@ -268,8 +268,36 @@ Two `u8` reads, then a jump table. **[L]**
 | **1** | `142d593da` | **`u8, i32 gain, u16, i32 bonus`** — the meso pick-up |
 | 2 | `142d598ae` | `u32, u64` |
 | 5 | `142d59c9f` | unread |
-| -5..-2 | `142d59c4e`, `142d59bfd`, `142d59b93`, `142d59b42` | the refusals (`0x00F2` "You can't get anymore items", `0x00F5`, …) |
+| -5..-2 | `142d59c4e`, `142d59bfd`, `142d59b93`, `142d59b42` | the refusals - decoded below, 2026-09-16 |
 | 3, 4, -1 | | default / special-cased before the table |
+
+### The refusals, and the one that is the inventory-full line (2026-09-16)
+
+Jump table `142d59d60` read directly (11 dwords, image-relative), each arm's string id
+decrypted with `tools/dump_stringids.py --id N`. Every arm but one posts to
+`FUN_142572050` with `r9d = 2` - **the on-screen message area, the EXP line's printer** -
+and none of them touches the chat log except -3's second string. **[L]**
+
+| sub-mode | arm | string | text |
+|---:|---|---|---|
+| **-1** | `142d593a9` | *(latched)* `0x00F2` | **"You can't get anymore items."** - see below |
+| -2 | `142d59b42` | `0x085B` | 'This item is unavailable for pick-up.' |
+| -3 | `142d59b93` | `0x00F4`, then `0x00F5` to **chat 11** | 'You cannot acquire any items.' / '...because the game file has been damaged...' |
+| -4 | `142d59bfd` | `0x00F3` | 'You cannot pick up this item.' |
+| -5 | `142d59c4e` | `0x12CE` | "You can't pick that up." |
+| 5 | `142d59c9f` | `0x12CF` | "You can't pick up the mesos, because you've already reached your maximum amount." |
+| 3, out of range | `142d59ced` | `0x00F1` | 'Failed to acquire for an unknown reason.' |
+| 4 | | | nothing |
+
+**Mode -1 is the inventory-full line, and the client rate-limits it itself.** The handler
+only sets `world+0x37a4 = 1` and returns. `FUN_142dada50` (one caller: the 22 KB field
+update `FUN_1428923e0` at `14289247a`, guarded by `14289246c cmp eax, 0x7d0` against
+`[r13+0x51f0]` - **once per 2000 ms**) reads the latch, posts `0x00F2` to the message area
+and clears it. So a server can send `-1` on every refused pick-up - a pet retrying every
+drop it stands on included - and the screen shows one line per two seconds and the chat
+log nothing. `net::message::inventory_full()` is that body: `00 00 FF`. It replaced the
+server's own yellow "Your bag would not take it" chat line on 2026-09-16 (the owner: *"use that
+default behavior instead of our custom message"*).
 
 ### Sub-mode 0, the item
 
@@ -517,8 +545,8 @@ that has killed this client twice. The tests in `message.rs` pin all four field 
   sites) and what `white` therefore does on screen.
 * **28 of the 36 type values.** Types 2, 7..18, 20, 21, 24..28, 30, 31, 34, 35 are unread.
   Types **19, 29, 32 and 33 have no handler** — that much is [L] from the table.
-* **Sub-modes 2, 5 and -5..-2 of the pick-up**, beyond their field widths and the refusal
-  strings they load.
+* **Sub-mode 2 of the pick-up** (`u32, u64`, arm `142d598ae`). The refusals -5..-2, -1
+  and 5 are decoded in §4 above.
 * **Four of the EXP mask bits** (`0x01`, `0x04`, `0x800`, `0x80000000`) — their offsets are
   [L], their meanings unread.
 * **Whether `0x0089` has an inbound-latch or field precondition.** I read the dispatch and

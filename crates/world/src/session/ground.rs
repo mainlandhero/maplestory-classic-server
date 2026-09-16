@@ -571,15 +571,25 @@ impl Session {
                             "InventoryOperation: the bag refused the item ({e}) - nCount 0,                              bExclRequestSent 1. WITHOUT this the client never sends another                              pick-up for the rest of the session, whatever the item is."
                         ),
                     });
-                    // **The sentence is for a hand, not a paw.** The owner, 2026-09-16: *"My chat
-                    // box is getting spammed with inventory full when my pet tries to pick up
-                    // items that goes to a full inventory tab."* A pet retries every drop it
-                    // walks over, so one full tab is one line per retry; the player's own
-                    // click is one line per click, which is the one worth reading. The
-                    // `0x0070` above still goes out either way - the unlock is not optional.
-                    if by_pet.is_none() {
-                        out.extend(self.notice(format!("Your bag would not take it: {e}")));
-                    }
+                    // **The client's own line, not ours.** The owner, 2026-09-16, twice in one
+                    // day: first the pet's retries were spamming the chat log with "Your bag
+                    // would not take it" (so the pet went quiet), then *"remove the "Your bag
+                    // would not take it" message from the chat. There should be a similar line
+                    // that indicates your inventory is full in the area where players see EXP
+                    // gained ... use that default behavior instead of our custom message."*
+                    // `0x0089` sub-mode -1 sets a latch the client flushes at most once every
+                    // two seconds as "You can't get anymore items." in the message area - so
+                    // it goes out for the pet too: the client throttles it, and the chat log
+                    // never sees it. The `0x0070` above still goes first; the unlock is not
+                    // optional. `e` is kept in the log line.
+                    out.push(Reply {
+                        opcode: net::message::MESSAGE,
+                        body: net::message::inventory_full(),
+                        what: format!(
+                            "Message DROP_PICKUP sub-mode -1: inventory full ({e}), {} - the client draws \"You can't get anymore items.\" in the message area, at most once per 2 s",
+                            if by_pet.is_some() { "the pet's request" } else { "the player's own click" }
+                        ),
+                    });
                 }
             }
             return out;
