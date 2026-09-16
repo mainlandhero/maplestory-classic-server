@@ -1,0 +1,21 @@
+# Remote-pet crash, 2026-09-15. Tester2 (char 214) present, Wisp (215) summons Husky, Tester2 faults.
+# hook log (Tester2's client) + world-ch0 pet packets. Clocks differ by ~20h (hook 22:05 = server 02:05).
+
+== client fault (previous-runs/maplecw-hook-20260915-220508.log) ==
+22:05:28.009   331 opcode=0x0277 elapsed_us=808.8 ret=1 flag=1->1 state=2->2
+22:05:28.010   332 opcode=0x0070 elapsed_us=218.5 ret=1 flag=1->1 state=2->2
+22:05:28.010   333 opcode=0x0070 elapsed_us=152.1 ret=1 flag=1->1 state=2->2
+22:05:28.030   795 opcode=0x0277 elapsed_us=912.1 ret=1 flag=1->1 state=2->2
+22:05:28.379   796 opcode=0x03E4 elapsed_us=104.0 ret=1 flag=1->1 state=2->2
+22:05:28.449   334 opcode=0x03D9 elapsed_us=115.7 ret=1 flag=1->1 state=2->2
+22:05:28.599 ***** CLIENT FAULT #1: code=0xc0000005 at 0x141d59bf3 in MapleStory.exe - the client raised this, we did not. An unhandled one ends the process without any call to ExitProcess. 2 C++ thro
+      stack: 0x143ad56f5(?) 0x141ec3f85<-TEXT 0x1429bb557<-TEXT 0x143273970(?) 0x141821e41<-TEXT
+22:05:28.608 ***** CRASH DUMP: writing C:\MapleCW\dumps\maplecw-crash-1057776-c0000005-1.dmp ... (full memory, this can take a few seconds) *****
+22:05:28.904 ***** SESSION obj=0x5f71008 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+22:05:30.071 ***** CRASH DUMP: wrote C:\MapleCW\dumps\maplecw-crash-1057776-c0000005-1.dmp, 1607033174 bytes. Open it with WinDbg; `!analyze -v` and `!heap -p -a <addr>` are the two
+
+== the summon (safe) and the FIRST move (fatal) - world-ch0.log ==
+02:05:28.022 -> [Tester2#214] 0x0277 PET_ACTIVATED (u32 charId, u32 petIdx 0, u8 activated, [u8 init, pet body]) - CUser vtable +0x98; research/msexe-pet-activated.c PetActivated: Husky (5000006) summ
+02:05:28.489 <- [Wisp#215] 0x0202 CLIENT_PET_MOVE (u32 petIdx, u32 tick, u8, then the movement path) - rebroadcast as 0x0278, 41 byte body 0000000000000000009fff9400000000000100009fff950000000000a6000
+02:05:28.490    0x0202 CLIENT_PET_MOVE (u32 petIdx, u32 tick, u8, then the movement path) - rebroadcast as 0x0278 is not answered yet - see crates/world/src/session/
+02:05:28.593 -> [Tester2#214] 0x0278 PET_MOVE (u32 charId, u32 petIdx, the path block verbatim) - FUN_141ec3f20 -> the path applier PetMove: Wisp's pet walked; the path forwarded to the map

@@ -224,6 +224,24 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-15: summoning a pet crashes a second client in the same map - it is the pet MOVE.**
+The owner: *"Summoning the pet on character the owner crashed another client Tester2 present in the same
+map."* Measured from the crash run (`previous-runs/maplecw-hook-20260915-220508.log`,
+`world-ch0.log` 02:05:28): the summon `0x0277` processed on Tester2 with `ret=1` and the pet
+idled half a second; the **first** `0x0278` pet-move faulted at `0x141d59bf3` - `movups
+xmm0,[rax]`, `rax` from `[obj+0x18]` null - inside the move applier `FUN_141d598b0`, reached
+from the pet-move handler `FUN_141ec3f20` (return `0x141ec3f85` on the fault stack) under
+`CField::OnPacket` (`0x141821e41`). The remote-user pet path `FUN_1429d6150` (144 bytes) runs
+`CPet::Init`+`SetPet` where the local path `FUN_1428a01a0` (2420) also builds the pet's visual;
+the remote pet is left with no layer for the move to write, and the summon body was correct
+(foothold 166, giantRate 100), so no packet fixes it - the client cannot render a remote pet on
+this build. Fix: pets are **owner-local** by default (`Config::broadcast_pets`, `--broadcast-pets`
+to re-enable for investigation). The summon, put-away, move, action broadcasts and the arrival
+companion are all gated; the owner's own pet is untouched and still summons, walks, loots and
+answers commands. `research/pet-remote-crash-2026-09-15.md`, fixture
+`research/fixtures/pet-remote-move-crashes-observer-2026-09-15.log`, full dump
+`dumps/maplecw-crash-1057776-c0000005-1.dmp`.
+
 **2026-09-14: skill points were granted at advancement and then WIPED by the next SetField.**
 seedling: *"job advancing to Bowman at level 12, the game did not grant them the 7 SP that they
 need because they're over leveled."* The advance itself was byte-perfect - `world-ch0.log`
