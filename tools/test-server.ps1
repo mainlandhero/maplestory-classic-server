@@ -1987,8 +1987,13 @@
           LOOT: kill a snail, let the Husky walk over the drop.
             it flies into the Husky and lands in the bag  -> DONE (0x0205 was UNKNOWN)
             it stays on the floor                        -> paste the "pet pick-up" log lines
-          SKILLS: use Auto HP on the Husky. Expect ONE summon animation (it is put away and
-          re-summoned on your screen so it re-reads its item), then:
+          SKILLS: use Auto HP on the Husky. Your 23:34 try KILLED THE CLIENT: the put-away
+          half of the re-summon was 11 bytes and the owner's handler reads a 12th, a reason
+          byte the remote handler never did (the client named the packet in a 0x009E). It is
+          there now; the skill itself was stored before the crash. Expect ONE summon
+          animation (put away and re-summoned so the pet re-reads its item), then:
+            client exits at the summon animation -> the reason byte is not enough; paste
+                       the new 0x009E line, its position says which byte
             tooltip says Auto HP (Learned), the item is gone  -> stored and applied
             walk into a mob until HP drops: does the pet feed you a potion? YES -> the mask
                        is read live or on init, DONE. NO with (Learned) shown -> the client
@@ -4885,7 +4890,9 @@ function Show-TestPlan {
         Write-Host '       LOOT: kill a snail, Husky walks over the drop:'
         Write-Host '         flies into the Husky, lands in the bag -> DONE' -ForegroundColor Green
         Write-Host '         stays on the floor -> paste the "pet pick-up" log lines' -ForegroundColor Yellow
-        Write-Host '       SKILLS: Auto HP on the Husky. Expect ONE summon animation. Then'
+        Write-Host '       SKILLS: Auto HP. Your 23:34 try KILLED THE CLIENT: the put-away half'
+        Write-Host '         of the re-summon lacked the reason byte the OWNER reads. Fixed.'
+        Write-Host '         Expect ONE summon animation. Client exits there -> paste 0x009E' -ForegroundColor Yellow
         Write-Host '         tooltip (Learned) + item gone -> stored. Take damage: potion fed?'
         Write-Host '         YES -> DONE. NO with (Learned) -> client wants more; say so' -ForegroundColor Yellow
         Write-Host '       NAME TAG: rename to Dummy:'

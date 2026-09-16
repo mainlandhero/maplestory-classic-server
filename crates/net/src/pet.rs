@@ -23,7 +23,9 @@
 //!
 //! ```text
 //! u32  petIdx        only 0 is accepted - one pet
-//! u8   activated     0: the pet at that index is put away, nothing more is read
+//! u8   activated     0: the pet at that index is put away. The REMOTE path reads nothing
+//!                    more; the LOCAL path (FUN_1428a01a0, 0x1428a06fa) reads `u8 reason` -
+//!                    see [`pet_deactivated`]
 //! u8   init          1 on a fresh summon (the reference's "init")
 //! -- CPet::Init, FUN_141eb9760, in `tools/listing.py` read order --
 //! u32  itemId
@@ -219,12 +221,37 @@ pub fn pet_activated(character_id: u32, pet: &FieldPet) -> Vec<u8> {
     w.into_vec()
 }
 
-/// The `0x0277` body that puts character `character_id`'s pet away.
+/// Why a pet was put away, as the OWNER's client reads it after `activated = 0`. `0` is the
+/// plain removal; `1..=5` each open a message (`0x1428a0705..0x1428a0725`, the switch arms).
+pub const PET_REMOVE_REASON_NONE: u8 = 0;
+
+/// The `0x0277` body that puts character `character_id`'s pet away: `charId, petIdx,
+/// activated = 0, u8 reason`.
+///
+/// # The reason byte was missing, and the first put-away to reach an owner killed the client
+///
+/// 2026-09-15 23:34, the owner teaching the Husky Auto HP: the reply ended with a put-away and a
+/// re-summon for the owner, and the client rejected the put-away in its own words -
+/// `0x009E`, reason `0x26` (read past the end), position 15 = the 11-byte packet plus four,
+/// the packet verbatim - and faulted at `0x140ce89d6`
+/// (`research/fixtures/pet-putaway-to-owner-rejected-0x009E-needs-reason-byte-2026-09-15.log`).
+///
+/// The **remote** user's handler (`FUN_1429d6150`) stops after `activated`, and that is the
+/// path `research/msexe-pet-activated.c` had read. The **local** user's (`FUN_1428a01a0`)
+/// calls `SetPet(idx, null)` and then reads **one more `u8`** at `0x1428a06fa` and switches on
+/// it - five arms show a message, anything else falls through to the plain removal. **[L]**
+/// `tools/reads.py 0x1428a01a0 1` lists that read; no arm reads further. Every put-away this
+/// server had sent before today went to observers (companions, the map), never to the owner,
+/// so the missing byte was invisible until the owner-side re-summon existed.
+///
+/// One byte for both audiences: the remote handler returns before it and an unread trailing
+/// byte is not a rejection - `0x009E` fires on a read past the end, not on bytes left over.
 pub fn pet_deactivated(character_id: u32) -> Vec<u8> {
     let mut w = PacketWriter::new();
     w.u32(character_id);
     w.u32(PET_INDEX);
-    w.u8(0); // activated = 0: FUN_1427707e0(user, 0, null) and nothing more is read
+    w.u8(0); //                       activated = 0: FUN_1427707e0(user, 0, null)
+    w.u8(PET_REMOVE_REASON_NONE); //  1428a06fa  the OWNER reads this; 0 = no message
     w.into_vec()
 }
 
@@ -343,10 +370,16 @@ mod tests {
         assert_eq!(&b[48..50], &[0, 0], "nameTag, chatBalloon");
     }
 
+    /// The owner's handler reads a reason byte after `activated = 0`; without it the client
+    /// rejected the packet (`0x009E`, pos 15 = 11 + 4) and died, 2026-09-15 23:34.
     #[test]
-    fn putting_a_pet_away_reads_nothing_past_the_activated_byte() {
+    fn putting_a_pet_away_carries_the_reason_byte_the_owner_reads() {
         let b = pet_deactivated(215);
-        assert_eq!(b, [0xd7, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(b, [0xd7, 0, 0, 0, 0, 0, 0, 0, 0, PET_REMOVE_REASON_NONE]);
+        assert_eq!(b.len(), 10, "eleven with the opcode - the rejected packet was eleven MINUS this byte");
+        // The rejected packet, verbatim from the 0x009E: ours ended at activated.
+        let rejected = [0x77u8, 0x02, 0xd7, 0, 0, 0, 0, 0, 0, 0, 0];
+        assert_eq!(&rejected[2..], &b[..9]);
     }
 
     /// The captured `0x0202`, 41 bytes: the head is nine and the path starts at the pet's own
