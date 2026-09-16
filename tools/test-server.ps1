@@ -2040,6 +2040,18 @@
             it stays on the floor                        -> paste the "pet pick-up" log lines
             the tooltip says "unregistered" for Auto Move -> the client package was not
                        rebuilt/installed (python tools\backport_install.py --install, client closed)
+          TWO HUSKIES ARE TWO PETS (2026-09-16). The owner: "Two Husky should not share the
+          same name. The pets should in the background have different ids." Every pet
+          item now carries a pet id (inventory.pet_id -> the pets table; the old
+          character_pets rows are moved across on the first start and stamped onto the
+          first matching pet, so a named Husky keeps its name). The pet's serial is the
+          pet id, so a name tag or a skill item names ONE Husky. Needs two of the same
+          pet in the Cash tab (buy a second Husky):
+            summon the second, rename it Dummy with a Name Tag: the first is still
+              Husky in its tooltip, the second is Dummy; relog: Dummy is out, Husky is
+              not -> fixed
+            both show the same name, or the wrong one comes back -> paste the two
+              "re-sent as pet 5000006 #N" lines from world-chN.log (the #N must differ)
           A FULL TAB (2026-09-16): our yellow "Your bag would not take it" chat line is
           GONE. A refused pick-up - yours or the pet's - now sends the client's own
           0x0089 sub-mode -1, and the CLIENT draws "You can't get anymore items." in the
@@ -5044,6 +5056,10 @@ function Show-TestPlan {
         Write-Host '         only when it walks onto it -> keys declared, pet code ignores them' -ForegroundColor Yellow
         Write-Host '         stays on the floor -> paste the "pet pick-up" log lines' -ForegroundColor Yellow
         Write-Host '         tooltip says unregistered -> package not rebuilt/installed' -ForegroundColor Yellow
+        Write-Host '       TWO HUSKIES ARE TWO PETS (2026-09-16): every pet item carries its own'
+        Write-Host '         id; a Name Tag names ONE of them. Buy a second Husky, summon it, name'
+        Write-Host '         it Dummy: the first stays Husky; relog: Dummy is the one out -> fixed' -ForegroundColor Yellow
+        Write-Host '         same name on both / wrong one back -> paste the "re-sent as pet #N" lines' -ForegroundColor Yellow
         Write-Host '       FULL TAB (2026-09-16): our yellow chat line is GONE. A refused pick-up'
         Write-Host '         (yours or the pet''s) is the CLIENT''s "You can''t get anymore items."'
         Write-Host '         in the message area where EXP draws, at most once per 2 s.'

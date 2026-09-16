@@ -1655,7 +1655,8 @@ mod tests {
         owner.on_field_entered();
         owner.last_position = Some((300, -50));
         owner.on_pet_activate(&super::tests::hex("509a18140100"));
-        store.set_pet_vitals(ids[0], 5_000_006, 1, 0, 50).unwrap();
+        let pet_id = store.pet_id_at(ids[0], store::InventoryType::Cash, 1).unwrap().expect("the Husky is numbered");
+        store.set_pet_vitals(pet_id, 1, 0, 50).unwrap();
         let _ = watcher.tick(1_000);
 
         let mut body = net::petfood::CLIENT_USE_PET_FOOD.to_le_bytes().to_vec();

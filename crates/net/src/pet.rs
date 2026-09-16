@@ -379,11 +379,12 @@ pub fn pet_name_changed(character_id: u32, name: &str) -> Vec<u8> {
     w.into_vec()
 }
 
-/// A stable, non-zero serial for a character's pet item, since the store keeps no cash
-/// serials: the character id in the high half, the item id in the low. The same value goes
-/// into the pet body and into the Cash-tab item, which is all the client needs of it.
-pub fn pet_serial(character_id: u32, item_id: u32) -> std::num::NonZeroU64 {
-    let raw = (u64::from(character_id) << 32) | u64::from(item_id);
+/// A stable, non-zero serial for one of a character's pets: the character id in the high
+/// half, the **pet id** (`store::pets`' row, 2026-09-16 - the item id until then) in the low.
+/// The same value goes into the pet body and into the Cash-tab item, which is all the client
+/// needs of it, and a request that carries it back names one pet - one Husky of two.
+pub fn pet_serial(character_id: u32, pet_id: u32) -> std::num::NonZeroU64 {
+    let raw = (u64::from(character_id) << 32) | u64::from(pet_id);
     std::num::NonZeroU64::new(raw).unwrap_or(std::num::NonZeroU64::MIN)
 }
 

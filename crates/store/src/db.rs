@@ -280,6 +280,10 @@ impl Store {
         // After the three tables that carry item ids exist: rewrite ids the client no longer
         // knows into the ones it does. Idempotent, every open - the live server runs a
         // different database from the repo's, and a restart is how it gets this.
+        // Pets: the `pets` table, the move of the 2026-09-15 `character_pets` rows onto it,
+        // and a number for every pet in every bag - after `inventory` has its `pet_id` column
+        // and before the rename pass, which visits `pets` too (it carries an item id).
+        crate::pets::create_tables(&conn)?;
         crate::inventory::rename_item_ids(&conn)?;
         crate::skills::create_tables(&conn)?;
         // The spent half of a skill point. A whole new table, so `CREATE TABLE IF NOT EXISTS`

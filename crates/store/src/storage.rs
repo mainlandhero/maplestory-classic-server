@@ -832,7 +832,7 @@ mod tests {
             options: EquipOptions { remaining_enhancements: 2, ..EquipOptions::default() },
             ..EquipStats::default()
         };
-        let item = Item { item_id: 1302000, kind: ItemKind::Equip(Some(scrolled)), failed_slots: 0 };
+        let item = Item { item_id: 1302000, kind: ItemKind::Equip(Some(scrolled)), failed_slots: 0, pet_id: None };
         store.set_inventory_slot(chr, InventoryType::Equip, 1, &item).unwrap();
 
         store.store_item(account, chr, InventoryType::Equip, 1, None, 1).unwrap();

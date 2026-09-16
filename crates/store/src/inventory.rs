@@ -219,15 +219,23 @@ pub struct Item {
     /// Always `0` for a bundle. Nothing enforces that in the type because a `CHECK` on the
     /// column is the wrong shape for a value that is legitimately `0` on most rows.
     pub failed_slots: u8,
+    /// **Which pet this is**, for a pet item: the `pets.pet_id` row its name, skills and
+    /// vitals live on. `None` for every other item, and for a pet that has not been through
+    /// [`Store::add_item`] yet (`place_into_bag` numbers it). Server-only, travels with the
+    /// row for the same reason `failed_slots` does - it is what tells two Huskies apart.
+    ///
+    /// The owner, 2026-09-16: *"Two Husky should not share the same name. The pets should in the
+    /// background have different ids to identify them apart."*
+    pub pet_id: Option<u32>,
 }
 
 impl Item {
     pub fn equip(item_id: u32) -> Self {
-        Item { item_id, kind: ItemKind::Equip(None), failed_slots: 0 }
+        Item { item_id, kind: ItemKind::Equip(None), failed_slots: 0, pet_id: None }
     }
 
     pub fn bundle(item_id: u32, quantity: u16) -> Self {
-        Item { item_id, kind: ItemKind::Bundle { quantity }, failed_slots: 0 }
+        Item { item_id, kind: ItemKind::Bundle { quantity }, failed_slots: 0, pet_id: None }
     }
 
     /// The owner: *"Please do not allow untradeable items to be stored."* Same answer as
@@ -442,11 +450,15 @@ pub(crate) fn item_columns() -> Vec<&'static str> {
     // leaves `equip_stats_from_row`'s indexing untouched, so every stat column is read at
     // exactly the offset it was before.
     c.push(FAILED_SLOTS_COLUMN);
+    c.push(PET_ID_COLUMN);
     c
 }
 
-/// The one server-only item column. See [`Item::failed_slots`].
+/// The first server-only item column. See [`Item::failed_slots`].
 pub(crate) const FAILED_SLOTS_COLUMN: &str = "failed_slots";
+
+/// The second, after it. See [`Item::pet_id`]. Nullable: NULL is every non-pet row.
+pub(crate) const PET_ID_COLUMN: &str = "pet_id";
 
 /// The `equipment` columns a worn item is read back with, and the reader for them.
 ///
@@ -668,6 +680,10 @@ pub(crate) fn item_values(item: &Item) -> Vec<Value> {
     // Server-only, last, matching `item_columns`. Written for a bundle too - it is always 0
     // there, and a `NOT NULL` column has to be given something.
     out.push(Value::Integer(i64::from(item.failed_slots)));
+    out.push(match item.pet_id {
+        Some(id) => Value::Integer(i64::from(id)),
+        None => Value::Null,
+    });
     out
 }
 
@@ -688,10 +704,13 @@ pub(crate) fn item_from_row(row: &rusqlite::Row<'_>, base: usize) -> rusqlite::R
     // Tolerant of NULL so a row written before this column existed reads as "no failures",
     // which is the truthful answer for one.
     let failed_slots: i64 = row.get(base + 3 + EQUIP_STAT_COLUMN_COUNT).unwrap_or(0);
+    // And the pet id after it, NULL (or absent) for anything that is not a numbered pet.
+    let pet_id: Option<i64> = row.get(base + 4 + EQUIP_STAT_COLUMN_COUNT).unwrap_or(None);
     Ok(Item {
         item_id: u32::try_from(item_id).unwrap_or(0),
         kind,
         failed_slots: u8::try_from(failed_slots).unwrap_or(0),
+        pet_id: pet_id.and_then(|v| u32::try_from(v).ok()),
     })
 }
 
@@ -787,7 +806,7 @@ pub const ITEM_ID_RENAMES: &[(u32, u32)] = &[
 /// (worn items) is here because the invariant is "every table with the column", not
 /// "every table a box could be in" - the test below derives the list from the schema and
 /// fails the moment a fifth table appears without being added.
-pub const ITEM_ID_TABLES: &[&str] = &["inventory", "equipment", "cash_locker", "storage_item"];
+pub const ITEM_ID_TABLES: &[&str] = &["inventory", "equipment", "cash_locker", "storage_item", "pets"];
 
 /// Apply [`ITEM_ID_RENAMES`] to every table in [`ITEM_ID_TABLES`]. Runs on every open.
 pub(crate) fn rename_item_ids(conn: &Connection) -> Result<()> {
@@ -842,6 +861,12 @@ pub(crate) fn add_equip_stat_columns(conn: &Connection, table: &str) -> Result<(
             ),
             [],
         )?;
+    }
+    // The pet id, 2026-09-16, nullable: NULL is the truthful value for every row that is
+    // not a pet, and for a pet bought before pets were numbered - `pets::create_tables`
+    // numbers those on the next open.
+    if !existing.contains(PET_ID_COLUMN) {
+        conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {PET_ID_COLUMN} INTEGER"), [])?;
     }
     Ok(())
 }
@@ -992,6 +1017,25 @@ pub(crate) fn place_into_bag(
     let full = || StoreError::BagFull { inv_type: inv_type.as_u8(), slots };
     let mut changed = Vec::new();
 
+    // **A pet is one slot and one identity, never a stack.** Two Huskies are two rows with
+    // two `pet_id`s, whatever `max_stack` says; a pet arriving without a number (bought, or
+    // from a locker row written before pets were numbered) gets a fresh `pets` row here, and
+    // one that has a number keeps it - and is re-homed to this character if it changed hands.
+    if net::inventory::is_pet(item.item_id) {
+        let mut pet = *item;
+        pet.pet_id = Some(match pet.pet_id {
+            Some(id) => {
+                crate::pets::adopt(conn, id, character_id, item.item_id)?;
+                id
+            }
+            None => crate::pets::new_pet(conn, character_id, item.item_id)?,
+        });
+        let slot = lowest_free(bag, inv_type).ok_or_else(full)?;
+        set_slot(conn, character_id, inv_type, slot, &pet)?;
+        let placed = InvItem { inv_type, slot, item: pet };
+        bag.items.push(placed);
+        return Ok(vec![placed]);
+    }
     let mut remaining = match item.kind {
         ItemKind::Equip(_) => {
             let slot = lowest_free(bag, inv_type).ok_or_else(full)?;
@@ -1074,6 +1118,9 @@ pub(crate) fn take_from_bag(
     }
     Ok(match item.kind {
         ItemKind::Equip(_) => item,
+        // A pet is a bundle of one that carries its identity; `want == have == 1` for it, so
+        // the whole row leaves and the number leaves with it.
+        ItemKind::Bundle { .. } if item.pet_id.is_some() => item,
         ItemKind::Bundle { .. } => Item::bundle(item.item_id, want),
     })
 }
@@ -1605,7 +1652,7 @@ impl Store {
             "DELETE FROM equipment WHERE character_id = ?1 AND slot = ?2",
             rusqlite::params![i64::from(character_id), equip_slot],
         )?;
-        let item = Item { item_id, kind: ItemKind::Equip(stats), failed_slots };
+        let item = Item { item_id, kind: ItemKind::Equip(stats), failed_slots, pet_id: None };
         set_slot(&tx, character_id, inv_type, dst, &item)?;
         tx.commit()?;
         Ok(InvItem { inv_type, slot: dst, item })
@@ -1715,7 +1762,7 @@ impl Store {
                 character_id,
                 inv_type,
                 src,
-                &Item { item_id, kind: ItemKind::Equip(stats), failed_slots },
+                &Item { item_id, kind: ItemKind::Equip(stats), failed_slots, pet_id: None },
             )?;
         }
         tx.commit()?;
@@ -1946,7 +1993,7 @@ mod tests {
                 chr.id,
                 InventoryType::Equip,
                 3,
-                &Item { item_id: 1040002, kind: ItemKind::Equip(Some(scrolled)), failed_slots: 0 },
+                &Item { item_id: 1040002, kind: ItemKind::Equip(Some(scrolled)), failed_slots: 0, pet_id: None },
             )
             .unwrap();
 
@@ -1988,6 +2035,7 @@ mod tests {
                     item_id: 1040002,
                     kind: ItemKind::Equip(Some(EquipStats::default())),
                     failed_slots: 2,
+                    pet_id: None,
                 },
             )
             .unwrap();
@@ -2063,7 +2111,7 @@ mod tests {
                 chr.id,
                 InventoryType::Equip,
                 1,
-                &Item { item_id: 1040002, kind: ItemKind::Equip(Some(scrolled)), failed_slots: 0 },
+                &Item { item_id: 1040002, kind: ItemKind::Equip(Some(scrolled)), failed_slots: 0, pet_id: None },
             )
             .unwrap();
         store.equip_from_bag(chr.id, 1, 5).unwrap();
@@ -2093,7 +2141,7 @@ mod tests {
                 chr,
                 InventoryType::Equip,
                 2,
-                &Item { item_id: 1040002, kind: ItemKind::Equip(Some(EquipStats::default())), failed_slots: 0 },
+                &Item { item_id: 1040002, kind: ItemKind::Equip(Some(EquipStats::default())), failed_slots: 0, pet_id: None },
             )
             .unwrap();
         let zeroed = store.inventory_slot(chr, InventoryType::Equip, 2).unwrap().unwrap();
@@ -2146,7 +2194,7 @@ mod tests {
                 chr,
                 InventoryType::Equip,
                 1,
-                &Item { item_id: 1302000, kind: ItemKind::Equip(Some(stats)), failed_slots: 0 },
+                &Item { item_id: 1302000, kind: ItemKind::Equip(Some(stats)), failed_slots: 0, pet_id: None },
             )
             .unwrap();
         let back = store.inventory_slot(chr, InventoryType::Equip, 1).unwrap().unwrap();

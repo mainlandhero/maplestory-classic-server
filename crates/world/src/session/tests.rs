@@ -4181,6 +4181,30 @@ fn a_short_hello_yields_no_character_rather_than_panicking() {
     assert_eq!(migration_hello_character(&[0u8; 12]), Some(0));
 }
 
+/// The pet item as the bag holds it - WITH its `pet_id`, which is what the blob builder keys
+/// the name, vitals and active byte on. A bare `Item::bundle` would read as an un-numbered pet.
+fn bag_pet(store: &Arc<Store>, character_id: u32, item_id: u32) -> store::Item {
+    store
+        .bag_items(character_id, store::InventoryType::Cash)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.item.item_id == item_id)
+        .map(|r| r.item)
+        .unwrap_or_else(|| panic!("no pet {item_id} in character {character_id}'s Cash tab"))
+}
+
+/// The `pets` row id of `item_id` in this character's Cash tab - the first one, when there
+/// are two. Tests that talk about "the Husky" mean this.
+fn pet_of(store: &Arc<Store>, character_id: u32, item_id: u32) -> u32 {
+    store
+        .bag_items(character_id, store::InventoryType::Cash)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.item.item_id == item_id)
+        .and_then(|r| r.item.pet_id)
+        .unwrap_or_else(|| panic!("no numbered pet {item_id} in character {character_id}'s Cash tab"))
+}
+
 fn hex(s: &str) -> Vec<u8> {
     let clean: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
     (0..clean.len() / 2)
@@ -11171,7 +11195,7 @@ fn a_double_click_on_the_husky_summons_it_and_a_second_puts_it_away() {
     assert_eq!(&up.body[10..14], &5_000_006u32.to_le_bytes(), "the Husky");
     assert_eq!(&up.body[16..21], b"Husky");
     assert_eq!(&up.body[29..31], &300i16.to_le_bytes(), "beside the character");
-    assert!(s.pet_is_active(5_000_006));
+    assert!((s.active_pet_item() == Some(5_000_006)));
     let add = out
         .iter()
         .find(|r| r.opcode == net::inventory::INVENTORY_OPERATION && r.what.contains("active=1"))
@@ -11180,7 +11204,7 @@ fn a_double_click_on_the_husky_summons_it_and_a_second_puts_it_away() {
     // type 1, itemId 4, hasCashSN 1 + serial 8, dateExpire 8, u32 4, u8 1 = 27 to the tail;
     // then name 13, level 1, closeness 2, fullness 1, dateDead 8, attr 2, skill 2, life 4, attribute 2 = 35.
     assert_eq!(add.body[at + 27 + 35], 1, "the active byte");
-    assert_eq!(&add.body[at + 6..at + 14], &net::pet::pet_serial(id, 5_000_006).get().to_le_bytes(), "the pairing serial on the item");
+    assert_eq!(&add.body[at + 6..at + 14], &net::pet::pet_serial(id, pet_of(&store, id, 5_000_006)).get().to_le_bytes(), "the pairing serial on the item");
     let last = out.last().unwrap();
     assert_eq!((last.opcode, last.body[0]), (net::inventory::INVENTORY_OPERATION, 1), "the request is closed last");
 
@@ -11189,8 +11213,9 @@ fn a_double_click_on_the_husky_summons_it_and_a_second_puts_it_away() {
     let again = s.pet_entry_replies(&chr);
     assert_eq!(again.len(), 1);
     assert_eq!(again[0].opcode, net::pet::PET_ACTIVATED);
-    // And the record's own pet body now says active.
-    let blob = s.item_blob(&store::Item::bundle(5_000_006, 1));
+    // And the record's own pet body now says active - the bag's row, which carries the pet
+    // id the active byte is keyed on since 2026-09-16.
+    let blob = s.item_blob(&bag_pet(&store, id, 5_000_006));
     assert_eq!(blob[1 + 18 + 35], 1, "the bag body agrees the pet is out");
 
     // The same click again: put away - activated 0, then the reason byte the OWNER's handler
@@ -11200,7 +11225,7 @@ fn a_double_click_on_the_husky_summons_it_and_a_second_puts_it_away() {
     assert_eq!(down.body.len(), 10);
     assert_eq!(down.body[8], 0, "activated = 0");
     assert_eq!(down.body[9], net::pet::PET_REMOVE_REASON_NONE, "the reason: a plain removal");
-    assert!(!s.pet_is_active(5_000_006));
+    assert!(!(s.active_pet_item() == Some(5_000_006)));
     assert!(out.iter().any(|r| r.what.contains("active=0")));
     assert!(s.pet_entry_replies(&chr).is_empty(), "nothing to re-send once it is away");
 
@@ -11208,7 +11233,7 @@ fn a_double_click_on_the_husky_summons_it_and_a_second_puts_it_away() {
     let out = s.on_pet_activate(&hex("509a18140700"));
     assert_eq!(out.len(), 1);
     assert_eq!((out[0].opcode, out[0].body[0]), (net::inventory::INVENTORY_OPERATION, 1));
-    assert!(!s.pet_is_active(5_000_006));
+    assert!(!(s.active_pet_item() == Some(5_000_006)));
 }
 
 /// `--pet-move-action` reaches the wire and nothing else moves. The default body carries
@@ -11267,12 +11292,12 @@ fn cash_slot_of(store: &Store, id: u32, item_id: u32) -> u16 {
 }
 
 /// A `0x0116` for a pet item: tick, the item's slot, the item, the pet's serial, an optional name.
-fn use_pet_item_body(slot: u16, item_id: u32, owner: u32, name: Option<&str>) -> Vec<u8> {
+fn use_pet_item_body(slot: u16, item_id: u32, owner: u32, pet_id: u32, name: Option<&str>) -> Vec<u8> {
     let mut body = net::cashitem::CLIENT_USE_STAT_RESET_ITEM.to_le_bytes().to_vec();
     body.extend_from_slice(&hex("f98e4e20"));
     body.extend_from_slice(&slot.to_le_bytes());
     body.extend_from_slice(&item_id.to_le_bytes());
-    body.extend_from_slice(&net::pet::pet_serial(owner, 5_000_006).get().to_le_bytes());
+    body.extend_from_slice(&net::pet::pet_serial(owner, pet_id).get().to_le_bytes());
     if let Some(n) = name {
         body.extend_from_slice(&(n.len() as u16).to_le_bytes());
         body.extend_from_slice(n.as_bytes());
@@ -11292,8 +11317,11 @@ fn use_pet_food_body(slot: u16, item_id: u32) -> Vec<u8> {
 /// The pet's `(level, closeness, fullness)` as the CLIENT will read them - out of the Cash
 /// item body the session builds, not out of the store - so the wire is what is asserted.
 fn pet_vitals_on_the_wire(s: &Session, id: u32) -> (u8, u16, u8) {
-    let pet = store::Item::bundle(5_000_006, 1);
-    let b = s.item_blob_with_cash_sn(&pet, Some(net::pet::pet_serial(id, 5_000_006)));
+    // The bag's own row, so the item carries its pet id - a bare `Item::bundle` would read as
+    // a pet that has never been numbered.
+    let pet = s.store.bag_items(id, store::InventoryType::Cash).unwrap().into_iter().find(|r| r.item.item_id == 5_000_006).unwrap().item;
+    let pet_id = pet.pet_id.expect("numbered");
+    let b = s.item_blob_with_cash_sn(&pet, Some(net::pet::pet_serial(id, pet_id)));
     // 1 type + 4 id + 1 hasSN + 8 sn + 8 expire + 4 + 1 + 13 name = 40, then level, closeness, fullness.
     (b[40], u16::from_le_bytes([b[41], b[42]]), b[43])
 }
@@ -11317,10 +11345,10 @@ fn pet_food_restores_thirty_earns_one_closeness_and_overfeeding_costs_after_the_
     s.last_position = Some((300, -50));
     s.on_pet_activate(&hex("509a18140100"));
     // Make it hungry first so the +30 is visible.
-    store.set_pet_vitals(id, 5_000_006, 1, 0, 50).unwrap();
+    store.set_pet_vitals(pet_of(&store, id, 5_000_006), 1, 0, 50).unwrap();
 
     let out = s.handle(&use_pet_food_body(food_slot, 2_120_000));
-    let st = store.pet_state(id, 5_000_006).unwrap();
+    let st = store.pet_state(pet_of(&store, id, 5_000_006)).unwrap();
     assert_eq!((st.fullness, st.closeness, st.level), (80, 1, 2), "+30, +1, and closeness 1 is level 2 in the table");
     assert_eq!(pet_vitals_on_the_wire(&s, id), (2, 1, 80), "the Cash item the client reads says so");
     assert!(out.iter().any(|r| r.what.contains("re-sent as pet 5000006")), "the item goes out again");
@@ -11340,11 +11368,11 @@ fn pet_food_restores_thirty_earns_one_closeness_and_overfeeding_costs_after_the_
     // (that feed is the "fill it" step below - the count of foods eaten is unchanged)
 
     // Filled (above), then overfeed twice: free, then -1.
-    assert_eq!(store.pet_state(id, 5_000_006).unwrap().fullness, 100);
+    assert_eq!(store.pet_state(pet_of(&store, id, 5_000_006)).unwrap().fullness, 100);
     s.handle(&use_pet_food_body(food_slot, 2_120_000)); // overfeed #1: free
-    assert_eq!(store.pet_state(id, 5_000_006).unwrap().closeness, 2);
+    assert_eq!(store.pet_state(pet_of(&store, id, 5_000_006)).unwrap().closeness, 2);
     s.handle(&use_pet_food_body(food_slot, 2_120_000)); // overfeed #2: -1
-    let st = store.pet_state(id, 5_000_006).unwrap();
+    let st = store.pet_state(pet_of(&store, id, 5_000_006)).unwrap();
     assert_eq!((st.fullness, st.closeness, st.level), (100, 1, 2), "closeness down one, the level kept");
     assert_eq!(store.bag_items(id, store::InventoryType::Use).unwrap().iter().find(|r| r.slot == food_slot).map(|r| match r.item.kind { store::ItemKind::Bundle { quantity } => quantity, _ => 0 }), Some(1), "four foods eaten");
 }
@@ -11359,22 +11387,22 @@ fn a_summoned_pet_loses_a_fullness_every_five_minutes_and_goes_home_at_zero() {
     s.last_position = Some((300, -50));
     s.tick(10_000);
     s.on_pet_activate(&hex("509a18140100"));
-    store.set_pet_vitals(id, 5_000_006, 3, 10, 2).unwrap();
+    store.set_pet_vitals(pet_of(&store, id, 5_000_006), 3, 10, 2).unwrap();
     let five = net::petfood::PET_HUNGER_INTERVAL_MS;
 
     // Not yet.
     assert!(s.tick(10_000 + five - 1).iter().all(|r| !r.what.contains("re-sent as pet")));
-    assert_eq!(store.pet_state(id, 5_000_006).unwrap().fullness, 2);
+    assert_eq!(store.pet_state(pet_of(&store, id, 5_000_006)).unwrap().fullness, 2);
     // Five minutes: 2 -> 1, the item re-sent, the pet still out.
     let out = s.tick(10_000 + five);
-    assert_eq!(store.pet_state(id, 5_000_006).unwrap().fullness, 1);
+    assert_eq!(store.pet_state(pet_of(&store, id, 5_000_006)).unwrap().fullness, 1);
     assert!(out.iter().any(|r| r.what.contains("re-sent as pet 5000006")));
-    assert!(s.pet_is_active(5_000_006));
+    assert!((s.active_pet_item() == Some(5_000_006)));
     // Ten: 1 -> 0, starved - closeness 10 -> 9, level kept, sent home, remembered as away.
     let out = s.tick(10_000 + 2 * five);
-    let st = store.pet_state(id, 5_000_006).unwrap();
+    let st = store.pet_state(pet_of(&store, id, 5_000_006)).unwrap();
     assert_eq!((st.fullness, st.closeness, st.level, st.active), (0, 9, 3, false));
-    assert!(!s.pet_is_active(5_000_006), "put away on this session");
+    assert!(!(s.active_pet_item() == Some(5_000_006)), "put away on this session");
     let gone = out.iter().find(|r| r.opcode == net::pet::PET_ACTIVATED).expect("the put-away");
     assert_eq!((gone.body[8], gone.body.len()), (0, 10), "activated 0, with the owner's reason byte");
     assert!(out.iter().any(|r| r.what.contains("starving")), "and the player is told");
@@ -11402,14 +11430,14 @@ fn a_successful_pet_command_earns_closeness_and_levels_the_pet_up() {
 
     let out = s.handle(&gm_chat("sit"));
     assert!(out.iter().any(|r| r.opcode == net::pet::PET_ACTION));
-    let st = store.pet_state(id, 5_000_006).unwrap();
+    let st = store.pet_state(pet_of(&store, id, 5_000_006)).unwrap();
     assert_eq!((st.closeness, st.level), (3, 3), "+3 closeness, and 3 is level 3 in the table");
     assert!(out.iter().any(|r| r.what.contains("re-sent as pet 5000006")), "the panel's numbers go out");
     assert!(out.iter().any(|r| r.opcode == net::stats::USER_EFFECT_LOCAL && r.body[0] == net::pet::USER_EFFECT_PET), "a level gained by a trick flashes too");
 
     // A failed trick earns nothing.
     s.handle(&gm_chat("bad"));
-    assert_eq!(store.pet_state(id, 5_000_006).unwrap().closeness, 3);
+    assert_eq!(store.pet_state(pet_of(&store, id, 5_000_006)).unwrap().closeness, 3);
 }
 
 /// **The pet's own loot request is `0x0205`, and it takes the drop.** The owner, 2026-09-15:
@@ -11440,7 +11468,7 @@ fn the_pets_0x0205_loot_request_takes_a_mob_drop() {
         })
     });
     s.on_pet_activate(&hex("509a18140100"));
-    assert!(s.pet_is_active(5_000_006));
+    assert!((s.active_pet_item() == Some(5_000_006)));
 
     // world-ch0.log 02:56:09.012, with the drop id swapped in at byte 17.
     let mut body = net::pet::CLIENT_PET_PICK_UP.to_le_bytes().to_vec();
@@ -11474,27 +11502,27 @@ fn a_pet_skill_item_sets_the_bit_and_is_used_up() {
 
     // tick, the skill item's slot, Auto HP Potion Skill, the Husky's serial.
     let skill_slot = cash_slot_of(&store, id, 5_190_000);
-    let out = s.handle(&use_pet_item_body(skill_slot, 5_190_000, id, None));
+    let out = s.handle(&use_pet_item_body(skill_slot, 5_190_000, id, pet_of(&store, id, 5_000_006), None));
 
-    let state = store.pet_state(id, 5_000_006).unwrap();
+    let state = store.pet_state(pet_of(&store, id, 5_000_006)).unwrap();
     assert_eq!(state.skills, net::bag::PET_SKILLS_LEARNED_AT_START | net::bag::PET_SKILL_AUTO_HP, "the vacuum trio and Auto HP");
     let cash = store.bag_items(id, store::InventoryType::Cash).unwrap();
     assert!(cash.iter().all(|r| r.item.item_id != 5_190_000), "the skill item is used up: {cash:?}");
     assert!(out.iter().any(|r| r.what.contains("re-sent as pet 5000006")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
     // The mask is in the item body the client reads: petSkill at 54 when the serial rides.
-    let pet = store::Item::bundle(5_000_006, 1);
-    let blob = s.item_blob_with_cash_sn(&pet, Some(net::pet::pet_serial(id, 5_000_006)));
+    let pet = bag_pet(&store, id, 5_000_006);
+    let blob = s.item_blob_with_cash_sn(&pet, Some(net::pet::pet_serial(id, pet_of(&store, id, 5_000_006))));
     assert_eq!(&blob[54..56], &(net::bag::PET_SKILLS_LEARNED_AT_START | net::bag::PET_SKILL_AUTO_HP).to_le_bytes());
     let summons: Vec<u8> = out.iter().filter(|r| r.opcode == net::pet::PET_ACTIVATED).map(|r| r.body[8]).collect();
     assert_eq!(summons, vec![0, 1], "put away, then back out, for the owner - a fresh CPet::Init");
-    assert!(s.pet_is_active(5_000_006), "and it is still out");
+    assert!((s.active_pet_item() == Some(5_000_006)), "and it is still out");
 
     // A second skill adds to the mask rather than replacing it.
     store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_190_002, 1), 1).unwrap();
     let slot = cash_slot_of(&store, id, 5_190_002);
-    s.handle(&use_pet_item_body(slot, 5_190_002, id, None));
+    s.handle(&use_pet_item_body(slot, 5_190_002, id, pet_of(&store, id, 5_000_006), None));
     assert_eq!(
-        store.pet_state(id, 5_000_006).unwrap().skills,
+        store.pet_state(pet_of(&store, id, 5_000_006)).unwrap().skills,
         net::bag::PET_SKILLS_LEARNED_AT_START | net::bag::PET_SKILL_AUTO_HP,
         "Auto Move was already in the default; the item changes nothing but is used up"
     );
@@ -11514,9 +11542,9 @@ fn a_pet_name_tag_renames_the_pet_and_the_name_sticks() {
     s.on_pet_activate(&hex("509a18140100"));
 
     let tag_slot = cash_slot_of(&store, id, 5_170_000);
-    let out = s.handle(&use_pet_item_body(tag_slot, 5_170_000, id, Some("Dummy")));
+    let out = s.handle(&use_pet_item_body(tag_slot, 5_170_000, id, pet_of(&store, id, 5_000_006), Some("Dummy")));
 
-    assert_eq!(store.pet_state(id, 5_000_006).unwrap().name.as_deref(), Some("Dummy"));
+    assert_eq!(store.pet_state(pet_of(&store, id, 5_000_006)).unwrap().name.as_deref(), Some("Dummy"));
     assert!(
         store.bag_items(id, store::InventoryType::Cash).unwrap().iter().all(|r| r.item.item_id != 5_170_000),
         "the tag is used up"
@@ -11535,8 +11563,8 @@ fn a_pet_name_tag_renames_the_pet_and_the_name_sticks() {
     // Too long is cut to the wire's 12 bytes, not refused.
     store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_170_000, 1), 1).unwrap();
     let tag_slot = cash_slot_of(&store, id, 5_170_000);
-    s.handle(&use_pet_item_body(tag_slot, 5_170_000, id, Some("ThisNameIsFarTooLong")));
-    assert_eq!(store.pet_state(id, 5_000_006).unwrap().name.as_deref(), Some("ThisNameIsFa"));
+    s.handle(&use_pet_item_body(tag_slot, 5_170_000, id, pet_of(&store, id, 5_000_006), Some("ThisNameIsFarTooLong")));
+    assert_eq!(store.pet_state(pet_of(&store, id, 5_000_006)).unwrap().name.as_deref(), Some("ThisNameIsFa"));
 }
 
 /// **A pet that was out at log-out is out at the next login.** The owner, 2026-09-15: *"Pets that
@@ -11558,17 +11586,17 @@ fn a_pet_that_was_out_is_out_again_after_a_relogin() {
     first.claim_for_character(id);
     first.last_position = Some((300, -50));
     first.on_pet_activate(&hex("509a18140100"));
-    assert!(first.pet_is_active(5_000_006));
-    assert_eq!(store.active_pet(id).unwrap(), Some(5_000_006), "remembered");
+    assert!((first.active_pet_item() == Some(5_000_006)));
+    assert_eq!(store.active_pet(id).unwrap().map(|p| p.item_id), Some(5_000_006), "remembered");
     drop(first);
 
     // Session two, same character: out before anything is sent.
     store.create_migration(account, id, 0, 0).unwrap();
     let mut second = Session::new(store.clone(), Arc::new(Config::default()));
     assert!(second.claim_for_character(id).contains("claimed the migration"));
-    assert!(second.pet_is_active(5_000_006), "restored at claim time, before the login SetField");
-    let pet = store::Item::bundle(5_000_006, 1);
-    let blob = second.item_blob_with_cash_sn(&pet, Some(net::pet::pet_serial(id, 5_000_006)));
+    assert!((second.active_pet_item() == Some(5_000_006)), "restored at claim time, before the login SetField");
+    let pet = bag_pet(&store, id, 5_000_006);
+    let blob = second.item_blob_with_cash_sn(&pet, Some(net::pet::pet_serial(id, pet_of(&store, id, 5_000_006))));
     assert_eq!(blob[1 + 4 + 1 + 8 + 8 + 4 + 1 + 13 + 1 + 2 + 1 + 8 + 2 + 2 + 4 + 2], 1, "the Cash item's active byte is 1 in the record");
     let entered = second.on_field_entered();
     let summon = entered.iter().find(|r| r.opcode == net::pet::PET_ACTIVATED).expect("the pet is re-summoned on the first field entry");
@@ -11580,8 +11608,86 @@ fn a_pet_that_was_out_is_out_again_after_a_relogin() {
     store.create_migration(account, id, 0, 0).unwrap();
     let mut third = Session::new(store.clone(), Arc::new(Config::default()));
     third.claim_for_character(id);
-    assert!(!third.pet_is_active(5_000_006));
+    assert!(!(third.active_pet_item() == Some(5_000_006)));
     assert!(third.on_field_entered().iter().all(|r| r.opcode != net::pet::PET_ACTIVATED));
+}
+
+/// **Two Huskies are two pets.** The owner, 2026-09-16: *"Two Husky should not share the same
+/// name. The pets should in the background have different ids to identify them apart."*
+///
+/// Same item id in two Cash slots. The name tag used on the second names the second only;
+/// the summon from slot 2 is the second (its serial carries its own id, its Cash item is the
+/// one with the active byte); a hunger tick moves the second's fullness only; a new session
+/// re-summons the second, by id, with its name - and the first is still "Husky" at 100.
+#[test]
+fn two_huskies_have_two_names_and_the_right_one_comes_back() {
+    const HUSKY: u32 = 5_000_006;
+    const ACTIVE: usize = 62;
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Wisp".to_string(), ..Default::default() };
+    let id = store.create_character(account, 0, &chr).unwrap().id;
+    let a = store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(HUSKY, 1), 1).unwrap()[0].item.pet_id.unwrap();
+    let b = store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(HUSKY, 1), 1).unwrap()[0].item.pet_id.unwrap();
+    assert_ne!(a, b, "two numbers");
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_170_000, 1), 1).unwrap(); // a name tag, slot 3
+    let mut names = std::collections::HashMap::new();
+    names.insert(HUSKY, "Husky".to_string());
+    names.insert(5_170_000, "Pet Name Tag".to_string());
+    let config = Arc::new(Config { item_names: names, ..Config::default() });
+    let row = |slot: u16| store.bag_items(id, store::InventoryType::Cash).unwrap().into_iter().find(|r| r.slot == slot).unwrap().item;
+    let name_on_wire = |s: &Session, slot: u16| {
+        let item = row(slot);
+        let blob = s.item_blob_with_cash_sn(&item, Some(net::pet::pet_serial(id, item.pet_id.unwrap())));
+        let name = &blob[27..40];
+        let end = name.iter().position(|&c| c == 0).unwrap_or(13);
+        (String::from_utf8_lossy(&name[..end]).into_owned(), blob[ACTIVE])
+    };
+    let summon = |slot: u16| { let mut b = 0x1418_9a50u32.to_le_bytes().to_vec(); b.extend_from_slice(&slot.to_le_bytes()); b };
+
+    store.create_migration(account, id, 0, 0).unwrap();
+    let mut s = Session::new(store.clone(), config.clone());
+    s.claim_for_character(id);
+    s.last_position = Some((300, -50));
+    assert_eq!(name_on_wire(&s, 1), ("Husky".to_string(), 0));
+    assert_eq!(name_on_wire(&s, 2), ("Husky".to_string(), 0));
+
+    // Summon the SECOND: its serial is its own id, its item is the one marked active.
+    let out = s.on_pet_activate(&summon(2));
+    let up = out.iter().find(|r| r.opcode == net::pet::PET_ACTIVATED).expect("the summon");
+    assert_eq!(&up.body[4 + 4 + 1 + 1 + 4 + 2 + 5..][..8], &net::pet::pet_serial(id, b).get().to_le_bytes(), "the field pet carries pet b's serial");
+    assert_eq!(store.active_pet(id).unwrap().map(|p| p.pet_id), Some(b));
+    assert_eq!(name_on_wire(&s, 1).1, 0, "slot 1's Husky is not the one out");
+    assert_eq!(name_on_wire(&s, 2).1, 1, "slot 2's Husky is");
+
+    // The name tag used on pet b names pet b only.
+    s.handle(&use_pet_item_body(3, 5_170_000, id, b, Some("Dummy")));
+    assert_eq!(store.pet_state(b).unwrap().name.as_deref(), Some("Dummy"));
+    assert_eq!(store.pet_state(a).unwrap().name, None, "the other Husky is still called Husky");
+    assert_eq!(name_on_wire(&s, 1).0, "Husky");
+    assert_eq!(name_on_wire(&s, 2).0, "Dummy");
+
+    // Hunger moves pet b's fullness and nobody else's.
+    s.pet_hunger_tick(net::petfood::PET_HUNGER_INTERVAL_MS);
+    assert_eq!((store.pet_state(a).unwrap().fullness, store.pet_state(b).unwrap().fullness), (100, 99));
+
+    // Swap slots 1 and 2: the numbers travel, the active one is still b, now in slot 1.
+    s.on_inventory_move(&inventory_move(5, 1, 2, 1));
+    assert_eq!(row(1).pet_id, Some(b));
+    assert_eq!(row(2).pet_id, Some(a));
+    drop(s);
+
+    // A new session re-summons pet b BY ID - in slot 1 now - under its name; a is untouched.
+    store.create_migration(account, id, 0, 0).unwrap();
+    let mut again = Session::new(store.clone(), config);
+    again.claim_for_character(id);
+    assert_eq!(name_on_wire(&again, 1), ("Dummy".to_string(), 1));
+    assert_eq!(name_on_wire(&again, 2), ("Husky".to_string(), 0));
+    let entered = again.on_field_entered();
+    let summons: Vec<&Reply> = entered.iter().filter(|r| r.opcode == net::pet::PET_ACTIVATED).collect();
+    assert_eq!(summons.len(), 1);
+    assert!(summons[0].what.contains("Dummy"), "{}", summons[0].what);
+    assert_eq!(&summons[0].body[4 + 4 + 1 + 1 + 4 + 2 + 5..][..8], &net::pet::pet_serial(id, b).get().to_le_bytes());
 }
 
 /// **Two pets, two sets of vitals, one out at a time, and all of it survives a re-login.**
@@ -11615,7 +11721,7 @@ fn two_pets_keep_their_own_vitals_across_a_relogin_and_only_one_is_out() {
     let id = store.create_character(account, 0, &chr).unwrap().id;
     store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(HUSKY, 1), 1).unwrap(); // slot 1
     store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(OTHER, 1), 1).unwrap(); // slot 2
-    let blob = |s: &Session, item: u32| s.item_blob_with_cash_sn(&store::Item::bundle(item, 1), Some(net::pet::pet_serial(id, item)));
+    let blob = |s: &Session, item: u32| s.item_blob_with_cash_sn(&bag_pet(&store, id, item), Some(net::pet::pet_serial(id, pet_of(&store, id, item))));
     let vitals = |s: &Session, item: u32| { let b = blob(s, item); (b[LEVEL], u16::from_le_bytes([b[CLOSENESS], b[CLOSENESS + 1]]), b[FULLNESS], b[ACTIVE]) };
     let summon = |slot: u16| { let mut b = 0x1418_9a50u32.to_le_bytes().to_vec(); b.extend_from_slice(&slot.to_le_bytes()); b };
 
@@ -11625,7 +11731,7 @@ fn two_pets_keep_their_own_vitals_across_a_relogin_and_only_one_is_out() {
     first.claim_for_character(id);
     first.last_position = Some((300, -50));
     first.on_pet_activate(&summon(1));
-    assert!(first.pet_is_active(HUSKY));
+    assert!((first.active_pet_item() == Some(HUSKY)));
     first.pet_hunger_tick(tick); // the summon armed the timer; this is the five-minute hunger
     assert_eq!(vitals(&first, HUSKY), (1, 0, 99, 1), "Husky: level 1, closeness 0, fullness 99, out");
     assert_eq!(vitals(&first, OTHER), (1, 0, 100, 0), "the other pet is untouched and in the bag");
@@ -11636,9 +11742,9 @@ fn two_pets_keep_their_own_vitals_across_a_relogin_and_only_one_is_out() {
     assert_eq!(pets.len(), 2, "the Husky's put-away and the other's summon: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
     assert!(pets[0].what.contains("put away") && pets[0].what.contains(&HUSKY.to_string()), "{}", pets[0].what);
     assert!(pets[1].what.contains("summoned") && pets[1].what.contains(&OTHER.to_string()), "{}", pets[1].what);
-    assert!(first.pet_is_active(OTHER) && !first.pet_is_active(HUSKY));
-    assert_eq!(store.active_pet(id).unwrap(), Some(OTHER), "the store agrees: one active row");
-    assert!(!store.pet_state(id, HUSKY).unwrap().active);
+    assert!((first.active_pet_item() == Some(OTHER)) && !(first.active_pet_item() == Some(HUSKY)));
+    assert_eq!(store.active_pet(id).unwrap().map(|p| p.item_id), Some(OTHER), "the store agrees: one active row");
+    assert!(!store.pet_state(pet_of(&store, id, HUSKY)).unwrap().active);
     // Two ticks on the other pet: its own fullness moves, the Husky's does not.
     first.pet_hunger_tick(3 * tick);
     first.pet_hunger_tick(4 * tick);
@@ -11658,8 +11764,8 @@ fn two_pets_keep_their_own_vitals_across_a_relogin_and_only_one_is_out() {
     assert!(summons[0].what.contains(&OTHER.to_string()), "{}", summons[0].what);
     // Closeness persists the same way: a trick that lands writes it, and the next session
     // reads it back on the right pet.
-    let st = store.pet_state(id, OTHER).unwrap();
-    store.set_pet_vitals(id, OTHER, st.level, 5, st.fullness).unwrap();
+    let st = store.pet_state(pet_of(&store, id, OTHER)).unwrap();
+    store.set_pet_vitals(pet_of(&store, id, OTHER), st.level, 5, st.fullness).unwrap();
     store.create_migration(account, id, 0, 0).unwrap();
     let mut third = Session::new(store.clone(), Arc::new(Config::default()));
     third.claim_for_character(id);
@@ -11710,7 +11816,7 @@ fn a_summoned_pet_picks_up_a_mob_drop_but_not_a_players_own_drop() {
 
     // Summon the Husky, then the same request: taken by the pet.
     s.on_pet_activate(&hex("509a18140100"));
-    assert!(s.pet_is_active(5_000_006));
+    assert!((s.active_pet_item() == Some(5_000_006)));
     let out = s.handle(&pet_request(mob_drop));
     let leave = out.iter().find(|r| r.opcode == net::drops::DROP_LEAVE_FIELD).expect("a leave");
     assert_eq!(leave.body[4], net::drops::leave_type::PET_PICKUP, "type 5 - it flies into the pet");
@@ -11820,7 +11926,7 @@ fn a_summoned_pet_walks_for_the_map_and_answers_its_command_words() {
     assert!(s.pet_command_replies("sit").is_empty(), "no pet, no trick");
 
     s.on_pet_activate(&hex("509a18140100"));
-    assert!(s.pet_is_active(5_000_006));
+    assert!((s.active_pet_item() == Some(5_000_006)));
 
     // The move: nothing back to the owner, one PetMove on the map with the path untouched.
     assert!(s.on_pet_move(&body).is_empty(), "the owner's own client already drew it");
@@ -11847,7 +11953,7 @@ fn a_summoned_pet_walks_for_the_map_and_answers_its_command_words() {
 
     // Put the pet away and the words go quiet again.
     s.on_pet_activate(&hex("f29d18140100"));
-    assert!(!s.pet_is_active(5_000_006));
+    assert!(!(s.active_pet_item() == Some(5_000_006)));
     let out = s.handle(&gm_chat("sit"));
     assert!(out.iter().all(|r| r.opcode != net::pet::PET_ACTION));
 }

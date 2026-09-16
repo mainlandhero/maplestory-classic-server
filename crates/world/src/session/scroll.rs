@@ -445,6 +445,7 @@ impl Session {
             item_id,
             kind: store::ItemKind::Equip(Some(new_stats)),
             failed_slots: applied.after.failed_slots,
+            pet_id: None,
         };
         let blob = self.item_blob(&refreshed);
         out.push(Reply {
