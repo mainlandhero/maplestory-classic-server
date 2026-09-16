@@ -236,7 +236,9 @@ tag stores a name, both in the new `store::pets`, re-sent in the Cash item; `0x0
 which only a fresh `0x0224` carried, so the pet-equip slot now re-announces the look and re-summons
 the pet on the map (**[I]** on the in-place redraw - the plan names the falsifier); the active pet
 is persisted and `restore_active_pet` re-summons at claim time. `0x0204` is the pet-action report.
-**Show Pet Info is NOT fixed** - the gate is a local in `FUN_1414be310` this pass did not source.
+**Show Pet Info** was greyed once and enabled the next time on the same build - state, not code: the
+gate is the info window's own pet array plus the local user's pet slot 0 (`FUN_1414be310`
+0x1414be793..83f), so a window built before the summon stays grey until rebuilt.
 `research/pets-loot-skills-name-relogin-2026-09-15.md`, fixture
 `research/fixtures/pet-loot-0205-skills-nametag-0116-hat-0107-unhandled-2026-09-15-world-ch0.log`.
 Plan step 8. Nothing of it on a screen yet.

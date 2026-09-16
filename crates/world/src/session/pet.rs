@@ -46,9 +46,9 @@
 //! # Not built, and said so
 //!
 //! Feeding, dyeing, closeness and levelling. A pet is level 1 for as long as closeness does
-//! not exist, and that is what picks the command band. And **Show Pet Info** in Character
-//! Info is greyed for the owner - the gate is a local pointer in `FUN_1414be310`
-//! (`research/msexe-userinfo-pet.c`, `local_40`) whose source this pass did not find.
+//! not exist, and that is what picks the command band. (**Show Pet Info** in Character Info
+//! is the client's own: its window builds a pet list when it opens, so one opened before the
+//! summon stays grey - `research/pets-loot-skills-name-relogin-2026-09-15.md` §6.)
 
 use super::*;
 
