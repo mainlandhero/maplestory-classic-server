@@ -210,13 +210,31 @@ impl Session {
         character_id: u32,
         map: u32,
     ) -> Vec<Reply> {
+        // **Every stat an item grants names the item as a NEGATIVE reason.** The owner,
+        // 2026-09-16: *"Magic Potions and other similar potions are not applying the buff
+        // icons."* They were sent with `reason: item_id` - positive, which the client reads
+        // as a skill id, and there is no skill 2002001 to draw. `net::buff::item_reason`.
+        let mut out = Vec::new();
+        let mut stats: Vec<net::buff::TemporaryStat> = restores
+            .buffs()
+            .iter()
+            .map(|&(bit, value)| net::buff::TemporaryStat {
+                bit,
+                value: i16::try_from(value).unwrap_or(i16::MAX),
+                reason: net::buff::item_reason(item_id),
+                duration_ms: restores.duration_ms,
+            })
+            .collect();
+
         // **The EXP coupon, which is a rate rather than a stat.** The owner: *"are we sure that
         // the EXP gained is actually properly being modified?"* It was not - this field was
         // read by nothing, so the coupon was consumed and did nothing at all.
         //
-        // It is set before the CTS block returns, because a coupon has no CTS bit and would
-        // otherwise leave through the early return below having changed nothing.
-        let mut out = Vec::new();
+        // The multiplier is the server's (`with_exp_coupon`); the client is told on CTS 163
+        // `ExpBuffRate` so the icon and its countdown appear top-right. The owner, 2026-09-16:
+        // *"the EXP coupon effects are not applying the appropriate buff icon ... make sure
+        // 2x and 3x coupons have the proper buff durations applied"*. Until then the coupon
+        // sent no `0x007D` at all - it had no bit - so there was nothing to draw.
         if restores.exp_percent > 0 && restores.duration_ms > 0 {
             let coupon = crate::consumables::ExpCoupon {
                 percent: restores.exp_percent,
@@ -227,6 +245,12 @@ impl Session {
             // Stacking would make two 2x coupons a 4x, which no version of this game does,
             // and refusing would eat the item - the worst of the three.
             self.exp_coupon = Some(coupon);
+            stats.push(net::buff::TemporaryStat {
+                bit: net::buff::CTS_EXP_BUFF_RATE,
+                value: i16::try_from(restores.exp_percent).unwrap_or(i16::MAX),
+                reason: net::buff::item_reason(item_id),
+                duration_ms: restores.duration_ms,
+            });
             let line = format!(
                 "{} experience for {} minutes.",
                 coupon.label(),
@@ -245,10 +269,9 @@ impl Session {
             });
         }
 
-        let buffs = restores.buffs();
         // A restore-only potion takes this path too and must leave with nothing: an empty
         // `0x007D` would set a mask with no bits and is not worth sending.
-        if buffs.is_empty() || restores.duration_ms == 0 {
+        if stats.is_empty() || restores.duration_ms == 0 {
             if !restores.unsupported().is_empty() {
                 crate::server::log(&format!(
                     "   item {item_id}: {} cannot be sent - no measured CTS bit for it in this \
@@ -259,17 +282,10 @@ impl Session {
             }
             return out;
         }
-        let stats: Vec<net::buff::TemporaryStat> = buffs
-            .iter()
-            .map(|&(bit, value)| net::buff::TemporaryStat {
-                bit,
-                value: i16::try_from(value).unwrap_or(i16::MAX),
-                reason: item_id,
-                duration_ms: restores.duration_ms,
-            })
-            .collect();
         // Remember them the same way a skill's are, so the tick expires them and a re-drink
-        // replaces rather than stacks.
+        // replaces rather than stacks. The coupon's bit 163 is in here too: the `0x007E` the
+        // tick sends at `expires_ms` is what takes the icon down, and it is the same instant
+        // `with_exp_coupon` stops multiplying.
         let expires_ms = self.clock_ms.saturating_add(u64::from(restores.duration_ms));
         for stat in &stats {
             self.buffs.retain(|b| b.bit != stat.bit);

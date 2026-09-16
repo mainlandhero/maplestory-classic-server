@@ -115,6 +115,36 @@ pub const CLIENT_SKILL_CANCEL_LEN: usize = CANCEL_MASK_OFFSET + MASK_LEN;
 /// while Speed is already held - which reads this bit and raises string `0x14DA`.
 pub const CTS_SPEED: u32 = 92;
 
+/// The character-temporary-stat bit an EXP coupon rides: **163, `ExpBuffRate`**.
+///
+/// **The bit is [L]**: it is what this client calls index 163 in its own CTS name table
+/// (`research/first-job-buffs.md`, Appendix A), and its `0x007D` block at `0x140a22478` is
+/// the standard one - value, `u32` reason, `u32` duration added to the base time - so it
+/// has the shape of every other entry this builder writes.
+///
+/// **What the client does with the value is [D].** The modern reference source sends the
+/// item's `expBuff` percent (`200`, `300`) on this bit and nothing else, and the name says
+/// rate; nothing here has measured the client's own EXP arithmetic reading it. It does not
+/// need to: `Session::with_exp_coupon` multiplies the kill server-side regardless, so this
+/// bit is for the icon and its countdown. A wrong reading would show as a wrong number in
+/// the icon's tooltip, never as wrong experience.
+pub const CTS_EXP_BUFF_RATE: u32 = 163;
+
+/// The `reason` of a stat an ITEM granted: the item id, **negated**.
+///
+/// A positive reason is a skill id - the icon comes from `Skill.wz` and the tooltip names
+/// the skill. Every potion this server sent before 2026-09-16 carried its item id
+/// *positive*, so the client went looking for skill `2002001`, found nothing, and drew
+/// nothing - the owner: *"Magic Potions and other similar potions are not applying the buff
+/// icons"*. The modern reference source sets `rOption = -itemID` for every item buff
+/// (`Char.java`, `ItemBuffs.java`), and that convention is older than this client.
+///
+/// **[D] until a run shows the icon.** The doubt is honest: no instruction in this build has
+/// been read testing the reason's sign. The test plan says what each outcome means.
+pub fn item_reason(item_id: u32) -> u32 {
+    item_id.wrapping_neg()
+}
+
 /// The bit mask is 124 bytes: 31 little-endian `u32` words.
 pub const MASK_LEN: usize = 124;
 
@@ -894,6 +924,16 @@ fn magic_armor_level(level: u32) -> Option<BuffLevel> {
 
 #[cfg(test)]
 mod tests {
+    /// An item's reason is its id negated, as the client reads a `u32` and the sign is the
+    /// whole point: `-2002001` is the Magic Potion, `2002001` would be a skill that does
+    /// not exist.
+    #[test]
+    fn an_item_reason_is_the_id_negated() {
+        assert_eq!(super::item_reason(2_002_001) as i32, -2_002_001);
+        assert_eq!(super::item_reason(2_450_001) as i32, -2_450_001);
+        assert_ne!(super::item_reason(2_002_001), 2_002_001);
+    }
+
     use super::*;
 
     /// **Bit 92 is byte 8 = `0x08`, and this is the assertion the whole packet rests on.**

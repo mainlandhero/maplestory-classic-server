@@ -2124,7 +2124,32 @@
           "could NOT be revoked ... predates sign-out" -> the deployed server is older than
                        this launcher; deploy the matching MapleCW-server.zip
 
-    10. THE CRASH - a question, not a test.
+    10. BUFF ICONS FROM ITEMS - 2026-09-16. You: "the EXP coupon effects are not applying
+        the appropriate buff icon on the top right" and "make sure that Magic Potions and
+        other similar potions are applying the buff icons as well."
+        Two bugs, one packet. A potion's 0x007D named its item id POSITIVE, which the client
+        reads as a skill id (there is no skill 2002001, so it drew nothing). The coupon sent
+        no 0x007D at all. Now every item stat names -itemId, and the coupon rides CTS bit
+        163 ExpBuffRate (the client's own name for it) worth 200 or 300 for its duration.
+        THE SIGN CONVENTION IS [D] - it is the modern reference's and a decade of clients',
+        but no instruction in THIS build has been read testing it. This run is the reading.
+          a. drink a Magic Potion (2002001): an icon top-right with the POTION's picture,
+             counting down from 10:00                                          -> DONE
+             icon appears but with no picture / a blank tooltip -> the sign is read but the
+                       item lookup is not; say what the tooltip shows
+             no icon, M.Att still +10 in the stat window -> the client ignores a negative
+                       reason; the stat itself is unaffected. Say so - that is the
+                       whole finding, and the fallback is a hidden-icon convention
+          b. use a 3x EXP Coupon (2450001): a SECOND icon, 15:00, and the yellow
+             "3x experience for 15 minutes" line                               -> DONE
+             the potion's icon shows and the coupon's does not -> bit 163 is not what this
+                       client draws for ExpBuffRate; the multiplier still works (kill
+                       something: triple EXP) - say both halves separately
+          c. wait either out, or !buff-cancel by right-clicking the icon: it goes away and
+             the stat window drops the number. A coupon that outlives its icon or an icon
+             that outlives its multiplier is a bug either way - say which.
+
+    11. THE CRASH - a question, not a test.
         A 1.36 GB dump was written at 00:08 from a fault at 0x14090a6f0, an address that
         appears NOWHERE else in the archive. It is an std::map node walk hitting a bad
         pointer, with 38 C++ throws before it. You said you were "just in the map with
@@ -5064,7 +5089,18 @@ function Show-TestPlan {
         Write-Host '       says "1 claim(s) revoked on the server" -> DONE' -ForegroundColor Green
         Write-Host '       "predates sign-out" -> deploy the matching server zip' -ForegroundColor Yellow
         Write-Host ''
-        Write-Host '  10. THE CRASH - a question, not a test.' -ForegroundColor White
+        Write-Host '  10. BUFF ICONS FROM ITEMS (2026-09-16). Potions named their item id' -ForegroundColor White
+        Write-Host '     POSITIVE (= a skill id, nothing to draw); the EXP coupon sent no'
+        Write-Host '     stat at all. Now -itemId, and the coupon rides CTS 163 ExpBuffRate.'
+        Write-Host '     The sign convention is [D]: this run is the reading.' -ForegroundColor Yellow
+        Write-Host '     a. Magic Potion 2002001: icon top-right, potion picture, 10:00 -> DONE' -ForegroundColor Green
+        Write-Host '        no icon, M.Att still +10 -> negative reason ignored; SAY SO' -ForegroundColor Yellow
+        Write-Host '     b. 3x EXP Coupon 2450001: a second icon, 15:00, + yellow line -> DONE' -ForegroundColor Green
+        Write-Host '        potion icon yes, coupon icon no -> 163 is not it; kill something,' -ForegroundColor Yellow
+        Write-Host '        triple EXP still? report both halves separately' -ForegroundColor Yellow
+        Write-Host '     c. wait one out / right-click it: icon AND stat go together' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  11. THE CRASH - a question, not a test.' -ForegroundColor White
         Write-Host '     A 1.36 GB dump at 00:08, fault 0x14090a6f0 - an address that'
         Write-Host '     appears NOWHERE else in the archive. It is an std::map node walk'
         Write-Host '     hitting a bad pointer, 38 C++ throws before it. You were "just in'
