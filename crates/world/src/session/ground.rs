@@ -571,7 +571,15 @@ impl Session {
                             "InventoryOperation: the bag refused the item ({e}) - nCount 0,                              bExclRequestSent 1. WITHOUT this the client never sends another                              pick-up for the rest of the session, whatever the item is."
                         ),
                     });
-                    out.extend(self.notice(format!("Your bag would not take it: {e}")));
+                    // **The sentence is for a hand, not a paw.** The owner, 2026-09-16: *"My chat
+                    // box is getting spammed with inventory full when my pet tries to pick up
+                    // items that goes to a full inventory tab."* A pet retries every drop it
+                    // walks over, so one full tab is one line per retry; the player's own
+                    // click is one line per click, which is the one worth reading. The
+                    // `0x0070` above still goes out either way - the unlock is not optional.
+                    if by_pet.is_none() {
+                        out.extend(self.notice(format!("Your bag would not take it: {e}")));
+                    }
                 }
             }
             return out;

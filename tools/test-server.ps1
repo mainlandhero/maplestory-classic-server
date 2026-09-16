@@ -2040,6 +2040,12 @@
             it stays on the floor                        -> paste the "pet pick-up" log lines
             the tooltip says "unregistered" for Auto Move -> the client package was not
                        rebuilt/installed (python tools\backport_install.py --install, client closed)
+          A FULL TAB (2026-09-16): the pet retrying a drop that has no slot no longer
+          prints "Your bag would not take it" - the owner's chat log was four lines of it per
+          drop. Its request is still unlocked (the 0x0070), so the pet keeps trying other
+          drops. Your OWN click on that drop still prints the line once.
+            pet over a drop for a full tab: chat log quiet, drop stays -> fixed
+            click it yourself: one "Your bag would not take it" line  -> as designed
           SKILLS: use Auto HP on the Husky. Your 23:34 try KILLED THE CLIENT: the put-away
           half of the re-summon was 11 bytes and the owner's handler reads a 12th, a reason
           byte the remote handler never did (the client named the packet in a 0x009E). It is
@@ -4981,6 +4987,9 @@ function Show-TestPlan {
         Write-Host '         only when it walks onto it -> keys declared, pet code ignores them' -ForegroundColor Yellow
         Write-Host '         stays on the floor -> paste the "pet pick-up" log lines' -ForegroundColor Yellow
         Write-Host '         tooltip says unregistered -> package not rebuilt/installed' -ForegroundColor Yellow
+        Write-Host '       FULL TAB (2026-09-16): the pet retrying a drop with no slot no longer'
+        Write-Host '         prints "Your bag would not take it"; your own click still does, once.'
+        Write-Host '         pet over it: chat quiet, drop stays -> fixed; click it: one line' -ForegroundColor Yellow
         Write-Host '       SKILLS: Auto HP. Your 23:34 try KILLED THE CLIENT: the put-away half'
         Write-Host '         of the re-summon lacked the reason byte the OWNER reads. Fixed.'
         Write-Host '         Expect ONE summon animation. Client exits there -> paste 0x009E' -ForegroundColor Yellow
