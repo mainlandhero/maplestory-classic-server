@@ -168,6 +168,19 @@ pub fn handle(service: &AuthService, req: &Request) -> Response {
             }
         },
 
+        // **The launcher itself.** The owner, 2026-09-16: *"The launcher that we have should have
+        // the ability to patch itself."* One entry and one file; 503 when this server was
+        // started without `--launcher`, which the launcher treats as "go on with what you
+        // have", not as a refusal. `crate::launcherpatch`.
+        ("GET", p) if p == crate::launcherpatch::MANIFEST_PATH => match service.launcher_patches() {
+            Some(l) => Response::text(200, l.rendered().as_ref().clone()),
+            None => Response::error(503, "this server publishes no launcher (no --launcher)"),
+        },
+        ("GET", p) if p == crate::launcherpatch::FILE_PATH => match service.launcher_patches() {
+            Some(l) => Response::file(l.file()),
+            None => Response::error(503, "this server publishes no launcher (no --launcher)"),
+        },
+
         ("POST", "/login") => match serde_json::from_str::<LoginRequest>(&req.body) {
             // Never echo the body back: it contains the password.
             Err(_) => Response::error(400, "invalid JSON"),
@@ -517,6 +530,34 @@ mod tests {
             ask.query = bad.into();
             assert_eq!(handle(&svc, &ask).status, 404, "{bad:?} must be refused");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The launcher's own manifest and file: 503 without `--launcher` (the launcher goes on),
+    /// a one-entry manifest the launcher parses and the exact bytes otherwise.
+    #[test]
+    fn the_launcher_endpoints_publish_one_file_or_say_there_is_none() {
+        let dir = std::env::temp_dir().join(format!("maplecw-auth-launcher-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("maplecw-launcher.exe");
+        std::fs::write(&exe, b"MZ a launcher").unwrap();
+
+        let bare = service();
+        assert_eq!(handle(&bare, &req("GET", crate::launcherpatch::MANIFEST_PATH, "")).status, 503);
+        assert_eq!(handle(&bare, &req("GET", crate::launcherpatch::FILE_PATH, "")).status, 503);
+
+        let source = crate::launcherpatch::LauncherSource::open(&exe).unwrap();
+        let svc = service().with_launcher_patches(std::sync::Arc::new(source));
+        let m = handle(&svc, &req("GET", crate::launcherpatch::MANIFEST_PATH, ""));
+        assert_eq!(m.status, 200);
+        let parsed = patchset::Manifest::parse(&m.body).expect("the launcher must parse it");
+        assert_eq!(parsed.entries.len(), 1);
+        assert_eq!(parsed.entries[0].path, crate::launcherpatch::PUBLISHED_NAME);
+        assert_eq!(parsed.entries[0].size, 13);
+        let f = handle(&svc, &req("GET", crate::launcherpatch::FILE_PATH, ""));
+        assert_eq!((f.status, f.content_type), (200, "application/octet-stream"));
+        assert_eq!(std::fs::read(f.file.expect("a file to stream")).unwrap(), b"MZ a launcher");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

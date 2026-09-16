@@ -236,6 +236,15 @@ if ($clientProblem) {
     exit 1
 }
 $authArgs += @('--client-dir', "$clientRoot")
+# The launcher, published from bin\ so every launcher can replace itself at Start Game
+# (the owner, 2026-09-16). Missing is a WARNING, not an error: launchers go on with the one they
+# have, and an older package legitimately has no launcher in bin\.
+$launcherExe = Join-Path $bin 'maplecw-launcher.exe'
+if (Test-Path $launcherExe) {
+    $authArgs += @('--launcher', "$launcherExe")
+} else {
+    Write-Host "  no $launcherExe - launchers will not be able to update themselves from this server" -ForegroundColor Yellow
+}
 $auth = Start-Process -FilePath (Join-Path $bin 'maplecw-auth.exe') -WorkingDirectory $root `
     -ArgumentList $authArgs -PassThru -NoNewWindow `
     -RedirectStandardOutput (Join-Path $root 'auth.log') `

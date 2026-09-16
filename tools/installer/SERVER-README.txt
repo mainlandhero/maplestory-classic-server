@@ -18,8 +18,11 @@ WHAT IS IN HERE, AND WHAT IS NOT
     data\                     shops, drops, quest scripts, the EXP curve
     client\                   THE CLIENT THIS SERVER PUBLISHES - see below
 
-Not here, and not needed here: the launcher, or grap64.dll. Those are the
-CLIENT machine's payload.
+bin\maplecw-launcher.exe is NOT for running on this box. It is what every
+player's launcher compares itself against: start-server.ps1 passes it to
+maplecw-auth --launcher, and a launcher whose own file hashes differently
+downloads this one, swaps itself and restarts - at Start Game, before it
+touches the client. grap64.dll is compiled into the launcher and is not here.
 
 
 THE client\ FOLDER IS NOT FOR RUNNING - IT IS WHAT PLAYERS PATCH AGAINST

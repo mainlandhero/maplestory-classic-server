@@ -36,6 +36,7 @@ mod launch;
 mod paths;
 mod prepare;
 mod remembered;
+mod selfupdate;
 mod servers;
 mod session;
 mod stub;
@@ -55,6 +56,9 @@ maplecw-launcher [--print-paths] [--check-client [folder]]
                   launches nothing. Takes an optional folder, defaulting to the resolved
                   client directory. Start Game runs the same check every time and puts the
                   result in the log, so this flag is only for checking without launching.
+  --updated-from <path>
+                  used by the launcher on itself: the newly installed launcher is started
+                  with the path of the one it replaced, and deletes it. Not for typing.
   --help          this
 
 The launcher takes no server address on the command line: the window has fields for it, and
@@ -121,6 +125,14 @@ pub fn run() {
     if args.iter().any(|a| a == "--help" || a == "-h" || a == "/?") {
         report(USAGE);
         return;
+    }
+    // The launcher that has just replaced an older one: remove the old executable, which
+    // could not be deleted while it was the running program. `selfupdate`. The result is
+    // shown in the window's first log lines, not on a console this build does not have.
+    if let Some(i) = args.iter().position(|a| a == selfupdate::UPDATED_FROM_FLAG) {
+        if let Some(old) = args.get(i + 1) {
+            selfupdate::finish_update(std::path::Path::new(old));
+        }
     }
 
     let options = eframe::NativeOptions {

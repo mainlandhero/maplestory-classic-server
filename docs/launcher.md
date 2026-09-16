@@ -45,6 +45,18 @@ part that changed, and the two options this document used to end on were both wr
    `-NXLDEBUG <server> <port>` plus the session token.
 6. **Get out of the way**, leaving a way to see the hook log if something went wrong.
 
+**0, since 2026-09-16 - before all of the above at Start Game: update itself.** The owner: *"The
+launcher that we have should have the ability to patch itself should we need to."* The server
+publishes its own copy of `maplecw-launcher.exe` (`bin\` of the server package,
+`maplecw-auth --launcher`, endpoints `/launcher/manifest` and `/launcher/file` -
+`auth::launcherpatch`). The launcher hashes its own executable, and when the two differ it
+downloads the server's, verifies size and SHA-256 before writing, renames the running
+executable to `.old`, renames the new one onto its path, starts it with `--updated-from
+<old>` and closes; the new one deletes the old file once the process has gone
+(`launcher::selfupdate`). Sign in again in the new window - the claim belonged to the old
+process and the password is never on disk. A server that publishes no launcher is a warning,
+not a refusal: an old server must not lock players out of a launcher that was working.
+
 ## Replace the marker files with one config
 
 The hook is switched on today by files written next to the client by PowerShell:

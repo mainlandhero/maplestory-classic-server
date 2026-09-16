@@ -19,6 +19,7 @@ fn main() -> std::process::ExitCode {
     // should be a PREPARED client folder - GameGuard stubbed, the Nexon gate byte patched -
     // because that is the state a launcher's own folder is in when it checks itself.
     let mut client_dir: Option<String> = None;
+    let mut launcher: Option<String> = None;
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -26,6 +27,10 @@ fn main() -> std::process::ExitCode {
         match args[i].as_str() {
             "--db" if i + 1 < args.len() => {
                 db_path = args[i + 1].clone();
+                i += 2;
+            }
+            "--launcher" if i + 1 < args.len() => {
+                launcher = Some(args[i + 1].clone());
                 i += 2;
             }
             "--client-dir" if i + 1 < args.len() => {
@@ -47,7 +52,9 @@ fn main() -> std::process::ExitCode {
                 i += 2;
             }
             "-h" | "--help" => {
-                println!("usage: maplecw-auth [--db <path>] [--bind <addr>] [--port <port>] [--client-dir <path>]");
+                println!("usage: maplecw-auth [--db <path>] [--bind <addr>] [--port <port>] [--client-dir <path>] [--launcher <exe>]");
+                println!("  --launcher    publish this launcher executable: a launcher whose own");
+                println!("                file hashes differently replaces itself from here");
                 println!("  --client-dir  publish this client folder: launchers check their own");
                 println!("                copy against it and download only the files that differ.");
                 println!("                Point it at a PREPARED client (stub installed, Nexon");
@@ -130,6 +137,24 @@ fn main() -> std::process::ExitCode {
     } else {
         println!("CLIENT PATCHES: OFF - no --client-dir, so /client/manifest answers 503 and");
         println!("  a launcher that requires a confirmed version will refuse to start the game.");
+    }
+    // The launcher, the same way: hashed once here, a restart publishes a new one. Refused on
+    // a bad path for the same reason as the client - a server told to publish a launcher and
+    // silently publishing none would tell every launcher it is current.
+    if let Some(exe) = &launcher {
+        match auth::launcherpatch::LauncherSource::open(std::path::Path::new(exe)) {
+            Ok(source) => {
+                println!("{}", source.describe());
+                service = service.with_launcher_patches(Arc::new(source));
+            }
+            Err(e) => {
+                eprintln!("--launcher {exe}: {e}");
+                return std::process::ExitCode::FAILURE;
+            }
+        }
+    } else {
+        println!("LAUNCHER PATCHES: OFF - no --launcher, so /launcher/manifest answers 503 and");
+        println!("  every launcher keeps the executable it has.");
     }
     let service = Arc::new(service);
     if let Err(e) = http::serve_on(service, &bind, port, tls) {
