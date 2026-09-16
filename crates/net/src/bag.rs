@@ -364,12 +364,16 @@ pub const PET_SKILL_AUTO_MP: u16 = 1 << 4;
 /// **What every pet knows the day it is bought.** The owner, 2026-09-13: *"the Husky should by
 /// default come with Meso Magnet and Item Pouch."*
 ///
-/// Meso Magnet is innate and carries no bit, so this is Item Pouch alone - and the installer
-/// puts `info/pickupItem 1` back on every pet so the client declares it. The other four
-/// (Auto HP, Auto MP, Auto Move, Expanded Auto Move) are the items the Cash Shop already sells
-/// at 100 LP under the Pets tab (`5190000..5190003`, SN `160300002..5`); learning one is
-/// **not built**, and when it is, this constant becomes the starting value of a per-pet column.
-pub const PET_SKILLS_LEARNED_AT_START: u16 = PET_SKILL_ITEM_POUCH;
+/// Meso Magnet is innate and carries no bit. **Item Pouch, Auto Move and Expanded Auto Move**
+/// - The owner, 2026-09-16: *"turn all pets into vacuum pets, so they loot from long range similar
+/// to current Luna Petite pets"*. That is the trio 370 of the modern archive's pets ship as
+/// `pickupItem 1, sweepForDrop 1, longRange 1`, and the installer declares all three on every
+/// classic pet (step 4c) so the mask and the declaration agree. Auto HP and Auto MP stay the
+/// shop's items (`5190000/1`); the shop's Auto Move items (`5190002/3`) now teach a bit every
+/// pet already has. `store::pets` ORs this into every stored mask on read, so a pet learned
+/// before 2026-09-16 is a vacuum pet too.
+pub const PET_SKILLS_LEARNED_AT_START: u16 =
+    PET_SKILL_ITEM_POUCH | PET_SKILL_AUTO_MOVE | PET_SKILL_EXPANDED_AUTO_MOVE;
 
 /// The Pet Name Tag, `Item/Cash/0517.img`. Arrives on `0x0116` with the pet's serial and the
 /// new name - `crate::cashitem::UseCashItem::text`.
@@ -823,8 +827,9 @@ mod pet_tests {
         assert_eq!(&b[44..46], &0u16.to_le_bytes(), "petAttribute");
         // The two fields the tooltip reads. A zero skill mask makes every skill the WZ grants
         // read "This is an unregistered pet."; a zero hue makes it read "Your pet has been dyed!".
-        assert_eq!(&b[46..48], &1u16.to_le_bytes(), "petSkill: Item Pouch, learned from the start");
-        assert_eq!(PET_SKILLS_LEARNED_AT_START, PET_SKILL_ITEM_POUCH, "Meso Magnet is innate and has no bit");
+        assert_eq!(&b[46..48], &PET_SKILLS_LEARNED_AT_START.to_le_bytes(), "petSkill: the vacuum trio, learned from the start");
+        assert_eq!(PET_SKILLS_LEARNED_AT_START, 0b1101, "Item Pouch, Expanded Auto Move, Auto Move - Meso Magnet is innate and has no bit");
+        assert_eq!(PET_SKILLS_LEARNED_AT_START & (PET_SKILL_AUTO_HP | PET_SKILL_AUTO_MP), 0, "the two pouches are still bought");
         assert_eq!(
             &b[48..52],
             &PET_REMAIN_LIFE.to_le_bytes(),

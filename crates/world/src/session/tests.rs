@@ -11349,14 +11349,14 @@ fn a_pet_skill_item_sets_the_bit_and_is_used_up() {
     let out = s.handle(&use_pet_item_body(skill_slot, 5_190_000, id, None));
 
     let state = store.pet_state(id, 5_000_006).unwrap();
-    assert_eq!(state.skills, net::bag::PET_SKILL_ITEM_POUCH | net::bag::PET_SKILL_AUTO_HP, "Item Pouch and Auto HP");
+    assert_eq!(state.skills, net::bag::PET_SKILLS_LEARNED_AT_START | net::bag::PET_SKILL_AUTO_HP, "the vacuum trio and Auto HP");
     let cash = store.bag_items(id, store::InventoryType::Cash).unwrap();
     assert!(cash.iter().all(|r| r.item.item_id != 5_190_000), "the skill item is used up: {cash:?}");
     assert!(out.iter().any(|r| r.what.contains("re-sent as pet 5000006")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
     // The mask is in the item body the client reads: petSkill at 54 when the serial rides.
     let pet = store::Item::bundle(5_000_006, 1);
     let blob = s.item_blob_with_cash_sn(&pet, Some(net::pet::pet_serial(id, 5_000_006)));
-    assert_eq!(&blob[54..56], &(net::bag::PET_SKILL_ITEM_POUCH | net::bag::PET_SKILL_AUTO_HP).to_le_bytes());
+    assert_eq!(&blob[54..56], &(net::bag::PET_SKILLS_LEARNED_AT_START | net::bag::PET_SKILL_AUTO_HP).to_le_bytes());
     let summons: Vec<u8> = out.iter().filter(|r| r.opcode == net::pet::PET_ACTIVATED).map(|r| r.body[8]).collect();
     assert_eq!(summons, vec![0, 1], "put away, then back out, for the owner - a fresh CPet::Init");
     assert!(s.pet_is_active(5_000_006), "and it is still out");
@@ -11367,7 +11367,8 @@ fn a_pet_skill_item_sets_the_bit_and_is_used_up() {
     s.handle(&use_pet_item_body(slot, 5_190_002, id, None));
     assert_eq!(
         store.pet_state(id, 5_000_006).unwrap().skills,
-        net::bag::PET_SKILL_ITEM_POUCH | net::bag::PET_SKILL_AUTO_HP | net::bag::PET_SKILL_AUTO_MOVE
+        net::bag::PET_SKILLS_LEARNED_AT_START | net::bag::PET_SKILL_AUTO_HP,
+        "Auto Move was already in the default; the item changes nothing but is used up"
     );
 }
 

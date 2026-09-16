@@ -442,27 +442,31 @@ def main():
             fh.write("# info/life. See tools/backport_install.py - a life of 0 days is why a\n")
             fh.write("# summoned pet had a name tag, walked, and drew nothing.\n")
             fh.write("info/permanent\tint\t1\n")
-            # **A pet declares only the skills it starts with.** The owner, 2026-09-13: "the
-            # Husky should by default come with Meso Magnet and Item Pouch"; and the four
-            # others "the player has to purchase ... in the Cash Shop and choose the pet as
-            # a target for it to learn".
+            # **A pet declares the skills it starts with, and every pet starts as a vacuum
+            # pet.** The owner, 2026-09-16: "Can we turn all pets into vacuum pets, so they loot
+            # from long range similar to current Luna Petite pets in modern MapleStory?" -
+            # which is what 370 of the modern archive's 1561 pets are in data: pickupItem 1,
+            # sweepForDrop 1, longRange 1 (research/pet-vacuum-2026-09-13.md).
             #
             # The tooltip prints a line per skill the pet IMAGE declares, and says
             # "(Learned)" or "This is an unregistered pet." by ANDing the item body's
-            # petSkill mask (FUN_14266f2d0). So a declared-but-unlearned skill is the line
-            # The owner asked to be rid of, and the pair has to move together:
+            # petSkill mask (FUN_14266f2d0). Declaration and mask move together:
             #
             #   pickupItem    Item Pouch          declared here, and in the mask
+            #   sweepForDrop  Auto Move           declared here, and in the mask
+            #   longRange     Expanded Auto Move  declared here, and in the mask
             #                                     (net::bag::PET_SKILLS_LEARNED_AT_START)
-            #   sweepForDrop  Auto Move           item 5190002, 100 LP - NOT declared
-            #   longRange     Expanded Auto Move  item 5190003, 100 LP - NOT declared
-            #   consumeHP/MP  Auto HP/MP Pouch    items 5190000/1     - NOT declared
+            #   consumeHP/MP  Auto HP/MP Pouch    items 5190000/1, 100 LP - NOT declared
+            #
+            # 2026-09-13 had zeroed the two auto-move keys so the shop's Auto Move items
+            # (5190002/3) would be the way to learn them; with every pet a vacuum pet those
+            # two items add nothing and are still sold - noted, not removed.
             #
             # Meso Magnet needs no key at all: it is absent from the client's own skill
             # table (FUN_141ed1ad0) and shows with every key cleared.
             fh.write("info/pickupItem\tint\t1\n")
-            fh.write("info/sweepForDrop\tint\t0\n")
-            fh.write("info/longRange\tint\t0\n")
+            fh.write("info/sweepForDrop\tint\t1\n")
+            fh.write("info/longRange\tint\t1\n")
         add("Item/Pet", "patch\t%07d.img\t%s" % (pet_id, tsv))
     shipped_pet_rows = {5000001, 5000008, 5000009}  # SN 160000000..2 in the classic Commodity.img
     pet_rows_patch = os.path.join(args.build_dir, "patch-Commodity-pets.tsv")
