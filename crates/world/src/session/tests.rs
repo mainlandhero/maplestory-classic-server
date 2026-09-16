@@ -11532,6 +11532,7 @@ fn a_summoned_pet_picks_up_a_mob_drop_but_not_a_players_own_drop() {
     assert_eq!(etc, vec![4_000_019], "in the bag");
     assert_eq!(s.fields.with_drops(map, |d| d.len()), 0, "off the floor");
 
+
     // A player's own ground drop: the byte is clear, and the pet is refused without a word.
     s.handle(&gm_chat("!item 1302000"));
     let out = s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, 1, 0, 1));
@@ -11550,6 +11551,52 @@ fn a_summoned_pet_picks_up_a_mob_drop_but_not_a_players_own_drop() {
     let out = s.handle(&by_hand);
     let leave = out.iter().find(|r| r.opcode == net::drops::DROP_LEAVE_FIELD).expect("a leave");
     assert_eq!(leave.body[4], net::drops::leave_type::CHAR_PICKUP);
+
+    // **A full tab: the pet is refused in silence, the player in a sentence.** The owner,
+    // 2026-09-16: the pet's retries were filling the chat log with "inventory 1 is full".
+    // Fill the Equip tab with a distinct equip per slot (a stack would not fill it), drop
+    // one more from a mob, and ask for it both ways. Both get the 0x0070 unlock - the
+    // client stops asking for the rest of the session without it - and only the hand gets
+    // the yellow line.
+    let mut filled = 0u32;
+    while store.add_item(id, store::InventoryType::Equip, &store::Item::equip(1_302_000 + filled), 1).is_ok() {
+        filled += 1;
+        assert!(filled < 1_000, "the Equip tab never fills");
+    }
+    assert!(filled >= 1, "the tab took at least one equip before refusing");
+    let mob_equip = |s: &mut Session| {
+        s.fields.with_drops(map, |d| {
+            d.drop_from_mob(crate::drops::DropFromMob {
+                from_mob: true,
+                map_id: map,
+                owner_id: id,
+                item: store::Item::equip(1_302_016),
+                inv_type: store::InventoryType::Equip,
+                meso: 0,
+                x: 540,
+                y: 395,
+                source_x: 540,
+                source_y: 380,
+                now_ms: 2_000,
+                party_id: 0,
+            })
+        }).0
+    };
+    let full_drop = mob_equip(&mut s);
+    let out = s.handle(&pet_request(full_drop));
+    assert!(out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "the unlock");
+    assert!(out.iter().all(|r| r.opcode != net::notice::CHAT_NOTICE), "the pet's refusal is silent: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(out.iter().all(|r| r.opcode != net::drops::DROP_LEAVE_FIELD), "and the drop stays on the floor");
+    assert_eq!(s.fields.with_drops(map, |d| d.len()), 1, "the one drop on the floor is the refused one");
+    let mut by_hand_full = crate::drops::CLIENT_DROP_PICK_UP.to_le_bytes().to_vec();
+    by_hand_full.extend_from_slice(&[0u8; crate::drops::PICK_UP_OBJECT_ID_AT]);
+    by_hand_full.extend_from_slice(&full_drop.to_le_bytes());
+    by_hand_full.extend_from_slice(&[0u8; 17]);
+    let out = s.handle(&by_hand_full);
+    assert!(out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "the unlock");
+    let line = out.iter().find(|r| r.opcode == net::notice::CHAT_NOTICE).expect("the player's own click is told");
+    assert!(line.what.contains("full"), "{}", line.what);
+    assert_eq!(s.fields.with_drops(map, |d| d.len()), 1, "still on the floor");
 }
 
 /// **A pet walks and answers to its name.** The owner, 2026-09-13: *"broadcast player pet movement
