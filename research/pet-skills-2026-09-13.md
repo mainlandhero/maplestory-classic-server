@@ -65,5 +65,13 @@ remains the best candidate and has never been seen on the wire.
 
 So a fresh pet has **Meso Magnet and Item Pouch**, both usable, and advertises nothing else.
 
+**Superseded 2026-09-16 for the two auto-move keys.** The owner: *"turn all pets into vacuum pets,
+so they loot from long range similar to current Luna Petite pets"*. The installer declares
+`sweepForDrop 1` and `longRange 1` again and `PET_SKILLS_LEARNED_AT_START` carries their bits,
+so every pet has Item Pouch + Auto Move + Expanded Auto Move from the start (the modern
+vacuum trio, §2 of `research/pet-vacuum-2026-09-13.md`); `store::pets` ORs the default into
+every stored mask on read. Auto HP/MP stay the shop's. The two Auto Move items still sell and
+teach a bit the pet already has.
+
 **The install is pending**: the client was running when this was written, so
 `python tools\backport_install.py --install` has to be re-run with it closed.

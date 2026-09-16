@@ -56,10 +56,12 @@ impl PetState {
     }
 }
 
-/// The mask a pet has before it learns anything - Item Pouch. Mirrors
-/// `net::bag::PET_SKILLS_LEARNED_AT_START`; `store` does not depend on that constant so the
-/// crate boundary stays one-way, and a test in `net` pins the two together.
-pub const PET_SKILLS_AT_START: u16 = 1;
+/// The mask every pet has - Item Pouch, Expanded Auto Move, Auto Move: a vacuum pet (the owner,
+/// 2026-09-16). Mirrors `net::bag::PET_SKILLS_LEARNED_AT_START`; `store` does not depend on
+/// that constant so the crate boundary stays one-way, and a test here pins the two together.
+/// **ORed into every mask on read**, so a row written before the auto-move bits were default
+/// (the live server's rows are `1` or `3`) reads as a vacuum pet without a migration.
+pub const PET_SKILLS_AT_START: u16 = 0b1101;
 
 pub(crate) fn ensure_table(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -110,7 +112,7 @@ impl Store {
                 |r| {
                     Ok(PetState {
                         name: r.get::<_, Option<String>>(0)?,
-                        skills: r.get::<_, i64>(1)? as u16,
+                        skills: (r.get::<_, i64>(1)? as u16) | PET_SKILLS_AT_START,
                         active: r.get::<_, i64>(2)? != 0,
                         level: r.get::<_, i64>(3)?.clamp(1, 30) as u8,
                         closeness: r.get::<_, i64>(4)?.max(0) as u32,
@@ -242,13 +244,13 @@ mod tests {
         assert_eq!(store.learn_pet_skill(chr, HUSKY, 1 << 4).unwrap(), PET_SKILLS_AT_START | (1 << 1) | (1 << 4));
         assert_eq!(
             store.pet_state(chr, HUSKY).unwrap(),
-            PetState { name: Some("Dummy".to_string()), skills: 0b1_0011, active: true, ..PetState::fresh() }
+            PetState { name: Some("Dummy".to_string()), skills: 0b1_1111, active: true, ..PetState::fresh() }
         );
         // The vitals ride the same row and leave the rest alone.
         store.set_pet_vitals(chr, HUSKY, 4, 7, 63).unwrap();
         let st = store.pet_state(chr, HUSKY).unwrap();
         assert_eq!((st.level, st.closeness, st.fullness), (4, 7, 63));
-        assert_eq!((st.name.as_deref(), st.skills, st.active), (Some("Dummy"), 0b1_0011, true));
+        assert_eq!((st.name.as_deref(), st.skills, st.active), (Some("Dummy"), 0b1_1111, true));
         // Learning on a pet with no row yet starts from the default mask, not from zero.
         assert_eq!(store.learn_pet_skill(chr, 5_000_002, 1 << 3).unwrap(), PET_SKILLS_AT_START | (1 << 3));
     }
@@ -274,7 +276,8 @@ mod tests {
             .unwrap();
         }
         let st = store.pet_state(chr, HUSKY).unwrap();
-        assert_eq!((st.skills, st.active, st.level, st.closeness, st.fullness), (3, true, 1, 0, 100), "old row, default vitals");
+        assert_eq!((st.skills, st.active, st.level, st.closeness, st.fullness), (3 | PET_SKILLS_AT_START, true, 1, 0, 100), "old row: default vitals, and the vacuum bits ORed in on read");
+        assert_eq!(PET_SKILLS_AT_START, net::bag::PET_SKILLS_LEARNED_AT_START, "the two crates agree on the default");
         store.set_pet_vitals(chr, HUSKY, 2, 1, 70).unwrap();
         assert_eq!(store.pet_state(chr, HUSKY).unwrap().fullness, 70);
     }

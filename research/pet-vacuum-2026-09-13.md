@@ -47,6 +47,25 @@ pet code acts on them: the loader stores them, and 370 modern pets ship them.
   u32` **[R]**). The builder is in `.themida` like the player's, so the offset and the opcode
   are settled by the first capture; the log line *"pet pick-up: 0x.... names live drop"* is it.
 
+## 3a. 2026-09-16: back on, for every pet, in both halves
+
+Between §2 and today the two keys went to `0` (the skill-item work of 2026-09-13 §4 made Auto
+Move a purchase), so no classic pet has actually been a vacuum pet on any run. The owner, 2026-09-16:
+*"Can we turn all pets into vacuum pets, so they loot from long range similar to current Luna
+Petite pets in modern MapleStory?"* Now:
+
+* the installer declares `pickupItem 1, sweepForDrop 1, longRange 1` on all eleven (step 4c) -
+  the modern vacuum trio;
+* `net::bag::PET_SKILLS_LEARNED_AT_START` is Item Pouch | Auto Move | Expanded Auto Move, and
+  `store::pets` ORs it into every stored mask on read, so the live server's existing rows
+  (`1`, `3`) read as vacuum pets with no migration;
+* the pet's loot request is `0x0205` and is handled (`research/pets-loot-skills-name-relogin-
+  2026-09-15.md` §1) - the "0x0329..0x032E" reading in §3/§4 is superseded.
+
+Both halves must be on the client for the tooltip to say *(Learned)* and for the pet code to
+act: the mask alone shows nothing, the key alone shows *"unregistered"*. **The radius is still
+Nexon's** (`FUN_141ed4490`'s family, unread); the run measures it.
+
 ## 4. Unverified, and what the run says
 
 Plan step TO(u). With the Husky out and a mob killed nearby: the pet goes to the drop and it

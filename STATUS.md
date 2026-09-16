@@ -224,6 +224,16 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-16: every pet is a vacuum pet - both halves this time.** The owner: *"Can we turn all pets into
+vacuum pets, so they loot from long range similar to current Luna Petite pets in modern
+MapleStory?"* The 09-13 attempt set the WZ keys and the same day's skill-item work zeroed them
+again, so no pet has been one on a run. Now the installer declares `pickupItem 1, sweepForDrop 1,
+longRange 1` on all eleven (the modern trio, 370 of 1561 pets) AND `PET_SKILLS_LEARNED_AT_START`
+carries Item Pouch | Auto Move | Expanded Auto Move, ORed into every stored mask on read (the live
+rows `1`/`3` need no migration). Auto HP/MP stay purchases; the shop's two Auto Move items now teach
+a bit every pet has (sold still, noted). **Needs the rebuilt client package** - the keys are WZ. The
+radius is Nexon's, unread; plan step 8 LOOT measures it. `research/pet-vacuum-2026-09-13.md` §3a.
+
 **2026-09-16: pets eat, get hungry, and grow closer.** The owner: *"Pets should decrease their fullness
 by 1 every 5 minutes. Using a pet food should recover the current active pet's fullness by 30 and
 their closeness by 1"*, with the wiki's closeness table. The request is **`0x0112`**, never captured:

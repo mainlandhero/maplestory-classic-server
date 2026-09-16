@@ -96,7 +96,7 @@ were read as unused before being taken. Both are re-measured on a new version (s
 | classic archive | op | what | why |
 |---|---|---|---|
 | `Item/Pet/Pet_000.wz` | `patch` all eleven `5000000..5000010`: `info/life` `int` `0`, `info/permanent` `int` `1` | permanent, never expiring | the shop's "3 days" was each pet's own `life` **[L]**; the modern permanent pet `5000060` carries exactly this pair **[L]**. `research/pets-2026-09-13.md` |
-| `Item/Pet/Pet_000.wz` | `patch` all eleven: `info/pickupItem 1`, `info/sweepForDrop 1`, `info/longRange 1` | every pet is a vacuum pet **[E]** | this client names all three keys and reads them in its pet loader; 370 of the modern archive's 1561 pets carry this trio **[L]**. What the radius is on screen is Nexon's code. `research/pet-vacuum-2026-09-13.md` |
+| `Item/Pet/Pet_000.wz` | `patch` all eleven: `info/pickupItem 1`, `info/sweepForDrop 1`, `info/longRange 1` | every pet is a vacuum pet **[E]** | this client names all three keys and reads them in its pet loader; 370 of the modern archive's 1561 pets carry this trio **[L]**. What the radius is on screen is Nexon's code. `research/pet-vacuum-2026-09-13.md`. **History:** 2026-09-13 set 1/1/1, then the same day's skill-item work zeroed the two auto-move keys so the shop's items would teach them; 2026-09-16 (the owner: *"turn all pets into vacuum pets"*) sets them back to 1 and puts the two bits in `net::bag::PET_SKILLS_LEARNED_AT_START`, so declaration and mask agree without an item |
 
 The "never needs reviving" half is the **server's** pet item body (`dateDead` = never), not WZ.
 

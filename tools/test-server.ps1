@@ -1356,16 +1356,8 @@
                          the 0x0277 line; one of the six tail fields is wrong
               nothing at all                                 -> paste the lines after 0x0147
               double-click again: it goes away               -> the toggle works
-            AND THE VACUUM (needs the REBUILT client package - tools/make-installer.ps1 - the
-            pet keys sweepForDrop/longRange live in the WZ). The client decides what the pet
-            reaches for; the server answers its request and refuses anything that is not a
-            mob's drop (a player's own drop, a coin, a box's drop go out marked not-for-pets).
-            Kill a mob near the pet, then drop something from your own bag:
-              the pet goes to the mob's drop, it lands in the bag, no click -> works; say
-                         roughly how far away a drop can be and still get taken
-              the pet goes to it and nothing happens; world-ch0.log shows an inbound
-                         0x0329..0x032E "named no live drop"                -> the request's
-                         shape is not the reference's; paste that body
+            AND THE VACUUM: see step 8, LOOT - the pet's request is 0x0205 (settled
+            2026-09-15) and every pet is a vacuum pet in both WZ and mask since 2026-09-16.
               the pet never moves toward drops                              -> the keys are
                          not what this pet code reads; say so
               the pet takes your OWN dropped item                           -> the byte is
@@ -2032,9 +2024,17 @@
         Tester2 sees the Husky, no crash). Every item below left a packet in world-ch0.log and
         each is answered now; none has been on a screen. As the owner with the Husky out, Tester2
         watching:
-          LOOT: kill a snail, let the Husky walk over the drop.
-            it flies into the Husky and lands in the bag  -> DONE (0x0205 was UNKNOWN)
+          LOOT, AND THE VACUUM (needs the REBUILT client package: the keys are WZ). Every pet
+          now declares pickupItem/sweepForDrop/longRange AND has the three bits in its mask
+          (open Show Pet Info / the pet tooltip: Item Pouch, Auto Move, Expanded Auto Move
+          all "(Learned)"). Kill a snail some distance from the Husky:
+            the Husky goes for the drop from far off and it lands in the bag, no click ->
+                       DONE; say roughly how far it reaches - that radius is Nexon's code
+            it takes the drop only when it walks onto it -> the keys are declared (tooltip
+                       says Learned) but the pet code ignores them on this build; say so
             it stays on the floor                        -> paste the "pet pick-up" log lines
+            the tooltip says "unregistered" for Auto Move -> the client package was not
+                       rebuilt/installed (python tools\backport_install.py --install, client closed)
           SKILLS: use Auto HP on the Husky. Your 23:34 try KILLED THE CLIENT: the put-away
           half of the re-summon was 11 bytes and the owner's handler reads a 12th, a reason
           byte the remote handler never did (the client named the packet in a 0x009E). It is
@@ -4123,13 +4123,7 @@ function Show-TestPlan {
         Write-Host '           appears, item not summoned -> the pairing serial; say so'
         Write-Host '           client dies at the click -> paste client-exit.log + the 0x0277 line' -ForegroundColor Yellow
         Write-Host '           nothing -> paste the lines after 0x0147;  click again -> it goes away'
-        Write-Host '         VACUUM (REBUILT client package needed): kill a mob near the pet,' -ForegroundColor Yellow
-        Write-Host '         then drop something of your own:'
-        Write-Host '           pet takes the mob drop, no click -> works; say how far it reaches'
-        Write-Host '           pet reaches it, nothing happens, log says "named no live drop"' -ForegroundColor Yellow
-        Write-Host '                         -> paste that inbound body'
-        Write-Host '           pet never goes for drops -> keys not read; say so'
-        Write-Host '           pet takes YOUR OWN drop -> paste the pet pick-up line' -ForegroundColor Yellow
+        Write-Host '         VACUUM: see step 8 LOOT (0x0205 settled; all pets vacuum since 09-16)' -ForegroundColor DarkGray
         Write-Host '      v) THE HUSKY RENDERS. CLOSED. THREE TWO-CLIENT FIXES, one launch,' -ForegroundColor Green
         Write-Host '         Tester2 as the second client:'
         Write-Host '         (a) THE SECOND CLIENT SEES THE PET: a Presence now carries the' -ForegroundColor Yellow
@@ -4972,9 +4966,13 @@ function Show-TestPlan {
         Write-Host '  8. THE PET, SIX THINGS - from your two-client run. The walk is' -ForegroundColor White
         Write-Host '     CONFIRMED. Each item below left a packet and is answered now; none'
         Write-Host '     has been on a screen. As the owner, Husky out, Tester2 watching:'
-        Write-Host '       LOOT: kill a snail, Husky walks over the drop:'
-        Write-Host '         flies into the Husky, lands in the bag -> DONE' -ForegroundColor Green
+        Write-Host '       LOOT + VACUUM (REBUILT client package: the keys are WZ). Tooltip must'
+        Write-Host '       say Item Pouch / Auto Move / Expanded Auto Move all (Learned). Kill a'
+        Write-Host '       snail some distance from the Husky:'
+        Write-Host '         it goes for the drop from far off, lands in the bag -> DONE; say how far' -ForegroundColor Green
+        Write-Host '         only when it walks onto it -> keys declared, pet code ignores them' -ForegroundColor Yellow
         Write-Host '         stays on the floor -> paste the "pet pick-up" log lines' -ForegroundColor Yellow
+        Write-Host '         tooltip says unregistered -> package not rebuilt/installed' -ForegroundColor Yellow
         Write-Host '       SKILLS: Auto HP. Your 23:34 try KILLED THE CLIENT: the put-away half'
         Write-Host '         of the re-summon lacked the reason byte the OWNER reads. Fixed.'
         Write-Host '         Expect ONE summon animation. Client exits there -> paste 0x009E' -ForegroundColor Yellow
