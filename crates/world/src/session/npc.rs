@@ -878,7 +878,7 @@ impl Session {
     /// `AlreadyAdvanced` is a refusal rather than a re-offer. `!resetsp` does not undo it and
     /// is not meant to.
     pub(super) fn advance_job_for(&mut self, template: u32) -> Option<Vec<Reply>> {
-        let mut chr = self.claimed_character()?;
+        let chr = self.claimed_character()?;
         match crate::jobs::advancement_for(&chr, template) {
             // Not an instructor at all - fall through to whatever this NPC normally does.
             crate::jobs::Advancement::NotAnInstructor => None,
@@ -894,15 +894,58 @@ impl Session {
             // falling through here; the next handler in the chain covers precisely the NPCs
             // this arm can name. `CLAUDE.md`'s "always answer" holds.
             crate::jobs::Advancement::AlreadyAdvanced { .. } => None,
+            // **Eligible is a question, not a transition.** The owner, 2026-09-15: *"Currently the
+            // moment you click on the first job instructors, you simply become that job. There
+            // should be a yes or no dialogue (including the requirement to job advance for the
+            // appropriate job) to make sure that the player is sure."* The box carries the
+            // requirements and the one-way warning; the job changes only on Yes, in
+            // `first_job_reply`, after the eligibility check is made a second time.
+            crate::jobs::Advancement::Eligible { .. } => {
+                let first = crate::jobs::first_job_at(template)?;
+                self.conversation = Some(Conversation {
+                    npc_template: template,
+                    quest_id: None,
+                    path: crate::jobs::ASK_PATH.to_string(),
+                    sent: 0,
+                    awaiting_yes_no: true,
+                    sent_with_next: false,
+                });
+                let text = crate::jobs::confirmation(&chr, first);
+                Some(vec![Reply {
+                    opcode: net::script::SCRIPT_MESSAGE,
+                    body: net::script::npc_ask(template, &text, false),
+                    what: format!("ScriptMessage AskYesNo from instructor {template}: the first job advancement's confirmation - {text:?}"),
+                }])
+            }
+            // Every other arm is a refusal with a sentence already written for it.
+            other => {
+                let _ = &other;
+                let text = crate::jobs::refusal(&chr, template)?;
+                Some(self.instructor_says(template, &text))
+            }
+        }
+    }
+
+    /// **The player answered the instructor's question.** Yes advances; No and a closed box
+    /// change nothing. The eligibility check runs again before the write - the level and the
+    /// stat cannot have fallen in the meantime, but a Yes that arrives with no character
+    /// claimed, or after `!job` changed the job, must not write a second advancement.
+    fn first_job_reply(&mut self, template: u32, action: i8) -> Vec<Reply> {
+        self.conversation = None;
+        let Some(mut chr) = self.claimed_character() else { return Vec::new() };
+        if action != net::script::SCRIPT_ACTION_YES {
+            return self.instructor_says(template, "Take your time. Come back when you are ready to decide.");
+        }
+        match crate::jobs::advancement_for(&chr, template) {
             crate::jobs::Advancement::Eligible { job, job_name } => {
                 let was = chr.job;
                 chr.job = job;
                 if let Err(e) = self.store.save_character_progress(&chr) {
                     // The save is the transition. Nothing follows a failed one.
-                    return Some(self.instructor_says(
+                    return self.instructor_says(
                         template,
                         &format!("Something went wrong and your job was not changed: {e}"),
-                    ));
+                    );
                 }
                 let mut out = self.instructor_says(
                     template,
@@ -912,14 +955,12 @@ impl Session {
                     ),
                 );
                 out.push(self.job_change_reply(was, job));
-                Some(out)
+                out
             }
-            // Every other arm is a refusal with a sentence already written for it.
-            other => {
-                let _ = &other;
-                let text = crate::jobs::refusal(&chr, template)?;
-                Some(self.instructor_says(template, &text))
-            }
+            _ => match crate::jobs::refusal(&chr, template) {
+                Some(text) => self.instructor_says(template, &text),
+                None => Vec::new(),
+            },
         }
     }
 
@@ -2207,6 +2248,12 @@ impl Session {
         // PACKET SENT - and they would go silent on the first Yes.
         if convo.path == crate::shanks::ASK_PATH {
             return self.shanks_reply(reply.action);
+        }
+
+        // The first job instructor's yes/no, before the generic quest branch for the same
+        // reason: it has no quest id and would be dropped with NO PACKET SENT.
+        if convo.path == crate::jobs::ASK_PATH {
+            return self.first_job_reply(convo.npc_template, reply.action);
         }
 
         // `!scroll`'s confirm, before the generic quest branch and for exactly the reason
