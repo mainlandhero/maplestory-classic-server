@@ -1085,27 +1085,59 @@ impl Session {
     /// one transaction.
     fn shanks_reply(&mut self, action: i8) -> Vec<Reply> {
         self.conversation = None;
-        let Some(mut chr) = self.claimed_character() else { return Vec::new() };
-        let step = crate::shanks::on_answer(&self.store, &self.config, chr.id, action);
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let step = crate::shanks::on_answer(&self.store, &self.config, &chr, action);
+        self.shanks_step(chr, step)
+    }
+
+    /// **The player dismissed Shanks' waiver box**, so the boat sails - for nothing.
+    ///
+    /// Called from `on_script_reply` BEFORE its closed-box early return, because a Close on
+    /// this box sails too: the decision was the Yes before it, and the fare is zero. The owner,
+    /// 2026-09-16: the free line "does not show" - it was sent in the same batch as the
+    /// `SetField` and torn down by field entry. This is the second half that fixes it.
+    fn shanks_announce_dismissed(&mut self) -> Vec<Reply> {
+        self.conversation = None;
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let step = crate::shanks::on_announce_dismissed(&self.store, &self.config, &chr);
+        self.shanks_step(chr, step)
+    }
+
+    /// The effects of a Shanks step. **Every warp hangs off `Step::Sail`**; an `Announce`
+    /// parks the conversation and sends its box alone, with nothing after it.
+    fn shanks_step(&mut self, mut chr: net::opcode::Character, step: crate::shanks::Step) -> Vec<Reply> {
         let mut out = crate::shanks::script_replies(&step);
-        if let crate::shanks::Step::Sail { fare, balance, .. } = step {
-            // The balance moves before the screen does, exactly as the taxi does it.
-            out.extend(self.meso_reply(chr.id));
-            // **Only say it if something was taken.** A free crossing that announced
-            // "You have lost mesos (-0)" would undo the moment the free line just built.
-            if fare > 0 {
-                out.push(Reply {
-                    opcode: net::message::MESSAGE,
-                    body: net::message::meso_lost_line(fare),
-                    what: format!("Message: grey chat line, Shanks' fare of {fare}"),
+        match step {
+            crate::shanks::Step::Announce { .. } => {
+                self.conversation = Some(Conversation {
+                    npc_template: crate::shanks::TEMPLATE,
+                    quest_id: None,
+                    path: crate::shanks::ANNOUNCE_PATH.to_string(),
+                    sent: 0,
+                    awaiting_yes_no: false,
+                    sent_with_next: false,
                 });
             }
-            let why = format!(
-                "Shanks sailed character {} to Lith Harbor for {fare} mesos (balance {balance}){}",
-                chr.id,
-                if fare == 0 { " - FREE, Mai's Final Training is complete" } else { "" }
-            );
-            out.extend(self.go_to_map(&mut chr, crate::shanks::DESTINATION_MAP, 0, why));
+            crate::shanks::Step::Sail { fare, balance } => {
+                // The balance moves before the screen does, exactly as the taxi does it.
+                out.extend(self.meso_reply(chr.id));
+                // **Only say it if something was taken.** A free crossing that announced
+                // "You have lost mesos (-0)" would undo the moment the waiver box just built.
+                if fare > 0 {
+                    out.push(Reply {
+                        opcode: net::message::MESSAGE,
+                        body: net::message::meso_lost_line(fare),
+                        what: format!("Message: grey chat line, Shanks' fare of {fare}"),
+                    });
+                }
+                let why = format!(
+                    "Shanks sailed character {} to Lith Harbor for {fare} mesos (balance {balance}){}",
+                    chr.id,
+                    if fare == 0 { " - FREE: a Beginner with Mai's Final Training complete" } else { "" }
+                );
+                out.extend(self.go_to_map(&mut chr, crate::shanks::DESTINATION_MAP, 0, why));
+            }
+            crate::shanks::Step::Ask { .. } | crate::shanks::Step::Done { .. } => {}
         }
         out
     }
@@ -2226,6 +2258,12 @@ impl Session {
         }
         let Some(reply) = net::script::parse_script_reply(body) else { return Vec::new() };
         let Some(convo) = self.conversation.clone() else { return Vec::new() };
+
+        // Shanks' waiver box sails on ANY dismissal, Close included, so it sits above the
+        // closed-box early return. See `shanks_announce_dismissed`.
+        if convo.path == crate::shanks::ANNOUNCE_PATH {
+            return self.shanks_announce_dismissed();
+        }
 
         if reply.action == net::script::SCRIPT_ACTION_CLOSED {
             self.conversation = None;
