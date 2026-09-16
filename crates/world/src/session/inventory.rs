@@ -38,14 +38,26 @@ impl Session {
         // tab). The owner, 2026-09-13: the eleven pets, permanent, never revived. The body is
         // `net::bag::pet_item_with_cash_sn`; its name is the item's until the player renames it.
         if net::inventory::is_pet(item.item_id) {
-            let name = self.config.item_names.get(&item.item_id).cloned().unwrap_or_default();
-            // `active` is this session's word: 1 while the pet is summoned, 0 otherwise -
-            // and 0 again on the next login, which is what puts it away. session/pet.rs.
+            // The player's name for it and its learned skills come from `store::pets`;
+            // `active` is this session's word - 1 while the pet is summoned - and since
+            // 2026-09-15 `restore_active_pet` sets it from the store at claim time, so a pet
+            // that was out at the last log-out is out in this record too. session/pet.rs.
+            let (name, skills) = match self.claimed.as_ref().map(|c| c.character_id) {
+                Some(id) => {
+                    let state = self.pet_state(id, item.item_id);
+                    (self.pet_name(id, item.item_id), state.skills)
+                }
+                None => (
+                    self.config.item_names.get(&item.item_id).cloned().unwrap_or_default(),
+                    net::bag::PET_SKILLS_LEARNED_AT_START,
+                ),
+            };
             return net::bag::pet_item_with_state(
                 item.item_id,
                 &name,
                 cash_sn,
                 u8::from(self.pet_is_active(item.item_id)),
+                skills,
             );
         }
         match item.kind {
@@ -205,6 +217,29 @@ impl Session {
     /// the old code refused to touch the database at all. Per-item stats travel with it, so
     /// a scrolled item does not come back flattened.
     pub(super) fn on_inventory_move(&mut self, payload: &[u8]) -> Vec<Reply> {
+        // **What the pet is wearing, before and after.** A move that changes the pet-equip
+        // slot has to reach the other players' copy of this character's look, and the
+        // cheapest true test of "changed" is the store itself rather than the reply's shape.
+        // `Session::republish_pet_look`; the owner, 2026-09-15, the Blue Top Hat.
+        let pet_hat = |s: &Self| {
+            s.claimed.as_ref().and_then(|c| {
+                s.store
+                    .equipped_items(c.character_id)
+                    .ok()
+                    .and_then(|worn| worn.into_iter().find(|e| e.slot == super::pet::PET_EQUIP_WORN_SLOT).map(|e| e.item_id))
+            })
+        };
+        let before = pet_hat(self);
+        let out = self.on_inventory_move_inner(payload);
+        if pet_hat(self) != before {
+            if let Some(chr) = self.claimed_character() {
+                self.republish_pet_look(&chr);
+            }
+        }
+        out
+    }
+
+    fn on_inventory_move_inner(&mut self, payload: &[u8]) -> Vec<Reply> {
         let Some(m) = net::inventory::parse_inventory_move(payload) else {
             return Vec::new();
         };

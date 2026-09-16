@@ -110,6 +110,9 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         0x0277 => "PET_ACTIVATED (u32 charId, u32 petIdx 0, u8 activated, [u8 init, pet body]) - CUser vtable +0x98; research/msexe-pet-activated.c",
         0x0202 => "CLIENT_PET_MOVE (u32 petIdx, u32 tick, u8, then the movement path) - rebroadcast as 0x0278",
         0x0278 => "PET_MOVE (u32 charId, u32 petIdx, the path block verbatim) - FUN_141ec3f20 -> the path applier",
+        0x0205 => "CLIENT_PET_PICK_UP (u32 petIdx, u8, u32 tick, u32, i16 x, i16 y, u32 dropId, u32 crc, ...) - the pet reached a drop; handled as a pick-up",
+        0x0204 => "CLIENT_PET_ACTION_REPORT (u32 petIdx, u8, u16 interact index) - the pet did a trick on its own client; a report",
+        0x027B => "PET_NAME_CHANGED (u32 charId, u32 petIdx, str name) - FUN_141ec4660; after a Pet Name Tag",
         0x0279 => "PET_ACTION (u32 charId, u32 petIdx, u8 interact index, u8 success, str line) - FUN_141ec3fa0",
         0x02B2 => "USER_HP_REMOTE (u32 charId, u32 hp, u32 maxHp) - a party member's HUD gauge and over-head bar",
         0x0107 => "CLIENT_INVENTORY_MOVE (u32 tick, u8 invType, i16 src, i16 dst, i16 count)",
@@ -302,6 +305,8 @@ pub fn is_client_report(opcode: u16) -> bool {
             | 0x00DC | 0x0238 | 0x024D
             | 0x0420 | 0x0421 | 0x0422 | 0x0423 | 0x0424 | 0x0425 | 0x0426
             | 0x01C1 | 0x01B9 | 0x0226
+            // The pet did a trick on its own client - `pet::CLIENT_PET_ACTION_REPORT`.
+            | 0x0204
     )
 }
 

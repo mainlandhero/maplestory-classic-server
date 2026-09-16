@@ -116,6 +116,32 @@ pub const PET_MOVE: u16 = 0x0278;
 /// indexes its own node list.
 pub const PET_ACTION: u16 = 0x0279;
 
+/// **Client -> server: the pet reached a drop and wants it.** The owner, 2026-09-15: *"Husky also
+/// currently does not loot items on the ground."* Seven of these in that run, all unanswered:
+///
+/// ```text
+/// 00000000 00 01f14d20 01000000 69ff d700 002d3101 9667e331 464b4c00     29 bytes
+/// petIdx   u8 tick     u32      x    y    dropId   crc      itemId
+/// ```
+///
+/// `FUN_141ec1f20` writes `u32, u8, u32, u32, u16, u16, u32, u32, u32, ...` (`tools/encodes.py`),
+/// and the drop id at byte 17 is `0x01312d00` = 20 000 000, this server's first drop object id -
+/// the offset `crate::drops::PET_PICK_UP_OBJECT_ID_AT` had from the reference and waited for a
+/// capture to confirm. **[L]** Routed to the same pick-up handler as the player's request;
+/// `Session::on_pick_up` already takes it by the pet offset.
+pub const CLIENT_PET_PICK_UP: u16 = 0x0205;
+
+/// **Client -> server: the pet did a trick on its own client.** `FUN_141ebe480`, `u32 petIdx,
+/// u8, u16 interact index` - sent once, right before the chat line that triggered it (`world-
+/// ch0.log` 02:56:28.893: `0004` then "bad", interact 4). A report: the server already answers
+/// the chat line with the `0x0279` of its own choosing, and the client went on. Not answered.
+pub const CLIENT_PET_ACTION_REPORT: u16 = 0x0204;
+
+/// Server -> client, per user: **the pet's name changed.** `FUN_141ec4660`, the `0x27b` arm of
+/// the pet sub-dispatcher, reads one `str` after the `charId`/`petIdx` the dispatcher consumed
+/// (`tools/reads.py 0x141ec4660 1`). **[L]** Sent to the owner and the map after a Pet Name Tag.
+pub const PET_NAME_CHANGED: u16 = 0x027B;
+
 /// The bytes of `0x0202` before the movement path: `u32 petIdx, u8`. **Five**, from the
 /// builder's own writes (`FUN_142b68a20`: `w_u32, w_u8`, then the path encoder). It was 9 until
 /// 2026-09-15, which cut the path's leading `u32` off and crashed every observer of a pet move.
@@ -239,6 +265,15 @@ pub fn pet_action(character_id: u32, index: u8, success: bool, message: &str) ->
     w.u8(index); //           141ec3fa0's first u8  -> FUN_141ec6680's command1
     w.u8(u8::from(success)); // its second          -> command2, tested as a flag
     w.str(message);
+    w.into_vec()
+}
+
+/// The `0x027B` body: `u32 charId, u32 petIdx, str name`.
+pub fn pet_name_changed(character_id: u32, name: &str) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(character_id);
+    w.u32(PET_INDEX);
+    w.str(name);
     w.into_vec()
 }
 

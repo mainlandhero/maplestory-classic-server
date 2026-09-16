@@ -43,6 +43,7 @@ pub mod password;
 /// `claims` resolves by. A socket concern in a database crate, deliberately: `crates/login`
 /// and `crates/world` both need it and both already depend on this one. See its module docs.
 pub mod peerowner;
+pub mod pets;
 /// **Who is playing right now**, as a lease rather than a flag - so the same account cannot
 /// be logged in twice and a client that CRASHES does not lock its owner out. See its module
 /// docs for why the holder is the client process and not the socket.
@@ -63,6 +64,7 @@ pub use claims::{
     LOGIN_CLAIM_TTL_SECS,
 };
 pub use kick::{KickRequest, KickWatch};
+pub use pets::PetState;
 pub use codes::{NewCode, CODE_ALPHABET, CODE_CHARS, INVITE_TTL_SECS, RECOVERY_TTL_SECS};
 pub use presence::{
     holder_key, PresenceGuard, PresenceHolder, PresenceOutcome, PRESENCE_LEASE_SECS,

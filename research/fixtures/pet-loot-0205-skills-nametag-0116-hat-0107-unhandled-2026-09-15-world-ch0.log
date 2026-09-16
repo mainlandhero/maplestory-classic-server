@@ -1,0 +1,41 @@
+# world-ch0.log 2026-09-15, the two-client pet run (Wisp#215 owner, Tester2#214 watching).
+# What the six reports SENT, all of it unanswered or mis-answered on this build:
+#   0x0205 x7  the pet's loot request (UNKNOWN)          -> now on_pick_up
+#   0x0116     5190000/1/2 skill items + 5170000 name tag, each with the pet serial 464b4c00d7000000
+#              (answered as 'not a reset scroll'; the tag body ends 0500 44756d6d79 = Dummy)
+#   0x0107     Deco slot 1 -> -114, the Blue Top Hat onto the pet (owner-only reply)
+#   0x0204     the pet-action report before 'bad'
+
+917:02:55:52.698 <- [Wisp#215] 0x0147 CLIENT_PET_ACTIVATE (u32 tick, u16 Cash-tab slot) - a double-click on a pet; a second one puts it away, 6 byte body 5fb14d200100
+918:02:55:52.698 -> [Wisp#215] 0x0277 PET_ACTIVATED (u32 charId, u32 petIdx 0, u8 activated, [u8 init, pet body]) - CUser vtable +0x98; research/msexe-pet-activated.c PetActivated: Husky (5000006) summoned beside Wisp at (-63, 150
+928:02:55:52.721 -> [Tester2#214] 0x0277 PET_ACTIVATED (u32 charId, u32 petIdx 0, u8 activated, [u8 init, pet body]) - CUser vtable +0x98; research/msexe-pet-activated.c PetActivated: Husky (5000006) summoned beside Wisp at (-63, 
+2139:02:56:09.012 <- [Wisp#215] 0x0205 UNKNOWN, 29 byte body 000000000001f14d200100000069ffd700002d31019667e331464b4c00
+2140:02:56:09.012    0x0205 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+2372:02:56:12.374 <- [Wisp#215] 0x0205 UNKNOWN, 29 byte body 000000000021fe4d2001000000baffdaff022d3101abdedade464b4c00
+2373:02:56:12.374    0x0205 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+2374:02:56:12.413 <- [Wisp#215] 0x0205 UNKNOWN, 29 byte body 00000000003ffe4d2001000000baffd7ff032d3101e2c475b5464b4c00
+2375:02:56:12.413    0x0205 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+2376:02:56:12.432 <- [Wisp#215] 0x0205 UNKNOWN, 29 byte body 00000000005dfe4d2001000000baffd3ff042d310100000000464b4c00
+2377:02:56:12.432    0x0205 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+2563:02:56:15.403 <- [Wisp#215] 0x0205 UNKNOWN, 29 byte body 0000000000f7094e2001000000caffabff032d3101e2c475b5464b4c00
+2564:02:56:15.403    0x0205 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+2565:02:56:15.433 <- [Wisp#215] 0x0205 UNKNOWN, 29 byte body 0000000000150a4e2001000000caffabff042d310100000000464b4c00
+2566:02:56:15.434    0x0205 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+2567:02:56:15.465 <- [Wisp#215] 0x0205 UNKNOWN, 29 byte body 0000000000330a4e2001000000beffadff022d3101abdedade464b4c00
+2568:02:56:15.465    0x0205 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+3436:02:56:28.893 <- [Wisp#215] 0x0204 UNKNOWN, 7 byte body 00000000000400
+3437:02:56:28.893    0x0204 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+4714:02:56:50.823 <- [Wisp#215] 0x0116 CLIENT_USE_STAT_RESET_ITEM (u32 tick, u16 slot, u32 itemId) - the AP and SP Reset Scrolls, 18 byte body f98e4e20020070314f00464b4c00d7000000
+4715:02:56:50.823    reset scroll: 5190000 arrived on 0x0116, which this server only knows for the two reset scrolls. Unlock only, and the item is KEPT.
+4969:02:56:54.514 <- [Wisp#215] 0x0116 CLIENT_USE_STAT_RESET_ITEM (u32 tick, u16 slot, u32 itemId) - the AP and SP Reset Scrolls, 18 byte body 279d4e20030071314f00464b4c00d7000000
+4970:02:56:54.514    reset scroll: 5190001 arrived on 0x0116, which this server only knows for the two reset scrolls. Unlock only, and the item is KEPT.
+5112:02:56:57.195 <- [Wisp#215] 0x0116 CLIENT_USE_STAT_RESET_ITEM (u32 tick, u16 slot, u32 itemId) - the AP and SP Reset Scrolls, 18 byte body fda84e20040072314f00464b4c00d7000000
+5113:02:56:57.195    reset scroll: 5190002 arrived on 0x0116, which this server only knows for the two reset scrolls. Unlock only, and the item is KEPT.
+8025:02:57:46.107 <- [Wisp#215] 0x0116 CLIENT_USE_STAT_RESET_ITEM (u32 tick, u16 slot, u32 itemId) - the AP and SP Reset Scrolls, 25 byte body 393f4f20060050e34e00464b4c00d7000000050044756d6d79
+8026:02:57:46.108    reset scroll: 5170000 arrived on 0x0116, which this server only knows for the two reset scrolls. Unlock only, and the item is KEPT.
+9623:02:58:26.326 -> [Wisp#215] 0x0277 PET_ACTIVATED (u32 charId, u32 petIdx 0, u8 activated, [u8 init, pet body]) - CUser vtable +0x98; research/msexe-pet-activated.c PetActivated: Husky (5000006) back beside Wisp after the field
+9755:02:58:26.366 -> [Tester2#214] 0x0277 PET_ACTIVATED (u32 charId, u32 petIdx 0, u8 activated, [u8 init, pet body]) - CUser vtable +0x98; research/msexe-pet-activated.c PetActivated: Husky (5000006) beside Wisp - sent to a playe
+13054:02:59:25.353 <- [Wisp#215] 0x0107 CLIENT_INVENTORY_MOVE (u32 tick, u8 invType, i16 src, i16 dst, i16 count), 11 byte body 4feb50200601008effffff
+13055:02:59:25.364 -> [Wisp#215] 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation: move invType 6 slot 1 -> -114. equipped item 1802006 from Deco bag slot 1 into slot 114 - a
+14947:02:59:59.631 -> [Tester2#214] 0x0277 PET_ACTIVATED (u32 charId, u32 petIdx 0, u8 activated, [u8 init, pet body]) - CUser vtable +0x98; research/msexe-pet-activated.c PetActivated: Husky (5000006) beside Wisp - sent to a play
+14951:02:59:59.631 -> [Wisp#215] 0x0277 PET_ACTIVATED (u32 charId, u32 petIdx 0, u8 activated, [u8 init, pet body]) - CUser vtable +0x98; research/msexe-pet-activated.c PetActivated: Husky (5000006) back beside Wisp after the fiel
