@@ -137,6 +137,48 @@ was out - or before the re-sent Cash item paired with it - has no entry, and the
 grey until the window is rebuilt. Not pursued further; if it greys again, the one observation
 worth making is whether Character Info was opened before or after the summon.
 
+## 7. Feeding, hunger and closeness - 2026-09-16
+
+The owner: *"Pets should decrease their fullness by 1 every 5 minutes. Using a pet food should recover
+the current active pet's fullness by 30 and their closeness by 1"*, and the wiki's **Pet Closeness**
+page: level starts at total closeness 0, 1, 3, 6, 14, 31, 60, 108, 181, 287, 434, 632, 891, 1224,
+1642, 2161, 2793, 3557, 4467, 5542, 6801, 8263, 9950, 11882, 14084, 16578, 19391, 22548, 26074,
+30000; +1..+3 per successful command; -1 per overfeed after the first; -1 and home on starvation;
+a loss never lowers the level.
+
+**The request.** No pet food had ever been used on this server (`805a2000` appears in no
+capture), so the opcode came off the client. `FUN_1428af6d0` dispatches a Use-tab double-click by
+item range **[L]**:
+
+```text
+1428b022f  lea eax, [rcx - 0x205940]    ; itemId - 2120000
+1428b0235  cmp eax, 0x2710              ; < 10000
+1428b0246  call FUN_142ccb350           ; -> 0x0112, writes CTOR u32 u16 u32 SEND
+1428b0255  lea eax, [rcx - 0x227c20]    ; 2260000.. mount food -> FUN_142ccb950, 0x0113
+```
+
+The order matches the reference's (`use item, cancel effect, summon sack, pet food, mount food,
+cash item` = `0x010E, 0x010F, 0x0111, 0x0112, 0x0113, 0x0114` here) - corroboration, not the
+evidence. `net::petfood`.
+
+**Where the numbers live.** The pet ITEM's body carries `u8 level, u16 closeness, u8 fullness`
+right after the name (`1403045 7f / b5 / cc`, `net::bag::PetVitals`), and the Show Pet Info panel
+and the tooltip read them from there - so every change is one re-sent Cash item. `store::pets`
+gains the three columns (guarded `ALTER TABLE`, the table is already on the live server).
+
+**What moves them.** `crate::petlevel`: the table, `level_after` (up only), `feed` (+30 capped at
+100, +1 closeness; at 100 an overfeed - the first free, every later one -1). `Session::
+on_use_pet_food` (`0x0112`; refused with the unlock and a notice when no pet is out or the slot
+does not hold that food). `Session::pet_hunger_tick`, off the session clock: -1 per five minutes
+out, re-armed by each summon; at 0, -1 closeness, the pet put away for the owner (with the
+reason byte), the map and the store, and a chat notice. `pet_command_replies`: a trick that lands
+adds the entry's `inc`, and the pet's stored level now picks its command band instead of the
+constant 1.
+
+**Not sent, and said so:** an eating animation. `0x0279` carries an interact index; whether the
+pet's table has a "food" entry and which index it is has not been read, and a wrong index plays
+the wrong trick. **[I]** on nothing else - the numbers are the item's, and the item is measured.
+
 ## What changed
 
 * `net::pet`: `CLIENT_PET_PICK_UP = 0x0205`, `CLIENT_PET_ACTION_REPORT = 0x0204`,

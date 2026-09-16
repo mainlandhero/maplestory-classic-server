@@ -11080,6 +11080,125 @@ fn use_pet_item_body(slot: u16, item_id: u32, owner: u32, name: Option<&str>) ->
     body
 }
 
+/// A `0x0112`: tick, the Use slot, the food.
+fn use_pet_food_body(slot: u16, item_id: u32) -> Vec<u8> {
+    let mut body = net::petfood::CLIENT_USE_PET_FOOD.to_le_bytes().to_vec();
+    body.extend_from_slice(&0x2050_8e0au32.to_le_bytes());
+    body.extend_from_slice(&slot.to_le_bytes());
+    body.extend_from_slice(&item_id.to_le_bytes());
+    body
+}
+
+/// The pet's `(level, closeness, fullness)` as the CLIENT will read them - out of the Cash
+/// item body the session builds, not out of the store - so the wire is what is asserted.
+fn pet_vitals_on_the_wire(s: &Session, id: u32) -> (u8, u16, u8) {
+    let pet = store::Item::bundle(5_000_006, 1);
+    let b = s.item_blob_with_cash_sn(&pet, Some(net::pet::pet_serial(id, 5_000_006)));
+    // 1 type + 4 id + 1 hasSN + 8 sn + 8 expire + 4 + 1 + 13 name = 40, then level, closeness, fullness.
+    (b[40], u16::from_le_bytes([b[41], b[42]]), b[43])
+}
+
+/// **Pet Food: +30 fullness, +1 closeness, the food used up, the level from the table.** The owner,
+/// 2026-09-15: *"Using a pet food should recover the current active pet's fullness by 30 and
+/// their closeness by 1."* The request is `0x0112` (`net::petfood`). A pet fed at 100 is an
+/// overfeed: the first is free, the second costs a closeness (the wiki's rule).
+#[test]
+fn pet_food_restores_thirty_earns_one_closeness_and_overfeeding_costs_after_the_first() {
+    let (mut s, store, id) = gm_session();
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+    store.add_item(id, store::InventoryType::Use, &store::Item::bundle(2_120_000, 5), 100).unwrap();
+    let food_slot = store.bag_items(id, store::InventoryType::Use).unwrap().iter().find(|r| r.item.item_id == 2_120_000).unwrap().slot;
+
+    // No pet out: refused, food kept, the request still unlocked.
+    let out = s.handle(&use_pet_food_body(food_slot, 2_120_000));
+    assert!(out.iter().any(|r| r.what.contains("Summon a pet")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED), "the 0x0112 unlock");
+
+    s.last_position = Some((300, -50));
+    s.on_pet_activate(&hex("509a18140100"));
+    // Make it hungry first so the +30 is visible.
+    store.set_pet_vitals(id, 5_000_006, 1, 0, 50).unwrap();
+
+    let out = s.handle(&use_pet_food_body(food_slot, 2_120_000));
+    let st = store.pet_state(id, 5_000_006).unwrap();
+    assert_eq!((st.fullness, st.closeness, st.level), (80, 1, 2), "+30, +1, and closeness 1 is level 2 in the table");
+    assert_eq!(pet_vitals_on_the_wire(&s, id), (2, 1, 80), "the Cash item the client reads says so");
+    assert!(out.iter().any(|r| r.what.contains("re-sent as pet 5000006")), "the item goes out again");
+    assert!(out.iter().any(|r| r.what.contains("QUANTITY") && r.what.contains("down to 4")), "one food used: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+
+    // Fill it, then overfeed twice: free, then -1.
+    s.handle(&use_pet_food_body(food_slot, 2_120_000)); // 80 -> 100, closeness 2
+    assert_eq!(store.pet_state(id, 5_000_006).unwrap().fullness, 100);
+    s.handle(&use_pet_food_body(food_slot, 2_120_000)); // overfeed #1: free
+    assert_eq!(store.pet_state(id, 5_000_006).unwrap().closeness, 2);
+    s.handle(&use_pet_food_body(food_slot, 2_120_000)); // overfeed #2: -1
+    let st = store.pet_state(id, 5_000_006).unwrap();
+    assert_eq!((st.fullness, st.closeness, st.level), (100, 1, 2), "closeness down one, the level kept");
+    assert_eq!(store.bag_items(id, store::InventoryType::Use).unwrap().iter().find(|r| r.slot == food_slot).map(|r| match r.item.kind { store::ItemKind::Bundle { quantity } => quantity, _ => 0 }), Some(1), "four foods eaten");
+}
+
+/// **Every five minutes out, one fullness; at zero the pet goes home.** The owner, 2026-09-15:
+/// *"Pets should decrease their fullness by 1 every 5 minutes."* Starvation is the wiki's:
+/// `-1` closeness, put away everywhere, and the next login leaves it in the bag.
+#[test]
+fn a_summoned_pet_loses_a_fullness_every_five_minutes_and_goes_home_at_zero() {
+    let (mut s, store, id) = gm_session();
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+    s.last_position = Some((300, -50));
+    s.tick(10_000);
+    s.on_pet_activate(&hex("509a18140100"));
+    store.set_pet_vitals(id, 5_000_006, 3, 10, 2).unwrap();
+    let five = net::petfood::PET_HUNGER_INTERVAL_MS;
+
+    // Not yet.
+    assert!(s.tick(10_000 + five - 1).iter().all(|r| !r.what.contains("re-sent as pet")));
+    assert_eq!(store.pet_state(id, 5_000_006).unwrap().fullness, 2);
+    // Five minutes: 2 -> 1, the item re-sent, the pet still out.
+    let out = s.tick(10_000 + five);
+    assert_eq!(store.pet_state(id, 5_000_006).unwrap().fullness, 1);
+    assert!(out.iter().any(|r| r.what.contains("re-sent as pet 5000006")));
+    assert!(s.pet_is_active(5_000_006));
+    // Ten: 1 -> 0, starved - closeness 10 -> 9, level kept, sent home, remembered as away.
+    let out = s.tick(10_000 + 2 * five);
+    let st = store.pet_state(id, 5_000_006).unwrap();
+    assert_eq!((st.fullness, st.closeness, st.level, st.active), (0, 9, 3, false));
+    assert!(!s.pet_is_active(5_000_006), "put away on this session");
+    let gone = out.iter().find(|r| r.opcode == net::pet::PET_ACTIVATED).expect("the put-away");
+    assert_eq!((gone.body[8], gone.body.len()), (0, 10), "activated 0, with the owner's reason byte");
+    assert!(out.iter().any(|r| r.what.contains("starving")), "and the player is told");
+    assert_eq!(store.active_pet(id).unwrap(), None, "the next login leaves it in the bag");
+    // Nothing more happens while it is away.
+    assert!(s.tick(10_000 + 3 * five).iter().all(|r| r.opcode != net::pet::PET_ACTIVATED));
+}
+
+/// **A trick that lands earns the entry's closeness, and the pet's own level picks its band.**
+/// The wiki: +1..+3 per successful command. The table's `inc` was recorded on 2026-09-13 and
+/// unused until now.
+#[test]
+fn a_successful_pet_command_earns_closeness_and_levels_the_pet_up() {
+    let (mut s, store, id) = gm_session();
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+    let mut cfg = (*s.config).clone();
+    // sit: always succeeds, inc 3 (column 5 of the table line). bad: always fails, inc 1.
+    cfg.pet_commands = crate::petcommands::PetCommands::parse(
+        "5000006\t0\tsit\t100\t1\t9\t3\ts\trest0\tBark bark!\n\
+         5000006\t4\tbad|no\t0\t1\t9\t1\tf\tangry\tHeh... heh...\n",
+    );
+    s.config = std::sync::Arc::new(cfg);
+    s.last_position = Some((300, -50));
+    s.on_pet_activate(&hex("509a18140100"));
+
+    let out = s.handle(&gm_chat("sit"));
+    assert!(out.iter().any(|r| r.opcode == net::pet::PET_ACTION));
+    let st = store.pet_state(id, 5_000_006).unwrap();
+    assert_eq!((st.closeness, st.level), (3, 3), "+3 closeness, and 3 is level 3 in the table");
+    assert!(out.iter().any(|r| r.what.contains("re-sent as pet 5000006")), "the panel's numbers go out");
+
+    // A failed trick earns nothing.
+    s.handle(&gm_chat("bad"));
+    assert_eq!(store.pet_state(id, 5_000_006).unwrap().closeness, 3);
+}
+
 /// **The pet's own loot request is `0x0205`, and it takes the drop.** The owner, 2026-09-15:
 /// *"Husky also currently does not loot items on the ground."* Seven `0x0205`s in that run,
 /// all logged UNKNOWN. The body is the capture's shape - `u32 petIdx, u8, u32 tick, u32, i16 x,

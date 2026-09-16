@@ -57,6 +57,7 @@ pub mod opcode;
 pub mod packet;
 pub mod party;
 pub mod pet;
+pub mod petfood;
 pub mod portalscript;
 pub mod quest;
 pub mod reactor;

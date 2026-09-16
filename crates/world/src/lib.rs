@@ -57,6 +57,7 @@ pub mod mobattack;
 pub mod mobshare;
 pub mod party;
 pub mod petcommands;
+pub mod petlevel;
 pub mod questitems;
 pub mod remoteattack;
 pub mod returnscroll;

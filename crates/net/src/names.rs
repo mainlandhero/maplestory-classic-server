@@ -181,6 +181,8 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         0x0104 => "CLIENT_SHOP_REQUEST (the Shop2 window; a different body from 0x00F5)",
         0x010E => "CLIENT_USE_ITEM (u32 tick, u16 slot, u32 itemId; the Use tab)",
         0x0111 => "CLIENT_SUMMON_SACK (the summoning sack in this slot)",
+        0x0112 => "CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range",
+        0x0113 => "CLIENT_USE_MOUNT_FOOD (u32 tick, u16 slot, u32 itemId) - items 2260000..; the arm after the pet food's. Not handled",
         0x032F => "CLIENT_REACTOR_HIT (u32 objectId, u32 hitOption, u16 delay, u32 skillId - a breakable box struck; net::reactor)",
         0x0330 => "CLIENT_REACTOR_TOUCH (u32 objectId, ...; a reactor walked into; not answered)",
         0x0125 => "CLIENT_ITEM_UPGRADE (u32 tick, u16 scroll slot, u16 dst slot, ...) - a scroll",

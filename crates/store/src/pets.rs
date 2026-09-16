@@ -41,6 +41,19 @@ pub struct PetState {
     pub skills: u16,
     /// Whether it was summoned when last seen.
     pub active: bool,
+    /// `1..=30`; never lowered (`world::petlevel`).
+    pub level: u8,
+    /// Total closeness earned, the level table's input.
+    pub closeness: u32,
+    /// `0..=100`; a feed adds, five minutes summoned subtracts one.
+    pub fullness: u8,
+}
+
+impl PetState {
+    /// A pet nothing has happened to.
+    pub fn fresh() -> Self {
+        PetState { name: None, skills: PET_SKILLS_AT_START, active: false, level: 1, closeness: 0, fullness: 100 }
+    }
 }
 
 /// The mask a pet has before it learns anything - Item Pouch. Mirrors
@@ -56,9 +69,31 @@ pub(crate) fn ensure_table(conn: &Connection) -> Result<()> {
             name         TEXT,
             skills       INTEGER NOT NULL DEFAULT 1,
             active       INTEGER NOT NULL DEFAULT 0,
+            level        INTEGER NOT NULL DEFAULT 1,
+            closeness    INTEGER NOT NULL DEFAULT 0,
+            fullness     INTEGER NOT NULL DEFAULT 100,
             PRIMARY KEY (character_id, item_id)
         );",
     )?;
+    // The table shipped on 2026-09-15 (716589b) without the three vitals and is on the owner's live
+    // server, so they are added the way `db.rs` adds every late column: guarded by
+    // `PRAGMA table_info`, because `ADD COLUMN` is not idempotent.
+    let mut existing = std::collections::HashSet::new();
+    {
+        let mut stmt = conn.prepare("PRAGMA table_info(character_pets)")?;
+        for name in stmt.query_map([], |row| row.get::<_, String>(1))? {
+            existing.insert(name?);
+        }
+    }
+    for (column, decl) in [
+        ("level", "INTEGER NOT NULL DEFAULT 1"),
+        ("closeness", "INTEGER NOT NULL DEFAULT 0"),
+        ("fullness", "INTEGER NOT NULL DEFAULT 100"),
+    ] {
+        if !existing.contains(column) {
+            conn.execute(&format!("ALTER TABLE character_pets ADD COLUMN {column} {decl}"), [])?;
+        }
+    }
     Ok(())
 }
 
@@ -69,7 +104,7 @@ impl Store {
         ensure_table(&conn)?;
         Ok(conn
             .query_row(
-                "SELECT name, skills, active FROM character_pets
+                "SELECT name, skills, active, level, closeness, fullness FROM character_pets
                  WHERE character_id = ?1 AND item_id = ?2",
                 rusqlite::params![character_id, item_id],
                 |r| {
@@ -77,11 +112,14 @@ impl Store {
                         name: r.get::<_, Option<String>>(0)?,
                         skills: r.get::<_, i64>(1)? as u16,
                         active: r.get::<_, i64>(2)? != 0,
+                        level: r.get::<_, i64>(3)?.clamp(1, 30) as u8,
+                        closeness: r.get::<_, i64>(4)?.max(0) as u32,
+                        fullness: r.get::<_, i64>(5)?.clamp(0, 100) as u8,
                     })
                 },
             )
             .optional()?
-            .unwrap_or(PetState { name: None, skills: PET_SKILLS_AT_START, active: false }))
+            .unwrap_or_else(PetState::fresh))
     }
 
     /// The pet this character had out, if any.
@@ -111,6 +149,21 @@ impl Store {
             rusqlite::params![character_id, item_id, i64::from(active)],
         )?;
         tx.commit()?;
+        Ok(())
+    }
+
+    /// The three numbers a feed, a command or a hungry five minutes move. Written together,
+    /// because they change together and a level is a function of the closeness.
+    pub fn set_pet_vitals(&self, character_id: u32, item_id: u32, level: u8, closeness: u32, fullness: u8) -> Result<()> {
+        let conn = self.conn();
+        ensure_table(&conn)?;
+        conn.execute(
+            "INSERT INTO character_pets (character_id, item_id, level, closeness, fullness)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(character_id, item_id)
+             DO UPDATE SET level = excluded.level, closeness = excluded.closeness, fullness = excluded.fullness",
+            rusqlite::params![character_id, item_id, i64::from(level), i64::from(closeness), i64::from(fullness)],
+        )?;
         Ok(())
     }
 
@@ -161,10 +214,8 @@ mod tests {
     #[test]
     fn an_untouched_pet_has_the_item_name_the_starting_skill_and_is_put_away() {
         let (store, chr) = store_with_character();
-        assert_eq!(
-            store.pet_state(chr, HUSKY).unwrap(),
-            PetState { name: None, skills: PET_SKILLS_AT_START, active: false }
-        );
+        assert_eq!(store.pet_state(chr, HUSKY).unwrap(), PetState::fresh());
+        assert_eq!((PetState::fresh().level, PetState::fresh().closeness, PetState::fresh().fullness), (1, 0, 100));
         assert_eq!(store.active_pet(chr).unwrap(), None);
     }
 
@@ -191,10 +242,41 @@ mod tests {
         assert_eq!(store.learn_pet_skill(chr, HUSKY, 1 << 4).unwrap(), PET_SKILLS_AT_START | (1 << 1) | (1 << 4));
         assert_eq!(
             store.pet_state(chr, HUSKY).unwrap(),
-            PetState { name: Some("Dummy".to_string()), skills: 0b1_0011, active: true }
+            PetState { name: Some("Dummy".to_string()), skills: 0b1_0011, active: true, ..PetState::fresh() }
         );
+        // The vitals ride the same row and leave the rest alone.
+        store.set_pet_vitals(chr, HUSKY, 4, 7, 63).unwrap();
+        let st = store.pet_state(chr, HUSKY).unwrap();
+        assert_eq!((st.level, st.closeness, st.fullness), (4, 7, 63));
+        assert_eq!((st.name.as_deref(), st.skills, st.active), (Some("Dummy"), 0b1_0011, true));
         // Learning on a pet with no row yet starts from the default mask, not from zero.
         assert_eq!(store.learn_pet_skill(chr, 5_000_002, 1 << 3).unwrap(), PET_SKILLS_AT_START | (1 << 3));
+    }
+
+    /// The live server has the 2026-09-15 table without the vitals: opening it must add them.
+    #[test]
+    fn the_first_shipped_table_gains_the_vitals_columns_on_first_touch() {
+        let (store, chr) = store_with_character();
+        {
+            let conn = store.conn();
+            conn.execute_batch(
+                "CREATE TABLE character_pets (
+                    character_id INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+                    item_id INTEGER NOT NULL, name TEXT,
+                    skills INTEGER NOT NULL DEFAULT 1, active INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (character_id, item_id));",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO character_pets (character_id, item_id, skills, active) VALUES (?1, 5000006, 3, 1)",
+                [chr],
+            )
+            .unwrap();
+        }
+        let st = store.pet_state(chr, HUSKY).unwrap();
+        assert_eq!((st.skills, st.active, st.level, st.closeness, st.fullness), (3, true, 1, 0, 100), "old row, default vitals");
+        store.set_pet_vitals(chr, HUSKY, 2, 1, 70).unwrap();
+        assert_eq!(store.pet_state(chr, HUSKY).unwrap().fullness, 70);
     }
 
     #[test]
