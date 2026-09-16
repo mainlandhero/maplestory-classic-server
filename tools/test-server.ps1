@@ -2058,6 +2058,18 @@
             it stays on the floor                        -> paste the "pet pick-up" log lines
             the tooltip says "unregistered" for Auto Move -> the client package was not
                        rebuilt/installed (python tools\backport_install.py --install, client closed)
+          NPC SHOP DUPLICATES (2026-09-16). The owner: "duplicate items in the NPC shop, one
+          being regular price, another being 10 times cheaper ... across multiple if not
+          all NPC shops." The cheap twin was our Sell row (the WZ sell price); the
+          classic window files EVERY row into the Buy list. The twins are gone; the Sell
+          panel is the client's own (your bag at the WZ price) and was never reading them.
+            1. open any shop (Lucy, the department store): each item ONCE, at its real
+               price -> fixed. Two of anything -> the old build.
+            2. the right-hand Sell panel still lists your bag with prices; sell a Red
+               Potion: mesos up, potion gone -> as before. Sell panel MISSING or the
+               sale refused -> paste the 0x055D line (row count) and the 0x00F5/0x055E
+               pair - that would mean the sell byte was load-bearing after all.
+            3. a quest item (Sera's Mirror) in the Sell panel: refused, stays -> as designed
           TWO HUSKIES ARE TWO PETS (2026-09-16). The owner: "Two Husky should not share the
           same name. The pets should in the background have different ids." Every pet
           item now carries a pet id (inventory.pet_id -> the pets table; the old
@@ -5074,6 +5086,10 @@ function Show-TestPlan {
         Write-Host '         only when it walks onto it -> keys declared, pet code ignores them' -ForegroundColor Yellow
         Write-Host '         stays on the floor -> paste the "pet pick-up" log lines' -ForegroundColor Yellow
         Write-Host '         tooltip says unregistered -> package not rebuilt/installed' -ForegroundColor Yellow
+        Write-Host '       NPC SHOP DUPLICATES (2026-09-16): the 10x-cheaper twin was our Sell row;'
+        Write-Host '         gone. Any shop: each item ONCE at its real price -> fixed. Sell a Red' -ForegroundColor Yellow
+        Write-Host '         Potion from the right panel: still works. Panel MISSING or sale refused' -ForegroundColor Yellow
+        Write-Host '         -> paste the 0x055D and 0x00F5/0x055E lines (the sell byte mattered).' -ForegroundColor Yellow
         Write-Host '       TWO HUSKIES ARE TWO PETS (2026-09-16): every pet item carries its own'
         Write-Host '         id; a Name Tag names ONE of them. Buy a second Husky, summon it, name'
         Write-Host '         it Dummy: the first stays Husky; relog: Dummy is the one out -> fixed' -ForegroundColor Yellow

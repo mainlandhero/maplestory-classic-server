@@ -19,16 +19,14 @@ impl Session {
     /// (`shopUI+0x338`) or the Sell tab (`+0x340`), and the Sell tab is then intersected
     /// with what the player is actually carrying. **A shop that sends no negative-price rows
     /// has an empty Sell tab** - there is no separate "here is what I buy" packet.
-    /// `net::shop::ShopRow::sell` does the negation; do not negate twice.
-    ///
     /// The two prices come from different places and swapping them is the easy mistake:
     /// a **buy** price is authored per row in `data/shops.txt`, a **sell** price is
     /// `ItemData::price`, which is the client's own `info/price` and is what the NPC *pays*.
     /// The owner established that direction: *"The prices client side most likely represents sell
-    /// prices."*
+    /// prices."* Only the buy price goes out on a row; the sell price is what `classic_sell`
+    /// pays, and the client draws its own from the WZ.
     ///
-    /// The owner's rule is enforced here as well as in the store: a quest item gets no sell row,
-    /// so it cannot be offered in the first place.
+    /// The owner's rule - no selling quest items - is enforced in the store (`sell_item`).
     ///
     /// **An empty row list is not an empty shop.** `140d22656` takes a different arm
     /// entirely for `rowCount == 0` - a dialog box, and a `0x0104` back - so a shop that
@@ -90,22 +88,19 @@ impl Session {
                 .with_unit_price(self.unit_price_milli(item.item_id)),
             );
         }
-        for item in &shop.items {
-            let Some(data) = self.config.shops.item_data.get(&item.item_id) else { continue };
-            if !data.may_be_sold() {
-                continue; // the owner: "Please do not allow quest items to be sold."
-            }
-            rows.push(
-                net::classicshop::ClassicShopRow::sell(
-                    item.item_id,
-                    u64::from(data.price),
-                    i16::try_from(self.config.shops.max_per_purchase(item.item_id)).unwrap_or(100),
-                )
-                // The Sell-tab twin carries the same price, so whichever row the client's
-                // Recharge list resolves the id to, it reads a non-zero double.
-                .with_unit_price(self.unit_price_milli(item.item_id)),
-            );
-        }
+        // **No Sell twins.** Until 2026-09-16 every stocked item went out a second time with
+        // the classic row's "sell" byte set and the WZ `info/price` - a Shop2 habit, where the
+        // price's sign chose the tab. The classic window files EVERY surviving row into the
+        // Buy list (`research/classic-shop-rows.md` §5: only a Buy Back row skips the Buy-tab
+        // classification), so on screen each item appeared twice, the twin at a tenth of the
+        // price. The owner: *"there are duplicate items in the NPC shop, one being regular price,
+        // another being 10 times cheaper. This is happening across multiple if not all NPC
+        // shops."* The Sell panel is built by the client from the player's own inventory at
+        // the client's own `info/price` (the screenshot prices a Green Skullcap no shop
+        // stocks), and `classic_sell` answers the sell request from `ItemData::price` - so
+        // the twins carried nothing the client used. Quest items still cannot be sold:
+        // `Store::sell_item` refuses them.
+        //
         // **No Buy Back rows.** This client's `UI/UIShop.img/Shop` has no `repurchaseInfo`
         // node and exactly two tabs, `TabBuy` and `TabSell`. See `classic_sell`.
 
@@ -278,6 +273,18 @@ impl Session {
                 &format!("item {item_id} belongs to no inventory tab"),
             );
         };
+        // **The owner: "Please do not allow quest items to be sold."** Checked here against the
+        // client's own `info/quest` flag, and again in the store against its generated list.
+        // This was the Sell twin's job until 2026-09-16 - a quest item got no twin - but the
+        // client's Sell panel never read the twins (it is the player's own bag at the WZ
+        // price), so the twin gated nothing; this does. The refusal is answered, not dropped:
+        // an unanswered shop request leaves the window waiting.
+        if self.config.shops.item_data.get(&item_id).is_some_and(|d| !d.may_be_sold()) {
+            return self.classic_refused(
+                net::classicshop::RESULT_NOT_ENOUGH_MESOS,
+                &format!("item {item_id} is a quest item and may not be sold"),
+            );
+        }
         // The sell price is the client's own `Item.wz` price - the owner, 2026-08-19: *"The prices
         // client side most likely represents sell prices."* `data/shops.txt` holds only what
         // the NPC charges.
