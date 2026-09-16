@@ -2115,6 +2115,14 @@
                        maplecw-launcher.exe.old beside it and say what the folder holds
           it updates on EVERY Start Game -> the server's copy and the installed one differ
                        by build; say so, that means two builds of the same source in play
+        AND SIGN OUT (same day): press Login, then Sign out.
+          Start Game greys the instant Sign out is pressed, and the status line then says
+                       "signed out - 1 claim(s) revoked on the server"        -> DONE; the
+                       server's auth.log has a "sign-out: 1 login claim(s) revoked" line
+          "the server had no live claim" -> a later Login of the same account had already
+                       replaced it; not a bug
+          "could NOT be revoked ... predates sign-out" -> the deployed server is older than
+                       this launcher; deploy the matching MapleCW-server.zip
 
     10. THE CRASH - a question, not a test.
         A 1.36 GB dump was written at 00:08 from a fault at 0x14090a6f0, an address that
@@ -5052,6 +5060,9 @@ function Show-TestPlan {
         Write-Host '       "publishes no launcher" -> the server is an older package' -ForegroundColor Yellow
         Write-Host '       closes and nothing opens -> say what the folder holds' -ForegroundColor Yellow
         Write-Host '       updates EVERY time -> two builds of one source in play; say so' -ForegroundColor Yellow
+        Write-Host '     SIGN OUT: Login, then Sign out. Start Game greys AT ONCE and the status'
+        Write-Host '       says "1 claim(s) revoked on the server" -> DONE' -ForegroundColor Green
+        Write-Host '       "predates sign-out" -> deploy the matching server zip' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  10. THE CRASH - a question, not a test.' -ForegroundColor White
         Write-Host '     A 1.36 GB dump at 00:08, fault 0x14090a6f0 - an address that'

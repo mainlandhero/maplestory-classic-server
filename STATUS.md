@@ -224,6 +224,18 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-16: Sign out revokes the claim, and Start Game greys the instant it is pressed.** The owner:
+*"Can we make sign-out button actually revoke the claim please ... Make sure it also disables the
+Start Game button once signed out."* The button used to be local and said so. Now the sign-in
+keeps the session token (memory only, redacted), Sign out drops the sign-in synchronously (Start
+Game is gated on it), then `POST /logout {token}` -> `AuthService::logout` ->
+`store::clear_login_claim_for_token`, then deletes the client's identity file. Three answers on
+screen: revoked / unknown (expired or superseded) / failed (unreachable, or a server without
+`/logout` - the claim expires by itself). Tests: the service revokes exactly that claim and leaves
+another account's; the HTTP shape (405 on GET, 400 on bad JSON, revoked then unknown); the
+launcher's parser; and end to end over TLS with the service's own store showing the claim gone.
+`docs/launcher.md`. Plan step 9.
+
 **2026-09-16: the launcher updates itself.** The owner: *"The launcher that we have should have the
 ability to patch itself should we need to. Currently it doesn't seem able to do that."* It could
 not - the version gate covered `client\` and the launcher lives beside it. Now the server package

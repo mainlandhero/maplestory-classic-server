@@ -44,6 +44,8 @@ enum Msg {
     LaunchFinished(Result<(), String>),
     /// This executable was replaced and the new one is starting; the window must close.
     LauncherReplaced { version: String, bytes: u64 },
+    /// The server answered the sign-out.
+    SignedOut(crate::http::SignOutReply),
 }
 
 /// Which of the three things the window is doing.
@@ -93,6 +95,9 @@ pub struct LauncherApp {
     launching: bool,
     /// A registration or recovery is in flight.
     working: bool,
+    /// The sign-out's server call is in flight. The sign-in itself is already gone by then -
+    /// Start Game is disabled the instant the button is pressed, not when the server answers.
+    signing_out: bool,
     /// `Some` once a sign-in has succeeded. This is the gate on **Start Game**.
     signed_in: Option<SignIn>,
     status: Option<(Level, String)>,
@@ -142,6 +147,7 @@ impl LauncherApp {
             tx,
             rx,
             close_after_update: false,
+            signing_out: false,
         };
         app.announce_layout();
         // Slightly roomier text than the default; the log pane is the point of the window.
@@ -500,6 +506,34 @@ impl LauncherApp {
         }
     }
 
+    /// The server half of Sign out. `signed_in` is already `None` when this runs.
+    fn start_sign_out(&mut self, ctx: &egui::Context, gone: Option<SignIn>) {
+        let token = gone.as_ref().and_then(|s| s.session_token()).cloned();
+        let identity_marker = self.layout.client_dir.join(crate::client::HOOK_IDENTITY_MARKER);
+        let Some((host, port, pin)) = self.service_target() else {
+            self.status = Some((Level::Info, "signed out on this side - type another account and press Login".into()));
+            return;
+        };
+        let Some(token) = token else {
+            self.push(Level::Warn, "signed out - the sign-in carried no session token, so there was no claim to revoke on the server".into());
+            self.status = Some((Level::Info, "signed out - type another account and press Login".into()));
+            let _ = std::fs::remove_file(&identity_marker);
+            return;
+        };
+        self.signing_out = true;
+        self.status = Some((Level::Info, "signing out - revoking the claim on the server…".into()));
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let reply = crate::http::sign_out(&host, port, &pin, &token);
+            // The credential the client would carry belongs to the claim just revoked; a
+            // stale one is refused by the login server, so leaving it is worse than none.
+            let _ = std::fs::remove_file(&identity_marker);
+            let _ = tx.send(Msg::SignedOut(reply));
+            ctx.request_repaint();
+        });
+    }
+
     fn start_launch(&mut self, ctx: &egui::Context, plan: Plan) {
         let layout = self.layout.clone();
         let tx = self.tx.clone();
@@ -615,6 +649,25 @@ impl LauncherApp {
                         Err(e) => self.fail(e),
                     }
                 }
+                Msg::SignedOut(reply) => {
+                    self.signing_out = false;
+                    let (level, text) = match reply {
+                        crate::http::SignOutReply::Revoked { claims } => (
+                            Level::Good,
+                            format!("signed out - {claims} claim(s) revoked on the server. Type another account and press Login"),
+                        ),
+                        crate::http::SignOutReply::Unknown => (
+                            Level::Info,
+                            "signed out - the server had no live claim for this sign-in (expired, or superseded by a later Login). Type another account and press Login".to_string(),
+                        ),
+                        crate::http::SignOutReply::Failed(why) => (
+                            Level::Warn,
+                            format!("signed out on this side, but the claim could NOT be revoked on the server: {why}. It expires on its own (12 h)"),
+                        ),
+                    };
+                    self.push(level, text.clone());
+                    self.status = Some((level, text));
+                }
                 Msg::LauncherReplaced { version, bytes } => {
                     self.launching = false;
                     self.remember_settings();
@@ -684,7 +737,7 @@ impl eframe::App for LauncherApp {
             );
             ui.separator();
 
-            let busy = self.busy();
+            let busy = self.busy() || self.signing_out;
 
             // Which of the three things this window does. Register and Forgot password exist
             // because a client machine has no database and no useradd: the only way in is a
@@ -801,19 +854,21 @@ impl eframe::App for LauncherApp {
                         // but retyping a name you can see is cheap, and losing what you typed
                         // is annoying.
                         //
-                        // No server call. A claim is keyed per launch and expires on its own;
-                        // nothing here can revoke one, and pretending otherwise in the UI would
-                        // be a lie about what the button does.
+                        // **And it revokes the claim on the server.** The owner, 2026-09-16: *"Can
+                        // we make sign-out button actually revoke the claim please."* Until
+                        // then this was local only, and said so. Now: the sign-in is dropped
+                        // HERE, synchronously - so Start Game (gated on `signed_in`) is
+                        // disabled the instant the button is pressed - then `POST /logout`
+                        // with the session token runs in a worker, and the client credential
+                        // this launch wrote into the game folder is removed, since the claim
+                        // it belonged to is gone.
                         if ui
                             .add_enabled(self.signed_in.is_some() && !busy, egui::Button::new("Sign out"))
                             .clicked()
                         {
-                            self.signed_in = None;
+                            let gone = self.signed_in.take();
                             wipe(&mut self.password);
-                            self.status = Some((
-                                Level::Info,
-                                "signed out - type another account and press Login".into(),
-                            ));
+                            self.start_sign_out(ctx, gone);
                             self.push(
                                 Level::Info,
                                 "--- signed out. The login claim from that sign-in is NOT revoked: it \
