@@ -175,9 +175,45 @@ reason byte), the map and the store, and a chat notice. `pet_command_replies`: a
 adds the entry's `inc`, and the pet's stored level now picks its command band instead of the
 constant 1.
 
-**Not sent, and said so:** an eating animation. `0x0279` carries an interact index; whether the
-pet's table has a "food" entry and which index it is has not been read, and a wrong index plays
-the wrong trick. **[I]** on nothing else - the numbers are the item's, and the item is measured.
+**The eating animation - §8.** It was "not sent" for one commit; the owner asked for it the same
+night and it is `0x027E`, below.
+
+## 8. The eating animation and the level-up flash - 2026-09-16
+
+The owner: *"I do want the eating animation to play for the client and other players. When closeness
+levels up, it should also play an animation to the client and other players in the map."*
+
+**Eating.** `0x0279`'s handler passes a constant `0` as the fifth argument of the performer
+`FUN_141ec6680(pet, type, entry, line, flag)`; so do `0x027A` and `0x027D`. Of the performer's
+eight callers exactly one passes `1`: **`FUN_141ec4780`, the `0x27e` arm** - the one the
+reference's opcode order had labelled "exception list". Its reads **[L]**:
+
+```text
+141ec47f7  u8  nType
+  == 1:  141ec49f9 u8 interact index (bounds-checked against the pet's table, level range
+         checked), 141ec4a50 u8 success (picks the success/fail line set), 141ec4a75 u8 1|2
+  == 2:  walks the pet's food table [pet+0x68] (24-byte rows, a level range each) for the
+         pet's level, then 141ec4b0c u8 success, 141ec4b24 u32 itemId - kept only if
+         2120000 <= id < 2130000, the pet-food range again
+141ec4ea9  FUN_141ec6680(pet, nType, entry, line, 1)
+```
+
+So `0x027E` is `PetActionCommand`, and the feed is `u32 charId, u32 petIdx, u8 2, u8 1, u32
+foodId` - `net::pet::pet_ate`, to the owner and the map. Whether the Husky at level N has a food
+row is the pet image's business; a miss falls to the common tail, not a fault.
+
+**Level-up.** `FUN_1427863f0`, the `UserEffect` decoder, runs its second switch over 85 arms
+(table `0x142791348`). Every arm was disassembled and searched for a call to `GetPet`
+(`FUN_1427703d0`): **arm 9** (`0x14278df5b`) has it - `u8 subtype`, `u32 petIdx`, `GetPet`,
+`CPet::OnEffect(pet, subtype)` = `FUN_141ebf340` -> `0x141ebf3c0`, whose switch is `test edi,
+edi / je` -> **0 = `Effect/PetEff.img/Basic/LevelUp`** (`0x141ebf686`), 1 = `Basic/Teleport`,
+2 = `%07d/warp` **[L]**. (Arm 69 also matched the scan and is not a pet arm - it reads a `u32`
+and formats a string.) `0x02D1` `u8 9, u8 0, u32 0` to the owner; `0x02AF` with the char id in
+front to the map - the remote handler runs the same decoder against the remote user.
+
+Both go out from `on_use_pet_food` (the flash only when the feed crossed a level) and the flash
+from `pet_command_replies` when a trick does. `net::pet::PET_ACTION_COMMAND`, `pet_ate`,
+`USER_EFFECT_PET`, `PET_EFFECT_LEVEL_UP`, `pet_level_up_local/remote`.
 
 ## What changed
 

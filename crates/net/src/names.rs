@@ -113,6 +113,7 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         0x0205 => "CLIENT_PET_PICK_UP (u32 petIdx, u8, u32 tick, u32, i16 x, i16 y, u32 dropId, u32 crc, ...) - the pet reached a drop; handled as a pick-up",
         0x0204 => "CLIENT_PET_ACTION_REPORT (u32 petIdx, u8, u16 interact index) - the pet did a trick on its own client; a report",
         0x027B => "PET_NAME_CHANGED (u32 charId, u32 petIdx, str name) - FUN_141ec4660; after a Pet Name Tag",
+        0x027E => "PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation",
         0x0279 => "PET_ACTION (u32 charId, u32 petIdx, u8 interact index, u8 success, str line) - FUN_141ec3fa0",
         0x02B2 => "USER_HP_REMOTE (u32 charId, u32 hp, u32 maxHp) - a party member's HUD gauge and over-head bar",
         0x0107 => "CLIENT_INVENTORY_MOVE (u32 tick, u8 invType, i16 src, i16 dst, i16 count)",

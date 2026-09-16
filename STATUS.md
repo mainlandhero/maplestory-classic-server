@@ -235,9 +235,15 @@ takes one fullness per five minutes out and at 0 sends the pet home (-1 closenes
 everywhere, a notice). A successful trick earns the table's own `inc` (+1..+3) and the pet's level
 now picks its command band. `store::pets` gains `level`, `closeness`, `fullness` (added to the live
 table by a guarded `ALTER`), and all three ride the pet's Cash item, re-sent on every change - which
-is what Show Pet Info reads. **No eating animation is sent** (the `0x0279` index for "food" is
-unmeasured). `research/pets-loot-skills-name-relogin-2026-09-15.md` §7. Plan step 8. Not on a
-screen yet.
+is what Show Pet Info reads. **And the two animations, same day** - the owner: *"I do want the eating animation to play for the
+client and other players. When closeness levels up, it should also play an animation."* Both read
+off the client: `0x027E` (`FUN_141ec4780`, "exception list" in the reference's order, wrong) is the
+pet performer - `u8 type`, type 2 = **food**: `u8 success, u32 itemId`, range-checked against
+2120000..2129999 [L]; and `UserEffect` arm **9** (of 85, the only arm that calls `GetPet`) is the pet
+arm - `u8 subtype, u32 petIdx` -> `CPet::OnEffect`, subtype **0** = `Effect/PetEff.img/Basic/LevelUp`
+[L]. A feed sends `0x027E` to the owner and the map; a level gained (feed or trick) sends `0x02D1`
+to the owner and `0x02AF` to the map. `research/pets-loot-skills-name-relogin-2026-09-15.md` §7-8.
+Plan step 8. Not on a screen yet.
 
 **2026-09-15, 23:34: teaching the Husky Auto HP KILLED the client - the owner's put-away wants a
 reason byte.** The reply's last two packets were a put-away and a re-summon to the owner; the client

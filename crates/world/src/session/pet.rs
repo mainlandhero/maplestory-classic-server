@@ -130,6 +130,9 @@ impl Session {
                     text.trim(), active.item_id, r.inc, st.level
                 ));
                 earned.push(self.pet_item_refresh(&chr, active.slot, active.item_id, true));
+                if level > st.level {
+                    earned.extend(self.pet_level_up_replies(&chr, st.level, level));
+                }
             }
         }
         let reply = Reply {
@@ -302,11 +305,11 @@ impl Session {
     /// `net::petfood` has the packet (never captured - the opcode is read off the client's
     /// item-use switch) and the numbers; `crate::petlevel::feed` has the overfeed rule.
     ///
-    /// The result reaches the screen as the pet's Cash item, re-sent (Show Pet Info and the
-    /// tooltip read it there). **No eating animation is sent** - the client's `0x0279` carries
-    /// an interact index and whether a "food" entry exists in that table is unmeasured; a wrong
-    /// index plays a wrong trick rather than nothing, so nothing is what goes out until the
-    /// screen says otherwise.
+    /// The numbers reach the screen as the pet's Cash item, re-sent (Show Pet Info and the
+    /// tooltip read it there). The **eating animation** is `0x027E` type 2 with the food's id
+    /// (`net::pet::pet_ate`), to the owner and the map - the owner, 2026-09-16: *"I do want the
+    /// eating animation to play for the client and other players."* A level gained on the way
+    /// adds the pet level-up flash, [`Session::pet_level_up_replies`].
     ///
     /// Refusals answer with the opcode's unlock and a notice: no pet out, the slot does not
     /// hold that food, or the item is not a pet food at all.
@@ -355,7 +358,46 @@ impl Session {
         let mut out = unlock();
         out.extend(self.stack_change_replies(store::InventoryType::Use, req.slot, held.saturating_sub(1)));
         out.push(self.pet_item_refresh(&chr, active.slot, active.item_id, true));
+        // The pet eats, on every screen it is on.
+        let ate = Reply {
+            opcode: net::pet::PET_ACTION_COMMAND,
+            body: net::pet::pet_ate(chr.id, item_id),
+            what: format!("PetActionCommand: {}'s pet eats {item_id} - type 2, the food's id", chr.name),
+        };
+        if self.config.broadcast_pets {
+            self.bus().publish(self.subscriber, chr.map_id, ate.clone(), None);
+        }
+        out.push(ate);
+        if level > st.level {
+            out.extend(self.pet_level_up_replies(&chr, st.level, level));
+        }
         out
+    }
+
+    /// **The pet levelled up: the flash, for the owner and the map.** The owner, 2026-09-16: *"When
+    /// closeness levels up, it should also play an animation to the client and other players in
+    /// the map."* `UserEffect` arm 9 with subtype 0 - `Effect/PetEff.img/Basic/LevelUp` - as
+    /// `0x02D1` to the owner and `0x02AF` to everyone else (`net::pet::pet_level_up_local` /
+    /// `_remote`). The returned replies are the owner's; the map's is published from here.
+    fn pet_level_up_replies(&self, chr: &net::opcode::Character, from: u8, to: u8) -> Vec<Reply> {
+        crate::server::log(&format!("   pet: character {}'s pet levelled {from} -> {to}; the LevelUp effect goes out", chr.id));
+        if self.config.broadcast_pets {
+            self.bus().publish(
+                self.subscriber,
+                chr.map_id,
+                Reply {
+                    opcode: net::stats::USER_EFFECT_REMOTE,
+                    body: net::pet::pet_level_up_remote(chr.id),
+                    what: format!("UserEffectRemote: {}'s pet level {from} -> {to} - effect 9 (pet), subtype 0 (LevelUp)", chr.name),
+                },
+                None,
+            );
+        }
+        vec![Reply {
+            opcode: net::stats::USER_EFFECT_LOCAL,
+            body: net::pet::pet_level_up_local(),
+            what: format!("UserEffectLocal: your pet's level {from} -> {to} - effect 9 (pet), subtype 0 (Effect/PetEff.img/Basic/LevelUp)"),
+        }]
     }
 
     /// **Every five minutes a summoned pet loses one fullness; at zero it goes home.** The owner,
