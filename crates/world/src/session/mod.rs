@@ -848,6 +848,12 @@ impl Session {
             net::pet::CLIENT_PET_MOVE => {
                 return self.on_pet_move(body.get(2..).unwrap_or(&[]))
             }
+            // **The pet reached a drop.** The same handler as the player's request: it finds
+            // the drop by the pet offset (byte 17) and takes it with the pet's leave type.
+            // Seven of these went unanswered on 2026-09-15 - "Husky does not loot".
+            net::pet::CLIENT_PET_PICK_UP => {
+                return self.on_pick_up(net::pet::CLIENT_PET_PICK_UP, body.get(2..).unwrap_or(&[]))
+            }
             op if net::combat::is_attack_opcode(op) => {
                 return self.on_attack(op, body.get(2..).unwrap_or(&[]))
             }
@@ -1348,6 +1354,10 @@ impl Session {
             },
             Err(e) => format!("character {character_id} could not be checked: {e}"),
         };
+        // The pet that was out at the last log-out is out again. Here, after the claim has
+        // settled and before the login SetField is built, so that record's Cash item already
+        // says `active = 1` and the first field entry re-summons it. session/pet.rs.
+        self.restore_active_pet();
         format!("{attested_note} || {outcome}")
     }
 

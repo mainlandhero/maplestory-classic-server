@@ -140,10 +140,17 @@ impl Session {
         match req.item_id {
             AP_RESET_SCROLL => self.use_reset_scroll(opcode, req.item_id, req.slot, true),
             SP_RESET_SCROLL => self.use_reset_scroll(opcode, req.item_id, req.slot, false),
+            // **The pet items ride this opcode too**, with the pet's serial after the ten
+            // bytes (`net::cashitem::UseCashItem::pet_serial`). The owner, 2026-09-15: the four
+            // skill items and the Name Tag all came through here and were kept as "not a
+            // reset scroll". session/pet.rs.
+            id if net::bag::pet_skill_bit_for_item(id).is_some() => self.use_pet_skill_item(opcode, &req),
+            net::bag::PET_NAME_TAG => self.use_pet_name_tag(opcode, &req),
             other => {
                 crate::server::log(&format!(
-                    "   reset scroll: {other} arrived on 0x0116, which this server only knows \
-                     for the two reset scrolls. Unlock only, and the item is KEPT."
+                    "   reset scroll: {other} arrived on 0x0116, which this server knows for the \
+                     two reset scrolls, the four pet skill items and the Pet Name Tag. Unlock \
+                     only, and the item is KEPT."
                 ));
                 unlock()
             }
@@ -479,7 +486,7 @@ impl Session {
     }
 
     /// The same, naming the opcode whose latch the unlock clears - `0x0114` or `0x0116`.
-    fn cash_item_notice_for(&mut self, opcode: u16, line: String) -> Vec<Reply> {
+    pub(super) fn cash_item_notice_for(&mut self, opcode: u16, line: String) -> Vec<Reply> {
         let mut out = crate::mesodrop::unlock_unhandled_latching_request(opcode);
         out.push(Reply {
             opcode: net::notice::CHAT_NOTICE,

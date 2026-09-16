@@ -33,17 +33,33 @@
 //! * A chat line that is one of the pet's own command words makes the pet act and speak -
 //!   [`Session::pet_command_replies`], reading `crate::petcommands`.
 //!
+//! # Built 2026-09-15, after the two-client run
+//!
+//! * The pet's own loot request `0x0205` reaches `on_pick_up` (it was UNKNOWN; "Husky does not
+//!   loot").
+//! * The four skill items and the Pet Name Tag, which ride `0x0116` with the pet's serial -
+//!   [`Session::use_pet_skill_item`], [`Session::use_pet_name_tag`]; the state lives in
+//!   `store::pets` and rides back in the pet's Cash item (`petSkill` mask, name).
+//! * A hat in the pet-equip slot is re-announced to the map ([`Session::republish_pet_look`]).
+//! * The pet that was out at log-out is out at the next login ([`Session::restore_active_pet`]).
+//!
 //! # Not built, and said so
 //!
-//! Feeding, naming, dyeing, closeness and levelling, and the Cash Shop pet-skill items that
-//! would set the item body's `petSkill` mask (`net::bag::PET_SKILLS_LEARNED_AT_START`). A pet
-//! is level 1 for as long as closeness does not exist, and that is what picks the command band.
+//! Feeding, dyeing, closeness and levelling. A pet is level 1 for as long as closeness does
+//! not exist, and that is what picks the command band. And **Show Pet Info** in Character
+//! Info is greyed for the owner - the gate is a local pointer in `FUN_1414be310`
+//! (`research/msexe-userinfo-pet.c`, `local_40`) whose source this pass did not find.
 
 use super::*;
 
 /// The level every pet is at, because this server keeps no closeness yet. It selects which
 /// band of an `interact` command answers. See `Session::pet_command_replies`.
 const PET_LEVEL: u32 = 1;
+
+/// The worn slot a pet's equip goes to, as the Deco tab numbers it: the Blue Top Hat went
+/// `Deco slot 1 -> -114` (`world-ch0.log` 2026-09-15 02:59:25, `0x0107`), i.e. cash worn slot
+/// 114 = body slot 14 plus the cash base. One pet, one slot. **[L]**
+pub(super) const PET_EQUIP_WORN_SLOT: u8 = 114;
 
 /// The pet this session has out, if any.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,9 +87,7 @@ impl Session {
         if self.active_pet.is_none() {
             return Vec::new();
         }
-        // Owner-local by default: broadcasting a pet MOVE to the map is what crashed a second
-        // client on 2026-09-15 - the remote pet has no visual to apply the move to.
-        // `Config::broadcast_pets`.
+        // `Config::broadcast_pets` is on by default; off is the owner-local fallback.
         if !self.config.broadcast_pets {
             return Vec::new();
         }
@@ -119,9 +133,8 @@ impl Session {
                 r.text
             ),
         };
-        // The owner always gets its own pet's answer (the return below); other players get it
-        // only when pets are broadcast, which is off by default - a pet action drives the same
-        // remote-pet object the move does, so it rides the same crash. `Config::broadcast_pets`.
+        // The owner always gets its own pet's answer (the return below); the map gets it too
+        // unless pets are owner-local. `Config::broadcast_pets`.
         if self.config.broadcast_pets {
             self.bus().publish(self.subscriber, chr.map_id, reply.clone(), None);
         }
@@ -172,6 +185,8 @@ impl Session {
                 self.bus().publish(self.subscriber, chr.map_id, gone.clone(), None);
             }
             self.bus().set_companions(self.subscriber, Vec::new());
+            // Put away in the store too, or the next login would summon it again.
+            let _ = self.store.set_pet_active(chr.id, active.item_id, false);
             out.push(gone);
             out.push(self.pet_item_refresh(&chr, active.slot, active.item_id, false));
             if active.slot == req.slot {
@@ -189,16 +204,16 @@ impl Session {
                 pet.name, pet.item_id, chr.name, pet.x, pet.y, pet.foothold, req.slot
             ),
         };
-        // Owner-local by default. When pets are broadcast, the summon goes to the map and the
-        // pet travels with the owner to whoever arrives after; when they are not - the default
-        // since the 2026-09-15 crash - neither happens, so no other client is ever handed a
-        // remote pet that would crash on its first move. `Config::broadcast_pets`.
+        // The summon goes to the map and the pet travels with the owner to whoever arrives
+        // after; with pets owner-local (`Config::broadcast_pets` off) neither happens.
         if self.config.broadcast_pets {
             self.bus().publish(self.subscriber, chr.map_id, up.clone(), None);
             self.bus().set_companions(self.subscriber, vec![up.clone()]);
         }
         out.push(up);
         self.active_pet = Some(ActivePet { slot: req.slot, item_id: item.item_id });
+        // Remembered across a re-login: `restore_active_pet` reads this at the next claim.
+        let _ = self.store.set_pet_active(chr.id, item.item_id, true);
         out.push(self.pet_item_refresh(&chr, req.slot, item.item_id, true));
         out.push(unlock);
         out
@@ -208,8 +223,7 @@ impl Session {
     /// The summoned pet's `0x0277`, so a player arriving on the map after the summon gets
     /// the pet right behind the owner's spawn; nothing when no pet is out.
     pub(super) fn pet_companions(&self, chr: &net::opcode::Character) -> Vec<Reply> {
-        // Off by default: an arriving player must not be handed a pet either, since it would
-        // crash on the owner's first step. `Config::broadcast_pets`, and the 2026-09-15 crash.
+        // Owner-local pets travel with nobody. `Config::broadcast_pets`.
         if !self.config.broadcast_pets {
             return Vec::new();
         }
@@ -249,15 +263,241 @@ impl Session {
         self.active_pet.is_some_and(|p| p.item_id == item_id)
     }
 
-    /// The pet as `0x0277` describes it: the item's name, the pairing serial, and the spot
-    /// under the character. With no position reported yet it stands at the origin, which the
-    /// client's own physics then drops onto whatever is below.
+    /// What the store knows about one of this character's pets: its name, its learned skills
+    /// and whether it was out. Defaults when it has never been touched. `store::pets`.
+    pub(super) fn pet_state(&self, character_id: u32, item_id: u32) -> store::PetState {
+        self.store.pet_state(character_id, item_id).unwrap_or(store::PetState {
+            name: None,
+            skills: net::bag::PET_SKILLS_LEARNED_AT_START,
+            active: false,
+        })
+    }
+
+    /// The name the pet goes by: the player's, from a Pet Name Tag, or the item's own.
+    pub(super) fn pet_name(&self, character_id: u32, item_id: u32) -> String {
+        self.pet_state(character_id, item_id)
+            .name
+            .unwrap_or_else(|| self.config.item_names.get(&item_id).cloned().unwrap_or_default())
+    }
+
+    /// **A pet that was out when the player left is out again when they come back.** The owner,
+    /// 2026-09-15: *"pets that were previously summoned by user should keep their state."*
+    ///
+    /// Called once, at claim time, before the login `SetField` is built - so the Cash item in
+    /// that record already carries `active = 1`, the owner's first field entry re-sends the
+    /// `0x0277` (`pet_entry_replies`), and everyone already there is handed it as a companion
+    /// (`pet_companions`). Nothing is sent from here; this only sets the session's word.
+    ///
+    /// A stored pet whose item is no longer in the Cash tab is put away in the store rather
+    /// than summoned from nowhere.
+    pub(super) fn restore_active_pet(&mut self) {
+        let Some(character_id) = self.claimed.as_ref().map(|c| c.character_id) else { return };
+        let Ok(Some(item_id)) = self.store.active_pet(character_id) else { return };
+        let slot = self
+            .store
+            .bag_items(character_id, store::InventoryType::Cash)
+            .ok()
+            .into_iter()
+            .flatten()
+            .find(|r| r.item.item_id == item_id)
+            .map(|r| r.slot);
+        match slot {
+            Some(slot) => {
+                self.active_pet = Some(ActivePet { slot, item_id });
+                crate::server::log(&format!(
+                    "   pet: character {character_id} had pet {item_id} (Cash slot {slot}) out when they \
+                     last left; it comes back out on this login"
+                ));
+            }
+            None => {
+                let _ = self.store.set_pet_active(character_id, item_id, false);
+                crate::server::log(&format!(
+                    "   pet: character {character_id}'s stored active pet {item_id} is no longer in the \
+                     Cash tab; put away in the store rather than summoned from nowhere"
+                ));
+            }
+        }
+    }
+
+    /// The pet an item is meant for, as `(Cash slot, item id)`: the one the request's serial
+    /// names (`net::pet::pet_serial` - the item id is its low half, the character its high),
+    /// or the pet that is out when no serial came. `None` when it is not in the Cash tab.
+    fn pet_named_by(&self, chr: &net::opcode::Character, serial: Option<u64>) -> Option<(u16, u32)> {
+        let item_id = match serial {
+            Some(sn) if (sn >> 32) as u32 == chr.id => (sn & 0xFFFF_FFFF) as u32,
+            Some(_) => return None,
+            None => self.active_pet?.item_id,
+        };
+        self.store
+            .bag_items(chr.id, store::InventoryType::Cash)
+            .ok()
+            .into_iter()
+            .flatten()
+            .find(|r| r.item.item_id == item_id && net::inventory::is_pet(item_id))
+            .map(|r| (r.slot, item_id))
+    }
+
+    /// **A pet skill item** - Auto HP, Auto MP, Auto Move, Expanded Auto Move - used on a pet.
+    /// The owner, 2026-09-15: *"the owner just tried to add the Auto HP, Auto MP and Auto Move skill onto
+    /// Husky, it doesn't work."* They arrived on `0x0116` with the pet's serial and were answered
+    /// as "not a reset scroll" - unlock only, item kept (`world-ch0.log` 02:56:50..57).
+    ///
+    /// The skill is a bit in the pet ITEM's `petSkill` mask (`net::bag::pet_item_with_state`),
+    /// so learning is: OR the bit into the store, use the skill item up, and re-send the pet's
+    /// Cash item with the new mask. **[I]**: whether the client's auto-HP/auto-loot logic reads
+    /// the refreshed item live or only at `CPet::Init` is unmeasured, so when the pet is out it
+    /// is put away and summoned again for the owner in the same reply - one summon animation,
+    /// and a pet that has certainly re-read its item. The plan step names the falsifier.
+    pub(super) fn use_pet_skill_item(&mut self, opcode: u16, req: &net::cashitem::UseCashItem) -> Vec<Reply> {
+        let unlock = || crate::mesodrop::unlock_unhandled_latching_request(opcode);
+        let Some(chr) = self.claimed_character() else { return unlock() };
+        let Some(bit) = net::bag::pet_skill_bit_for_item(req.item_id) else { return unlock() };
+        let Some((pet_slot, pet_item)) = self.pet_named_by(&chr, req.pet_serial) else {
+            crate::server::log(&format!(
+                "   pet skill: character {} used {} for a pet this server cannot find (serial {:?}); kept",
+                chr.id, req.item_id, req.pet_serial
+            ));
+            return self.cash_item_notice_for(opcode, "That skill needs a pet to learn it. Nothing was used up.".to_string());
+        };
+        let skills = match self.store.learn_pet_skill(chr.id, pet_item, bit) {
+            Ok(m) => m,
+            Err(e) => {
+                crate::server::log(&format!("   pet skill: storing the skill failed: {e}; the item is kept"));
+                return unlock();
+            }
+        };
+        let _ = self.store.remove_item(chr.id, store::InventoryType::Cash, req.slot, Some(1));
+        crate::server::log(&format!(
+            "   pet skill: character {} taught pet {pet_item} skill bit {bit:#06x} with item {} - mask now {skills:#06x}; the item is used up",
+            chr.id, req.item_id
+        ));
+        let mut out = unlock();
+        out.extend(self.stack_change_replies(store::InventoryType::Cash, req.slot, 0));
+        let out_now = self.pet_is_active(pet_item);
+        out.push(self.pet_item_refresh(&chr, pet_slot, pet_item, out_now));
+        if out_now {
+            out.extend(self.resummon_for_owner(&chr, pet_item));
+        }
+        out
+    }
+
+    /// **A Pet Name Tag.** The owner, 2026-09-15: *"I also tried to rename Husky into Dummy using
+    /// the Pet Name Tag."* `0x0116` with the pet's serial and the name; answered as a reset
+    /// scroll, so nothing happened. The name is stored per pet (`store::pets`), the pet's Cash
+    /// item is re-sent carrying it, the tag is used up, and `0x027B` renames the pet on every
+    /// screen it is on - the owner's and the map's (`net::pet::PET_NAME_CHANGED`).
+    ///
+    /// The wire field is 13 bytes with a terminator, so the name is cut to 12 bytes on a
+    /// character boundary rather than refused - a long name losing its tail is what the
+    /// client's own field would do.
+    pub(super) fn use_pet_name_tag(&mut self, opcode: u16, req: &net::cashitem::UseCashItem) -> Vec<Reply> {
+        let unlock = || crate::mesodrop::unlock_unhandled_latching_request(opcode);
+        let Some(chr) = self.claimed_character() else { return unlock() };
+        let mut name = req.text.as_deref().map(str::trim).unwrap_or_default().to_string();
+        if name.is_empty() {
+            return self.cash_item_notice_for(opcode, "Type a name for the pet first. Nothing was used up.".to_string());
+        }
+        while name.len() > net::bag::PET_NAME_LEN - 1 {
+            name.pop();
+        }
+        let Some((pet_slot, pet_item)) = self.pet_named_by(&chr, req.pet_serial) else {
+            return self.cash_item_notice_for(opcode, "That tag needs a pet to name. Nothing was used up.".to_string());
+        };
+        if let Err(e) = self.store.set_pet_name(chr.id, pet_item, &name) {
+            crate::server::log(&format!("   pet name: storing {name:?} failed: {e}; the tag is kept"));
+            return unlock();
+        }
+        let _ = self.store.remove_item(chr.id, store::InventoryType::Cash, req.slot, Some(1));
+        crate::server::log(&format!("   pet name: character {} named pet {pet_item} {name:?}; the tag is used up", chr.id));
+        let mut out = unlock();
+        out.extend(self.stack_change_replies(store::InventoryType::Cash, req.slot, 0));
+        let out_now = self.pet_is_active(pet_item);
+        out.push(self.pet_item_refresh(&chr, pet_slot, pet_item, out_now));
+        if out_now {
+            let renamed = Reply {
+                opcode: net::pet::PET_NAME_CHANGED,
+                body: net::pet::pet_name_changed(chr.id, &name),
+                what: format!("PetNameChanged: {}'s pet is now called {name:?}", chr.name),
+            };
+            if self.config.broadcast_pets {
+                self.bus().publish(self.subscriber, chr.map_id, renamed.clone(), None);
+                // Whoever arrives next is handed the pet under its new name.
+                let pet = self.field_pet(&chr, pet_item);
+                self.bus().set_companions(
+                    self.subscriber,
+                    vec![Reply {
+                        opcode: net::pet::PET_ACTIVATED,
+                        body: net::pet::pet_activated(chr.id, &pet),
+                        what: format!("PetActivated: {} beside {} - for a later arrival", pet.name, chr.name),
+                    }],
+                );
+            }
+            out.push(renamed);
+        }
+        out
+    }
+
+    /// Put the owner's pet away and summon it again **on the owner's screen only** - a fresh
+    /// `CPet::Init` that has read the pet's Cash item as it is now. The map is not told: the
+    /// remote pet has no item to re-read.
+    fn resummon_for_owner(&self, chr: &net::opcode::Character, item_id: u32) -> Vec<Reply> {
+        let pet = self.field_pet(chr, item_id);
+        vec![
+            Reply {
+                opcode: net::pet::PET_ACTIVATED,
+                body: net::pet::pet_deactivated(chr.id),
+                what: format!("PetActivated: {} put away for a moment so it re-reads its item", pet.name),
+            },
+            Reply {
+                opcode: net::pet::PET_ACTIVATED,
+                body: net::pet::pet_activated(chr.id, &pet),
+                what: format!("PetActivated: {} back beside {} with its item as it is now", pet.name, chr.name),
+            },
+        ]
+    }
+
+    /// **The character's look changed in a way the PET wears** - a hat into the pet-equip slot.
+    /// The owner, 2026-09-15: *"Wearing the Blue Top Hat on the pet does not show for different
+    /// clients when first worn (upon loading into Cash Shop and then return it does show)."*
+    ///
+    /// The hat travels in the character's own look, not the pet's packet: the Deco move put
+    /// it at worn slot `-114`, `look_layout` pairs cash slot 114 with body slot 14, and the
+    /// remote client dresses the pet from that entry - which is why a fresh `0x0224` on
+    /// re-entry showed it. So: re-announce the look (`broadcast_look_change`, a second
+    /// `0x0224`; **[I]** on whether the remote redraws in place), and re-summon the pet on the
+    /// map so its `CPet::Init` runs against the new look. The owner's own screen already has
+    /// both. `PET_EQUIP_WORN_SLOT`.
+    pub(super) fn republish_pet_look(&mut self, chr: &net::opcode::Character) {
+        self.broadcast_look_change(chr);
+        let Some(active) = self.active_pet else { return };
+        if !self.config.broadcast_pets {
+            return;
+        }
+        let pet = self.field_pet(chr, active.item_id);
+        let gone = Reply {
+            opcode: net::pet::PET_ACTIVATED,
+            body: net::pet::pet_deactivated(chr.id),
+            what: format!("PetActivated: {} put away on the map so it can be redrawn with the new look", pet.name),
+        };
+        let up = Reply {
+            opcode: net::pet::PET_ACTIVATED,
+            body: net::pet::pet_activated(chr.id, &pet),
+            what: format!("PetActivated: {} back beside {} on the map, dressed from the re-announced look", pet.name, chr.name),
+        };
+        self.bus().publish(self.subscriber, chr.map_id, gone, None);
+        self.bus().publish(self.subscriber, chr.map_id, up.clone(), None);
+        self.bus().set_companions(self.subscriber, vec![up]);
+    }
+
+    /// The pet as `0x0277` describes it: its name, the pairing serial, and the spot under the
+    /// character. With no position reported yet it stands at the origin, which the client's
+    /// own physics then drops onto whatever is below.
     fn field_pet(&self, chr: &net::opcode::Character, item_id: u32) -> net::pet::FieldPet {
         let (x, y) = self.last_position.unwrap_or((0, 0));
         let landing = self.config.footholds.landing(chr.map_id, x, y);
         net::pet::FieldPet {
             item_id,
-            name: self.config.item_names.get(&item_id).cloned().unwrap_or_default(),
+            name: self.pet_name(chr.id, item_id),
             serial: net::pet::pet_serial(chr.id, item_id).get(),
             x,
             y: landing.as_ref().map_or(y, |l| l.y),
@@ -269,12 +509,14 @@ impl Session {
     /// The Cash-tab item re-sent at its slot with its `active` byte as `active` says and the
     /// pairing serial set. An Add at an occupied slot replaces what the client holds there.
     fn pet_item_refresh(&self, chr: &net::opcode::Character, slot: u16, item_id: u32, active: bool) -> Reply {
-        let name = self.config.item_names.get(&item_id).cloned().unwrap_or_default();
+        let state = self.pet_state(chr.id, item_id);
+        let name = self.pet_name(chr.id, item_id);
         let blob = net::bag::pet_item_with_state(
             item_id,
             &name,
             Some(net::pet::pet_serial(chr.id, item_id)),
             u8::from(active),
+            state.skills,
         );
         Reply {
             opcode: net::inventory::INVENTORY_OPERATION,

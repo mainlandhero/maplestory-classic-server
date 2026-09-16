@@ -371,6 +371,29 @@ pub const PET_SKILL_AUTO_MP: u16 = 1 << 4;
 /// **not built**, and when it is, this constant becomes the starting value of a per-pet column.
 pub const PET_SKILLS_LEARNED_AT_START: u16 = PET_SKILL_ITEM_POUCH;
 
+/// The Pet Name Tag, `Item/Cash/0517.img`. Arrives on `0x0116` with the pet's serial and the
+/// new name - `crate::cashitem::UseCashItem::text`.
+pub const PET_NAME_TAG: u32 = 5_170_000;
+
+/// **Which skill a Cash-shop skill item teaches**, or `None` for anything else. The four the
+/// shop sells (`research/pet-skills-2026-09-13.md` §2), each `add 1` of one key:
+///
+/// ```text
+/// 5190000  Auto HP Potion Skill      consumeHP     -> PET_SKILL_AUTO_HP
+/// 5190001  Auto MP Potion Skill      consumeMP     -> PET_SKILL_AUTO_MP
+/// 5190002  Auto Move Skill           dropSweep     -> PET_SKILL_AUTO_MOVE
+/// 5190003  Expanded Auto Move Skill  longRange     -> PET_SKILL_EXPANDED_AUTO_MOVE
+/// ```
+pub fn pet_skill_bit_for_item(item_id: u32) -> Option<u16> {
+    match item_id {
+        5_190_000 => Some(PET_SKILL_AUTO_HP),
+        5_190_001 => Some(PET_SKILL_AUTO_MP),
+        5_190_002 => Some(PET_SKILL_AUTO_MOVE),
+        5_190_003 => Some(PET_SKILL_EXPANDED_AUTO_MOVE),
+        _ => None,
+    }
+}
+
 /// A pet (item type 3) - what `FUN_140304550` reads after the shared base. The owner,
 /// 2026-09-13: *"They should also be permanent duration. They should never need to be
 /// revived."*
@@ -402,13 +425,20 @@ pub const PET_SKILLS_LEARNED_AT_START: u16 = PET_SKILL_ITEM_POUCH;
 /// the client on 2026-08-26, which is the whole reason the type byte and the tail are read
 /// off the client rather than assumed.
 pub fn pet_item_with_cash_sn(item_id: u32, name: &str, cash_sn: Option<std::num::NonZeroU64>) -> Vec<u8> {
-    pet_item_with_state(item_id, name, cash_sn, 0)
+    pet_item_with_state(item_id, name, cash_sn, 0, PET_SKILLS_LEARNED_AT_START)
 }
 
-/// [`pet_item_with_cash_sn`] with the `active` byte set: `0` in the bag, `1` while the pet is
-/// summoned (`crate::pet`). The reference's `PetItem.activeState` is `petIdx + 1`, and this
-/// client accepts one pet, so the only live value is `1`.
-pub fn pet_item_with_state(item_id: u32, name: &str, cash_sn: Option<std::num::NonZeroU64>, active: u8) -> Vec<u8> {
+/// [`pet_item_with_cash_sn`] with the `active` byte set - `0` in the bag, `1` while the pet is
+/// summoned (`crate::pet`); the reference's `PetItem.activeState` is `petIdx + 1`, and this
+/// client accepts one pet, so the only live value is `1` - and the learned-skill mask, which
+/// is [`PET_SKILLS_LEARNED_AT_START`] until a skill item adds a bit (`store::pets`).
+pub fn pet_item_with_state(
+    item_id: u32,
+    name: &str,
+    cash_sn: Option<std::num::NonZeroU64>,
+    active: u8,
+    skills: u16,
+) -> Vec<u8> {
     let mut b = Vec::with_capacity(PET_ITEM_LEN + 8);
     b.push(PET_ITEM_TYPE); //                                   1403095fb  u8   item type
     b.extend_from_slice(&item_id.to_le_bytes()); //             1403035c5  u32  itemId
@@ -433,7 +463,7 @@ pub fn pet_item_with_state(item_id: u32, name: &str, cash_sn: Option<std::num::N
     b.push(100); //                                             1403045cc  u8   fullness
     b.extend_from_slice(&PET_DATE_DEAD.to_le_bytes()); //       14030460f  raw[8] dateDead
     b.extend_from_slice(&0u16.to_le_bytes()); //                140304617  u16  petAttribute
-    b.extend_from_slice(&PET_SKILLS_LEARNED_AT_START.to_le_bytes()); // 14030462e u16 petSkill
+    b.extend_from_slice(&skills.to_le_bytes()); //                14030462e  u16  petSkill
     b.extend_from_slice(&PET_REMAIN_LIFE.to_le_bytes()); //     140304645  u32  remainLife
     b.extend_from_slice(&0u16.to_le_bytes()); //                14030467e  u16  attribute
     b.push(active); //                                          14030469b  u8   active

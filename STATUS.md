@@ -224,6 +224,23 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-15, later: the pet walks on both screens (confirmed), and six more pet reports in one
+message.** The owner: *"Tester2 now sees the pet, no crash"* - then Auto HP/MP/Move do nothing, no
+looting, the Name Tag does nothing, Show Pet Info greyed, the pet's hat invisible to others until a
+map change, and the pet gone on re-login. Every one left a packet: `0x0205` x7 (the pet's loot
+request, UNKNOWN - byte 17 is the drop id, confirming `PET_PICK_UP_OBJECT_ID_AT`; now routed to
+`on_pick_up`), `0x0116` x4 with **the pet's serial after the ten reset-scroll bytes** and, for the
+tag, a string ("Dummy") - the skill items OR a bit into the pet item's `petSkill` mask and the
+tag stores a name, both in the new `store::pets`, re-sent in the Cash item; `0x027B`
+(`FUN_141ec4660`, one `str`) renames on screen; `0x0107` Deco 1 -> -114 put the hat at look slot 14,
+which only a fresh `0x0224` carried, so the pet-equip slot now re-announces the look and re-summons
+the pet on the map (**[I]** on the in-place redraw - the plan names the falsifier); the active pet
+is persisted and `restore_active_pet` re-summons at claim time. `0x0204` is the pet-action report.
+**Show Pet Info is NOT fixed** - the gate is a local in `FUN_1414be310` this pass did not source.
+`research/pets-loot-skills-name-relogin-2026-09-15.md`, fixture
+`research/fixtures/pet-loot-0205-skills-nametag-0116-hat-0107-unhandled-2026-09-15-world-ch0.log`.
+Plan step 8. Nothing of it on a screen yet.
+
 **2026-09-15: summoning a pet crashes a second client in the same map - it is the pet MOVE.**
 The owner: *"Summoning the pet on character the owner crashed another client Tester2 present in the same
 map."* Measured from the crash run (`previous-runs/maplecw-hook-20260915-220508.log`,

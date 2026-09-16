@@ -57,7 +57,7 @@ pub const CLIENT_USE_STAT_RESET_ITEM: u16 = 0x0116;
 pub const USE_CASH_ITEM_BODY_LEN: usize = 10;
 
 /// A decoded [`CLIENT_USE_CASH_ITEM`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UseCashItem {
     /// `FUN_1429e3ef0()`. Nothing reads it.
     pub tick: u32,
@@ -66,23 +66,74 @@ pub struct UseCashItem {
     /// The item id the client believes is in that slot. Checked against the slot rather than
     /// trusted, for the same reason the sack's is.
     pub item_id: u32,
+    /// **The pet the item is for**, as its `petLockerSN` - present on the pet-targeted items.
+    ///
+    /// The owner's run of 2026-09-15, `world-ch0.log` 02:56:50..02:57:46: the four pet skill items
+    /// (`5190000..3`) and the Pet Name Tag (`5170000`) all arrive on `0x0116` with **eight more
+    /// bytes** after the ten - `46 4b 4c 00 d7 00 00 00` = `pet_serial(215, 5000006)` byte for
+    /// byte, the serial this server put in the pet's Cash item and in its `0x0277`. **[L]**
+    /// `None` on the ten-byte form the reset scrolls send.
+    pub pet_serial: Option<u64>,
+    /// **The new name**, on the Pet Name Tag only: a `u16`-prefixed string after the serial -
+    /// `05 00 44 75 6d 6d 79` = "Dummy" in the same capture. **[L]** `None` otherwise.
+    pub text: Option<String>,
 }
 
 /// Decode a [`CLIENT_USE_CASH_ITEM`] body. `None` when it is shorter than the client sends.
+/// The optional tail (a pet serial, then a string) is read when the bytes are there and
+/// ignored when they are not - a truncated string is `None`, not a refusal of the whole item.
 pub fn parse_use_cash_item(body: &[u8]) -> Option<UseCashItem> {
     if body.len() < USE_CASH_ITEM_BODY_LEN {
         return None;
     }
+    let pet_serial = body
+        .get(10..18)
+        .map(|b| u64::from_le_bytes(b.try_into().expect("eight bytes")));
+    let text = body.get(18..20).and_then(|l| {
+        let n = usize::from(u16::from_le_bytes([l[0], l[1]]));
+        body.get(20..20 + n).map(|t| String::from_utf8_lossy(t).into_owned())
+    });
     Some(UseCashItem {
         tick: u32::from_le_bytes([body[0], body[1], body[2], body[3]]),
         slot: u16::from_le_bytes([body[4], body[5]]),
         item_id: u32::from_le_bytes([body[6], body[7], body[8], body[9]]),
+        pet_serial,
+        text,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The two pet-targeted shapes of `0x0116`, byte for byte from `world-ch0.log`
+    /// 2026-09-15: an Auto HP Potion Skill (`5190000`) from Cash slot 2, and a Pet Name Tag
+    /// (`5170000`) from slot 6 renaming the pet "Dummy". Both carry the pet's serial,
+    /// `(215 << 32) | 5000006`, after the ten bytes the reset scrolls stop at.
+    #[test]
+    fn the_pet_skill_item_and_the_name_tag_carry_the_pets_serial_and_the_tag_a_name() {
+        let skill = hex("f98e4e20020070314f00464b4c00d7000000");
+        let r = parse_use_cash_item(&skill).unwrap();
+        assert_eq!((r.slot, r.item_id), (2, 5_190_000));
+        assert_eq!(r.pet_serial, Some((215u64 << 32) | 5_000_006), "the Husky's serial, as the server minted it");
+        assert_eq!(r.text, None);
+
+        let tag = hex("393f4f20060050e34e00464b4c00d7000000050044756d6d79");
+        let r = parse_use_cash_item(&tag).unwrap();
+        assert_eq!((r.slot, r.item_id), (6, 5_170_000));
+        assert_eq!(r.pet_serial, Some((215u64 << 32) | 5_000_006));
+        assert_eq!(r.text.as_deref(), Some("Dummy"));
+
+        // A ten-byte reset-scroll body has neither, and a string cut short is None.
+        let r = parse_use_cash_item(&skill[..10]).unwrap();
+        assert_eq!((r.pet_serial, r.text), (None, None));
+        let r = parse_use_cash_item(&tag[..23]).unwrap();
+        assert_eq!(r.text, None);
+    }
+
+    fn hex(s: &str) -> Vec<u8> {
+        (0..s.len() / 2).map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).unwrap()).collect()
+    }
 
     /// **The owner's own packet**, byte for byte out of `world.log`, decoded to what they did: an
     /// Equip Tab 5-slot Coupon out of Cash slot 3.

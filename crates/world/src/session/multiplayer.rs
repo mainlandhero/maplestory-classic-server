@@ -1571,6 +1571,59 @@ mod tests {
         );
     }
 
+    /// **A hat put on the pet reaches the other player without a map change.** The owner,
+    /// 2026-09-15: *"Wearing the Blue Top Hat on the pet does not show for different clients
+    /// when first worn (upon loading into Cash Shop and then return it does show)."* The hat is
+    /// in the character's look (cash slot 114 = body slot 14), so the observer gets the look
+    /// again (`0x0224`) and the pet put away and back so its init runs against it. **[I]** on
+    /// the remote redraw; the wire is what this pins.
+    #[test]
+    fn a_hat_put_on_the_pet_is_re_announced_to_the_map() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut ids = Vec::new();
+        for name in ["Owner", "Watcher"] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: 104_040_000, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.create_migration(account, id, 0, 0).unwrap();
+            ids.push(id);
+        }
+        store.add_item(ids[0], store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+        store.add_item(ids[0], store::InventoryType::Deco, &store::Item::equip(1_802_006), 1).unwrap();
+        let mut item_names = std::collections::HashMap::new();
+        item_names.insert(5_000_006u32, "Husky".to_string());
+        let config = Arc::new(Config { item_names, ..(*config).clone() });
+
+        let mut owner = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut watcher = Session::joining(store.clone(), config, fields.clone());
+        owner.claim_for_character(ids[0]);
+        watcher.claim_for_character(ids[1]);
+        watcher.on_field_entered();
+        owner.on_field_entered();
+        owner.last_position = Some((300, -50));
+        owner.on_pet_activate(&super::tests::hex("509a18140100"));
+        let _ = watcher.tick(1_000); // the spawn and the summon, already covered elsewhere
+
+        // Deco slot 1 -> worn -114: world-ch0.log 02:59:25, byte for byte.
+        let out = owner.on_inventory_move(&super::tests::hex("4feb50200601008effffff"));
+        assert!(out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "the owner's own move reply");
+        let worn = store.equipped_items(ids[0]).unwrap();
+        assert!(worn.iter().any(|e| e.slot == crate::session::pet::PET_EQUIP_WORN_SLOT && e.item_id == 1_802_006), "{worn:?}");
+
+        let heard: Vec<u16> = watcher.tick(2_000).into_iter().map(|r| r.opcode).collect();
+        let look = heard.iter().filter(|&&o| o == net::userpool::USER_ENTER_FIELD).count();
+        let pets = heard.iter().filter(|&&o| o == net::pet::PET_ACTIVATED).count();
+        assert_eq!((look, pets), (1, 2), "the look again, then the pet away and back: {heard:?}");
+        // And the announced look now carries the hat at body slot 14.
+        let chr = owner.claimed_character().unwrap();
+        let look_bytes = net::opcode::avatar_look(&chr);
+        assert!(look_bytes.windows(5).any(|w| w[0] == 14 && w[1..5] == 1_802_006u32.to_le_bytes()), "slot 14 = the hat");
+
+        // A move that does not touch the pet slot re-announces nothing.
+        let quiet = watcher.tick(3_000);
+        assert!(quiet.iter().all(|r| r.opcode != net::userpool::USER_ENTER_FIELD));
+    }
+
     /// **A kill on one connection pays a character on another.** This is the whole
     /// EXP-share feature end to end, and it is the test that fails if any link is
     /// unhooked: `award_kill_experience`, `Bus::send_to_character`, the mailbox,

@@ -10970,6 +10970,206 @@ fn the_pet_move_action_lever_changes_exactly_one_byte_of_the_summon() {
 /// a pet's request for it is answered with the type-5 leave and the bag write, no chat line. A
 /// player's own ground drop goes out with the byte clear, and a pet's request for it gets the
 /// unlock alone and the drop stays. With no pet out, a pet-shaped body names nothing.
+/// (The test itself is `a_summoned_pet_picks_up_a_mob_drop_but_not_a_players_own_drop`, below
+/// the four 2026-09-15 pet tests and their two helpers.)
+
+/// The Cash slot the store put `item_id` in - `add_item` picks the slot itself (its last
+/// argument is the stack size), so a test reads it back rather than assuming it.
+fn cash_slot_of(store: &Store, id: u32, item_id: u32) -> u16 {
+    store
+        .bag_items(id, store::InventoryType::Cash)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.item.item_id == item_id)
+        .map(|r| r.slot)
+        .unwrap_or_else(|| panic!("item {item_id} is not in the Cash tab"))
+}
+
+/// A `0x0116` for a pet item: tick, the item's slot, the item, the pet's serial, an optional name.
+fn use_pet_item_body(slot: u16, item_id: u32, owner: u32, name: Option<&str>) -> Vec<u8> {
+    let mut body = net::cashitem::CLIENT_USE_STAT_RESET_ITEM.to_le_bytes().to_vec();
+    body.extend_from_slice(&hex("f98e4e20"));
+    body.extend_from_slice(&slot.to_le_bytes());
+    body.extend_from_slice(&item_id.to_le_bytes());
+    body.extend_from_slice(&net::pet::pet_serial(owner, 5_000_006).get().to_le_bytes());
+    if let Some(n) = name {
+        body.extend_from_slice(&(n.len() as u16).to_le_bytes());
+        body.extend_from_slice(n.as_bytes());
+    }
+    body
+}
+
+/// **The pet's own loot request is `0x0205`, and it takes the drop.** The owner, 2026-09-15:
+/// *"Husky also currently does not loot items on the ground."* Seven `0x0205`s in that run,
+/// all logged UNKNOWN. The body is the capture's shape - `u32 petIdx, u8, u32 tick, u32, i16 x,
+/// i16 y, u32 dropId, u32 crc, u32 itemId` - with this test's drop id at byte 17, where the
+/// capture had `0x01312d00` = 20 000 000, this server's first drop id.
+#[test]
+fn the_pets_0x0205_loot_request_takes_a_mob_drop() {
+    let (mut s, store, id) = gm_session();
+    let map = net::opcode::START_MAP_ID;
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+    s.last_position = Some((520, 395));
+    let (mob_drop, _) = s.fields.with_drops(map, |d| {
+        d.drop_from_mob(crate::drops::DropFromMob {
+            from_mob: true,
+            map_id: map,
+            owner_id: id,
+            item: store::Item::bundle(4_000_019, 1),
+            inv_type: store::InventoryType::Etc,
+            meso: 0,
+            x: 540,
+            y: 395,
+            source_x: 540,
+            source_y: 380,
+            now_ms: 1_000,
+            party_id: 0,
+        })
+    });
+    s.on_pet_activate(&hex("509a18140100"));
+    assert!(s.pet_is_active(5_000_006));
+
+    // world-ch0.log 02:56:09.012, with the drop id swapped in at byte 17.
+    let mut body = net::pet::CLIENT_PET_PICK_UP.to_le_bytes().to_vec();
+    body.extend_from_slice(&hex("000000000001f14d200100000069ffd700"));
+    body.extend_from_slice(&mob_drop.to_le_bytes());
+    body.extend_from_slice(&hex("9667e331464b4c00"));
+    assert_eq!(body.len(), 2 + 29, "the captured length");
+    let out = s.handle(&body);
+    let leave = out.iter().find(|r| r.opcode == net::drops::DROP_LEAVE_FIELD).expect("the drop leaves");
+    assert_eq!(leave.body[4], net::drops::leave_type::PET_PICKUP, "type 5 - it flies into the pet");
+    assert_eq!(s.fields.with_drops(map, |d| d.len()), 0, "and it is gone from the floor");
+    assert!(
+        out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION),
+        "and the item reaches the bag: {:?}",
+        out.iter().map(|r| &r.what).collect::<Vec<_>>()
+    );
+}
+
+/// **A skill item teaches the pet and is used up.** The owner, 2026-09-15: Auto HP / MP / Move
+/// "doesn't work" - they arrived on `0x0116` with the pet's serial and were kept as "not a
+/// reset scroll". Now: the bit lands in `store::pets`, the skill item is gone, the pet's Cash
+/// item goes back out carrying the mask, and - the pet being out - it is put away and
+/// re-summoned for the owner so `CPet::Init` re-reads the item.
+#[test]
+fn a_pet_skill_item_sets_the_bit_and_is_used_up() {
+    let (mut s, store, id) = gm_session();
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_190_000, 1), 2).unwrap();
+    s.last_position = Some((300, -50));
+    s.on_pet_activate(&hex("509a18140100"));
+
+    // tick, the skill item's slot, Auto HP Potion Skill, the Husky's serial.
+    let skill_slot = cash_slot_of(&store, id, 5_190_000);
+    let out = s.handle(&use_pet_item_body(skill_slot, 5_190_000, id, None));
+
+    let state = store.pet_state(id, 5_000_006).unwrap();
+    assert_eq!(state.skills, net::bag::PET_SKILL_ITEM_POUCH | net::bag::PET_SKILL_AUTO_HP, "Item Pouch and Auto HP");
+    let cash = store.bag_items(id, store::InventoryType::Cash).unwrap();
+    assert!(cash.iter().all(|r| r.item.item_id != 5_190_000), "the skill item is used up: {cash:?}");
+    assert!(out.iter().any(|r| r.what.contains("re-sent as pet 5000006")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    // The mask is in the item body the client reads: petSkill at 54 when the serial rides.
+    let pet = store::Item::bundle(5_000_006, 1);
+    let blob = s.item_blob_with_cash_sn(&pet, Some(net::pet::pet_serial(id, 5_000_006)));
+    assert_eq!(&blob[54..56], &(net::bag::PET_SKILL_ITEM_POUCH | net::bag::PET_SKILL_AUTO_HP).to_le_bytes());
+    let summons: Vec<u8> = out.iter().filter(|r| r.opcode == net::pet::PET_ACTIVATED).map(|r| r.body[8]).collect();
+    assert_eq!(summons, vec![0, 1], "put away, then back out, for the owner - a fresh CPet::Init");
+    assert!(s.pet_is_active(5_000_006), "and it is still out");
+
+    // A second skill adds to the mask rather than replacing it.
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_190_002, 1), 1).unwrap();
+    let slot = cash_slot_of(&store, id, 5_190_002);
+    s.handle(&use_pet_item_body(slot, 5_190_002, id, None));
+    assert_eq!(
+        store.pet_state(id, 5_000_006).unwrap().skills,
+        net::bag::PET_SKILL_ITEM_POUCH | net::bag::PET_SKILL_AUTO_HP | net::bag::PET_SKILL_AUTO_MOVE
+    );
+}
+
+/// **A Pet Name Tag renames the pet everywhere it is.** The owner, 2026-09-15: *"I also tried to
+/// rename Husky into Dummy using the Pet Name Tag."* The tag's `0x0116` carries the serial and
+/// the name (`world-ch0.log` 02:57:46). Now the name is stored, the tag is used up, the Cash item
+/// goes back out under the new name, `0x027B` renames the pet on screen, and the next `0x0277`
+/// - a field entry, a later arrival - already says "Dummy".
+#[test]
+fn a_pet_name_tag_renames_the_pet_and_the_name_sticks() {
+    let (mut s, store, id) = gm_session();
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_170_000, 1), 1).unwrap();
+    s.last_position = Some((300, -50));
+    s.on_pet_activate(&hex("509a18140100"));
+
+    let tag_slot = cash_slot_of(&store, id, 5_170_000);
+    let out = s.handle(&use_pet_item_body(tag_slot, 5_170_000, id, Some("Dummy")));
+
+    assert_eq!(store.pet_state(id, 5_000_006).unwrap().name.as_deref(), Some("Dummy"));
+    assert!(
+        store.bag_items(id, store::InventoryType::Cash).unwrap().iter().all(|r| r.item.item_id != 5_170_000),
+        "the tag is used up"
+    );
+    let renamed = out.iter().find(|r| r.opcode == net::pet::PET_NAME_CHANGED).expect("0x027B to the owner");
+    assert_eq!(&renamed.body[0..4], &id.to_le_bytes());
+    assert_eq!(&renamed.body[8..], &hex("050044756d6d79"), "u16 length, then Dummy");
+    // The re-sent Cash item and the next summon both carry it.
+    let refreshed = out.iter().find(|r| r.what.contains("re-sent as pet 5000006")).expect("the Cash item again");
+    assert!(refreshed.body.windows(5).any(|w| w == b"Dummy"), "the item body carries the name");
+    let chr = s.claimed_character().unwrap();
+    let again = s.pet_entry_replies(&chr);
+    assert!(again[0].body.windows(5).any(|w| w == b"Dummy"), "the field pet is Dummy now");
+    assert!(!again[0].body.windows(5).any(|w| w == b"Husky"));
+
+    // Too long is cut to the wire's 12 bytes, not refused.
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_170_000, 1), 1).unwrap();
+    let tag_slot = cash_slot_of(&store, id, 5_170_000);
+    s.handle(&use_pet_item_body(tag_slot, 5_170_000, id, Some("ThisNameIsFarTooLong")));
+    assert_eq!(store.pet_state(id, 5_000_006).unwrap().name.as_deref(), Some("ThisNameIsFa"));
+}
+
+/// **A pet that was out at log-out is out at the next login.** The owner, 2026-09-15: *"Pets that
+/// were spawned from before does not survive a re-login, pets that were previously summoned by
+/// user should keep their state."* A second session on the same store claims the same character:
+/// the pet is active before the record is built (its Cash item says so), and the first field
+/// entry re-sends the `0x0277`. Put away, and the next login leaves it in the bag.
+#[test]
+fn a_pet_that_was_out_is_out_again_after_a_relogin() {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Wisp".to_string(), ..Default::default() };
+    let id = store.create_character(account, 0, &chr).unwrap().id;
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+
+    // Session one: summon, then the connection goes away.
+    store.create_migration(account, id, 0, 0).unwrap();
+    let mut first = Session::new(store.clone(), Arc::new(Config::default()));
+    first.claim_for_character(id);
+    first.last_position = Some((300, -50));
+    first.on_pet_activate(&hex("509a18140100"));
+    assert!(first.pet_is_active(5_000_006));
+    assert_eq!(store.active_pet(id).unwrap(), Some(5_000_006), "remembered");
+    drop(first);
+
+    // Session two, same character: out before anything is sent.
+    store.create_migration(account, id, 0, 0).unwrap();
+    let mut second = Session::new(store.clone(), Arc::new(Config::default()));
+    assert!(second.claim_for_character(id).contains("claimed the migration"));
+    assert!(second.pet_is_active(5_000_006), "restored at claim time, before the login SetField");
+    let pet = store::Item::bundle(5_000_006, 1);
+    let blob = second.item_blob_with_cash_sn(&pet, Some(net::pet::pet_serial(id, 5_000_006)));
+    assert_eq!(blob[1 + 4 + 1 + 8 + 8 + 4 + 1 + 13 + 1 + 2 + 1 + 8 + 2 + 2 + 4 + 2], 1, "the Cash item's active byte is 1 in the record");
+    let entered = second.on_field_entered();
+    let summon = entered.iter().find(|r| r.opcode == net::pet::PET_ACTIVATED).expect("the pet is re-summoned on the first field entry");
+    assert_eq!(summon.body[8], 1, "activated");
+
+    // Put away in session two: session three finds it in the bag.
+    second.on_pet_activate(&hex("f29d18140100"));
+    assert_eq!(store.active_pet(id).unwrap(), None);
+    store.create_migration(account, id, 0, 0).unwrap();
+    let mut third = Session::new(store.clone(), Arc::new(Config::default()));
+    third.claim_for_character(id);
+    assert!(!third.pet_is_active(5_000_006));
+    assert!(third.on_field_entered().iter().all(|r| r.opcode != net::pet::PET_ACTIVATED));
+}
+
 #[test]
 fn a_summoned_pet_picks_up_a_mob_drop_but_not_a_players_own_drop() {
     let (mut s, store, id) = gm_session();

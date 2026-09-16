@@ -1980,7 +1980,34 @@
         the pool is entitlement - spent). A beginner (ouggh, id 215) must still show its own
         computed SP and NOT a phantom first-job pool.
 
-     8. THE CRASH - a question, not a test.
+     8. THE PET, SIX THINGS - 2026-09-15, from your two-client run (the walk is CONFIRMED:
+        Tester2 sees the Husky, no crash). Every item below left a packet in world-ch0.log and
+        each is answered now; none has been on a screen. As the owner with the Husky out, Tester2
+        watching:
+          LOOT: kill a snail, let the Husky walk over the drop.
+            it flies into the Husky and lands in the bag  -> DONE (0x0205 was UNKNOWN)
+            it stays on the floor                        -> paste the "pet pick-up" log lines
+          SKILLS: use Auto HP on the Husky. Expect ONE summon animation (it is put away and
+          re-summoned on your screen so it re-reads its item), then:
+            tooltip says Auto HP (Learned), the item is gone  -> stored and applied
+            walk into a mob until HP drops: does the pet feed you a potion? YES -> the mask
+                       is read live or on init, DONE. NO with (Learned) shown -> the client
+                       wants more than the mask; say so, that is the next measurement
+          NAME TAG: use one on the Husky, type Dummy.
+            name tag over the pet says Dummy on BOTH screens, tag gone  -> DONE (0x027B)
+            only the owner's screen changes -> the map copy of 0x027B is dropped; say so
+          HAT: put the Blue Top Hat on the pet with Tester2 already in the map.
+            Tester2 sees the hat at once             -> DONE
+            Tester2 sees TWO the owner's, or a frozen one  -> the second 0x0224 duplicates the user;
+                       STOP, say so - the beauty coupon uses the same path and never tested it
+            Tester2 sees nothing until a map change  -> the redraw ignores the look; say so
+          RE-LOGIN: log out with the Husky out, log back in.
+            it is standing beside you on arrival, Cash tab shows it summoned -> DONE
+            it is in the bag -> paste the "pet: character" log line at claim time
+          SHOW PET INFO: still greyed. NOT fixed - the gate is a local in the client's info
+          window this pass did not find. Do not spend time on it.
+
+     9. THE CRASH - a question, not a test.
         A 1.36 GB dump was written at 00:08 from a fault at 0x14090a6f0, an address that
         appears NOWHERE else in the archive. It is an std::map node walk hitting a bad
         pointer, with 38 C++ throws before it. You said you were "just in the map with
@@ -2038,18 +2065,8 @@
       A level-up gives +16 max HP and +12 max MP.
       Etc items and mesos survive a relog; Garnet Ores stack into one slot.
       !setrates 2 3 5 -> one banner naming all three; !rates reads them back.
-      PET + SECOND CLIENT (the social pet, fixed 2026-09-15): summon a pet on the owner with
-        Tester2 standing in the same map, then WALK the owner around.
-          Tester2 sees the Husky walk smoothly beside the owner  -> DONE, the move packet is fixed
-          Tester2's client EXITS on the owner's first step        -> the leading-key fix is wrong;
-                       grab the new outbound 0x0278 body from world-ch0.log and the dump
-          Tester2 sees the pet SNAP / teleport / freeze      -> the x/y or count still misaligns;
-                       paste the 0x0278 body (should be charId, petIdx, tick, then x=-, y=)
-          The owner's own pet is unaffected either way (that never went through the wire).
-        The crash was: the 0x0202 head is 5 bytes (petIdx, u8) and we took it as 9, so the
-        rebroadcast path started 4 bytes in and the pet's X (-97) was read as the element
-        count -> nothing appended -> null-deref. The path goes out whole now.
-        --no-broadcast-pets is the owner-local fallback.
+      A pet walks on BOTH screens - CONFIRMED 2026-09-15 (the 0x0202 head is 5 bytes, not
+        9; the path goes out whole). --no-broadcast-pets is the owner-local fallback.
 
     STILL OPEN - do not spend the run confirming these are broken
     ------------------------------------------------------------
@@ -4861,7 +4878,28 @@ function Show-TestPlan {
         Write-Host '     Spend one, change channel: the spend must hold. A beginner (ouggh,'
         Write-Host '     215) must show its OWN computed SP, not a phantom first-job pool.'
         Write-Host ''
-        Write-Host '  8. THE CRASH - a question, not a test.' -ForegroundColor White
+        Write-Host '  8. THE PET, SIX THINGS - from your two-client run. The walk is' -ForegroundColor White
+        Write-Host '     CONFIRMED. Each item below left a packet and is answered now; none'
+        Write-Host '     has been on a screen. As the owner, Husky out, Tester2 watching:'
+        Write-Host '       LOOT: kill a snail, Husky walks over the drop:'
+        Write-Host '         flies into the Husky, lands in the bag -> DONE' -ForegroundColor Green
+        Write-Host '         stays on the floor -> paste the "pet pick-up" log lines' -ForegroundColor Yellow
+        Write-Host '       SKILLS: Auto HP on the Husky. Expect ONE summon animation. Then'
+        Write-Host '         tooltip (Learned) + item gone -> stored. Take damage: potion fed?'
+        Write-Host '         YES -> DONE. NO with (Learned) -> client wants more; say so' -ForegroundColor Yellow
+        Write-Host '       NAME TAG: rename to Dummy:'
+        Write-Host '         Dummy over the pet on BOTH screens -> DONE' -ForegroundColor Green
+        Write-Host '         owner only -> the map 0x027B is dropped; say so' -ForegroundColor Yellow
+        Write-Host '       HAT: Blue Top Hat on the pet with Tester2 present:'
+        Write-Host '         Tester2 sees it at once -> DONE' -ForegroundColor Green
+        Write-Host '         Tester2 sees TWO the owner''s / a frozen one -> STOP, say so' -ForegroundColor Red
+        Write-Host '         nothing until a map change -> redraw ignores the look' -ForegroundColor Yellow
+        Write-Host '       RE-LOGIN: log out with the Husky out, log back in:'
+        Write-Host '         standing beside you on arrival -> DONE' -ForegroundColor Green
+        Write-Host '         in the bag -> paste the "pet: character" claim-time line' -ForegroundColor Yellow
+        Write-Host '       SHOW PET INFO: still greyed. NOT fixed; do not spend time on it.' -ForegroundColor DarkGray
+        Write-Host ''
+        Write-Host '  9. THE CRASH - a question, not a test.' -ForegroundColor White
         Write-Host '     A 1.36 GB dump at 00:08, fault 0x14090a6f0 - an address that'
         Write-Host '     appears NOWHERE else in the archive. It is an std::map node walk'
         Write-Host '     hitting a bad pointer, 38 C++ throws before it. You were "just in'
