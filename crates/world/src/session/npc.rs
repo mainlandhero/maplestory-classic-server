@@ -1181,7 +1181,7 @@ impl Session {
         let step = crate::taxi::on_reply(&self.store, &self.config, chr.id, taxi, body)?;
         self.conversation = None;
         let mut out = crate::taxi::script_replies(taxi, &step);
-        if let crate::taxi::Step::Ride { map_id, map_name, balance, .. } = step {
+        if let crate::taxi::Step::Ride { map_id, map_name, fare, balance } = step {
             // The balance moves before the screen does. Field entry states it again ~420 ms
             // later; belt and braces, not a duplicate - the character record has no meso field.
             out.extend(self.meso_reply(chr.id));
@@ -1192,15 +1192,16 @@ impl Session {
             // and this is not one, but the ordering is the one already observed working.
             out.push(Reply {
                 opcode: net::message::MESSAGE,
-                body: net::message::meso_lost_line(taxi.fare),
+                // **The ride's fare, not the row's**: Lyn's way back to Southperry costs
+                // 20,000 under a header that quoted 500, and the line must say what was taken.
+                body: net::message::meso_lost_line(fare),
                 what: format!(
-                    "Message: Meso Penalty Applied (-{}) - the taxi fare, said out loud. The \
+                    "Message: Meso Penalty Applied (-{fare}) - the taxi fare, said out loud. The \
                      client owns the wording; we send the number. Whether a zero plain line \
-                     also draws is UNMEASURED - see net::message::meso_penalty",
-                    taxi.fare
+                     also draws is UNMEASURED - see net::message::meso_penalty"
                 ),
             });
-            let why = crate::taxi::ride_note(taxi, &chr, map_id, &map_name, balance);
+            let why = crate::taxi::ride_note(taxi, &chr, map_id, &map_name, fare, balance);
             out.extend(self.go_to_map(&mut chr, map_id, 0, why));
         }
         Some(out)

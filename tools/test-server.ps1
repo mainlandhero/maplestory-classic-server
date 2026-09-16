@@ -378,6 +378,15 @@
                unchanged, no grey fare line -> fixed
             2. the same with a first-job character: no waiver box, straight to Lith Harbor,
                the grey "lost mesos (-1000)" line -> as designed
+          And the way BACK, 2026-09-16: "Lyn in Lith Harbor ... should have an additional
+          destination to allow travelers to go back to Maple Island Southperry for 20,000
+          mesos. This should only exist at Lyn and not at other Taxis." Lyn's menu has a
+          SIXTH line, "Southperry (Maple Island) - 20000 mesos", under the same header that
+          still quotes the 500-meso tour; the five towns are lines 1-5 exactly as before.
+            3. click Lyn: six lines, the last names Southperry and 20000 -> as designed.
+               Pick it with 20,000+: Southperry, grey "lost mesos (-20000)" -> fixed.
+               With less: their refusal quotes 20000 (not 500), nothing taken.
+            4. the Lith Harbor VIP Cab and the Henesys Regular Cab: NO Southperry line.
 
       (l) THE FARE LINE MUST BE GREY, NOT RED. Any fare - Shanks or a taxi - prints a grey
           chat line "You have lost mesos (-1000)". A RED "You have received Meso Penalty"
@@ -4504,6 +4513,10 @@ function Show-TestPlan {
         Write-Host '           Beginner who finished Mai, Yes -> the waiver box, still in'
         Write-Host '           Southperry; dismiss it -> Lith Harbor, mesos unchanged -> fixed'
         Write-Host '           A first-job character who finished Mai -> NO box, pays 1000.'
+        Write-Host '           LYN (Lith Harbor) has a SIXTH line since 2026-09-16: "Southperry' -ForegroundColor Magenta
+        Write-Host '           (Maple Island) - 20000 mesos". Pick it with 20,000+ -> Southperry,'
+        Write-Host '           grey "lost mesos (-20000)" -> fixed. With less -> refusal quotes'
+        Write-Host '           20000. The VIP Cab and the Henesys cab have NO such line.'
         Write-Host '       (l) THE FARE LINE MUST BE GREY. Any fare - Shanks or a taxi -' -ForegroundColor Yellow
         Write-Host '           prints a grey chat line "You have lost mesos (-1000)".'
         Write-Host '           A RED "You have received Meso Penalty" means the old path is'
