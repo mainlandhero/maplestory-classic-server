@@ -675,6 +675,23 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
+     TV. PHIL'S JOB GUIDE IS A REAL MENU NOW. The owner, 2026-09-15: "Phil's dialogue to allow
+         Beginners to choose a location to job advance to does not work. The selection is
+         fundamentally broken and cannot be selected by the cursor." It was a chain of
+         yes/no boxes drawn to look like a list - Yes and No were the only controls. Phil
+         (Lith Harbor, template 101) now sends ONE type-6 menu, the same box the taxis and
+         the second-job instructors use: heading, then a highlighted line per first job -
+         "Swordsman - Dances with Balrog in Warriors' Sanctuary (needs 35 STR)" and the
+         other three. Clicking a line rides to THAT instructor's map (arrival line on the
+         right, then the SetField); Close sends nothing. Beginner, level 10+ only; the
+         refusals for a non-beginner or a level-9 are unchanged (a plain OK box).
+           1. a level-10 beginner clicks Phil: a list whose lines HIGHLIGHT under the cursor
+              and can be clicked -> fixed. If it is still a Yes/No box -> the old chain,
+              report it.
+           2. click "Magician": a yellow arrival line, then Grendel's map (Magic Library),
+              job still Beginner -> fixed. Talk to Grendel: the TR yes/no box.
+           3. Escape/Close on the menu: nothing, you stay in Lith Harbor.
+
      TR. THE FIRST JOB ADVANCEMENT ASKS FIRST. The owner, 2026-09-15: "the moment you click on
          the first job instructors, you simply become that job. There should be a yes or
          no dialogue (including the requirement)". An eligible click now opens the
@@ -3743,6 +3760,13 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
+        Write-Host '  TV. PHIL''S JOB GUIDE IS A REAL MENU NOW (type 6, like the taxis).' -ForegroundColor Magenta
+        Write-Host '      Level-10 beginner clicks Phil (Lith Harbor): one list whose lines'
+        Write-Host '      highlight under the cursor and can be CLICKED -> fixed.'
+        Write-Host '      Still a Yes/No box -> the old chain, report it.'
+        Write-Host '        pick Magician -> arrival line, Grendel''s map, still a Beginner'
+        Write-Host '        Close -> nothing, you stay in Lith Harbor'
+        Write-Host ''
         Write-Host '  TR. THE FIRST JOB ADVANCEMENT ASKS FIRST.' -ForegroundColor Magenta
         Write-Host '      An eligible click opens a yes/no box naming the requirements and'
         Write-Host '      the one-way warning; the job changes ONLY on Yes.'
