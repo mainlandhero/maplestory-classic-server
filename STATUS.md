@@ -235,12 +235,18 @@ from the pet-move handler `FUN_141ec3f20` (return `0x141ec3f85` on the fault sta
 `CPet::Init`+`SetPet` where the local path `FUN_1428a01a0` (2420) also builds the pet's visual;
 the remote pet is left with no layer for the move to write, and the summon body was correct
 (foothold 166, giantRate 100), so no packet fixes it - the client cannot render a remote pet on
-this build. Fix: pets are **owner-local** by default (`Config::broadcast_pets`, `--broadcast-pets`
-to re-enable for investigation). The summon, put-away, move, action broadcasts and the arrival
-companion are all gated; the owner's own pet is untouched and still summons, walks, loots and
-answers commands. `research/pet-remote-crash-2026-09-15.md`, fixture
-`research/fixtures/pet-remote-move-crashes-observer-2026-09-15.log`, full dump
-`dumps/maplecw-crash-1057776-c0000005-1.dmp`.
+this build. **Root cause (corrected the same day, from the crash dump's registers): the `0x0278` body was
+malformed, not the client.** The dump faulted with `rax = 0`, `rbp = 0x4f935ad8` a valid path
+container - a zero-element null-deref (`research/remote-move-verification.md` §6.1), not a
+missing visual. The `0x0278` dispatcher consumes `petIdx` (`0x142795b5e`) then the applier reads
+`u32 key, i16 x, i16 y, u16, u16, i16 count`; the client's `0x0202` path has **no leading key**,
+so a verbatim copy read the pet's X (`-97`) as the count, appended nothing, and dereferenced the
+empty list tail. `net::pet::pet_move_broadcast` now inserts the `0x0202` tick as that leading key
+and drops any zero-element path. **Pets broadcast by default again** (`Config::broadcast_pets =
+true`, `--no-broadcast-pets` for the owner-local fallback). `research/pet-remote-crash-2026-09-15.md`,
+fixture `research/fixtures/pet-remote-move-crashes-observer-2026-09-15.log`, dump
+`dumps/maplecw-crash-1057776-c0000005-1.dmp`. NEXT GOAL: confirm on two screens that Tester2 sees
+The owner's Husky walk (not crash, not teleport).
 
 **2026-09-14: skill points were granted at advancement and then WIPED by the next SetField.**
 seedling: *"job advancing to Bowman at level 12, the game did not grant them the 7 SP that they

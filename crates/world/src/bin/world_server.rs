@@ -45,10 +45,9 @@ maplecw-world - one channel of the MapleCW game world
   --pet-move-action N  the moveAction byte a summoned pet gets in 0x0277, instead of
                    0. A test lever: 30 sends the client down the stance-1 arm, the
                    only pet arm that gives the pet's layer a z. See Config::pet_move_action
-  --broadcast-pets show a summoned pet to OTHER players in the map. OFF by default:
-                   it crashed a second client on 2026-09-15 (the remote pet has no
-                   visual and its first move null-derefs). Owner-local otherwise.
-                   research/pet-remote-crash-2026-09-15.md
+  --no-broadcast-pets  do NOT show a summoned pet to other players in the map.
+                   Pets are broadcast by default (summon and movement); this is the
+                   owner-local fallback. research/pet-remote-crash-2026-09-15.md
   --inventory-slots N  give every inventory N slots instead of the character's own,
                    so a client run can read the number off the screen (1..=100).
                    Go UNDER the 30 default: the window is 5x6 with a scrollbar,
@@ -218,11 +217,11 @@ fn main() -> ExitCode {
                 config.answer_packets = false;
                 Ok(())
             }
-            // Off by default since it crashed a second client on 2026-09-15
-            // (research/pet-remote-crash-2026-09-15.md). Turn it on only to re-investigate the
-            // remote-pet path with a second client and a dump armed.
-            "--broadcast-pets" => {
-                config.broadcast_pets = true;
+            // On by default: other players see a summoned pet and its movement. This turns it
+            // OFF, the owner-local fallback, if the remote pet ever misbehaves again
+            // (research/pet-remote-crash-2026-09-15.md).
+            "--no-broadcast-pets" => {
+                config.broadcast_pets = false;
                 Ok(())
             }
             "--portals" => value().map(|v| portals_path = PathBuf::from(v)),

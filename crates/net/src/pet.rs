@@ -73,11 +73,28 @@ pub const PET_ACTIVATED: u16 = 0x0277;
 /// two of its fields). **[L]** on the position, **[D]** on the head length.
 pub const CLIENT_PET_MOVE: u16 = 0x0202;
 
-/// Server -> client, per user: **that character's pet moved.** `FUN_141ec3f20` hands everything
-/// after the pet index straight to `FUN_141d598b0`, the movement-path applier that
-/// `research/user-pool-tables.md` identifies for remote players - so the body is
-/// `u32 charId, u32 petIdx` and then **the path block verbatim**, exactly as `0x0293` is for a
-/// remote character. **[L]**
+/// Server -> client, per user: **that character's pet moved.**
+///
+/// The dispatcher `FUN_142795b20` reads `charId` (the user pool) and then **consumes `petIdx`
+/// itself** (`call 0x1406e8c20` at `0x142795b5e`, which advances the reader) before it tail-jumps
+/// to the move handler `FUN_141ec3f20`. So the movement-path applier `FUN_141d598b0` /
+/// `FUN_1404b2630` reads starting **after `petIdx`**, and its first read is a `u32` that lands in
+/// `path+0x40` - the sender's move key, ignored by an observer - *before* the `i16 x, i16 y`.
+/// This is the same shape `0x0293` (remote user) and `0x03D9` (mob) carry. **[L]**
+///
+/// # The body is NOT the client's `0x0202` path verbatim - that crashed every observer
+///
+/// 2026-09-15: summoning a pet on `the owner` crashed `Tester2` in the same map. The dump
+/// (`research/pet-remote-crash-2026-09-15.md`) faulted at `0x141d59bf3`, `movups xmm0,[rax]`
+/// with `rax = 0` - the applier's element list tail was null because it had appended **nothing**:
+/// `FUN_1404b2630` bails at `0x1404b26b3 jle` when the element count `i16` is `<= 0`, and the
+/// count it read was `-97`, the pet's own X coordinate. The client's `0x0202` move path is
+/// **`i16 x, i16 y, u16, u16, i16 count, elements`** - it has no leading `u32` key - so copying
+/// it verbatim after `petIdx` shifts every field back four bytes and the applier reads a
+/// coordinate as the count. The `0x0202` head is `petIdx, u32 tick, u8`; that **tick is the key**
+/// the observer's applier wants, just carried in the head rather than the path. So the body is
+/// `u32 charId, u32 petIdx, u32 tick, <the 0x0202 path>` - [`pet_move_broadcast`]. **[L]** on the
+/// dispatch and the count offset, confirmed against the crash dump's registers.
 pub const PET_MOVE: u16 = 0x0278;
 
 /// Server -> client, per user: **the pet does something and says a line.** `FUN_141ec3fa0`
@@ -183,13 +200,25 @@ pub fn pet_deactivated(character_id: u32) -> Vec<u8> {
 /// something. `None` when the body is too short to hold a head and a path.
 pub fn pet_move_broadcast(character_id: u32, body: &[u8]) -> Option<Vec<u8>> {
     let pet_index = u32::from_le_bytes(body.get(0..4)?.try_into().ok()?);
+    // The `0x0202` tick, bytes 4..8. It becomes the path's leading `u32` key - the field the
+    // observer's applier reads into `path+0x40` before x/y, and ignores. Without it the whole
+    // path is four bytes short of what the client expects and the count reads a coordinate.
+    // See [`PET_MOVE`]; measured from the 2026-09-15 crash dump.
+    let tick = body.get(4..8)?;
     let path = body.get(CLIENT_PET_MOVE_HEAD_LEN..)?;
-    if path.is_empty() {
+    // Below the fixed head (x, y, u16, u16, count) there is nothing to forward, and the count
+    // must be positive or the applier appends nothing and then dereferences the empty list
+    // tail - the exact null-deref of the crash, guarded here so a zero-element path (never yet
+    // observed, but a latent hazard - `research/remote-move-verification.md` §6.1) can never
+    // reach an observer.
+    let count = path.get(8..10)?;
+    if i16::from_le_bytes([count[0], count[1]]) <= 0 {
         return None;
     }
     let mut w = PacketWriter::new();
     w.u32(character_id);
     w.u32(pet_index);
+    w.bytes(tick);
     w.bytes(path);
     Some(w.into_vec())
 }
@@ -280,20 +309,38 @@ mod tests {
     /// The captured `0x0202`, 41 bytes: the head is nine and the path starts at the pet's own
     /// position (0x0136, 0x0112 = 310, 274 - where the server put it).
     #[test]
-    fn a_pet_move_is_rebroadcast_with_its_path_untouched() {
-        let hex = "000000000000000000360112010000000001000036011201000000002a0000000000000004fe010000";
+    fn a_pet_move_carries_the_tick_as_the_paths_leading_key_so_the_client_reads_the_count() {
+        // The owner's live capture, world-ch0.log 02:05:28.489, the 1-element move whose verbatim
+        // copy crashed Tester2: petIdx 0, tick 0, flag, then x=-97, y=148, ..., count=1.
+        let hex = "0000000000000000009fff9400000000000100009fff950000000000a60000000000000004fe010000";
         let body: Vec<u8> =
             (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap()).collect();
         assert_eq!(body.len(), 41);
-        assert_eq!(&body[9..11], &310i16.to_le_bytes(), "the path starts at the pet's x");
-        assert_eq!(&body[11..13], &274i16.to_le_bytes(), "and its y");
+        assert_eq!(&body[9..11], &(-97i16).to_le_bytes(), "the 0x0202 path starts at the pet's x - no leading key");
+
         let out = pet_move_broadcast(215, &body).unwrap();
         assert_eq!(&out[0..4], &215u32.to_le_bytes(), "charId");
-        assert_eq!(&out[4..8], &0u32.to_le_bytes(), "petIdx, copied from the request");
-        assert_eq!(&out[8..], &body[9..], "the path block, byte for byte");
-        assert_eq!(out.len(), 8 + (41 - 9));
+        assert_eq!(&out[4..8], &0u32.to_le_bytes(), "petIdx");
+        assert_eq!(&out[8..12], &body[4..8], "the tick becomes the path's leading key");
+        assert_eq!(&out[12..], &body[9..], "then the 0x0202 path, unchanged");
+
+        // Decode the way the client does: the dispatcher has consumed charId+petIdx, so the
+        // applier reads from byte 8 - u32 key, i16 x, i16 y, u16, u16, i16 count. The count
+        // must come out positive, which is the whole point: a verbatim copy read it as -97.
+        let at = 8;
+        let x = i16::from_le_bytes(out[at + 4..at + 6].try_into().unwrap());
+        let y = i16::from_le_bytes(out[at + 6..at + 8].try_into().unwrap());
+        let count = i16::from_le_bytes(out[at + 12..at + 14].try_into().unwrap());
+        assert_eq!((x, y, count), (-97, 148, 1), "the applier now reads the real x, y and count");
+
         assert!(pet_move_broadcast(215, &body[..9]).is_none(), "a head with no path is nothing to send");
         assert!(pet_move_broadcast(215, &body[..3]).is_none());
+
+        // A zero-element path is dropped rather than forwarded - it would null-deref the
+        // observer's empty list tail (research/remote-move-verification.md §6.1).
+        let mut zero = body.clone();
+        zero[17..19].copy_from_slice(&0i16.to_le_bytes()); // the count, at path offset 8 = body 17
+        assert!(pet_move_broadcast(215, &zero).is_none(), "a zero-element pet path is not forwarded");
     }
 
     #[test]

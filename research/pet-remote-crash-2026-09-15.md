@@ -37,6 +37,11 @@ And `world-ch0.log` has the packet that drove it, server `02:05:28.593` ≈ hook
 
 ## Why the move faults and the summon does not
 
+> **Superseded by the correction at the end of this file.** The "remote pet has no visual/layer"
+> reading below was an inference from two function sizes and is **wrong**: the dump shows `rbp`
+> is a valid path container and `rax` is a null element-list tail. Kept for the record; read the
+> correction for the actual mechanism and the fix.
+
 The fault instruction, `tools/dis_at.py 0x141d598b0`:
 
 ```text
@@ -68,10 +73,13 @@ Valid foothold (166, not 0), life-size (100). **Nothing the server can put in `0
 one either. This is the same class as every other pet finding: the packet is right and the
 client's own code decides the outcome. Here the outcome is a null layer.
 
-## The fix: pets are owner-local by default
+## First response (superseded): pets made owner-local
 
-`Config::broadcast_pets`, default `false`. The four places a pet reached other clients are all
-gated on it:
+> **Superseded the same day** - see the correction below. The real fix keeps broadcasting on and
+> corrects the move packet. This section records the interim owner-local mode, which survives as
+> the `--no-broadcast-pets` fallback.
+
+`Config::broadcast_pets` gated the four places a pet reached other clients:
 
 | site | packet | on `false` |
 |---|---|---|
@@ -93,3 +101,52 @@ armed, rather than by accident.
 
 Fixture: `research/fixtures/pet-remote-move-crashes-observer-2026-09-15.log`.
 Full dump: `dumps/maplecw-crash-1057776-c0000005-1.dmp` (1.6 GB, from the crash run).
+
+---
+
+## Correction, 2026-09-15 (same day): it is the packet, and it is fixable
+
+The section above concluded the remote pet could not be drawn on this build and made pets
+owner-local. That was wrong, and the retraction rests on a stronger instrument than the claim:
+the crash dump's own registers plus the client's dispatcher, where the first pass read only the
+fault RIP and the handler sizes.
+
+**The dump.** Parsing the minidump's exception + thread context streams (no WinDbg needed):
+
+```
+ExceptionCode 0xc0000005   ExceptionAddress 0x141d59bf3   Info[1] (faulting addr) 0x0
+Rax=0x0   Rbp=0x4f935ad8   Rsi=0x0   Rdi=0x1   Rbx=0x226
+```
+
+`Rbp = 0x4f935ad8` is a **valid heap object** - the pet's path container `pet+0x640`, not a
+near-null `0x640`. `0x141d59bef mov rax,[rbp+0x18]` loaded `rax = 0` (the element-list **tail**),
+and `0x141d59bf3 movups xmm0,[rax]` faulted on the null. So the applier appended **nothing**: it
+is exactly the zero-element null-deref that `research/remote-move-verification.md` §6.1 predicted
+as a latent hazard, now realised.
+
+**Why the count read zero.** The `0x0278` dispatcher `FUN_142795b20` reads `charId` (the user
+pool) and then **consumes `petIdx` itself** - `0x142795b5e call 0x1406e8c20`, which advances the
+reader - before it tail-jumps (`0x142795bb1`) to `FUN_141ec3f20` with the reader positioned
+**after `petIdx`**. So `FUN_1404b2630` reads its fixed head from there: `u32 key, i16 x, i16 y,
+u16, u16, i16 count`. The client's `0x0202` move path, however, is `i16 x, i16 y, u16, u16, i16
+count, elements` - **no leading key**. Forwarded verbatim after `petIdx`, every field is four
+bytes early and the `i16 count` lands on the pet's X coordinate, `-97`. `FUN_1404b2630` bails at
+`0x1404b26b3 jle` on `count <= 0`, appends nothing, and the tail is null.
+
+Decoded both live captures (1- and 2-element moves) at each candidate offset: reading from the
+byte after `petIdx` with a leading key inserted gives `x=-97, y=148, count=1` and `count=2`
+respectively; the verbatim copy gives `count=-97` / `-27137`. The mob broadcast `0x03D9` never
+hit this because `mob_move_broadcast` already writes two filler `u32`s before its path and the
+mob path is itself key-led - which is why 260 mob moves in the same run drew fine through the
+**same** `FUN_141d598b0`.
+
+**The fix.** `net::pet::pet_move_broadcast` now emits `charId, petIdx, tick, <the 0x0202 path>` -
+the `0x0202` tick (its head bytes 4..8) becomes the leading key the applier reads into
+`path+0x40` and ignores, so x/y/count line up. It also drops any zero-element path defensively,
+closing §6.1's hazard for this packet. Pets broadcast by default again (`Config::broadcast_pets`,
+`--no-broadcast-pets` to fall back to owner-local).
+
+The generalisation is this file's own: *the remote pet was under-constructed* was a plausible
+inference from two function sizes, and it was wrong. The dump said `rbp` was a real object and
+`rax` was a null tail - a measurement - and the count offset fell out of the dispatcher, not a
+guess about the client's renderer.
