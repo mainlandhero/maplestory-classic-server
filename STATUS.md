@@ -224,6 +224,21 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-16: pets eat, get hungry, and grow closer.** The owner: *"Pets should decrease their fullness
+by 1 every 5 minutes. Using a pet food should recover the current active pet's fullness by 30 and
+their closeness by 1"*, with the wiki's closeness table. The request is **`0x0112`**, never captured:
+the client's item-use switch `FUN_1428af6d0` picks its builder for `itemId - 2120000 < 10000` at
+`0x1428b022f`, and the builder writes `u32 tick, u16 slot, u32 itemId` [L] (`net::petfood`; the next
+arm, 2260000.., is mount food -> `0x0113`). `crate::petlevel` holds the 30-level table, "up only",
+the feed (+30 capped, +1) and the overfeed rule (the first free, then -1). `Session::pet_hunger_tick`
+takes one fullness per five minutes out and at 0 sends the pet home (-1 closeness, put away
+everywhere, a notice). A successful trick earns the table's own `inc` (+1..+3) and the pet's level
+now picks its command band. `store::pets` gains `level`, `closeness`, `fullness` (added to the live
+table by a guarded `ALTER`), and all three ride the pet's Cash item, re-sent on every change - which
+is what Show Pet Info reads. **No eating animation is sent** (the `0x0279` index for "food" is
+unmeasured). `research/pets-loot-skills-name-relogin-2026-09-15.md` §7. Plan step 8. Not on a
+screen yet.
+
 **2026-09-15, 23:34: teaching the Husky Auto HP KILLED the client - the owner's put-away wants a
 reason byte.** The reply's last two packets were a put-away and a re-summon to the owner; the client
 rejected the put-away by name (`0x009E` reason `0x26`, pos 15 = our 11-byte `0x0277` + 4) and faulted

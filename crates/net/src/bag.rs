@@ -425,19 +425,43 @@ pub fn pet_skill_bit_for_item(item_id: u32) -> Option<u16> {
 /// the client on 2026-08-26, which is the whole reason the type byte and the tail are read
 /// off the client rather than assumed.
 pub fn pet_item_with_cash_sn(item_id: u32, name: &str, cash_sn: Option<std::num::NonZeroU64>) -> Vec<u8> {
-    pet_item_with_state(item_id, name, cash_sn, 0, PET_SKILLS_LEARNED_AT_START)
+    pet_item_with_state(item_id, name, cash_sn, 0, &PetVitals::default())
+}
+
+/// **What the pet item says about the pet**: the four fields of the body that move.
+///
+/// Level, closeness and fullness are what the KEY BINDINGS-adjacent "Show Pet Info" panel and
+/// the pet tooltip print (`research/pet-tooltip-and-commands-2026-09-13.md`), read from the
+/// Cash item and nowhere else - so every change is a re-send of the item. `store::pets` holds
+/// them; `crate::petfood` and `world::petlevel` move them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PetVitals {
+    /// `1..=30`. `1403045 7f`.
+    pub level: u8,
+    /// Total closeness. `1403045b5`; a `u16` on the wire, so 30 000 (level 30) fits.
+    pub closeness: u16,
+    /// `0..=100`. `1403045cc`.
+    pub fullness: u8,
+    /// The learned-skill mask, [`PET_SKILLS_LEARNED_AT_START`] until a skill item adds a bit.
+    pub skills: u16,
+}
+
+impl Default for PetVitals {
+    /// A pet fresh from the shop: level 1, no closeness, full, Item Pouch.
+    fn default() -> Self {
+        PetVitals { level: 1, closeness: 0, fullness: 100, skills: PET_SKILLS_LEARNED_AT_START }
+    }
 }
 
 /// [`pet_item_with_cash_sn`] with the `active` byte set - `0` in the bag, `1` while the pet is
 /// summoned (`crate::pet`); the reference's `PetItem.activeState` is `petIdx + 1`, and this
-/// client accepts one pet, so the only live value is `1` - and the learned-skill mask, which
-/// is [`PET_SKILLS_LEARNED_AT_START`] until a skill item adds a bit (`store::pets`).
+/// client accepts one pet, so the only live value is `1` - and the pet's [`PetVitals`].
 pub fn pet_item_with_state(
     item_id: u32,
     name: &str,
     cash_sn: Option<std::num::NonZeroU64>,
     active: u8,
-    skills: u16,
+    vitals: &PetVitals,
 ) -> Vec<u8> {
     let mut b = Vec::with_capacity(PET_ITEM_LEN + 8);
     b.push(PET_ITEM_TYPE); //                                   1403095fb  u8   item type
@@ -458,12 +482,12 @@ pub fn pet_item_with_state(
     let n = bytes.len().min(PET_NAME_LEN - 1); // a terminator stays
     fixed[..n].copy_from_slice(&bytes[..n]);
     b.extend_from_slice(&fixed); //                              140304577  raw[13] name
-    b.push(1); //                                               14030457f  u8   level
-    b.extend_from_slice(&0u16.to_le_bytes()); //                1403045b5  u16  closeness
-    b.push(100); //                                             1403045cc  u8   fullness
+    b.push(vitals.level); //                                    14030457f  u8   level
+    b.extend_from_slice(&vitals.closeness.to_le_bytes()); //    1403045b5  u16  closeness
+    b.push(vitals.fullness); //                                 1403045cc  u8   fullness
     b.extend_from_slice(&PET_DATE_DEAD.to_le_bytes()); //       14030460f  raw[8] dateDead
     b.extend_from_slice(&0u16.to_le_bytes()); //                140304617  u16  petAttribute
-    b.extend_from_slice(&skills.to_le_bytes()); //                14030462e  u16  petSkill
+    b.extend_from_slice(&vitals.skills.to_le_bytes()); //       14030462e  u16  petSkill
     b.extend_from_slice(&PET_REMAIN_LIFE.to_le_bytes()); //     140304645  u32  remainLife
     b.extend_from_slice(&0u16.to_le_bytes()); //                14030467e  u16  attribute
     b.push(active); //                                          14030469b  u8   active

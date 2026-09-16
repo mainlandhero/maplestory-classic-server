@@ -335,6 +335,11 @@ pub struct Session {
     /// The pet this session has summoned, if any - session-only, put away by a relog.
     /// `session/pet.rs`.
     active_pet: Option<pet::ActivePet>,
+    /// When the summoned pet next loses a fullness, on the session clock. `None` with no pet
+    /// out. session/pet.rs `pet_hunger_tick`.
+    pet_hunger_due_ms: Option<u64>,
+    /// Feeds on an already-full pet this session; the first is free. `crate::petlevel::feed`.
+    pet_overfeeds: u32,
 
     /// Session milliseconds of the last thing the player did: moved, attacked, or was hit.
     ///
@@ -586,6 +591,8 @@ impl Session {
             log_name: None,
             last_move_action: None,
             active_pet: None,
+            pet_hunger_due_ms: None,
+            pet_overfeeds: 0,
             banner_shown: None,
             last_activity_ms: 0,
             next_regen_ms: None,
@@ -695,6 +702,8 @@ impl Session {
         // tick arrive in the order the client draws them.
         out.extend(self.buff_tick(now_ms));
         out.extend(self.dragon_blood_tick(now_ms));
+        // The summoned pet's fullness, one down every five minutes. session/pet.rs.
+        out.extend(self.pet_hunger_tick(now_ms));
         if self.config.chatter_off {
             return out;
         }
@@ -847,6 +856,10 @@ impl Session {
             // The pet walked. Forwarded to the map so other players see it. session/pet.rs.
             net::pet::CLIENT_PET_MOVE => {
                 return self.on_pet_move(body.get(2..).unwrap_or(&[]))
+            }
+            // Pet Food from the Use tab. session/pet.rs, net::petfood.
+            net::petfood::CLIENT_USE_PET_FOOD => {
+                return self.on_use_pet_food(body.get(2..).unwrap_or(&[]))
             }
             // **The pet reached a drop.** The same handler as the player's request: it finds
             // the drop by the pet offset (byte 17) and takes it with the pet's leave type.

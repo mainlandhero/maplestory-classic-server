@@ -42,14 +42,11 @@ impl Session {
             // `active` is this session's word - 1 while the pet is summoned - and since
             // 2026-09-15 `restore_active_pet` sets it from the store at claim time, so a pet
             // that was out at the last log-out is out in this record too. session/pet.rs.
-            let (name, skills) = match self.claimed.as_ref().map(|c| c.character_id) {
-                Some(id) => {
-                    let state = self.pet_state(id, item.item_id);
-                    (self.pet_name(id, item.item_id), state.skills)
-                }
+            let (name, vitals) = match self.claimed.as_ref().map(|c| c.character_id) {
+                Some(id) => (self.pet_name(id, item.item_id), self.pet_vitals(id, item.item_id)),
                 None => (
                     self.config.item_names.get(&item.item_id).cloned().unwrap_or_default(),
-                    net::bag::PET_SKILLS_LEARNED_AT_START,
+                    net::bag::PetVitals::default(),
                 ),
             };
             return net::bag::pet_item_with_state(
@@ -57,7 +54,7 @@ impl Session {
                 &name,
                 cash_sn,
                 u8::from(self.pet_is_active(item.item_id)),
-                skills,
+                &vitals,
             );
         }
         match item.kind {

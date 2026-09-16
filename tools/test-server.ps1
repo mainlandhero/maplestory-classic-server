@@ -2038,6 +2038,20 @@
             Tester2 sees TWO the owner's, or a frozen one  -> the second 0x0224 duplicates the user;
                        STOP, say so - the beauty coupon uses the same path and never tested it
             Tester2 sees nothing until a map change  -> the redraw ignores the look; say so
+          FEEDING (2026-09-15, the owner: +30 fullness, +1 closeness, -1 fullness every five
+          minutes). Buy Pet Food from Lucy (35 mesos), summon the Husky, open Show Pet Info:
+            use one food: Fullness +30 (capped 100), Closeness +1, Level 2 at closeness 1 ->
+                       DONE. The request is 0x0112, read off the client, never captured before
+            the food is not used up / nothing changes -> paste the "pet food:" log line, or
+                       the "<- ... 0x0112" line if there is none: the opcode is wrong
+            no eating animation is EXPECTED - none is sent; say if you want one
+            feed it twice more at 100: the second overfeed costs a closeness (the wiki rule)
+          HUNGER: leave the Husky out. Every five minutes Fullness drops one (reopen the
+          panel). At 0 it goes home, one closeness gone, "is starving" in chat. To see the
+          end without an hour: this cannot be sped up from the client; say if you want a
+          GM lever.
+          TRICKS: "sit" that succeeds -> Closeness +3 (the table's own inc), and the level
+          climbs the wiki table. A failed trick earns nothing.
           RE-LOGIN: log out with the Husky out, log back in.
             it is standing beside you on arrival, Cash tab shows it summoned -> DONE
             it is in the bag -> paste the "pet: character" log line at claim time
@@ -4947,6 +4961,12 @@ function Show-TestPlan {
         Write-Host '         Tester2 sees it at once -> DONE' -ForegroundColor Green
         Write-Host '         Tester2 sees TWO the owner''s / a frozen one -> STOP, say so' -ForegroundColor Red
         Write-Host '         nothing until a map change -> redraw ignores the look' -ForegroundColor Yellow
+        Write-Host '       FEEDING: Pet Food (Lucy, 35 mesos) on the Husky, Show Pet Info open:'
+        Write-Host '         Fullness +30, Closeness +1, Level 2 -> DONE (0x0112, never captured)' -ForegroundColor Green
+        Write-Host '         nothing changes -> paste the "pet food:" line, or the 0x0112 line' -ForegroundColor Yellow
+        Write-Host '         no eating animation is EXPECTED. 3rd feed at 100 costs a closeness.'
+        Write-Host '       HUNGER: -1 Fullness per five minutes out; at 0 it goes home.'
+        Write-Host '       TRICKS: a "sit" that lands -> Closeness +3, the level climbs.'
         Write-Host '       RE-LOGIN: log out with the Husky out, log back in:'
         Write-Host '         standing beside you on arrival -> DONE' -ForegroundColor Green
         Write-Host '         in the bag -> paste the "pet: character" claim-time line' -ForegroundColor Yellow
