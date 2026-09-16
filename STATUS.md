@@ -236,6 +236,16 @@ another account's; the HTTP shape (405 on GET, 400 on bad JSON, revoked then unk
 launcher's parser; and end to end over TLS with the service's own store showing the claim gone.
 `docs/launcher.md`. Plan step 9.
 
+**2026-09-16: the version gate un-patched the Nexon gate byte, so a client kept showing "failed to
+load".** Joanne, via the owner: a published package needed their manual `MapleStory.exe` patch on every
+launch, and their script found the byte UNPATCHED though the package ships it patched. Mechanism:
+`prepare` patches the gate (`0xd9038a: 75->eb`), then the version gate (`clientpatch::check_and_patch`,
+which runs AFTER `prepare`) overwrote `MapleStory.exe` with their server's canonical copy - and their
+server serves an UNPATCHED exe, reverting the patch. Fix: `prepare_and_launch` re-asserts
+`patch_nexon_launcher_gate` AFTER the version gate, on whatever is on disk - idempotent (no-op when
+the server serves a patched exe). Their server should also serve a patched canonical exe (our packages
+do) to avoid a 76 MB re-download per launch. Test `a_patch_reverted_by_a_client_download_is_re_applied`.
+
 **2026-09-16: the launcher updates itself.** The owner: *"The launcher that we have should have the
 ability to patch itself should we need to. Currently it doesn't seem able to do that."* It could
 not - the version gate covered `client\` and the launcher lives beside it. Now the server package
