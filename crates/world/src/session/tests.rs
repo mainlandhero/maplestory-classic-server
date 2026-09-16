@@ -10304,6 +10304,47 @@ fn a_cash_equip_lands_in_the_deco_tab_and_the_notice_is_ascii() {
     assert_eq!(restored, uebel.equips.len() + 1, "the Deco tab is restored on field entry");
 }
 
+/// **The Frieren coupon, on a live-shaped bag.** The owner, 2026-09-16: *"The coupon also should
+/// not be used if the user does not have enough inventory space to use the coupon. The coupon
+/// should remain in the player's inventory."* Live, the set's five equips are cash equips
+/// and go to the Deco tab (150 slots), and the choice of version is made in a menu before
+/// anything is handed out. Deco at 146 of 150: the choice is refused whole, the coupon stays
+/// in its Cash slot, the Use tab (which had room for the two coupons) gets nothing, and the
+/// refusal names the Deco tab and the shortfall.
+#[test]
+fn frierens_coupon_is_kept_when_the_deco_tab_cannot_take_the_set() {
+    let (mut s, store, id) = gm_session();
+    let version = &crate::signaturestyle::FRIEREN_VERSIONS[0];
+    let mut equips = std::collections::HashMap::new();
+    for &e in version.equips {
+        equips.insert(e, crate::config::EquipTemplate { cash: true, ..Default::default() });
+    }
+    let mut cfg = (*s.config).clone();
+    cfg.equips = equips;
+    s.config = Arc::new(cfg);
+    assert_eq!(store.inventory_slots(id, store::InventoryType::Deco).unwrap(), 150, "the live Deco size");
+    for _ in 0..146 {
+        store.add_item(id, store::InventoryType::Deco, &store::Item::equip(1_802_006), 1).unwrap();
+    }
+    let coupon = crate::signaturestyle::FRIEREN_COUPON;
+    let slot = store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(coupon, 1), 1).unwrap()[0].slot;
+    let before = store.bag(id).unwrap();
+
+    s.on_use_cash_item(&use_cash_item_body(slot, coupon));
+    let out = s.on_script_reply(&menu_reply(Some(0)));
+    let notice = out.iter().find(|r| r.opcode == net::notice::CHAT_NOTICE).expect("a refusal notice");
+    let text = notice_text(notice);
+    assert!(text.contains("Deco tab needs 5 free slot(s)") && text.contains("has 4"), "{text}");
+    assert!(text.contains("Nothing was used up"), "{text}");
+    assert!(!out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "no row placed: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(!out.iter().any(|r| r.what.contains("receipt")), "no receipt for nothing");
+    let after = store.bag(id).unwrap();
+    assert_eq!(after.items, before.items, "the bag is byte-for-byte what it was");
+    assert!(after.items_in(store::InventoryType::Cash).any(|i| i.slot == slot && i.item.item_id == coupon), "the coupon is in its slot");
+    assert_eq!(after.items_in(store::InventoryType::Use).count(), 0, "the Use tab got nothing either");
+    assert!(s.conversation.is_none(), "the menu is closed");
+}
+
 /// **All or nothing.** A set that needs more Equip slots than are free is refused before a
 /// single row is written, the coupon is kept, and the player is told which tab and by how
 /// much. A half-opened set is the failure this exists to prevent.
@@ -11478,6 +11519,89 @@ fn a_pet_that_was_out_is_out_again_after_a_relogin() {
     third.claim_for_character(id);
     assert!(!third.pet_is_active(5_000_006));
     assert!(third.on_field_entered().iter().all(|r| r.opcode != net::pet::PET_ACTIVATED));
+}
+
+/// **Two pets, two sets of vitals, one out at a time, and all of it survives a re-login.**
+///
+/// The owner, 2026-09-16: *"double check and make sure that pet fullness and closeness is
+/// persisted through logins. A player should be able to have multiple pets with varying
+/// amounts of fullness and closeness. Summoning a new pet onto the field should unsummon the
+/// old pet. Only 1 active pet at a time."* This walks it with the session's own writes - the
+/// five-minute hunger tick - rather than poking the store, so a write that stopped reaching
+/// the store would fail here. The vitals are read back off the Cash item blob the next
+/// session builds, which is the record the client draws from.
+///
+/// **Two pets of the SAME species are one pet to this server** - the store keys on
+/// `(character, item id)` and the client-facing serial is `(character << 32) | item id` -
+/// and this test says so rather than leaving it implicit.
+#[test]
+fn two_pets_keep_their_own_vitals_across_a_relogin_and_only_one_is_out() {
+    const HUSKY: u32 = 5_000_006;
+    const OTHER: u32 = 5_000_001;
+    // Offsets into `net::bag::pet_item_with_state` with a cash serial: 27 bytes of head, 13 of
+    // name, then u8 level, u16 closeness, u8 fullness; active is at 62.
+    const LEVEL: usize = 40;
+    const CLOSENESS: usize = 41;
+    const FULLNESS: usize = 43;
+    const ACTIVE: usize = 62;
+    let tick = net::petfood::PET_HUNGER_INTERVAL_MS;
+
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Wisp".to_string(), ..Default::default() };
+    let id = store.create_character(account, 0, &chr).unwrap().id;
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(HUSKY, 1), 1).unwrap(); // slot 1
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(OTHER, 1), 1).unwrap(); // slot 2
+    let blob = |s: &Session, item: u32| s.item_blob_with_cash_sn(&store::Item::bundle(item, 1), Some(net::pet::pet_serial(id, item)));
+    let vitals = |s: &Session, item: u32| { let b = blob(s, item); (b[LEVEL], u16::from_le_bytes([b[CLOSENESS], b[CLOSENESS + 1]]), b[FULLNESS], b[ACTIVE]) };
+    let summon = |slot: u16| { let mut b = 0x1418_9a50u32.to_le_bytes().to_vec(); b.extend_from_slice(&slot.to_le_bytes()); b };
+
+    // ---- session one: the Husky out, one hunger tick; then the other pet swaps it out ----
+    store.create_migration(account, id, 0, 0).unwrap();
+    let mut first = Session::new(store.clone(), Arc::new(Config::default()));
+    first.claim_for_character(id);
+    first.last_position = Some((300, -50));
+    first.on_pet_activate(&summon(1));
+    assert!(first.pet_is_active(HUSKY));
+    first.pet_hunger_tick(tick); // the summon armed the timer; this is the five-minute hunger
+    assert_eq!(vitals(&first, HUSKY), (1, 0, 99, 1), "Husky: level 1, closeness 0, fullness 99, out");
+    assert_eq!(vitals(&first, OTHER), (1, 0, 100, 0), "the other pet is untouched and in the bag");
+
+    // Summoning the other pet puts the Husky away in the same reply: ONE pet out.
+    let out = first.on_pet_activate(&summon(2));
+    let pets: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::pet::PET_ACTIVATED).collect();
+    assert_eq!(pets.len(), 2, "the Husky's put-away and the other's summon: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(pets[0].what.contains("put away") && pets[0].what.contains(&HUSKY.to_string()), "{}", pets[0].what);
+    assert!(pets[1].what.contains("summoned") && pets[1].what.contains(&OTHER.to_string()), "{}", pets[1].what);
+    assert!(first.pet_is_active(OTHER) && !first.pet_is_active(HUSKY));
+    assert_eq!(store.active_pet(id).unwrap(), Some(OTHER), "the store agrees: one active row");
+    assert!(!store.pet_state(id, HUSKY).unwrap().active);
+    // Two ticks on the other pet: its own fullness moves, the Husky's does not.
+    first.pet_hunger_tick(3 * tick);
+    first.pet_hunger_tick(4 * tick);
+    assert_eq!(vitals(&first, OTHER), (1, 0, 98, 1));
+    assert_eq!(vitals(&first, HUSKY), (1, 0, 99, 0));
+    drop(first);
+
+    // ---- session two: both sets of vitals come back, and only the other pet is out ----
+    store.create_migration(account, id, 0, 0).unwrap();
+    let mut second = Session::new(store.clone(), Arc::new(Config::default()));
+    second.claim_for_character(id);
+    assert_eq!(vitals(&second, HUSKY), (1, 0, 99, 0), "the Husky's own fullness, in the bag");
+    assert_eq!(vitals(&second, OTHER), (1, 0, 98, 1), "the other pet's own fullness, and it is the one out");
+    let entered = second.on_field_entered();
+    let summons: Vec<&Reply> = entered.iter().filter(|r| r.opcode == net::pet::PET_ACTIVATED).collect();
+    assert_eq!(summons.len(), 1, "exactly one pet is re-summoned on login");
+    assert!(summons[0].what.contains(&OTHER.to_string()), "{}", summons[0].what);
+    // Closeness persists the same way: a trick that lands writes it, and the next session
+    // reads it back on the right pet.
+    let st = store.pet_state(id, OTHER).unwrap();
+    store.set_pet_vitals(id, OTHER, st.level, 5, st.fullness).unwrap();
+    store.create_migration(account, id, 0, 0).unwrap();
+    let mut third = Session::new(store.clone(), Arc::new(Config::default()));
+    third.claim_for_character(id);
+    assert_eq!(vitals(&third, OTHER), (1, 5, 98, 1));
+    assert_eq!(vitals(&third, HUSKY), (1, 0, 99, 0), "and the Husky did not gain it");
 }
 
 #[test]
