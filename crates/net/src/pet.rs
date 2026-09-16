@@ -46,8 +46,11 @@
 //!
 //! The widths and order are the client's **[L]**; the names of the last six are the reference's
 //! `Pet.encode` and older builds' `nameTag`/`chatBalloon` tail **[I]**. `0x0278..0x027E` are the
-//! rest of the family (move, action, speak, name change, hue, command, exception list) and are
-//! not built - a solo pet needs none of them to appear.
+//! rest of the family: move (`0x0278`), action (`0x0279`), a word for the pet to react to
+//! (`0x027A`, reads a `str` and looks it up in the command table), name change (`0x027B`),
+//! `0x027C`, `0x027D`, and **`0x027E`, the performer - a trick by index or the eating
+//! animation** ([`PET_ACTION_COMMAND`]). "Exception list" for the last was the reference's
+//! guess and is wrong; the handler reads a food item id.
 //!
 //! # What is deliberately NOT here
 //!
@@ -292,6 +295,78 @@ pub fn pet_action(character_id: u32, index: u8, success: bool, message: &str) ->
     w.u8(index); //           141ec3fa0's first u8  -> FUN_141ec6680's command1
     w.u8(u8::from(success)); // its second          -> command2, tested as a flag
     w.str(message);
+    w.into_vec()
+}
+
+/// Server -> client, per user: **the pet performs - a trick by index, or eats.** `FUN_141ec4780`,
+/// the `0x27e` arm of the pet sub-dispatcher. `research/msexe-pet-activated.c` had it down as
+/// "exception list" from the reference's opcode order; the listing says otherwise **[L]**:
+///
+/// ```text
+/// 141ec47f7  u8  nType                    1 = a trick, 2 = food, anything else: nothing
+///   nType 1:
+/// 141ec49f9  u8  interact index           bounds-checked against the pet's own table
+/// 141ec4a50  u8  success                  picks the success (+0x18) or fail (+0x20) lines
+/// 141ec4a75  u8  1 or 2                   which line; other values skip the line
+///   nType 2:
+/// 141ec4b0c  u8  success
+/// 141ec4b24  u32 itemId                   kept only if 2120000 <= id < 2130000 (a pet food)
+/// then FUN_141ec6680(pet, nType, entry, line, 1) - the same performer 0x0279 calls with 0
+/// ```
+///
+/// So the eating animation is `nType 2` with the food's id - [`pet_ate`]. The handler looks
+/// the food up in the pet's own food table by the pet's level (`[pet+0x68]`, 24-byte rows with
+/// a level range), so whether a given pet at a given level has an entry is the pet image's
+/// business; a miss falls through to the common tail rather than a fault.
+pub const PET_ACTION_COMMAND: u16 = 0x027E;
+
+/// `PET_ACTION_COMMAND` type 2. The one value the food branch reads first.
+pub const PET_ACTION_FOOD: u8 = 2;
+
+/// The `0x027E` body for a successful feed: `u32 charId, u32 petIdx, u8 2, u8 1, u32 foodId`.
+/// The owner, 2026-09-16: *"I do want the eating animation to play for the client and other
+/// players."* Sent to the owner and published to the map.
+pub fn pet_ate(character_id: u32, food_item_id: u32) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(character_id);
+    w.u32(PET_INDEX);
+    w.u8(PET_ACTION_FOOD);
+    w.u8(1); // success
+    w.u32(food_item_id);
+    w.into_vec()
+}
+
+/// **The pet-effect arm of `UserEffect`.** `FUN_1427863f0`'s second switch, table
+/// `0x142791348`, index **9** -> `0x14278df5b`: reads `u8 subtype`, `u32 petIdx`, finds the
+/// user's pet (`FUN_1427703d0`) and calls `CPet::OnEffect(pet, subtype)` = `FUN_141ebf340`
+/// **[L]**. Every other arm of the 85 was scanned for a `GetPet` call and only this one (and
+/// arm 69, which is not a pet arm - it reads a `u32` and formats a string) has one.
+pub const USER_EFFECT_PET: u8 = 9;
+
+/// `CPet::OnEffect` subtype **0** is `Effect/PetEff.img/Basic/LevelUp` - `0x141ebf454 test
+/// edi, edi / je 0x141ebf686`, and that arm loads the LevelUp string at `0x141ebf686`. 1 is
+/// `Basic/Teleport`, 2 is `%07d/warp`. **[L]**
+pub const PET_EFFECT_LEVEL_UP: u8 = 0;
+
+/// `0x02D1` `UserEffectLocal` for the owner: `u8 9, u8 0, u32 petIdx`. The owner, 2026-09-16:
+/// *"When closeness levels up, it should also play an animation to the client and other
+/// players in the map."*
+pub fn pet_level_up_local() -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(USER_EFFECT_PET);
+    w.u8(PET_EFFECT_LEVEL_UP);
+    w.u32(PET_INDEX);
+    w.into_vec()
+}
+
+/// `0x02AF` `UserEffectRemote` for everyone else: `u32 charId`, then the same three fields. The
+/// remote handler runs the same decoder (`FUN_1427863f0`) against the remote user.
+pub fn pet_level_up_remote(character_id: u32) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(character_id);
+    w.u8(USER_EFFECT_PET);
+    w.u8(PET_EFFECT_LEVEL_UP);
+    w.u32(PET_INDEX);
     w.into_vec()
 }
 

@@ -2051,7 +2051,13 @@
                        DONE. The request is 0x0112, read off the client, never captured before
             the food is not used up / nothing changes -> paste the "pet food:" log line, or
                        the "<- ... 0x0112" line if there is none: the opcode is wrong
-            no eating animation is EXPECTED - none is sent; say if you want one
+            the Husky EATS (0x027E type 2 with the food's id, read off the client's own
+                       handler) on YOUR screen and on Tester2's -> DONE
+            no eating animation on either screen -> the pet image has no food entry for
+                       its level, or the type byte is wrong; say which screen
+            closeness 0 -> 1 is level 1 -> 2: a LEVEL-UP flash on both screens (UserEffect
+                       9, subtype 0 = Effect/PetEff.img/Basic/LevelUp) -> DONE
+            the flash on your screen only -> the remote 0x02AF is dropped; say so
             feed it twice more at 100: the second overfeed costs a closeness (the wiki rule)
           HUNGER: leave the Husky out. Every five minutes Fullness drops one (reopen the
           panel). At 0 it goes home, one closeness gone, "is starving" in chat. To see the
@@ -4971,7 +4977,9 @@ function Show-TestPlan {
         Write-Host '       FEEDING: Pet Food (Lucy, 35 mesos) on the Husky, Show Pet Info open:'
         Write-Host '         Fullness +30, Closeness +1, Level 2 -> DONE (0x0112, never captured)' -ForegroundColor Green
         Write-Host '         nothing changes -> paste the "pet food:" line, or the 0x0112 line' -ForegroundColor Yellow
-        Write-Host '         no eating animation is EXPECTED. 3rd feed at 100 costs a closeness.'
+        Write-Host '         the Husky EATS on BOTH screens (0x027E) -> DONE; one screen only -> say which' -ForegroundColor Green
+        Write-Host '         level 1 -> 2 on the first feed: a LEVEL-UP flash on BOTH screens' -ForegroundColor Green
+        Write-Host '         3rd feed at 100 costs a closeness.'
         Write-Host '       HUNGER: -1 Fullness per five minutes out; at 0 it goes home.'
         Write-Host '       TRICKS: a "sit" that lands -> Closeness +3, the level climbs.'
         Write-Host '       RE-LOGIN: log out with the Husky out, log back in:'

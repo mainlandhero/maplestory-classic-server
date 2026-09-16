@@ -1624,6 +1624,59 @@ mod tests {
         assert!(quiet.iter().all(|r| r.opcode != net::userpool::USER_ENTER_FIELD));
     }
 
+    /// **The eating animation and the level-up flash reach the other player.** The owner,
+    /// 2026-09-16: *"I do want the eating animation to play for the client and other players.
+    /// When closeness levels up, it should also play an animation to the client and other
+    /// players in the map."* The watcher gets `0x027E` type 2 with the food's id and `0x02AF`
+    /// effect 9 / subtype 0 naming the owner.
+    #[test]
+    fn a_feed_and_the_level_it_earns_are_seen_by_the_other_player() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut ids = Vec::new();
+        for name in ["Owner", "Watcher"] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: 104_040_000, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.create_migration(account, id, 0, 0).unwrap();
+            ids.push(id);
+        }
+        store.add_item(ids[0], store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+        store.add_item(ids[0], store::InventoryType::Use, &store::Item::bundle(2_120_000, 2), 100).unwrap();
+        let food_slot = store.bag_items(ids[0], store::InventoryType::Use).unwrap().iter().find(|r| r.item.item_id == 2_120_000).unwrap().slot;
+        let mut item_names = std::collections::HashMap::new();
+        item_names.insert(5_000_006u32, "Husky".to_string());
+        let config = Arc::new(Config { item_names, ..(*config).clone() });
+
+        let mut owner = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut watcher = Session::joining(store.clone(), config, fields.clone());
+        owner.claim_for_character(ids[0]);
+        watcher.claim_for_character(ids[1]);
+        watcher.on_field_entered();
+        owner.on_field_entered();
+        owner.last_position = Some((300, -50));
+        owner.on_pet_activate(&super::tests::hex("509a18140100"));
+        store.set_pet_vitals(ids[0], 5_000_006, 1, 0, 50).unwrap();
+        let _ = watcher.tick(1_000);
+
+        let mut body = net::petfood::CLIENT_USE_PET_FOOD.to_le_bytes().to_vec();
+        body.extend_from_slice(&0x2050_8e0au32.to_le_bytes());
+        body.extend_from_slice(&food_slot.to_le_bytes());
+        body.extend_from_slice(&2_120_000u32.to_le_bytes());
+        let own = owner.handle(&body);
+        assert!(own.iter().any(|r| r.opcode == net::pet::PET_ACTION_COMMAND), "the owner sees it eat");
+
+        let heard = watcher.tick(2_000);
+        let ate = heard.iter().find(|r| r.opcode == net::pet::PET_ACTION_COMMAND).expect("the watcher sees it eat");
+        assert_eq!(&ate.body[0..4], &ids[0].to_le_bytes(), "the owner's pet");
+        assert_eq!((ate.body[8], ate.body[9]), (net::pet::PET_ACTION_FOOD, 1));
+        assert_eq!(&ate.body[10..14], &2_120_000u32.to_le_bytes());
+        let flash = heard.iter().find(|r| r.opcode == net::stats::USER_EFFECT_REMOTE).expect("the watcher sees the level-up");
+        assert_eq!(&flash.body[0..4], &ids[0].to_le_bytes());
+        assert_eq!(&flash.body[4..], &[net::pet::USER_EFFECT_PET, net::pet::PET_EFFECT_LEVEL_UP, 0, 0, 0, 0]);
+        // The Cash item itself stays with the owner: nothing the watcher receives is an inventory op.
+        assert!(heard.iter().all(|r| r.opcode != net::inventory::INVENTORY_OPERATION));
+    }
+
     /// **A kill on one connection pays a character on another.** This is the whole
     /// EXP-share feature end to end, and it is the test that fails if any link is
     /// unhooked: `award_kill_experience`, `Bus::send_to_character`, the mailbox,
