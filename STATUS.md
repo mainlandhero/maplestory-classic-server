@@ -224,6 +224,29 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-16 17:00: the guard page recycles at 200 s and the reserve is 16 M, because the 16:46
+run spent 8 M in four and a half minutes.** The owner: *"I thought we fixed all heap corruptions with
+a guard, why is there more?"* then *"Okay, let's recycle sooner."* `D:\MapleCW\previous-runs\
+maplecw-hook-20260916-165530.log` [L]: `0x20+0x40` armed at 16:46:16, `0x20` at **34 173/s** (the
+12:01 run it was sized from ran at 1 560/s), `0x40` at 3 396/s, and **the two classes share one
+cursor** - both served counters stopped between the 240 s and 300 s heartbeats and sum to exactly
+8 388 608. With a 600 s window nothing could age out before the reserve was gone, so from ~254 s
+every allocation fell back to the client's own pool (9.5 M fallen back by 540 s), the sentry
+caught the known `0x0000000100000020` header at 373 s in a pool slot the guard was no longer
+serving, and the client died at 554 s of `0xC0000374`. The guard was never a fix - the writer is
+the client's anti-cheat writing a compile-time offset past an array, and the guard absorbs it
+only while it serves the allocation. Change: `REUSE_AFTER_MS` 600 s -> **200 s** (one full 180 s
+firing plus 20 s; what is given up is the second and third firings, which no catch on record
+needed), `MAX_SLOTS` 8 M -> **16 M** (64 GiB address space, 64 MB ring at arm, metadata still
+lazy) because at 200 s the pair needs 7.5 M in flight and 8 M is a fit, not headroom. The arming
+line now models the armed SET against the 16:46 rates (`armed_need`), 2.2x for the pair, and
+prints the shout for `all`. Tests: the 16:46 model puts the exhaustion in 240..300 s and says
+600 s could never have recycled in time; the 12:01 model still reproduces its own run with its
+own window. 113 grap-stub tests. **What the next run must show:** `recycled` > 0 from the ~260 s
+heartbeat on and `FELL BACK` absent - plan (1b). Why the churn was 22x the 12:01 run's is not
+known: same client build, different server and pet traffic, nothing in the log ties the rate to
+either. `research/guard-page-2026-09-08.md` §8.
+
 **2026-09-16: item buffs draw their icon - potions name `-itemId`, the EXP coupon rides CTS 163.**
 The owner: *"the EXP coupon effects are not applying the appropriate buff icon on the top right ...
 make sure 2x and 3x coupons have the proper buff durations applied"* and *"make sure that Magic
