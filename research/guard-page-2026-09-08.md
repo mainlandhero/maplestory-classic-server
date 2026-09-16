@@ -282,3 +282,54 @@ nothing in this file rules out a cause that first appears at hour three - includ
 close-time faults (`0x14094e190`, `0x141d12df0`) that were recorded and never chased. The
 allocation rate of the `0x40` class is still unmeasured; the first night's `recycled` and
 `fell back` counters will measure it.
+
+## 8. 2026-09-16 16:46: the reserve went in four and a half minutes, and the window is the lever
+
+The owner: *"I thought we fixed all heap corruptions with a guard, why is there more?"* The honest
+answer is that §0 never claimed a fix. The writer is the client's own anti-cheat
+(`the-180-second-family-is-anti-cheat-2026-09-08.md`) writing a compile-time offset past a
+pool array; the guard absorbs that write in its own padding **only for allocations it serves**.
+A run that has fallen back is a run with no guard, and it looks the same on screen.
+
+`D:\MapleCW\previous-runs\maplecw-hook-20260916-165530.log`, `0x20+0x40`, 8 M slots, 600 s.
+All `[L]` from the 60 s heartbeats:
+
+```text
+   t      0x20 served   0x40 served   fell back    recycled
+  60 s       877 768       221 237            0           0
+ 240 s     7 028 973       832 568            0           0
+ 300 s     7 508 881       879 727    1 575 758           0     <- 7 508 881 + 879 727 = 8 388 608
+ 373 s     POOL SENTRY FINDING #1: 0x0000000100000020, chunk position 226/288 - a POOL slot
+ 540 s     7 508 881       879 727    9 504 594           0
+ 554 s     CLIENT FAULT 0xC0000374
+```
+
+Three things the 12:01 sizing (§7) got wrong, all visible in that table:
+
+1. **The churn.** `0x20` ran at 34 173/s, not 1 560/s. Twenty-two times. Same client build;
+   the differences are the server and the pet traffic, and nothing here ties the rate to either.
+   It is a measured difference between two runs, not a cause.
+2. **The cursor is shared.** §7 modelled each class against its own share and the arming line
+   said "2.8x for 2 classes". The two served counters stopped in the same minute and sum to
+   the reserve exactly.
+3. **A window longer than the time-to-exhaustion recycles nothing.** At 600 s the pair needed
+   20.5 M slots in flight; the reserve was 8 M and gone at 254 s, before the first slot could
+   age out. `recycled` read 0 on every heartbeat of the run.
+
+**The change** (the owner: *"Okay, let's recycle sooner."*): `REUSE_AFTER_MS` **600 s -> 200 s**,
+one full firing of the 180 s clock plus 20 s. The claim kept: a pointer taken at the free is
+written at most once per period, and that write lands on a decommitted page. The claim given
+up: the second and third firings - margin, not a measured exposure; every catch on record is a
+single write on the tick that allocated the array. And `MAX_SLOTS` **8 M -> 16 M**, because at
+200 s the pair needs 7.5 M in flight and 8 M would be 1.1x - a fit, not headroom. 64 GiB of
+address space, a 64 MB ring at arm, metadata still committed only as far as the cursor reaches,
+which once recycling holds is the working set (~290 MB at this churn) and not the reserve.
+
+The arming line now models the armed *set* (`armed_need`) against the 16:46 rates - `0x20`
+and `0x40` at their own, the unmeasured two at `0x20`'s - and reports 2.2x for the pair.
+
+**What the next run must show, and what each reading means.** `recycled` non-zero from the
+~260 s heartbeat on with `FELL BACK` absent: the window holds at this churn. `FELL BACK`
+present: the churn is higher still; the heartbeat lines are the measurement. A heap death with
+`FELL BACK` absent: a write through a pointer older than 200 s, which is exactly the margin
+this gave up, and the answer is the window back up with a reserve sized for it.

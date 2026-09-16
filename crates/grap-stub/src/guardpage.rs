@@ -277,14 +277,34 @@ pub(crate) fn mask_text(mask: u32) -> String {
 /// for two classes at that rate with better than 2 x headroom, or all four if the other three
 /// together are no worse than `0x20`. Everything above the cursor is address space and lazily
 /// committed metadata, so the headroom is nearly free - see [`META_BLOCK_BYTES`].
-pub(crate) const MAX_SLOTS: usize = 8 * 1024 * 1024;
+///
+/// # Doubled to 16 M on 2026-09-16, from the 16:46 run - and the reserve is SHARED
+///
+/// That run armed `0x20+0x40` with 8 M and spent the whole reserve at **~254 s** `[L]`: the
+/// `0x20` counter stopped at 7 508 881 and `0x40`'s at 879 727, and those two sum to exactly
+/// 8 388 608. The 8 M sizing above modelled each class against its own share, and the arming
+/// line said "2.8x for 2 classes"; the truth was one cursor for both and a churn twenty times
+/// the 12:01 run's - see [`MEASURED_1646_STEADY_PER_S_0X20`]. The client fell back to its own
+/// pool at four and a half minutes, the sentry caught the known header damage two minutes
+/// later in a slot the guard was no longer serving, and it died at nine.
+///
+/// The owner: *"Okay, let's recycle sooner."* The window is the lever ([`REUSE_AFTER_MS`], now 200
+/// s), and this doubles the cursor with it because at 200 s the measured pair needs 7.5 M
+/// slots in flight and 8 M is a fit, not headroom. 16 M is 64 GiB of address space, a 64 MB
+/// ring committed at arm, and metadata that is still committed only as far as the cursor
+/// reaches - which, once recycling holds, is about the working set and not the reserve.
+pub(crate) const MAX_SLOTS: usize = 16 * 1024 * 1024;
+
+/// The reserve the 16:46 run of 2026-09-16 had, and spent at ~254 s. `[L]`
+pub(crate) const MAX_SLOTS_UNTIL_0916: usize = 8 * 1024 * 1024;
 
 /// Reserve sizes to try, in slots, largest first. A 32 GiB reservation in a 64-bit process
 /// with 128 TB of user address space should never fail - but "should never fail" is how this
 /// project has lost runs before, and standing the whole module down because address space was
 /// fragmented would be a worse outcome than arming with a smaller cursor and saying so. Every
 /// entry is a power of two: the retirement ring indexes with a mask.
-const RESERVE_LADDER: [usize; 5] = [
+const RESERVE_LADDER: [usize; 6] = [
+    16 * 1024 * 1024,
     8 * 1024 * 1024,
     4 * 1024 * 1024,
     2 * 1024 * 1024,
@@ -304,20 +324,35 @@ const SLOT_HEADER_OFF: usize = SLOT_BODY_OFF - 8;
 /// cannot last a night: the cursor only advances, so the reserve is a budget of total
 /// allocations. So a page is reused only after this long.
 ///
-/// **Unchanged at 600 s on 2026-09-08, deliberately.** The number comes from the writer, not
-/// from the reserve: it fires on an exact **180 s** clock
-/// (`research/the-180-second-clock-2026-09-07.md`), and 600 s covers three firings of any
-/// pointer taken at the instant of a free. The temptation after the 12:01 run was to shorten it
-/// - every 100 s shaved is ~156 K slots per class - but the run showed the *cursor* was the
-/// constraint and the cursor is the cheap thing to grow: 8 M slots costs address space and
-/// lazily-committed metadata, while a shorter window costs guarantee. Nothing measured says a
-/// stale pointer stops being written after two firings rather than three, so the window stays
-/// where the measurement of the writer put it.
+/// **600 s until 2026-09-16, then 200 s.** The number comes from the writer: it fires on an
+/// exact **180 s** clock (`research/the-180-second-clock-2026-09-07.md`). 600 s covered three
+/// firings of any pointer taken at the instant of a free, and on 2026-09-08 it was kept there
+/// deliberately - the 12:01 run had shown the *cursor* was the constraint, and the cursor is
+/// the cheap thing to grow.
+///
+/// The 16:46 run of 2026-09-16 showed the other case. `0x20` churned at **34 173/s** `[L]`,
+/// twenty-two times the 1 560/s the reserve was sized from, so one 600 s window needed 20.5 M
+/// slots in flight for the shipped pair and the 8 M reserve was spent at ~254 s - before a
+/// single slot could age out, because nothing ages out before the window. Recycling that
+/// starts after the reserve is gone protects nothing. The owner: *"Okay, let's recycle sooner."*
+///
+/// **200 s is one full firing of the writer's clock plus 20 s of slack.** The claim it keeps:
+/// a pointer taken at the free is written at most once per 180 s, so any write through it
+/// within the first period lands on a decommitted page and is caught. The claim it gives up:
+/// the second and third firings. Nothing measured says the writer fires through the same
+/// pointer more than once - the catches on record are single writes, `+0x24` and `+0x90` past
+/// an array allocated on the tick that writes it - so what is given up is margin, not a
+/// measured exposure. [`MAX_SLOTS`] doubled in the same change, so the pair's 200 s window
+/// (7.5 M slots) has better than 2x.
 ///
 /// A stale write inside the window lands on a decommitted page and is caught; one after it
 /// lands on a live quarantined slot, which is the same exposure the client's own pool has after
 /// a few milliseconds.
-const REUSE_AFTER_MS: u64 = 600_000;
+const REUSE_AFTER_MS: u64 = 200_000;
+
+/// The window every run before 2026-09-16 had. Kept for the 12:01 model's test, which has to
+/// reproduce *that* run's fallback with *that* run's window.
+pub(crate) const REUSE_AFTER_MS_UNTIL_0916: u64 = 600_000;
 
 /// The header value stamped on a quarantined slot: **greater than `0x98`**, so every one of the
 /// client's three free ladders (`0x10/0x20/0x40/0x80` twice, `0x28/0x38/0x58/0x98` once) falls
@@ -350,6 +385,46 @@ pub(crate) const MEASURED_FALLBACK_AT_600S: usize = 419_588;
 /// Live `0x20` slots at every heartbeat after the first three minutes: ~26 000. `[L]`
 /// One committed page each, so ~104 MB - not the ~230 MB predicted before the launch.
 pub(crate) const MEASURED_LIVE_0X20: usize = 26_000;
+
+// ---- the 16:46 run of 2026-09-16, which spent the 8 M reserve in four and a half minutes --
+//
+// `D:\MapleCW\previous-runs\maplecw-hook-20260916-165530.log`, `0x20+0x40` armed at 16:46:16,
+// client dead of `0xC0000374` at 16:55:28. All `[L]`, read off the 60 s heartbeats. The two
+// classes share ONE cursor: their served counters both stopped between the 240 s and 300 s
+// heartbeats, and 7 508 881 + 879 727 = 8 388 608 exactly.
+
+/// `0x20` served in the first 60 s. `[L]`
+pub(crate) const MEASURED_1646_BURST_60S_0X20: usize = 877_768;
+/// `0x20` sustained: 60 s -> 240 s served 877 768 -> 7 028 973, i.e. 6 151 205 in 180 s. `[L]`
+pub(crate) const MEASURED_1646_STEADY_PER_S_0X20: usize = 34_173;
+/// `0x40` served in the first 60 s. `[L]`
+pub(crate) const MEASURED_1646_BURST_60S_0X40: usize = 221_237;
+/// `0x40` sustained: 221 237 -> 832 568 over the same 180 s. `[L]`
+pub(crate) const MEASURED_1646_STEADY_PER_S_0X40: usize = 3_396;
+/// Live `0x20` slots at every heartbeat after the first minute: ~54 000, so ~210 MB of
+/// committed pages for that class. `[L]`
+pub(crate) const MEASURED_1646_LIVE_0X20: usize = 54_000;
+
+/// What an armed set needs from the reserve: `(first window, steady state)`, summed over its
+/// classes, because the cursor is shared. `0x20` and `0x40` at their own rates from the 16:46
+/// run; `0x10` and `0x80` are unmeasured and take `0x20`'s - the conservative reading, and the
+/// one that keeps `all` printing the not-enough-headroom shout until someone measures them.
+pub(crate) fn armed_need(mask: u32) -> (usize, usize) {
+    let mut first = 0usize;
+    let mut steady = 0usize;
+    for (bucket, &class) in CLASSES.iter().enumerate() {
+        if mask & (1 << bucket) == 0 {
+            continue;
+        }
+        let (burst, rate) = match class {
+            0x40 => (MEASURED_1646_BURST_60S_0X40, MEASURED_1646_STEADY_PER_S_0X40),
+            _ => (MEASURED_1646_BURST_60S_0X20, MEASURED_1646_STEADY_PER_S_0X20),
+        };
+        first += first_window_slots(burst, rate, REUSE_AFTER_MS);
+        steady += steady_slots(rate, REUSE_AFTER_MS);
+    }
+    (first, steady)
+}
 
 /// Slots one class needs to be covered from a standing start: its first-minute burst plus the
 /// rest of one retirement window at the sustained rate. Pure, so the sizing has to argue with
@@ -1166,12 +1241,12 @@ unsafe fn arm(mask: u32) {
 /// from, and what would make it wrong, because a run that quietly falls back looks exactly
 /// like a healthy one.
 pub(crate) fn render_armed(mask: u32, slots: usize, reserve: usize, ring_bytes: usize) -> String {
-    let need = first_window_slots(MEASURED_BURST_60S, MEASURED_STEADY_PER_S, REUSE_AFTER_MS);
-    let steady = steady_slots(MEASURED_STEADY_PER_S, REUSE_AFTER_MS);
+    let (first, steady) = armed_need(mask);
+    let need = first.max(steady);
     let nclass = mask.count_ones() as usize;
     // Headroom against the model, to one decimal, and a shout if the reserve is below it -
     // "1x" and "0x" both read as a number rather than as a warning.
-    let tenths = slots.saturating_mul(10) / need.max(1) / nclass.max(1);
+    let tenths = slots.saturating_mul(10) / need.max(1);
     let headroom = if tenths >= 15 {
         format!("{}.{}x", tenths / 10, tenths % 10)
     } else {
@@ -1184,21 +1259,22 @@ pub(crate) fn render_armed(mask: u32, slots: usize, reserve: usize, ring_bytes: 
     format!(
         "***** GUARD PAGE ARMED: size class(es) {} are served one-slot-per-page from a \
          {} GB reserve ({slots} slots) at {reserve:#x} and DECOMMITTED on free, each \
-         address held back for {}s before it can be handed out again. SIZED FROM THE \
-         12:01 RUN: 0x20 burst to {MEASURED_BURST_60S} in its first minute then ran at \
-         {MEASURED_STEADY_PER_S}/s, so ONE class needs {need} slots for its first \
-         retirement window ({steady} once it is turning over) - the old \
-         {OLD_MAX_SLOTS}-slot cursor was spent at six minutes and \
-         {MEASURED_FALLBACK_AT_600S} allocations fell back. Against that requirement \
-         this reserve has {headroom} of headroom for the {nclass} class(es) armed, IF \
-         they churn like 0x20 - which \
-         is measured for 0x20 and unmeasured for the other three, so read the \
-         'pool allocations seen by class' counters in the heartbeat. Metadata is \
-         committed lazily, so arming costs {} MB now and grows with the cursor instead \
-         of 320 MB up front. Committed PAGE memory is bounded by the LIVE set, not by \
-         the cursor: 0x20 held ~{MEASURED_LIVE_0X20} live slots all run, which is \
-         {} MB, so expect roughly that per class rather than the 230 MB predicted \
-         before that launch. A stale write or read into a freed slot faults at the \
+         address held back for {}s - one full firing of the writer's 180 s clock plus \
+         20 s - before it can be handed out again. SIZED FROM THE 16:46 RUN OF \
+         2026-09-16, which spent an 8388608-slot reserve in 254 s: 0x20 burst to \
+         {MEASURED_1646_BURST_60S_0X20} in its first minute then ran at \
+         {MEASURED_1646_STEADY_PER_S_0X20}/s (22x the 12:01 run it was sized from), 0x40 \
+         at {MEASURED_1646_STEADY_PER_S_0X40}/s, and the two classes share ONE cursor. \
+         The {nclass} class(es) armed need {first} slots for their first retirement \
+         window and {steady} once they are turning over; against the larger of those \
+         this reserve has {headroom} of headroom. 0x10 and 0x80 are unmeasured and \
+         modelled at 0x20's rate, so read the 'pool allocations seen by class' counters \
+         in the heartbeat - and read FELL BACK first: a fallen-back run looks exactly \
+         like a protected one. Metadata is committed lazily, so arming costs {} MB now \
+         and grows with the cursor, which stops growing once recycling holds. \
+         Committed PAGE memory is bounded by the LIVE set, not by the cursor: 0x20 held \
+         ~{MEASURED_1646_LIVE_0X20} live slots all run, which is {} MB, so expect \
+         roughly that per class. A stale write or read into a freed slot faults at the \
          instruction that makes it, which the handler logs (RIP, target, who allocated, \
          who freed, how long ago) and recommits so the client continues. control PASS. \
          The pool's own chain, free list and counters are untouched - our slots take \
@@ -1208,7 +1284,7 @@ pub(crate) fn render_armed(mask: u32, slots: usize, reserve: usize, ring_bytes: 
         slots * PAGE_BYTES / (1024 * 1024 * 1024),
         REUSE_AFTER_MS / 1000,
         (ring_bytes + META_BLOCK_BYTES) / (1024 * 1024),
-        MEASURED_LIVE_0X20 * PAGE_BYTES / (1024 * 1024),
+        MEASURED_1646_LIVE_0X20 * PAGE_BYTES / (1024 * 1024),
     )
 }
 
@@ -1401,13 +1477,15 @@ mod tests {
         assert_eq!(mask_text(mask), SHIPPED, "and it round-trips to the same words");
         assert!(mask.count_ones() == 2);
 
-        // The headroom the shipped set gets, from the model rather than from prose: two
-        // classes clear the 1.5x floor `render_armed` shouts below, four do not - which is why
+        // The headroom the shipped set gets, from the model rather than from prose: the pair
+        // clears the 1.5x floor `render_armed` shouts below, all four do not - which is why
         // `all` is not what ships.
-        let need = first_window_slots(MEASURED_BURST_60S, MEASURED_STEADY_PER_S, REUSE_AFTER_MS);
-        let tenths = |n: usize| MAX_SLOTS * 10 / need / n;
-        assert!(tenths(2) >= 15, "two classes: {} tenths", tenths(2));
-        assert!(tenths(4) < 15, "four would print the NOT-enough-headroom shout");
+        let tenths = |m: u32| {
+            let (first, steady) = armed_need(m);
+            MAX_SLOTS * 10 / first.max(steady)
+        };
+        assert!(tenths(mask) >= 15, "the pair: {} tenths", tenths(mask));
+        assert!(tenths(parse_classes("all").unwrap()) < 15, "all four would print the NOT-enough-headroom shout");
 
         // A comma is the one separator that must NOT work: the session marker is itself
         // comma-separated, so `guardpage=0x20,0x40` reaches here as `0x20` and arms half of
@@ -1416,12 +1494,19 @@ mod tests {
     }
 
     /// **The reserve must be a working set, not a budget.** A slot is reusable only after
-    /// `REUSE_AFTER_MS`, which is more than three periods of the writer's 180 s clock.
+    /// `REUSE_AFTER_MS`, which covers one full period of the writer's 180 s clock with slack -
+    /// three periods until 2026-09-16, when the 16:46 run spent the reserve before anything
+    /// could age out. Shorter than one period would hand a page back before the writer's next
+    /// tick, which is the one exposure the window exists to close.
     #[test]
-    fn a_retired_slot_is_reusable_only_after_three_firings_of_the_writers_clock() {
+    fn a_retired_slot_is_reusable_only_after_one_full_firing_of_the_writers_clock() {
         assert!(
-            REUSE_AFTER_MS >= 3 * 180_000,
-            "the delay must cover three 180 s firings of any pointer taken at the free"
+            REUSE_AFTER_MS > 180_000,
+            "the delay must cover one 180 s firing of any pointer taken at the free, with slack"
+        );
+        assert!(
+            REUSE_AFTER_MS < 2 * 180_000,
+            "and it was shortened on purpose - two firings is the old budget problem again"
         );
         let freed = 1_000_000u64;
         assert!(!reusable_at(freed, freed), "just freed");
@@ -1443,7 +1528,7 @@ mod tests {
     #[test]
     fn the_model_reproduces_the_measured_fallback_of_the_first_guard_page_run() {
         // What one class needs from a standing start: the burst plus the rest of the window.
-        let first = first_window_slots(MEASURED_BURST_60S, MEASURED_STEADY_PER_S, REUSE_AFTER_MS);
+        let first = first_window_slots(MEASURED_BURST_60S, MEASURED_STEADY_PER_S, REUSE_AFTER_MS_UNTIL_0916);
         assert_eq!(first, 1_469_572, "627172 + 1560*540");
 
         // The old cursor could not hold it, and the shortfall IS the measured fallback. The
@@ -1458,7 +1543,7 @@ mod tests {
         // **The burst is what broke it, not the steady state.** Steady-state churn alone would
         // have fitted in the old cursor with room to spare - which is why shortening
         // REUSE_AFTER_MS was the wrong lever and a bigger cursor was the right one.
-        let steady = steady_slots(MEASURED_STEADY_PER_S, REUSE_AFTER_MS);
+        let steady = steady_slots(MEASURED_STEADY_PER_S, REUSE_AFTER_MS_UNTIL_0916);
         assert_eq!(steady, 936_000);
         assert!(steady < OLD_MAX_SLOTS, "the steady state always fitted: {steady}");
 
@@ -1467,18 +1552,36 @@ mod tests {
         assert!((300..360).contains(&spent_at_s), "model says {spent_at_s}s");
     }
 
-    /// **The new reserve, sized against that model.**
+    /// **The 16:46 run of 2026-09-16, and the model that has to reproduce it.** The pair was
+    /// armed with 8 M and 600 s; both served counters stopped between the 240 s and 300 s
+    /// heartbeats, summing to exactly the reserve. The model has to put the exhaustion there,
+    /// and has to say that 600 s could never have recycled in time at that churn.
     #[test]
-    fn the_reserve_holds_the_measured_burst_for_more_than_one_class() {
-        let first = first_window_slots(MEASURED_BURST_60S, MEASURED_STEADY_PER_S, REUSE_AFTER_MS);
-        // One class, with real headroom rather than a fit.
-        assert!(MAX_SLOTS > first * 4, "{MAX_SLOTS} vs {first}");
-        // Two classes at the measured 0x20 rate, still with better than 2x headroom. This is
-        // the configuration the next run should use: 0x20 and 0x40, the two with victims.
-        assert!(MAX_SLOTS > 2 * first * 2, "two classes must fit twice over");
-        // All four, if the other three together are no worse than 0x20 - true only if their
-        // rates are at most 0x20's, which is UNMEASURED. The SEEN counters exist to settle it.
-        assert!(MAX_SLOTS > 4 * first, "all four must at least fit once");
+    fn the_model_reproduces_when_the_1646_run_spent_its_shared_reserve() {
+        let burst = MEASURED_1646_BURST_60S_0X20 + MEASURED_1646_BURST_60S_0X40;
+        let rate = MEASURED_1646_STEADY_PER_S_0X20 + MEASURED_1646_STEADY_PER_S_0X40;
+        let spent_at_s = 60 + (MAX_SLOTS_UNTIL_0916 - burst) / rate;
+        assert!((240..300).contains(&spent_at_s), "model says {spent_at_s}s; the heartbeats say 240..300");
+        // At 600 s the pair's steady state alone was 2.4x the reserve: no cursor could have
+        // been recycled into, because nothing is old enough before the window.
+        let steady_600 = steady_slots(rate, REUSE_AFTER_MS_UNTIL_0916);
+        assert!(steady_600 > 2 * MAX_SLOTS_UNTIL_0916, "{steady_600} vs {MAX_SLOTS_UNTIL_0916}");
+        // 34 173/s is 22x the 12:01 run's 1 560/s - the number the old sizing rested on.
+        assert_eq!(MEASURED_1646_STEADY_PER_S_0X20 / MEASURED_STEADY_PER_S, 21);
+    }
+
+    /// **The new reserve and window, sized against that run.**
+    #[test]
+    fn the_reserve_holds_the_shipped_pair_with_headroom_against_the_1646_run() {
+        let pair = parse_classes("0x20+0x40").unwrap();
+        let (first, steady) = armed_need(pair);
+        assert_eq!(steady, (34_173 + 3_396) * 200, "{steady}");
+        assert_eq!(first, 877_768 + 221_237 + (34_173 + 3_396) * 140, "{first}");
+        // Better than 2x on the larger of the two, from the model rather than from prose.
+        assert!(MAX_SLOTS * 10 / first.max(steady) >= 20, "{MAX_SLOTS} vs {first}/{steady}");
+        // 8 M would have been a fit, not headroom - which is why the cursor doubled with the
+        // window rather than instead of it.
+        assert!(MAX_SLOTS_UNTIL_0916 * 10 / first.max(steady) < 15);
         // The ladder is powers of two, because the ring indexes with a mask.
         for w in RESERVE_LADDER {
             assert!(w.is_power_of_two(), "{w} is not a power of two");
@@ -1513,11 +1616,18 @@ mod tests {
     fn the_metadata_array_is_committed_only_as_far_as_the_cursor_reaches() {
         assert_eq!(META_STRIDE, 40, "four u64-ish fields and two u32");
         let eager_mb = MAX_SLOTS * META_STRIDE / (1024 * 1024);
-        assert_eq!(eager_mb, 320, "what it would cost committed up front");
+        assert_eq!(eager_mb, 640, "what it would cost committed up front at 16 M");
 
-        let first = first_window_slots(MEASURED_BURST_60S, MEASURED_STEADY_PER_S, REUSE_AFTER_MS);
+        // The 12:01 run's one-class window at the old 600 s: 60 MB, as the doc block says.
+        let first = first_window_slots(MEASURED_BURST_60S, MEASURED_STEADY_PER_S, REUSE_AFTER_MS_UNTIL_0916);
         let used = commit_target(first * META_STRIDE, META_BLOCK_BYTES, MAX_SLOTS * META_STRIDE);
         assert!(used / (1024 * 1024) < 60, "{} MB for one class", used / (1024 * 1024));
+        // The 16:46 run's churn, the shipped pair, at 200 s: the cursor reaches the larger of
+        // the pair's two windows and then holds there once recycling supplies every fresh
+        // request, so this is what a night at that churn commits - under 300 MB, not 640.
+        let (pair_first, pair_steady) = armed_need(parse_classes("0x20+0x40").unwrap());
+        let used = commit_target(pair_first.max(pair_steady) * META_STRIDE, META_BLOCK_BYTES, MAX_SLOTS * META_STRIDE);
+        assert!((280..300).contains(&(used / (1024 * 1024))), "{} MB for the pair at 16:46 churn", used / (1024 * 1024));
 
         // commit_target rounds up to a block, never past the reservation, and is monotone.
         assert_eq!(commit_target(1, 1024, 8192), 1024);
@@ -1529,10 +1639,14 @@ mod tests {
         // rate it fires about three times a minute.
         let slots_per_block = META_BLOCK_BYTES / META_STRIDE;
         assert!(slots_per_block > MEASURED_STEADY_PER_S * 10, "{slots_per_block} slots a block");
+        // At the 16:46 run's 34 173/s it fires about once a second while the cursor is still
+        // advancing - one VirtualAlloc a second, off the hot path - and not at all once
+        // recycling holds the cursor still.
+        assert!(slots_per_block * 2 > MEASURED_1646_STEADY_PER_S_0X20, "{slots_per_block} slots a block");
 
         // The ring is the other array, and it is eager on purpose: 4 bytes a slot.
         let ring_mb = MAX_SLOTS * std::mem::size_of::<u32>() / (1024 * 1024);
-        assert_eq!(ring_mb, 32);
+        assert_eq!(ring_mb, 64, "16 M slots x 4 bytes, committed at arm");
         assert_eq!(
             ring_mb * META_STRIDE / std::mem::size_of::<u32>(),
             eager_mb,
@@ -1671,31 +1785,32 @@ mod tests {
         let one = render_armed(parse_classes("0x20").unwrap(), MAX_SLOTS, 0x1_8006_0000, MAX_SLOTS * 4);
         eprintln!("{one}\n");
         assert!(one.contains("size class(es) 0x20 are served"), "{one}");
-        assert!(one.contains("32 GB reserve (8388608 slots)"), "{one}");
-        assert!(one.contains("held back for 600s"), "{one}");
-        assert!(one.contains("ONE class needs 1469572 slots"), "{one}");
-        assert!(one.contains("936000 once it is turning over"), "{one}");
-        assert!(one.contains("this reserve has 5.7x of headroom for the 1 class(es) armed"), "{one}");
-        assert!(one.contains("arming costs 33 MB now"), "{one}");
-        assert!(one.contains("~26000 live slots all run, which is 101 MB"), "{one}");
+        assert!(one.contains("64 GB reserve (16777216 slots)"), "{one}");
+        assert!(one.contains("held back for 200s - one full firing"), "{one}");
+        assert!(one.contains("The 1 class(es) armed need 5661988 slots for their first"), "{one}");
+        assert!(one.contains("6834600 once they are turning over"), "{one}");
+        assert!(one.contains("this reserve has 2.4x of headroom"), "{one}");
+        assert!(one.contains("arming costs 65 MB now"), "{one}");
+        assert!(one.contains("~54000 live slots all run, which is 210 MB"), "{one}");
         assert!(one.contains("control PASS"), "the launcher's plan greps for this");
         assert!(one.contains("stamp 0x100 covers every class at once"), "{one}");
 
         let two = render_armed(parse_classes("0x20+0x40").unwrap(), MAX_SLOTS, 0x1_8006_0000, MAX_SLOTS * 4);
-        eprintln!("{two}\n");
         assert!(two.contains("size class(es) 0x20+0x40 are served"), "{two}");
-        assert!(two.contains("this reserve has 2.8x of headroom for the 2 class(es) armed"), "{two}");
+        assert!(two.contains("The 2 class(es) armed need 6358665 slots"), "{two}");
+        assert!(two.contains("7513800 once they are turning over"), "{two}");
+        assert!(two.contains("this reserve has 2.2x of headroom"), "{two}");
 
-        // All four at 0x20's rate is a fit rather than headroom, and the line has to SAY so
-        // instead of printing "1x" and letting it read like a pass. This is the number that
-        // decides whether all-four is a run worth spending a night on.
+        // All four at 0x20's rate for the unmeasured two is a shortfall, and the line has to
+        // SAY so rather than print "0.7x" as if it were a number like any other.
         let four = render_armed(parse_classes("all").unwrap(), MAX_SLOTS, 0x1000, MAX_SLOTS * 4);
-        assert!(four.contains("***** only 1.4x, which is NOT enough headroom"), "{four}");
+        assert!(four.contains("***** only 0.7x, which is NOT enough headroom"), "{four}");
 
-        // A degraded reservation still renders, and still says how much cursor it has.
+        // And the bottom rung of the ladder, which the run should never see but the line must
+        // still describe honestly.
         let small = render_armed(parse_classes("0x20").unwrap(), 512 * 1024, 0x1000, 512 * 1024 * 4);
         assert!(small.contains("(524288 slots)"), "{small}");
-        assert!(small.contains("***** only 0.3x, which is NOT enough headroom"), "{small}");
+        assert!(small.contains("***** only 0.0x, which is NOT enough headroom"), "{small}");
     }
 
     /// **Render the heartbeat and read it.** The same rule the launcher's test plan lives
@@ -1726,7 +1841,7 @@ mod tests {
             line,
             "guard page: 0x20: 1628991 served, 1603226 freed, 25765 live, 580415 recycled, \
              0 fell back | 0x40: 402113 served, 396004 freed, 6109 live, 141002 recycled, \
-             0 fell back | 1469572 of 8388608 fresh pages used, 0 STALE-ACCESS CATCH(es) | \
+             0 fell back | 1469572 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | \
              pool allocations seen by class: 0x10 41000, 0x20 1628991, 0x40 402113, 0x80 9004"
         );
         // An unwatched class contributes its churn measurement and nothing else - that is the
@@ -1748,7 +1863,7 @@ mod tests {
         assert!(line.contains("3 STALE-ACCESS CATCH(es)"), "{line}");
         assert!(line.contains("7 free(s) of an address inside the reserve"), "{line}");
         // The 12:01 run's exact numbers must render as a FELL BACK, since that is what it was.
-        assert!(line.contains("1048576 of 8388608 fresh pages used"), "{line}");
+        assert!(line.contains("1048576 of 16777216 fresh pages used"), "{line}");
 
         // A served-but-never-freed class is only shouted about once there is enough of it to
         // mean something: one allocation in the first millisecond of a run is not a leak.

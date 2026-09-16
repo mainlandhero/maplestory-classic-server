@@ -460,6 +460,24 @@
     grow - is now committed lazily as the cursor advances. REUSE_AFTER_MS stays at 600 s: it
     comes from the writer's 180 s clock (three firings), not from the reserve.
 
+    (1b) 2026-09-16 16:46, THE SAME THING AGAIN AT 22x THE CHURN, AND THE WINDOW IS NOW THE
+    LEVER. On D:\MapleCW the pair 0x20+0x40 spent the whole 8388608-slot reserve at ~254 s:
+    0x20 ran at 34173/s (the 12:01 run it was sized from ran at 1560/s), 0x40 at 3396/s, and
+    the two classes share ONE cursor - their served counters both stopped between the 240 s
+    and 300 s heartbeats and sum to exactly 8388608. At 600 s nothing could age out before the
+    reserve was gone, so from 4.5 min every allocation went back to the client's own pool,
+    the sentry caught the known 0x0000000100000020 header at 6 min in a slot the guard no
+    longer served, and the client died at 9 min of 0xC0000374. You: "Okay, let's recycle
+    sooner." REUSE_AFTER_MS is 200 s (one full 180 s firing plus 20 s) and the reserve is
+    16777216 slots (64 GB of address space, 64 MB ring at arm). The pair's 200 s window is
+    7.5 M slots, 2.2x headroom, and the arming line now prints the pair's need from the 16:46
+    numbers rather than one class's from the 12:01 ones. WHAT TO READ: the heartbeat's
+    "recycled" counter must be NON-ZERO from the 260 s heartbeat on, and "FELL BACK" must
+    stay absent. Recycled > 0 with FELL BACK absent past 10 min -> the window holds at this
+    churn. FELL BACK present -> the churn is higher still; paste the heartbeat lines.
+    A heap death with FELL BACK absent -> a write through a pointer older than 200 s, which
+    is the margin this gave up, and the answer is the window back up with a bigger reserve.
+
     (2) IT DIED ON A CLASS WE WERE NOT QUARANTINING. The fatal object is a 0x40 slot whose
     vtable pointer was incremented by 2 (it reads 0x143406c02; 0x143406c00 is the genuine
     vtable). The writer holds a stale ADDRESS, not a class - whichever bucket's chunk is later
@@ -4689,7 +4707,7 @@ function Show-TestPlan {
         Write-Host '    0j. WHAT THE GUARD PAGE NOW COVERS, and what it does not.' -ForegroundColor Yellow
         Write-Host '       It quarantines a SET of pool size classes, not one: every allocation'
         Write-Host '       of a watched class gets its own page and its free decommits that page'
-        Write-Host '       and holds the address back for 600s. All three deaths on record -'
+        Write-Host '       and holds the address back for 200s (600s until 2026-09-16). All three deaths on record -'
         Write-Host '       0x40 map node +2, 0x20 tree node set to -1, 0x40 vtable +2 - are'
         Write-Host '       inside 0x20+0x40. 0x10 and 0x80 are NOT watched by default and their'
         Write-Host '       churn is unmeasured; the "seen by class" counters are what would'
@@ -5262,12 +5280,13 @@ if ($GuardPage) {
     }
     Write-Host "GUARD PAGE: quarantining size class(es) $GuardBucket." -ForegroundColor Cyan
     Write-Host '  Each allocation of those classes gets its OWN page; its free DECOMMITS the' -ForegroundColor Cyan
-    Write-Host '  page and holds the address back 600s. A stale write/read into a freed slot' -ForegroundColor Cyan
-    Write-Host '  FAULTS at the instruction that makes it - on any clock, not just the 180s' -ForegroundColor Cyan
-    Write-Host '  window. Sized from the 12:01 run: 0x20 bursts to 627172 allocations in its' -ForegroundColor Cyan
-    Write-Host '  first minute then runs at 1560/s, so the reserve is 8388608 slots (32 GB of' -ForegroundColor Cyan
-    Write-Host '  address space) and the metadata is committed lazily. ~33 MB at arm, ~100 MB' -ForegroundColor Cyan
-    Write-Host '  of live pages per class.' -ForegroundColor Cyan
+    Write-Host '  page and holds the address back 200s - one full firing of the 180s clock' -ForegroundColor Cyan
+    Write-Host '  plus slack; 600s until 2026-09-16, when the 16:46 run spent the reserve at' -ForegroundColor Cyan
+    Write-Host '  254s: 0x20 ran at 34173/s, 22x the run it was sized from, and the two' -ForegroundColor Cyan
+    Write-Host '  classes share ONE cursor. The reserve is 16777216 slots (64 GB of address' -ForegroundColor Cyan
+    Write-Host '  space), metadata committed lazily: ~65 MB at arm, ~210 MB of live pages' -ForegroundColor Cyan
+    Write-Host '  for 0x20 at that churn. READ "recycled" (must be > 0 from ~260s) and' -ForegroundColor Cyan
+    Write-Host '  "FELL BACK" (must stay absent) in every heartbeat before anything else.' -ForegroundColor Cyan
     Write-Host '  In the hook log: "GUARD PAGE ARMED ... control PASS" (it states the sizing' -ForegroundColor Cyan
     Write-Host '  model and its headroom), a per-class heartbeat line, "the FIRST free of class' -ForegroundColor Cyan
     Write-Host '  0x40 came back through our HeapFree shim" (the control that a NEWLY watched' -ForegroundColor Cyan
