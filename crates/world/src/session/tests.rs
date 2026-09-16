@@ -2036,13 +2036,20 @@ fn clicking_an_instructor_advances_the_job() {
         made.job = 0;
         store.save_character_progress(&made).unwrap();
         store.create_migration(account_id, made.id, 0, 0).unwrap();
-        let config = Config { npcs, ..Config::default() };
+        // The starter sword has to be a real item to `give_item`, which refuses an id the
+        // client cannot draw. `Config::default()` knows no names, so name the one gift.
+        let mut item_names = std::collections::HashMap::new();
+        item_names.insert(1_302_016, "Beginner's Long Sword".to_string());
+        let config = Config { npcs, item_names, ..Config::default() };
         let mut s = Session::new(store.clone(), Arc::new(config));
         s.claim_for_character(made.id);
         (s, store, made.id)
     };
     let job_of = |store: &Arc<Store>, id: u32| {
         store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().job
+    };
+    let equips_of = |store: &Arc<Store>, id: u32| -> Vec<u32> {
+        store.bag_items(id, store::InventoryType::Equip).unwrap().into_iter().map(|i| i.item.item_id).collect()
     };
 
     // ---- eligible: level 10 and STR at the minimum. THE CLICK ASKS; only Yes advances ----
@@ -2064,6 +2071,7 @@ fn clicking_an_instructor_advances_the_job() {
     let out = s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_CLOSED));
     assert_eq!(job_of(&store, id), 0);
     assert!(!out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED));
+    assert!(equips_of(&store, id).is_empty(), "no gift before the Yes");
     // Yes: the job persists, the packet goes, the sentence is said.
     let _ = s.handle(&npc_click(1000));
     let out = s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_YES));
@@ -2074,9 +2082,21 @@ fn clicking_an_instructor_advances_the_job() {
         .expect("the client must be told, or it draws the old job forever");
     assert!(stat.what.contains("job 0 -> 100"), "{}", stat.what);
     assert!(stat.what.contains("skill points"), "and the SP, or the + button stays grey: {}", stat.what);
+    let said = out.iter().find(|r| r.opcode == net::script::SCRIPT_MESSAGE).expect("a sentence, or nothing on screen says what happened");
+    // **And the Beginner's set.** The owner, 2026-09-16: the instructors hand out the Beginner's
+    // equipment free with the advancement. Dances with Balrog: the Long Sword, in the Equip
+    // tab, announced in their sentence and on the grey chat line a quest reward uses.
+    assert_eq!(equips_of(&store, id), vec![1_302_016], "the Beginner's Long Sword is in the bag");
+    assert!(said.what.contains("Beginner's Long Sword"), "the gift is named: {}", said.what);
     assert!(
-        out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE),
-        "and a sentence, or nothing on screen says what happened"
+        out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION),
+        "the Add row that draws it: {:?}",
+        out.iter().map(|r| &r.what).collect::<Vec<_>>()
+    );
+    assert!(
+        out.iter().any(|r| r.opcode == net::stats::USER_EFFECT_LOCAL && r.what.contains("1302016")),
+        "the grey chat line: {:?}",
+        out.iter().map(|r| &r.what).collect::<Vec<_>>()
     );
 
     // ---- too low a level: a sentence, and NOTHING else ----
@@ -2109,6 +2129,7 @@ fn clicking_an_instructor_advances_the_job() {
         "a second click must not re-advance or re-grant SP"
     );
     assert_eq!(job_of(&store, id), 100, "and the job is unchanged");
+    assert_eq!(equips_of(&store, id), vec![1_302_016], "and the gift is not handed out twice");
 }
 
 /// **Iron Body actually reduces the damage taken.**

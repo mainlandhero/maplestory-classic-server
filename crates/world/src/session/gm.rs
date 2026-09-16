@@ -1189,7 +1189,7 @@ impl Session {
     ///
     /// `Ok` carries the line to print and the packets to send. `Err` carries the refusal,
     /// already worded for a person.
-    fn give_item(
+    pub(super) fn give_item(
         &mut self,
         item_id: u32,
         count: u16,

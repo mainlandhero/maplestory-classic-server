@@ -154,6 +154,19 @@ pub struct FirstJob {
     /// **[L]** - and it is *all* the words this client has for them; see
     /// `research/job-advancement.md` §6.
     pub idle_line: &'static str,
+    /// **The Beginner's set the instructor hands over with the advancement.** The owner,
+    /// 2026-09-16: *"When job advancing to the 1st job, there is a set of "Beginner"
+    /// equipment that those job instructors should also hand out for free. For example,
+    /// Grendel should hand out just job advanced Magicians with a free "Beginner's Wooden
+    /// Wand"."*
+    ///
+    /// **[L]** the five items are every `Beginner's ...` row in `gm-handbook/items.txt`
+    /// (`grep -i "beginner" gm-handbook/items.txt`), and **[I]** which job gets which is
+    /// read off the weapon class in the id - `130` one-handed sword, `137` wand, `145` bow,
+    /// `133` dagger, `147` claw - because no quest in `quests.json` names any of them. The
+    /// Rogue gets both of theirs: the client has a Beginner's dagger *and* a Beginner's claw,
+    /// and nothing says which they were meant to have. One of each, free, on the Yes.
+    pub starter_equips: &'static [u32],
 }
 
 /// The four first job advancements.
@@ -171,6 +184,7 @@ pub const FIRST_JOBS: [FirstJob; 4] = [
         map_name: "Warriors' Sanctuary",
         town_id: 10004000,
         idle_line: "Those who want to become a warrior, come see me...",
+        starter_equips: &[1_302_016], // Beginner's Long Sword
     },
     FirstJob {
         npc_template: 313,
@@ -182,6 +196,7 @@ pub const FIRST_JOBS: [FirstJob; 4] = [
         map_name: "Magic Library",
         town_id: 10002000,
         idle_line: "All who desire to become a magician, talk to me...",
+        starter_equips: &[1_372_008], // Beginner's Wooden Wand
     },
     FirstJob {
         npc_template: 221,
@@ -193,6 +208,7 @@ pub const FIRST_JOBS: [FirstJob; 4] = [
         map_name: "Bowman Instructional School",
         town_id: 10001000,
         idle_line: "Those who want to become a bowman... Talk to me...",
+        starter_equips: &[1_452_008], // Beginner's War Bow
     },
     FirstJob {
         npc_template: 411,
@@ -204,6 +220,7 @@ pub const FIRST_JOBS: [FirstJob; 4] = [
         map_name: "Thieves' Hideout",
         town_id: 10003000,
         idle_line: "Those that want to be a thief, come...",
+        starter_equips: &[1_332_017, 1_472_022], // Beginner's Triangular Zamadar, Beginner's Garnier
     },
 ];
 
@@ -364,6 +381,35 @@ pub fn sp_encoding_changes(from: u16, to: u16) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **Every instructor hands out a Beginner's weapon of their own class, and nobody
+    /// else's.** The five ids are the five `Beginner's` rows in `items.txt`; the class is
+    /// the id's weapon prefix, so a row that gave the Magician a sword would fail here.
+    #[test]
+    fn each_instructor_hands_out_the_beginners_weapons_of_their_own_class() {
+        let class_of = |item: u32| item / 10_000;
+        let want: &[(u16, &[u32])] = &[
+            (100, &[130]),      // Swordsman: a one-handed sword
+            (200, &[137]),      // Magician: a wand
+            (300, &[145]),      // Archer: a bow
+            (400, &[133, 147]), // Rogue: a dagger and a claw
+        ];
+        let mut all = Vec::new();
+        for first in &FIRST_JOBS {
+            let (_, classes) = want.iter().find(|(j, _)| *j == first.job).unwrap();
+            let got: Vec<u32> = first.starter_equips.iter().map(|&i| class_of(i)).collect();
+            assert_eq!(&got, classes, "{} hands out the wrong class", first.npc_name);
+            assert!(!first.starter_equips.is_empty(), "{} hands out nothing", first.npc_name);
+            for &item in first.starter_equips {
+                assert_eq!(item / 1_000_000, 1, "{item} is not an equip");
+                assert!(!all.contains(&item), "{item} is handed out twice");
+                all.push(item);
+            }
+        }
+        all.sort_unstable();
+        assert_eq!(all, [1_302_016, 1_332_017, 1_372_008, 1_452_008, 1_472_022], "the five Beginner's rows");
+        assert_eq!(first_job_at(313).unwrap().starter_equips, &[1_372_008], "Grendel: the Wooden Wand");
+    }
 
     fn beginner(level: u32) -> Character {
         Character {
