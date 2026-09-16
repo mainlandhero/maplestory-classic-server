@@ -16,7 +16,7 @@
 //! byte-identical to a run without them. Passing them also broke the run with a "trouble
 //! connecting" dialog, which is why [`crate::app`] passes exactly three arguments.
 
-use crate::http::{self, AuthReply, ClientToken, LaunchId};
+use crate::http::{self, AuthReply, ClientToken, LaunchId, SessionToken};
 
 /// The result of a sign-in attempt, in the shape the UI needs.
 ///
@@ -31,7 +31,7 @@ pub enum SignIn {
         ttl_secs: i64,
         /// The handle for registering the client process this sign-in is about to start.
         ///
-        /// **Not the session token**, which still never reaches this machine. See
+        /// **Not the session token** (that is `session_token` below, kept only for Sign out). See
         /// `crate::http::LaunchId` and `store::StakedClaim`. It is carried out of this module
         /// only because `crate::prepare` needs it the instant the client starts, and it is
         /// redacted in `Debug` so it cannot reach the log pane by accident.
@@ -48,6 +48,9 @@ pub enum SignIn {
         /// Empty on a server that predates it. See [`SignIn::client_token`] for why an empty
         /// one must produce no marker rather than an empty marker.
         client_token: ClientToken,
+        /// **The session token**, held in memory for one purpose: **Sign out** revokes the
+        /// claim with it (`crate::http::sign_out`). Never written to disk; redacted in `Debug`.
+        session_token: SessionToken,
     },
     /// Wrong password, or no such account. **One outcome, on purpose.**
     BadCredentials,
@@ -65,7 +68,7 @@ impl SignIn {
     /// The line shown under the buttons.
     pub fn message(&self) -> String {
         match self {
-            SignIn::Ok { account_id, identity, ttl_secs, launch_id, client_token } => format!(
+            SignIn::Ok { account_id, identity, ttl_secs, launch_id, client_token, .. } => format!(
                 "signed in as {identity} (account {account_id}). This launch will be served as \
                  this account; the claim lasts {}.{}{}",
                 human_duration(*ttl_secs),
@@ -127,6 +130,15 @@ impl SignIn {
             _ => None,
         }
     }
+
+    /// The session token, for **Sign out** to revoke the claim with. `None` for a refusal and
+    /// for a server that issued none (nothing to revoke there).
+    pub fn session_token(&self) -> Option<&SessionToken> {
+        match self {
+            SignIn::Ok { session_token, .. } if !session_token.is_empty() => Some(session_token),
+            _ => None,
+        }
+    }
 }
 
 /// Sign in against the server's auth service.
@@ -155,12 +167,13 @@ pub fn sign_in(
         return SignIn::Unreachable(NOT_PINNED.to_string());
     };
     match http::login(host, auth_port, pin, identity, password) {
-        AuthReply::Ok { account_id, launch_id, client_token, .. } => SignIn::Ok {
+        AuthReply::Ok { account_id, launch_id, client_token, session_token, .. } => SignIn::Ok {
             account_id,
             identity: identity.to_string(),
             ttl_secs: LOGIN_CLAIM_TTL_SECS,
             launch_id,
             client_token,
+            session_token,
         },
         AuthReply::InvalidCredentials => SignIn::BadCredentials,
         AuthReply::Disabled => SignIn::Disabled,
@@ -221,6 +234,7 @@ mod tests {
             ttl_secs: LOGIN_CLAIM_TTL_SECS,
             launch_id: LaunchId::new("a-launch-handle"),
             client_token: ClientToken::new("MFRGGZDFMZTWQ2LKNNWG23TP2A"),
+            session_token: SessionToken::new("session-secret"),
         }
     }
 
@@ -245,6 +259,7 @@ mod tests {
             ttl_secs: LOGIN_CLAIM_TTL_SECS,
             launch_id: LaunchId::new(""),
             client_token: ClientToken::new("MFRGGZDFMZTWQ2LKNNWG23TP2A"),
+            session_token: SessionToken::new("session-secret"),
         }
         .message();
         assert!(msg.contains("cannot be registered"), "{msg}");
@@ -264,6 +279,7 @@ mod tests {
             ttl_secs: LOGIN_CLAIM_TTL_SECS,
             launch_id: LaunchId::new("h"),
             client_token: ClientToken::new(""),
+            session_token: SessionToken::new("session-secret"),
         };
         assert!(s.client_token().is_none());
         let msg = s.message();
@@ -329,6 +345,7 @@ mod tests {
                 ttl_secs: 3600,
                 launch_id: LaunchId::new("SECRET-HANDLE"),
                 client_token: ClientToken::new("SECRET-CLIENT-TOKEN"),
+                session_token: SessionToken::new("session-secret"),
             },
             SignIn::BadCredentials,
             SignIn::Disabled,

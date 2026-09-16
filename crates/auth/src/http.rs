@@ -67,6 +67,12 @@ struct LaunchRequest {
     pid: u32,
 }
 
+/// `POST /logout`: the session token the sign-in issued. Never logged, never echoed.
+#[derive(Deserialize)]
+struct LogoutRequest {
+    token: String,
+}
+
 /// One parsed request. The body is the raw text; each endpoint decodes its own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
@@ -209,6 +215,17 @@ pub fn handle(service: &AuthService, req: &Request) -> Response {
             }
         },
 
+        // **Sign out.** The owner, 2026-09-16: the launcher's button revokes the claim its sign-in
+        // staked, so the account is no longer "held" by a launcher nobody is using. 200 with
+        // a status either way; a missing claim is not a failure.
+        ("POST", "/logout") => match serde_json::from_str::<LogoutRequest>(&req.body) {
+            Err(_) => Response::error(400, "invalid JSON"),
+            Ok(l) => {
+                let resp = service.logout(&l.token, req.peer.as_deref());
+                Response::json(200, serde_json::to_string(&resp).unwrap_or_default())
+            }
+        },
+
         // Registration and recovery: single-use codes a GM minted. The status code carries
         // the verdict class and the body carries the sentence; the launcher reads both.
         ("POST", "/register") => match serde_json::from_str::<RegisterRequest>(&req.body) {
@@ -246,7 +263,7 @@ pub fn handle(service: &AuthService, req: &Request) -> Response {
         }
 
         ("GET", "/login") | ("GET", "/launch") | ("GET", "/verify") | ("GET", "/consume")
-        | ("GET", "/register") | ("GET", "/recover") => Response::error(405, "POST"),
+        | ("GET", "/register") | ("GET", "/recover") | ("GET", "/logout") => Response::error(405, "POST"),
         _ => Response::error(404, "not found"),
     }
 }
@@ -531,6 +548,26 @@ mod tests {
             assert_eq!(handle(&svc, &ask).status, 404, "{bad:?} must be refused");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `POST /logout` over the wire shape the launcher sends: the claim goes, and the answer is
+    /// a status the launcher reads, never an error for an unknown token.
+    #[test]
+    fn logout_is_a_post_that_revokes_the_signed_in_claim() {
+        let svc = service();
+        let ok = handle(&svc, &req("POST", "/login", r#"{"username":"player_one","password":"hunter2hunter2"}"#));
+        assert_eq!(ok.status, 200);
+        let token = ok.body.split("\"token\":\"").nth(1).and_then(|s| s.split('"').next()).expect("a token in the login body").to_string();
+        assert_eq!(svc.store().live_login_claims().unwrap().len(), 1);
+
+        assert_eq!(handle(&svc, &req("GET", "/logout", "")).status, 405);
+        assert_eq!(handle(&svc, &req("POST", "/logout", "not json")).status, 400);
+        let r = handle(&svc, &req("POST", "/logout", &format!(r#"{{"token":"{token}"}}"#)));
+        assert_eq!(r.status, 200);
+        assert!(r.body.contains(r#""status":"revoked""#), "{}", r.body);
+        assert_eq!(svc.store().live_login_claims().unwrap().len(), 0);
+        let again = handle(&svc, &req("POST", "/logout", &format!(r#"{{"token":"{token}"}}"#)));
+        assert!(again.body.contains(r#""status":"unknown""#), "{}", again.body);
     }
 
     /// The launcher's own manifest and file: 503 without `--launcher` (the launcher goes on),

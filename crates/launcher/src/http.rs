@@ -90,6 +90,30 @@ impl std::fmt::Debug for LaunchId {
 /// One-time and short-lived: the login server spends it on first presentation and stores only
 /// its SHA-256. `Debug` redacts for the same reason `LaunchId` does - a `{:?}` on a struct is
 /// how a secret reaches a log without anybody deciding to put it there.
+/// **The session token the sign-in issued** - the credential that proves to the server that a
+/// later request comes from the same sign-in. Held only in memory, only to be spent by
+/// [`sign_out`]; never written to disk, never logged (`Debug` redacts it).
+#[derive(Clone, PartialEq, Eq)]
+pub struct SessionToken(String);
+
+impl SessionToken {
+    pub fn new(token: impl Into<String>) -> Self {
+        Self(token.into())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.trim().is_empty()
+    }
+}
+
+impl std::fmt::Debug for SessionToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.is_empty() { "SessionToken(<none>)" } else { "SessionToken(<redacted>)" })
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct ClientToken(String);
 
@@ -137,11 +161,64 @@ pub enum AuthReply {
         /// so the second `Start Game` was refused while this screen said the session was good
         /// for twelve hours. Since 2026-09-08 the server honours it until the claim expires.
         client_token: ClientToken,
+        /// The session token, kept so that **Sign out** can revoke the claim it staked
+        /// ([`sign_out`]). Empty on a server that predates it - then there is nothing to spend.
+        session_token: SessionToken,
     },
     InvalidCredentials,
     Disabled,
     /// Anything else: unreachable, a non-200, a body that did not parse.
     Failed(String),
+}
+
+/// What `POST /logout` said. Never fatal: the sign-in is dropped on this side either way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignOutReply {
+    /// That many claims were deleted on the server - this sign-in's.
+    Revoked { claims: usize },
+    /// The server had no live claim for this token: expired, superseded, or already gone.
+    Unknown,
+    /// Unreachable, a non-200, an unreadable body, or a server that predates `/logout`.
+    Failed(String),
+}
+
+/// `POST /logout`: revoke the claim this sign-in staked. The owner, 2026-09-16: *"make sign-out
+/// button actually revoke the claim."*
+pub fn sign_out(host: &str, port: u16, pin: &Fingerprint, token: &SessionToken) -> SignOutReply {
+    if token.is_empty() {
+        return SignOutReply::Failed("the sign-in handed back no session token, so there is no claim this launcher can revoke".into());
+    }
+    let body = format!("{{\"token\":{}}}", json_string(token.as_str()));
+    let request = format!(
+        "POST /logout HTTP/1.1\r\n\
+         Host: {host}:{port}\r\n\
+         Content-Type: application/json\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\r\n{body}",
+        body.len()
+    );
+    match send(host, port, pin, request.as_bytes()) {
+        Ok(r) => parse_sign_out(&r),
+        Err(e) => SignOutReply::Failed(e),
+    }
+}
+
+fn parse_sign_out(response: &str) -> SignOutReply {
+    let (_, status, body) = match status_and_body(response) {
+        Ok(t) => t,
+        Err(e) => return SignOutReply::Failed(e),
+    };
+    if status == "404" || status == "405" {
+        return SignOutReply::Failed("this server predates sign-out (no /logout); the claim expires on its own".into());
+    }
+    if status != "200" {
+        return SignOutReply::Failed(format!("the server answered {status} to the sign-out: {}", trim(body)));
+    }
+    match field(body, "status").as_deref() {
+        Some("revoked") => SignOutReply::Revoked { claims: number(body, "claims").unwrap_or(0) as usize },
+        Some("unknown") => SignOutReply::Unknown,
+        _ => SignOutReply::Failed(format!("could not read the sign-out answer: {}", trim(body))),
+    }
 }
 
 /// What `POST /launch` said.
@@ -635,6 +712,8 @@ pub fn parse(response: &str) -> AuthReply {
                     client_token: ClientToken::new(
                         field(body, "client_token").unwrap_or_default(),
                     ),
+                    // Kept for Sign out, and for nothing else.
+                    session_token: SessionToken::new(field(body, "token").unwrap_or_default()),
                 },
                 None => AuthReply::Failed(format!("no account id in the answer: {}", trim(body))),
             }
@@ -873,8 +952,54 @@ mod tests {
                 username: "tester".into(),
                 launch_id: LaunchId::new("L1"),
                 client_token: ClientToken::new("MFRGGZDFMZTWQ2LKNNWG23TP2A"),
+                session_token: SessionToken::new("abc"),
             }
         );
+    }
+
+    /// `/logout`'s three answers, and the session token's redaction.
+    #[test]
+    fn a_sign_out_answer_is_revoked_unknown_or_failed_and_the_token_never_prints() {
+        let ok = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"revoked\",\"claims\":1}";
+        assert_eq!(parse_sign_out(ok), SignOutReply::Revoked { claims: 1 });
+        let none = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"unknown\"}";
+        assert_eq!(parse_sign_out(none), SignOutReply::Unknown);
+        let old = "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\n\r\n{\"error\":\"no\"}";
+        assert!(matches!(parse_sign_out(old), SignOutReply::Failed(ref why) if why.contains("predates")));
+        assert_eq!(format!("{:?}", SessionToken::new("SECRET")), "SessionToken(<redacted>)");
+        assert_eq!(format!("{:?}", SessionToken::new("")), "SessionToken(<none>)");
+    }
+
+    /// **End to end over TLS**: sign in, sign out, and the service's own store shows the claim
+    /// gone - then the same token is `Unknown`.
+    #[test]
+    fn signing_out_over_tls_revokes_the_claim_the_sign_in_staked() {
+        let dir = std::env::temp_dir().join(format!("maplecw-launcher-signout-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let identity = auth::tls::ensure_identity(&dir).unwrap();
+        let tls = identity.server_config().unwrap();
+        let store = std::sync::Arc::new(store::Store::open_in_memory().unwrap());
+        store.create_account("tester", "correct horse battery").unwrap();
+        let service = std::sync::Arc::new(auth::AuthService::new(store.clone()));
+        let listener = auth::http::listen("127.0.0.1", 0).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let _ = auth::http::run(listener, service, tls);
+        });
+        let pin = identity.fingerprint;
+
+        let AuthReply::Ok { session_token, .. } = login("127.0.0.1", port, &pin, "tester", "correct horse battery") else {
+            panic!("sign-in");
+        };
+        assert!(!session_token.is_empty(), "the session token comes back and is kept");
+        assert_eq!(store.live_login_claims().unwrap().len(), 1, "the sign-in staked a claim");
+
+        assert_eq!(sign_out("127.0.0.1", port, &pin, &session_token), SignOutReply::Revoked { claims: 1 });
+        assert_eq!(store.live_login_claims().unwrap().len(), 0, "and sign-out revoked it");
+        assert_eq!(sign_out("127.0.0.1", port, &pin, &session_token), SignOutReply::Unknown, "a second time finds nothing");
+        assert!(matches!(sign_out("127.0.0.1", port, &pin, &SessionToken::new("")), SignOutReply::Failed(_)), "no token, no request");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The client token is the one secret that leaves this machine again - it goes into a file

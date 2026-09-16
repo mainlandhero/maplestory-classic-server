@@ -103,6 +103,19 @@ pub enum LoginResponse {
 /// Three outcomes rather than a boolean, because *"the handle named no live claim"* and *"the
 /// database would not write"* need different sentences on the launcher's screen and only one
 /// of them has a fix the person can carry out.
+/// What `POST /logout` said. **The claim is gone or it was never there**; neither is a 5xx.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum LogoutResponse {
+    /// The claim(s) this session token staked are deleted. A client launched from that sign-in
+    /// that has not connected yet will not be served as the account; one already in the world
+    /// keeps its session, which was minted at its own login.
+    Revoked { claims: usize },
+    /// No live claim carried this token: it expired, was superseded by a later sign-in of the
+    /// same account, or was revoked already. Nothing to do, and nothing wrong.
+    Unknown,
+}
+
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum LaunchResponse {
@@ -301,6 +314,31 @@ impl AuthService {
     /// one will be ignored eventually"* - the launcher shows this line, so an unregistered
     /// launch is visible before the client is on screen rather than after it turns out to be
     /// playing the wrong account.
+    /// **Sign out: revoke the claim this sign-in staked.** The owner, 2026-09-16: *"Can we make
+    /// sign-out button actually revoke the claim please."* Keyed by the SESSION token - the
+    /// credential the launcher was issued at sign-in - not by the launch id, whose only power
+    /// is `POST /launch` and which must stay powerless to evict anyone.
+    pub fn logout(&self, token: &str, peer: Option<&str>) -> LogoutResponse {
+        let from = peer.unwrap_or("?");
+        if token.trim().is_empty() {
+            return LogoutResponse::Unknown;
+        }
+        match self.store.clear_login_claim_for_token(token) {
+            Ok(0) => {
+                log(&format!("[{from}] sign-out: no live claim carried that token - nothing to revoke"));
+                LogoutResponse::Unknown
+            }
+            Ok(n) => {
+                log(&format!("[{from}] sign-out: {n} login claim(s) revoked"));
+                LogoutResponse::Revoked { claims: n }
+            }
+            Err(e) => {
+                eprintln!("auth: sign-out from {from} could not delete the claim: {e}");
+                LogoutResponse::Unknown
+            }
+        }
+    }
+
     pub fn bind_launch(&self, launch_id: &str, pid: u32) -> LaunchResponse {
         if launch_id.trim().is_empty() || pid == 0 {
             // pid 0 is the System Idle Process and can never own a socket, so it is an
@@ -444,6 +482,27 @@ mod tests {
             panic!("{who} must be able to sign in");
         };
         (token, launch_id)
+    }
+
+    /// **Sign out revokes exactly the claim that sign-in staked.** The owner, 2026-09-16. Owl's
+    /// claim survives otter's sign-out; a second sign-out of the same token is `Unknown`, as is
+    /// a token nobody was issued; an empty token never touches the store.
+    #[test]
+    fn signing_out_revokes_that_claim_and_nobody_elses() {
+        let svc = two_player_service();
+        let (otter_token, _) = sign_in(&svc, "otter", "127.0.0.1");
+        sign_in(&svc, "owl", "127.0.0.1");
+        assert_eq!(svc.store().live_login_claims().unwrap().len(), 2);
+
+        assert_eq!(svc.logout(&otter_token, Some("127.0.0.1")), LogoutResponse::Revoked { claims: 1 });
+        let live = svc.store().live_login_claims().unwrap();
+        assert_eq!(live.len(), 1, "{live:?}");
+        assert_eq!(live[0].account_name, "owl", "owl is untouched");
+
+        assert_eq!(svc.logout(&otter_token, None), LogoutResponse::Unknown, "already revoked");
+        assert_eq!(svc.logout("never-issued", None), LogoutResponse::Unknown);
+        assert_eq!(svc.logout("", None), LogoutResponse::Unknown);
+        assert_eq!(svc.store().live_login_claims().unwrap().len(), 1, "none of those touched owl");
     }
 
     /// **The bug, stated as a test at the level it was measured.**

@@ -156,6 +156,22 @@ its account from a resolver rather than from `Config`, so whichever route wins i
 function."* That is what was built, and it turned out that once the resolver existed neither
 option was needed.
 
+### Sign out revokes the claim - 2026-09-16
+
+The owner: *"Can we make sign-out button actually revoke the claim please"* and *"Make sure it also
+disables the 'Start Game' button once signed out."* Until then the button was local: it cleared
+the sign-in and said in its own comment that it could not revoke anything. Now the sign-in
+keeps the **session token** the service issued (in memory only, `Debug`-redacted), and Sign
+out does three things in this order: drops the sign-in synchronously - Start Game is gated on
+it, so the button greys the instant Sign out is pressed, before any network - then `POST
+/logout {token}` in a worker (`auth::AuthService::logout` ->
+`store::clear_login_claim_for_token`), then removes the client credential file this launch
+wrote into the game folder, since the claim it belonged to is gone. The answer is one of three
+sentences: revoked (N claims), unknown (expired or superseded - nothing to do), or failed
+(unreachable or a server that predates `/logout` - the claim expires on its own). A client
+already in the world keeps playing: its session was minted at its own login. A client from
+that sign-in that has not connected yet is not served as the account.
+
 ## How more than one account actually works
 
 **A login claim in the shared database, and per-connection resolution.** Built 2026-08-28.
