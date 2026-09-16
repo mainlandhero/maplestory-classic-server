@@ -2045,9 +2045,28 @@ fn clicking_an_instructor_advances_the_job() {
         store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().job
     };
 
-    // ---- eligible: level 10 and STR at the minimum ----
+    // ---- eligible: level 10 and STR at the minimum. THE CLICK ASKS; only Yes advances ----
+    // The owner, 2026-09-15: "the moment you click on the first job instructors, you simply
+    // become that job. There should be a yes or no dialogue (including the requirement)".
     let (mut s, store, id) = build(crate::jobs::LEVEL_MINIMUM, crate::jobs::STAT_MINIMUM);
     let out = s.handle(&npc_click(1000));
+    assert_eq!(job_of(&store, id), 0, "the click alone changes nothing");
+    assert!(!out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED), "no job packet before an answer");
+    let ask = out.iter().find(|r| r.opcode == net::script::SCRIPT_MESSAGE).expect("the question");
+    assert!(ask.what.contains("AskYesNo"), "{}", ask.what);
+    assert!(ask.what.contains("Warrior") && ask.what.contains("Level 10") && ask.what.contains("STR 35"), "the requirements are in the box: {}", ask.what);
+    assert!(ask.what.contains("cannot be undone"), "{}", ask.what);
+    // No: a sentence, nothing else, and the job is untouched. Closing the box: nothing.
+    let out = s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_NO));
+    assert_eq!(job_of(&store, id), 0);
+    assert!(out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE) && !out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED));
+    let _ = s.handle(&npc_click(1000));
+    let out = s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_CLOSED));
+    assert_eq!(job_of(&store, id), 0);
+    assert!(!out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED));
+    // Yes: the job persists, the packet goes, the sentence is said.
+    let _ = s.handle(&npc_click(1000));
+    let out = s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_YES));
     assert_eq!(job_of(&store, id), 100, "the job must persist, not just be announced");
     let stat = out
         .iter()
@@ -2082,6 +2101,7 @@ fn clicking_an_instructor_advances_the_job() {
     // ---- already advanced: one-way, so this is a refusal rather than a re-offer ----
     let (mut s, store, id) = build(crate::jobs::LEVEL_MINIMUM, crate::jobs::STAT_MINIMUM);
     s.handle(&npc_click(1000));
+    s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_YES));
     assert_eq!(job_of(&store, id), 100);
     let out = s.handle(&npc_click(1000));
     assert!(
@@ -10914,11 +10934,13 @@ fn a_double_click_on_the_husky_summons_it_and_a_second_puts_it_away() {
     let blob = s.item_blob(&store::Item::bundle(5_000_006, 1));
     assert_eq!(blob[1 + 18 + 35], 1, "the bag body agrees the pet is out");
 
-    // The same click again: put away - nine bytes, activated 0 - and the item back to 0.
+    // The same click again: put away - activated 0, then the reason byte the OWNER's handler
+    // reads (nine bytes without it killed the client, 2026-09-15 23:34) - and the item back to 0.
     let out = s.on_pet_activate(&hex("f29d18140100"));
     let down = out.iter().find(|r| r.opcode == net::pet::PET_ACTIVATED).expect("a PetActivated");
-    assert_eq!(down.body.len(), 9);
+    assert_eq!(down.body.len(), 10);
     assert_eq!(down.body[8], 0, "activated = 0");
+    assert_eq!(down.body[9], net::pet::PET_REMOVE_REASON_NONE, "the reason: a plain removal");
     assert!(!s.pet_is_active(5_000_006));
     assert!(out.iter().any(|r| r.what.contains("active=0")));
     assert!(s.pet_entry_replies(&chr).is_empty(), "nothing to re-send once it is away");

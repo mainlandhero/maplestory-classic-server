@@ -57,6 +57,37 @@ announced with **`0x027B`** - `FUN_141ec4660`, the `0x27b` arm of the pet sub-di
 one `str` after `charId`/`petIdx` (`tools/reads.py 0x141ec4660 1`) **[L]** - to the owner and the
 map.
 
+### 2a. The re-summon killed the client: the owner's put-away wants a reason byte
+
+23:34 the same night, Auto HP on the Husky. The reply was right up to its last two packets: the
+put-away and the re-summon **to the owner**. The client rejected the put-away in its own words:
+
+```
+0x009E  0100 26000000 0f00 ff5bf45b | 7702 d7000000 00000000 00
+        u16  reason    pos           our 0x0277: charId 215, petIdx 0, activated 0   (11 bytes)
+```
+
+reason `0x26` = read past the end, position 15 = 11 + 4 (the same +4 the `0x05F1` rejection
+carried), fault at `0x140ce89d6` three ms later - the identical death to the one-table `0x05F1`.
+Fixture `research/fixtures/pet-putaway-to-owner-rejected-0x009E-needs-reason-byte-2026-09-15.log`.
+
+`research/msexe-pet-activated.c` had said *"activated 0: the pet at that index is put away,
+nothing more is read"*. That is the **remote** user's handler, `FUN_1429d6150`. The **local**
+user's, `FUN_1428a01a0`, takes the `activated == 0` branch to `0x1428a0654`, calls `SetPet(idx,
+null)` at `0x1428a06ec`, and then **reads a `u8` at `0x1428a06fa`** and switches on it: `1..=5`
+each build a message (`0x1428a0994`, `0x7e1`, `0x7a4`, `0x767`, `0x72b` - string `0x1b5` on the
+last), anything else falls to `0x1428a0a8d`, the plain removal. `tools/reads.py 0x1428a01a0 1`
+lists five reads and that is the last one; no arm reads more. **[L]**
+
+Why it was never seen: every put-away this server had sent went to observers - the map
+broadcast and the companion list - and the owner-side toggle (double-click the pet again) had
+not been done on a screen. The archive has no `put away for` line at all. The owner-side
+re-summon built for the skill item was the first put-away an owner ever received.
+
+`net::pet::pet_deactivated` now ends with `u8 reason = 0` for every audience: the remote
+handler returns before it, and leftover bytes are not a rejection (`0x009E` is the read *past*
+the end). The put-away toggle, the map republish and the re-summon all use the one builder.
+
 ## 3. The hat: it is in the CHARACTER's look, and nobody re-announced the look
 
 `0x0107` at 02:59:25: `invType 6, slot 1 -> -114`, the Blue Top Hat. The server equipped it

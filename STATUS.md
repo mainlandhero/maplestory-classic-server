@@ -224,6 +224,17 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-15, 23:34: teaching the Husky Auto HP KILLED the client - the owner's put-away wants a
+reason byte.** The reply's last two packets were a put-away and a re-summon to the owner; the client
+rejected the put-away by name (`0x009E` reason `0x26`, pos 15 = our 11-byte `0x0277` + 4) and faulted
+at `0x140ce89d6`. The remote handler stops after `activated`; the LOCAL one (`FUN_1428a01a0`) reads a
+`u8 reason` at `0x1428a06fa` after `SetPet(null)` and switches on it (0 = plain removal, 1..5 a
+message) [L]. No put-away had ever reached an owner before - the archive has no `put away for` line.
+`pet_deactivated` now carries `reason = 0` for every audience (the remote returns before it; leftover
+bytes are not a rejection). Fixture
+`research/fixtures/pet-putaway-to-owner-rejected-0x009E-needs-reason-byte-2026-09-15.log`; research
+§2a. The skill itself was stored and the item used up before the crash (`mask now 0x0003`).
+
 **2026-09-15, later: the pet walks on both screens (confirmed), and six more pet reports in one
 message.** The owner: *"Tester2 now sees the pet, no crash"* - then Auto HP/MP/Move do nothing, no
 looting, the Name Tag does nothing, Show Pet Info greyed, the pet's hat invisible to others until a

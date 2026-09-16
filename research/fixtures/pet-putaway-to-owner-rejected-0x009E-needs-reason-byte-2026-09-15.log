@@ -1,0 +1,35 @@
+# 2026-09-15 23:34: Auto HP on the Husky. The server's reply ends with 0x0277 put-away + 0x0277 summon to
+# the OWNER; the client rejects the put-away (0x009E reason 0x26 read-past-end, pos 15 = 11-byte packet
+# + 4) and faults at 0x140ce89d6. The LOCAL PetActivated path (FUN_1428a01a0) reads a u8 reason after
+# activated=0 at 0x1428a06fa; the remote path does not. First put-away ever sent to an owner on screen.
+
+== world-ch0.log ==
+03:34:23.048 <- [Wisp#215] 0x0116 CLIENT_USE_STAT_RESET_ITEM (u32 tick, u16 slot, u32 itemId) - the AP and SP Reset Scrolls, 18 byte body a6ed7020020070314f00464b4c00d7000000
+03:34:23.058    pet skill: character 215 taught pet 5000006 skill bit 0x0002 with item 5190000 - mask now 0x0003; the item is used up
+03:34:23.058 -> [Wisp#215] 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: UNLOCK ONLY. 0x0116 is not handled, but its client-side builder sets the +0x2330 exclusive-request latch, so leaving it una
+03:34:23.059    body 010001000000000000
+03:34:23.059 -> [Wisp#215] 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation REMOVE: Cash slot 2 is empty now
+03:34:23.059    body 0100010000000003050200
+03:34:23.059 -> [Wisp#215] 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation: Cash slot 1 re-sent as pet 5000006 with active=1 and its serial
+03:34:23.059    body 010001000000000005010003464b4c0001464b4c00d7000000008005bb46e6170200000000004875736b79000000000000000001000064000078c9a3a815020000030000ca9a3b000001ffffffff0000000000000000
+03:34:23.059 -> [Wisp#215] 0x0277 PET_ACTIVATED (u32 charId, u32 petIdx 0, u8 activated, [u8 init, pet body]) - CUser vtable +0x98; research/msexe-pet-activated.c PetActivated: Husky put away for a moment so it re-reads its item
+03:34:23.059    body d70000000000000000
+03:34:23.059 -> [Wisp#215] 0x0277 PET_ACTIVATED (u32 charId, u32 petIdx 0, u8 activated, [u8 init, pet body]) - CUser vtable +0x98; research/msexe-pet-activated.c PetActivated: Husky back beside Wisp with its item as it is now
+03:34:23.059    body d7000000000000000101464b4c0005004875736b79464b4c00d7000000d4ff960000aa00ffffffff464b4c00000064000000
+03:34:23.071 <- [Wisp#215] 0x009E CLIENT_PACKET_REJECTED (14-byte header, then the offending packet with its opcode), 25 byte body 0100260000000f00ff5bf45b7702d700000000000000007702
+03:34:23.072    0x009E CLIENT_PACKET_REJECTED (14-byte header, then the offending packet with its opcode) is not answered yet - see crates/world/src/session/
+
+== maplecw-hook.log (client) ==
+23:34:23.037  2340 opcode=0x03D9 elapsed_us=63.3 ret=1 flag=1->1 state=2->2
+23:34:23.038  2341 opcode=0x03D9 elapsed_us=55.6 ret=1 flag=1->1 state=2->2
+23:34:23.065 ***** SESSION obj=0x5f230b8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:23.067  2342 opcode=0x007C elapsed_us=268.8 ret=1 flag=1->1 state=2->2
+23:34:23.068  2343 opcode=0x0070 elapsed_us=222.1 ret=1 flag=1->1 state=2->2
+23:34:23.068  2344 opcode=0x0070 elapsed_us=188.6 ret=1 flag=1->1 state=2->2
+23:34:23.069 ***** C++ THROW #4 at 0x7ff8d4ab5369 in KERNELBASE.dll on tid 1069624 at +87250ms
+      stack: 0x143a3b118(?) 0x143a3b118(?) 0x140dbaed0<-TEXT 0x144fe3010(vm) 0x143a3b118(?) 0x142ef6ddc<-TEXT 0x143a3b118(?) 0x14286e33d<-TEXT 0x1406e8b71<-TEXT 0x1428a06ff<-TEXT 0x140001000<-TEXT 0x1
+23:34:23.071 ***** C++ THROW #5 at 0x7ff8d4ab5369 in KERNELBASE.dll on tid 1069624 at +87250ms
+      stack: 0x143a3b118(?) 0x143a3b118(?) 0x144fe3010(vm) 0x143a3b118(?) 0x142ef6ddc<-TEXT 0x143a3b118(?) 0x142fa80d6<-TEXT 0x142f04370<-TEXT 0x142fa8090<-TEXT 0x142efb305<-TEXT 0x142fa8090<-TEXT 0x1
+23:34:23.072 ***** CLIENT FAULT #1: code=0xc0000005 at 0x140ce89d6 in MapleStory.exe - the client raised this, we did not. An unhandled one ends the process without any call to ExitProcess. 5 C++ thro
+      stack: 0x14308e3ed<-TEXT 0x143ae2d20(?) 0x142f04320<-TEXT 0x14308e3db<-TEXT 0x14374e6fc(?) 0x142efba4e<-TEXT 0x14308e3db<-TEXT 0x1437949ba(?) 0x14374e6fc(?) 0x14374e6fc(?) 0x14374e6fd(?) 0x14374
+23:34:23.072 ***** CRASH DUMP: writing C:\MapleCW\dumps\maplecw-crash-1067844-c0000005-1.dmp ... (full memory, this can take a few seconds) *****
