@@ -378,7 +378,7 @@ mod tests {
         assert_ne!(ASK_PATH, crate::taxi::MENU_PATH);
         assert_ne!(ASK_PATH, crate::jobs::ASK_PATH, "the instructor's yes/no is its own path");
         assert!(!crate::taxi::is_taxi_path(crate::jobs::ASK_PATH));
-        assert!(crate::jobguide::offer_index(crate::jobs::ASK_PATH).is_none());
+        assert!(!crate::jobguide::is_menu_path(crate::jobs::ASK_PATH));
         assert!(!crate::scrollnpc::is_scroll_path(crate::jobs::ASK_PATH));
         assert!(!ASK_PATH.starts_with(crate::taxi::PATH_PREFIX));
         assert!(ASK_PATH.contains('.'), "a quest path is \"\", \"0\" or \"0.yes\"");

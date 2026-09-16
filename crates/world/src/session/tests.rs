@@ -7520,6 +7520,65 @@ fn the_second_advancement_walks_the_client_s_own_chain() {
     assert_eq!(held(&s, b.chain.proof_item), 0, "and the proof is spent, not left in the bag");
 }
 
+/// **Phil's guide is a menu the cursor can pick from, and the pick rides.**
+///
+/// The owner, 2026-09-15: *"Phil's dialogue to allow Beginners to choose a location to job advance
+/// to does not work. The selection is fundamentally broken and cannot be selected by the
+/// cursor."* It was a chain of yes/no boxes drawn to look like a list. This walks the fixed
+/// path the way a player does: click Phil, get ONE type-6 box with a `#L` line per first job,
+/// answer it with the client's own 10-byte pick, and land on the chosen instructor's map with
+/// the job unchanged - Phil routes, the instructor advances. A Close sends nothing and leaves
+/// the player where they stand.
+#[test]
+fn phils_job_guide_is_a_selectable_menu_and_the_pick_rides() {
+    let phil = crate::jobguide::PHIL_TEMPLATE;
+    let mut npcs = std::collections::HashMap::new();
+    npcs.insert(
+        crate::jobguide::PHIL_MAP,
+        vec![net::opcode::FieldNpc { object_id: 1000, template_id: phil, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 }],
+    );
+    let fields = crate::jobs::FIRST_JOBS.iter().map(|j| j.map_id).chain([crate::jobguide::PHIL_MAP]).collect();
+
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "LevelTen".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &chr).unwrap();
+    made.level = crate::jobs::LEVEL_MINIMUM;
+    made.job = 0;
+    store.save_character_progress(&made).unwrap();
+    store.set_character_map(made.id, crate::jobguide::PHIL_MAP).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let mut s = Session::new(store.clone(), Arc::new(Config { npcs, fields, ..Config::default() }));
+    s.claim_for_character(made.id);
+    let row = |store: &Arc<Store>| store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == made.id).unwrap();
+
+    // ---- the click: one menu, parked -----------------------------------------------------
+    let out = s.handle(&npc_click(1000));
+    assert_eq!(out.len(), 1, "one box, not a chain: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert_eq!(out[0].opcode, net::script::SCRIPT_MESSAGE);
+    assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_MENU, "type 6 - the list the taxi measured on screen");
+    assert_eq!(out[0].body, net::script::npc_menu(phil, &crate::jobguide::menu_text()));
+    let convo = s.conversation.clone().expect("the menu is parked");
+    assert_eq!(convo.path, crate::jobguide::MENU_PATH);
+    assert!(!convo.awaiting_yes_no, "a menu is not a yes/no box");
+
+    // ---- Close: silence, and nobody moved --------------------------------------------------
+    assert!(s.on_script_reply(&menu_reply(None)).is_empty());
+    assert!(s.conversation.is_none());
+    assert_eq!(row(&store).map_id, crate::jobguide::PHIL_MAP);
+
+    // ---- the pick: line 2, the third first job, rides to ITS instructor's map -------------
+    s.handle(&npc_click(1000));
+    let dest = crate::jobguide::destination(2).unwrap();
+    let out = s.on_script_reply(&menu_reply(Some(2)));
+    assert!(out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE), "the arrival line, before the SetField");
+    assert!(out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "and the SetField itself: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(!out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE), "no script box beside a SetField - field entry tears it down");
+    assert_eq!(row(&store).map_id, dest.map_id, "{}'s map, not the town", dest.npc_name);
+    assert_eq!(row(&store).job, 0, "Phil routes; only the instructor advances");
+    assert!(s.conversation.is_none());
+}
+
 /// **Without the proof the instructor refuses, and refusing changes nothing.**
 ///
 /// The mirror of the walk above, and the reason it is a separate test: a chain that can be
@@ -10449,7 +10508,7 @@ fn the_receipt_path_cannot_be_confused_with_any_other_menu() {
     assert!(!crate::taxi::is_taxi_path(p));
     assert!(!crate::secondjob::is_menu_path(p));
     assert!(!crate::dailyperks::is_menu_path(p));
-    assert!(crate::jobguide::offer_index(p).is_none());
+    assert!(!crate::jobguide::is_menu_path(p));
     assert_ne!(p, crate::shanks::ASK_PATH);
     // And the text is exactly the shape the client draws: heading, then icon + name per line.
     let t = crate::signaturestyle::receipt_text(&[1_703_726, 2_543_137]);
@@ -10461,7 +10520,7 @@ fn the_receipt_path_cannot_be_confused_with_any_other_menu() {
     assert!(!crate::taxi::is_taxi_path(&c));
     assert!(!crate::secondjob::is_menu_path(&c));
     assert!(!crate::dailyperks::is_menu_path(&c));
-    assert!(crate::jobguide::offer_index(&c).is_none());
+    assert!(!crate::jobguide::is_menu_path(&c));
     assert_eq!(crate::signaturestyle::slot_from_frieren_chooser_path("package.frieren:12"), Some(12));
     assert_eq!(crate::signaturestyle::slot_from_frieren_chooser_path("package.receipt"), None);
     // And the menu is the scroll NPC's measured grammar: literal line breaks, `#L<n>#` rows.
