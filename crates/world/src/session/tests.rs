@@ -1024,21 +1024,22 @@ fn a_grocers_star_rows_carry_the_recharge_price_and_the_potion_row_does_not() {
     let out = s.open_shop_for(21, id).expect("Lucy keeps a shop");
     let body = &out[0].body;
     let (_, rows) = s.open_shop.clone().expect("the rows we sent are kept for the buy");
-    // Buy rows first (potion, quest item, subi), then the Sell rows for whatever may be sold.
+    // Buy rows only (potion, quest item, subi): no Sell twins since 2026-09-16.
     let mut at = net::classicshop::CLASSIC_HEAD_LEN;
     let mut priced = 0;
     for row in &rows {
         let len = row.wire_len();
+        assert!(!row.sell, "no row is a Sell twin: {}", row.item_id);
         if net::bag::bundle_has_serial(row.item_id) {
             let bits = u64::from_le_bytes(body[at + len - 12..at + len - 4].try_into().unwrap());
-            assert_eq!(f64::from_bits(bits), 0.3, "Subi's unitPrice, on the {} row", if row.sell { "Sell" } else { "Buy" });
+            assert_eq!(f64::from_bits(bits), 0.3, "Subi's unitPrice, on the Buy row");
             priced += 1;
         }
         at += len;
     }
     assert_eq!(at, body.len(), "walked every row by its own width");
-    assert_eq!(priced, 2, "the Buy row and its Sell twin both carry it");
-    assert!(out[0].what.contains("2 rechargeable with a unit price"), "{}", out[0].what);
+    assert_eq!(priced, 1, "the one Buy row carries it");
+    assert!(out[0].what.contains("1 rechargeable with a unit price"), "{}", out[0].what);
 }
 
 #[test]
@@ -1126,15 +1127,15 @@ fn clicking_a_shopkeeper_opens_the_shop() {
         21,
         "the NPC template the click named"
     );
-    // Two buy rows - a quest item is perfectly buyable - and one sell row, because the
-    // quest item gets none. The owner's rule is about SELLING, not stocking.
+    // Two buy rows - a quest item is perfectly buyable - and NO sell twins (2026-09-16: the
+    // classic window filed them into the Buy list too, so every item drew twice).
     let rows = u16::from_le_bytes([out[0].body[19], out[0].body[20]]);
-    assert_eq!(rows, 3, "rowCount is a u16, at the end of the 21-byte head");
+    assert_eq!(rows, 2, "rowCount is a u16, at the end of the 21-byte head");
     assert_eq!(
         out[0].body.len(),
-        net::classicshop::CLASSIC_HEAD_LEN + 3 * net::classicshop::CLASSIC_ROW_LEN
+        net::classicshop::CLASSIC_HEAD_LEN + 2 * net::classicshop::CLASSIC_ROW_LEN
     );
-    assert!(out[0].what.contains("2 buy, 1 sell"), "{}", out[0].what);
+    assert!(out[0].what.contains("2 buy, 0 sell"), "{}", out[0].what);
 }
 
 /// **Getting hit subtracts HP and tells the client.** The owner: *"Getting hit by the mob does
@@ -1520,35 +1521,33 @@ fn the_shop_row_cap_cannot_empty_the_counter() {
     assert_eq!(u16::from_le_bytes([out[0].body[19], out[0].body[20]]), 1, "clamped up to one");
 }
 
-/// **A quest item gets no sell row, so the player is never offered the option.**
+/// **Every row is a Buy row, each item once, and a quest item still cannot be sold.**
 ///
-/// The owner: *"Please do not allow quest items to be sold."* That is about selling, not
-/// stocking - an NPC may perfectly well sell you a quest item, and this one does. The
-/// store refuses the transaction too; this is the same rule one layer earlier, where the
-/// row never appears in the Sell tab at all.
-///
-/// The tab a row lands in is its price's **sign**: `140d23ac5 cmp dword [rbx+0x58],0 /
-/// jg` files positive into the Buy tab and the rest into Sell.
+/// The owner, 2026-09-16: *"there are duplicate items in the NPC shop, one being regular price,
+/// another being 10 times cheaper."* The classic window files every surviving row into the
+/// Buy list whatever its sell byte says (`research/classic-shop-rows.md` §5), so the Sell
+/// twins this server used to send were the duplicates. They are gone; the sell byte on every
+/// row is 0; and the owner's older rule - *"Please do not allow quest items to be sold"* - is the
+/// store's, which refuses the sell request.
 #[test]
-fn a_quest_item_is_never_given_a_sell_row() {
-    let (mut s, _, _) = shop_session();
+fn every_shop_row_is_a_buy_row_and_a_quest_item_still_cannot_be_sold() {
+    let (mut s, store, id) = shop_session();
     let out = s.handle(&npc_click(1000));
     let rows = &out[0].body[net::classicshop::CLASSIC_HEAD_LEN..];
-
-    // **The tab is a FLAG on the classic row, not the price's sign.** Shop2 filed a row by
-    // `cmp dword [rbx+0x58],0 / jg`; the classic window carries an explicit sell byte as the
-    // second-to-last of the row's 157. Same rule, different encoding - and reading it the old
-    // way here would have put every row in the Buy tab and passed.
-    let mut sell_rows = Vec::new();
-    let mut buy_rows = Vec::new();
-    for i in 0..3usize {
+    let count = u16::from_le_bytes([out[0].body[19], out[0].body[20]]) as usize;
+    let mut ids = Vec::new();
+    for i in 0..count {
         let at = i * net::classicshop::CLASSIC_ROW_LEN;
-        let item_id = u32::from_le_bytes(rows[at + 8..at + 12].try_into().unwrap());
-        let sell = rows[at + net::classicshop::CLASSIC_ROW_LEN - 2];
-        if sell == 0 { buy_rows.push(item_id) } else { sell_rows.push(item_id) }
+        ids.push(u32::from_le_bytes(rows[at + 8..at + 12].try_into().unwrap()));
+        assert_eq!(rows[at + net::classicshop::CLASSIC_ROW_LEN - 2], 0, "row {i}: the sell byte is 0");
     }
-    assert_eq!(buy_rows, vec![2000000, 4031507], "both are stocked");
-    assert_eq!(sell_rows, vec![2000000], "the quest item is not buyable back");
+    assert_eq!(ids, vec![2000000, 4031507], "each stocked item exactly once");
+
+    // The quest item in the bag: a sell request is refused and it stays.
+    store.add_item(id, store::InventoryType::Etc, &store::Item::bundle(4031507, 1), 1).unwrap();
+    let out = s.handle(&classic_sell(1, 4031507, 1));
+    assert!(out.iter().any(|r| r.opcode == net::classicshop::CLASSIC_SHOP_RESULT), "answered: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert_eq!(store.bag(id).unwrap().items_in(store::InventoryType::Etc).count(), 1, "still in the bag");
 }
 
 /// A purchase charges the SERVER's price, adds the item, and says so three ways.
@@ -1603,7 +1602,7 @@ fn an_unknown_row_index_is_refused_and_still_answered() {
     assert_eq!(out.len(), 1, "one result, and it must exist");
     assert_eq!(out[0].opcode, net::classicshop::CLASSIC_SHOP_RESULT);
     assert_eq!(out[0].body[0], net::classicshop::RESULT_NOT_ENOUGH_MESOS);
-    assert!(out[0].what.contains("not among the 3 rows"), "{}", out[0].what);
+    assert!(out[0].what.contains("not among the 2 rows"), "{}", out[0].what);
 }
 
 /// **The item id in the request is checked against the row.** A client whose list has

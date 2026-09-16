@@ -355,6 +355,16 @@ flag is intact at both. Checked, not assumed.
 At `141fa0303` a Buy Back row **skips the Buy-tab classification entirely** (`jne 0x141fa1178`),
 so a row is either merchandise or repurchase, never both.
 
+> **2026-09-16, measured on screen: the first per-row `u8` does NOT take a row out of the
+> Buy list.** The server sent every stocked item twice - once plain, once with that byte set
+> and the WZ `info/price` (a Shop2 habit: there, the sign of the price chose the tab) - and
+> The owner's screenshot of the Henesys Department Store shows each potion twice, the twin at a
+> tenth of the price. Consistent with the table below: every surviving row joins `+0x340`
+> and the Buy-tab classification, and only a Buy Back row skips it. The Sell panel on the
+> right prices a Green Skullcap no shop stocks, so it is the client's own bag at the client's
+> own price, not the "Sell list". The twins are no longer sent; what `+0x348` is *for* is
+> still open.
+
 ### The lists on the window
 
 | offset | list | index array | how it is filled |
