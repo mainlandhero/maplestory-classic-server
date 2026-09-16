@@ -1452,6 +1452,10 @@ mod tests {
     /// and the client drops a user-pool packet for a character it does not have. The owner's
     /// own `0x0277` for the arrival is not sent back to the owner. And putting the pet away
     /// clears it, so the next arrival is not handed a pet that is no longer out.
+    ///
+    /// **This is the `broadcast_pets = true` path.** It is off by default since the
+    /// 2026-09-15 crash (`Config::broadcast_pets`), so the test turns it on to exercise it;
+    /// `a_pet_is_owner_local_by_default_and_no_arrival_is_handed_it` pins the default.
     #[test]
     fn a_pet_summoned_before_another_player_arrives_is_handed_to_them_after_the_owners_spawn() {
         let (store, config, fields) = channel();
@@ -1466,7 +1470,7 @@ mod tests {
         store.add_item(ids[0], store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
         let mut item_names = std::collections::HashMap::new();
         item_names.insert(5_000_006u32, "Husky".to_string());
-        let config = Arc::new(Config { item_names, ..(*config).clone() });
+        let config = Arc::new(Config { item_names, broadcast_pets: true, ..(*config).clone() });
 
         let mut owner = Session::joining(store.clone(), config.clone(), fields.clone());
         let mut arrival = Session::joining(store, config, fields.clone());
@@ -1511,6 +1515,64 @@ mod tests {
         assert!(
             !again.iter().any(|r| r.opcode == net::pet::PET_ACTIVATED),
             "a pet that has been put away must not travel with its owner any more"
+        );
+    }
+
+    /// **A pet is owner-local by default: no other client is ever handed it.** Summoning a
+    /// pet on `the owner` crashed the second client `Tester2` in the same map on 2026-09-15 - the
+    /// remote-user pet path builds no visual, so the pet's first move faulted at
+    /// `0x141d59bf3` (`research/pet-remote-crash-2026-09-15.md`). Nothing the server puts in
+    /// the packet fixes a client that cannot render a remote pet, so by default the pet does
+    /// not leave the owner's own screen. Neither the live observer nor a later arrival is
+    /// handed it, and the owner's own summon is unaffected.
+    #[test]
+    fn a_pet_is_owner_local_by_default_and_no_arrival_is_handed_it() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut ids = Vec::new();
+        for name in ["Owner", "Arrival"] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: 104_040_000, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.create_migration(account, id, 0, 0).unwrap();
+            ids.push(id);
+        }
+        store.add_item(ids[0], store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+        let mut item_names = std::collections::HashMap::new();
+        item_names.insert(5_000_006u32, "Husky".to_string());
+        // The default: broadcast_pets is NOT set, so it is false.
+        let config = Arc::new(Config { item_names, ..(*config).clone() });
+        assert!(!config.broadcast_pets, "the crash-safe default");
+
+        let mut owner = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut observer = Session::joining(store, config, fields.clone());
+        owner.claim_for_character(ids[0]);
+        observer.claim_for_character(ids[1]);
+
+        // The observer is already standing in the map, then the owner summons.
+        observer.on_field_entered();
+        owner.on_field_entered();
+        owner.last_position = Some((300, -50));
+        let summon = owner.on_pet_activate(&super::tests::hex("509a18140100"));
+        assert!(summon.iter().any(|r| r.opcode == net::pet::PET_ACTIVATED), "the OWNER still sees the pet");
+
+        // The present observer is told nothing about the pet - not the summon, and (since it
+        // is never on their screen) never a move.
+        let heard = observer.tick(1_000);
+        assert!(
+            !heard.iter().any(|r| r.opcode == net::pet::PET_ACTIVATED || r.opcode == net::pet::PET_MOVE),
+            "no pet packet reaches a present observer: {:?}",
+            heard.iter().map(|r| r.opcode).collect::<Vec<_>>()
+        );
+        // The owner's own pet walks: still nothing to the map.
+        let body = super::tests::hex("000000000000000000360112010000000001000036011201000000002a0000000000000004fe010000");
+        assert!(owner.on_pet_move(&body).is_empty());
+        assert!(!observer.tick(2_000).iter().any(|r| r.opcode == net::pet::PET_MOVE), "no walk broadcast either");
+
+        // And a player arriving after the summon is not handed the pet.
+        let joined = observer.on_field_entered();
+        assert!(
+            !joined.iter().any(|r| r.opcode == net::pet::PET_ACTIVATED),
+            "an arrival is not handed a pet that would crash on the owner's first step"
         );
     }
 

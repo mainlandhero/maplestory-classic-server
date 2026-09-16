@@ -2038,6 +2038,11 @@
       A level-up gives +16 max HP and +12 max MP.
       Etc items and mesos survive a relog; Garnet Ores stack into one slot.
       !setrates 2 3 5 -> one banner naming all three; !rates reads them back.
+      PET + SECOND CLIENT: summon a pet on the owner with Tester2 standing in the same map.
+        Tester2 must NOT crash. Pets are owner-local now (Tester2 will not SEE the pet -
+        that is deliberate: the remote pet had no visual and its first move null-derefed,
+        research/pet-remote-crash-2026-09-15.md). --broadcast-pets re-enables the crash for
+        investigation only.
 
     STILL OPEN - do not spend the run confirming these are broken
     ------------------------------------------------------------

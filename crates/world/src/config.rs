@@ -130,6 +130,34 @@ pub struct Config {
     /// window draws the same pet perfectly. `research/pet-draw-chain-2026-09-14.md` §12.
     pub pet_move_action: Option<u8>,
 
+    /// **Whether a summoned pet is shown to OTHER players in the map.** Default `false`, and
+    /// the default is a crash fix.
+    ///
+    /// The owner, 2026-09-13, asked for it: *"broadcast player pet movement so other people can
+    /// see pets moving even if it is not their own."* It was built - the summon `0x0277`, the
+    /// move `0x0278` and the action `0x0279` were all published to the map, and a pet was
+    /// handed to whoever arrived after (`Presence::companions`).
+    ///
+    /// Then, 2026-09-15, summoning a pet on `the owner` **crashed** the second client `Tester2`
+    /// standing in the same map. Measured from the crash run (`maplecw-hook-20260915-220508`,
+    /// `world-ch0` 02:05:28): the summon `0x0277` processed on Tester2 with `ret=1` and the
+    /// pet idled for half a second, then the **first** `0x0278` pet-move faulted at
+    /// `0x141d59bf3` - `movups xmm0,[rax]` with `rax` from `[obj+0x18]` null, inside the
+    /// move applier `FUN_141d598b0`, reached from the pet-move handler `FUN_141ec3f20`
+    /// (return address `0x141ec3f85` on the fault stack) under `CField::OnPacket`
+    /// (`0x141821e41`). The remote-user pet-init path `FUN_1429d6150` is 144 bytes - `CPet::
+    /// Init` plus `SetPet` - where the LOCAL path `FUN_1428a01a0` is 2420 and builds the
+    /// pet's visual; the remote pet is left without the layer the move applier dereferences.
+    /// The summon body was correct (foothold 166, giantRate 100), so this is a client-side
+    /// limitation of the remote-pet object, not a bad packet - nothing the server can put in
+    /// `0x0277`/`0x0278` fixes it. `research/pet-remote-crash-2026-09-15.md`.
+    ///
+    /// So a pet is **owner-local** by default: the owner sees and moves their own pet exactly
+    /// as before (that path is untouched and confirmed on screen), and nothing about the pet
+    /// reaches other clients. Turn this on only to re-investigate the remote path with a
+    /// second client and a dump ready - it WILL crash observers on this build.
+    pub broadcast_pets: bool,
+
     /// Where every portal leads, keyed by `(map, portal name)`.
     ///
     /// Generated from the client's own `Map.wz` by `tools/dump_portals.py` - the data is the
@@ -2340,6 +2368,7 @@ impl Default for Config {
             peer_policy: store::migration::PeerPolicy::Require,
             inventory_slots: None,
             pet_move_action: None,
+            broadcast_pets: false,
             chairs: HashMap::new(),
             portals: HashMap::new(),
             portal_index: HashMap::new(),

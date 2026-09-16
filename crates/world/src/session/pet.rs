@@ -71,6 +71,12 @@ impl Session {
         if self.active_pet.is_none() {
             return Vec::new();
         }
+        // Owner-local by default: broadcasting a pet MOVE to the map is what crashed a second
+        // client on 2026-09-15 - the remote pet has no visual to apply the move to.
+        // `Config::broadcast_pets`.
+        if !self.config.broadcast_pets {
+            return Vec::new();
+        }
         let Some(out) = net::pet::pet_move_broadcast(chr.id, body) else { return Vec::new() };
         let reply = Reply {
             opcode: net::pet::PET_MOVE,
@@ -113,7 +119,12 @@ impl Session {
                 r.text
             ),
         };
-        self.bus().publish(self.subscriber, chr.map_id, reply.clone(), None);
+        // The owner always gets its own pet's answer (the return below); other players get it
+        // only when pets are broadcast, which is off by default - a pet action drives the same
+        // remote-pet object the move does, so it rides the same crash. `Config::broadcast_pets`.
+        if self.config.broadcast_pets {
+            self.bus().publish(self.subscriber, chr.map_id, reply.clone(), None);
+        }
         vec![reply]
     }
 
@@ -154,7 +165,12 @@ impl Session {
                 body: net::pet::pet_deactivated(chr.id),
                 what: format!("PetActivated: pet {} (Cash slot {}) put away for {}", active.item_id, active.slot, chr.name),
             };
-            self.bus().publish(self.subscriber, chr.map_id, gone.clone(), None);
+            // The owner always gets the put-away (below). Other players were only told the pet
+            // was there if `broadcast_pets` is on, so only then do they need the removal; the
+            // companion list is cleared regardless, since it is free and keeps arrivals clean.
+            if self.config.broadcast_pets {
+                self.bus().publish(self.subscriber, chr.map_id, gone.clone(), None);
+            }
             self.bus().set_companions(self.subscriber, Vec::new());
             out.push(gone);
             out.push(self.pet_item_refresh(&chr, active.slot, active.item_id, false));
@@ -173,9 +189,14 @@ impl Session {
                 pet.name, pet.item_id, chr.name, pet.x, pet.y, pet.foothold, req.slot
             ),
         };
-        self.bus().publish(self.subscriber, chr.map_id, up.clone(), None);
-        // And whoever walks in after this hears about it too, right after the owner's spawn.
-        self.bus().set_companions(self.subscriber, vec![up.clone()]);
+        // Owner-local by default. When pets are broadcast, the summon goes to the map and the
+        // pet travels with the owner to whoever arrives after; when they are not - the default
+        // since the 2026-09-15 crash - neither happens, so no other client is ever handed a
+        // remote pet that would crash on its first move. `Config::broadcast_pets`.
+        if self.config.broadcast_pets {
+            self.bus().publish(self.subscriber, chr.map_id, up.clone(), None);
+            self.bus().set_companions(self.subscriber, vec![up.clone()]);
+        }
         out.push(up);
         self.active_pet = Some(ActivePet { slot: req.slot, item_id: item.item_id });
         out.push(self.pet_item_refresh(&chr, req.slot, item.item_id, true));
@@ -187,6 +208,11 @@ impl Session {
     /// The summoned pet's `0x0277`, so a player arriving on the map after the summon gets
     /// the pet right behind the owner's spawn; nothing when no pet is out.
     pub(super) fn pet_companions(&self, chr: &net::opcode::Character) -> Vec<Reply> {
+        // Off by default: an arriving player must not be handed a pet either, since it would
+        // crash on the owner's first step. `Config::broadcast_pets`, and the 2026-09-15 crash.
+        if !self.config.broadcast_pets {
+            return Vec::new();
+        }
         let Some(active) = self.active_pet else { return Vec::new() };
         let pet = self.field_pet(chr, active.item_id);
         vec![Reply {
