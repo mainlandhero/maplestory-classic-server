@@ -58,12 +58,17 @@ use super::*;
 /// 114 = body slot 14 plus the cash base. One pet, one slot. **[L]**
 pub(super) const PET_EQUIP_WORN_SLOT: u8 = 114;
 
-/// The pet this session has out, if any.
+/// One of this character's pets, as the session handles it: where its item is, what it is,
+/// and **which one it is** - `pet_id` is the `pets` row its name and vitals live on, and the
+/// low half of the serial the client pairs by. Two Huskies are two of these with two ids.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct ActivePet {
     /// The Cash-tab slot it lives in, 1-based.
     pub slot: u16,
     pub item_id: u32,
+    /// `store::pets` row id. The owner, 2026-09-16: *"The pets should in the background have
+    /// different ids to identify them apart."*
+    pub pet_id: u32,
 }
 
 impl Session {
@@ -113,7 +118,7 @@ impl Session {
         let Some(active) = self.active_pet else { return Vec::new() };
         let Some(chr) = self.claimed_character() else { return Vec::new() };
         let roll = self.rng.next();
-        let st = self.pet_state(chr.id, active.item_id);
+        let st = self.pet_state(Some(active.pet_id));
         let Some(r) = self.config.pet_commands.respond(active.item_id, u32::from(st.level), text, roll)
         else {
             return Vec::new();
@@ -124,12 +129,12 @@ impl Session {
         if r.success && r.inc > 0 {
             let closeness = st.closeness + r.inc;
             let level = crate::petlevel::level_after(st.level, closeness);
-            if self.store.set_pet_vitals(chr.id, active.item_id, level, closeness, st.fullness).is_ok() {
+            if self.store.set_pet_vitals(active.pet_id, level, closeness, st.fullness).is_ok() {
                 crate::server::log(&format!(
                     "   pet: {:?} earned pet {} +{} closeness -> {closeness}, level {} -> {level}",
                     text.trim(), active.item_id, r.inc, st.level
                 ));
-                earned.push(self.pet_item_refresh(&chr, active.slot, active.item_id, true));
+                earned.push(self.pet_item_refresh(&chr, active, true));
                 if level > st.level {
                     earned.extend(self.pet_level_up_replies(&chr, st.level, level));
                 }
@@ -187,6 +192,23 @@ impl Session {
             return vec![unlock];
         };
 
+        // **Which pet.** The row carries its number from `add_item`; a row that somehow has
+        // none is numbered now, so a pet never acts under another pet's identity.
+        let pet_id = match item.pet_id {
+            Some(id) => id,
+            None => match self.store.pet_id_at(chr.id, store::InventoryType::Cash, req.slot) {
+                Ok(Some(id)) => id,
+                _ => {
+                    crate::server::log(&format!(
+                        "   pet: Cash slot {} holds pet {} with no pet id and none could be assigned; unlocking",
+                        req.slot, item.item_id
+                    ));
+                    return vec![unlock];
+                }
+            },
+        };
+        let next = ActivePet { slot: req.slot, item_id: item.item_id, pet_id };
+
         let mut out = Vec::new();
         if let Some(active) = self.active_pet.take() {
             // Put the current one away first - either this is the toggle, or a swap.
@@ -203,17 +225,17 @@ impl Session {
             }
             self.bus().set_companions(self.subscriber, Vec::new());
             // Put away in the store too, or the next login would summon it again.
-            let _ = self.store.set_pet_active(chr.id, active.item_id, false);
+            let _ = self.store.set_pet_active(chr.id, active.pet_id, false);
             self.pet_hunger_due_ms = None;
             out.push(gone);
-            out.push(self.pet_item_refresh(&chr, active.slot, active.item_id, false));
-            if active.slot == req.slot {
+            out.push(self.pet_item_refresh(&chr, active, false));
+            if active.pet_id == pet_id {
                 out.push(unlock);
                 return out;
             }
         }
 
-        let pet = self.field_pet(&chr, item.item_id);
+        let pet = self.field_pet(&chr, next);
         let up = Reply {
             opcode: net::pet::PET_ACTIVATED,
             body: net::pet::pet_activated(chr.id, &pet),
@@ -229,12 +251,12 @@ impl Session {
             self.bus().set_companions(self.subscriber, vec![up.clone()]);
         }
         out.push(up);
-        self.active_pet = Some(ActivePet { slot: req.slot, item_id: item.item_id });
+        self.active_pet = Some(next);
         self.pet_hunger_due_ms = Some(self.clock_ms + net::petfood::PET_HUNGER_INTERVAL_MS);
         self.pet_overfeeds = 0;
         // Remembered across a re-login: `restore_active_pet` reads this at the next claim.
-        let _ = self.store.set_pet_active(chr.id, item.item_id, true);
-        out.push(self.pet_item_refresh(&chr, req.slot, item.item_id, true));
+        let _ = self.store.set_pet_active(chr.id, pet_id, true);
+        out.push(self.pet_item_refresh(&chr, next, true));
         out.push(unlock);
         out
     }
@@ -248,7 +270,7 @@ impl Session {
             return Vec::new();
         }
         let Some(active) = self.active_pet else { return Vec::new() };
-        let pet = self.field_pet(chr, active.item_id);
+        let pet = self.field_pet(chr, active);
         vec![Reply {
             opcode: net::pet::PET_ACTIVATED,
             body: net::pet::pet_activated(chr.id, &pet),
@@ -267,7 +289,7 @@ impl Session {
     /// every other player the pet twice per field entry.
     pub(super) fn pet_entry_replies(&self, chr: &net::opcode::Character) -> Vec<Reply> {
         let Some(active) = self.active_pet else { return Vec::new() };
-        let pet = self.field_pet(chr, active.item_id);
+        let pet = self.field_pet(chr, active);
         vec![Reply {
             opcode: net::pet::PET_ACTIVATED,
             body: net::pet::pet_activated(chr.id, &pet),
@@ -278,20 +300,31 @@ impl Session {
         }]
     }
 
-    /// Whether `item_id` is the pet this session has out - the `active` byte of its body.
-    pub(super) fn pet_is_active(&self, item_id: u32) -> bool {
-        self.active_pet.is_some_and(|p| p.item_id == item_id)
+    /// Whether the pet numbered `pet_id` is the one this session has out - the `active` byte
+    /// of its body. Per pet: the other Husky's byte stays 0.
+    pub(super) fn pet_is_active(&self, pet_id: u32) -> bool {
+        self.active_pet.is_some_and(|p| p.pet_id == pet_id)
     }
 
-    /// What the store knows about one of this character's pets: its name, its learned skills
-    /// and whether it was out. Defaults when it has never been touched. `store::pets`.
-    pub(super) fn pet_state(&self, character_id: u32, item_id: u32) -> store::PetState {
-        self.store.pet_state(character_id, item_id).unwrap_or_else(|_| store::PetState::fresh())
+    /// The item id of the pet that is out, for a caller that only wants to know what species
+    /// is on the field. Tests, today.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn active_pet_item(&self) -> Option<u32> {
+        self.active_pet.map(|p| p.item_id)
+    }
+
+    /// What the store knows about one pet: its name, its learned skills and whether it was
+    /// out. Defaults when it has never been touched, and for `None` - a pet item that has not
+    /// been numbered. `store::pets`.
+    pub(super) fn pet_state(&self, pet_id: Option<u32>) -> store::PetState {
+        pet_id
+            .and_then(|id| self.store.pet_state(id).ok())
+            .unwrap_or_else(store::PetState::fresh)
     }
 
     /// The four moving fields of the pet's Cash item, from the store.
-    pub(super) fn pet_vitals(&self, character_id: u32, item_id: u32) -> net::bag::PetVitals {
-        let st = self.pet_state(character_id, item_id);
+    pub(super) fn pet_vitals(&self, pet_id: Option<u32>) -> net::bag::PetVitals {
+        let st = self.pet_state(pet_id);
         net::bag::PetVitals {
             level: st.level,
             closeness: u16::try_from(st.closeness).unwrap_or(u16::MAX),
@@ -341,11 +374,11 @@ impl Session {
             out.extend(unlock());
             return out;
         };
-        let st = self.pet_state(chr.id, active.item_id);
+        let st = self.pet_state(Some(active.pet_id));
         let (fullness, closeness, overfeeds) = crate::petlevel::feed(st.fullness, st.closeness, self.pet_overfeeds);
         self.pet_overfeeds = overfeeds;
         let level = crate::petlevel::level_after(st.level, closeness);
-        if let Err(e) = self.store.set_pet_vitals(chr.id, active.item_id, level, closeness, fullness) {
+        if let Err(e) = self.store.set_pet_vitals(active.pet_id, level, closeness, fullness) {
             crate::server::log(&format!("   pet food: storing the vitals failed: {e}; the food is kept"));
             return unlock();
         }
@@ -357,7 +390,7 @@ impl Session {
         ));
         let mut out = unlock();
         out.extend(self.stack_change_replies(store::InventoryType::Use, req.slot, held.saturating_sub(1)));
-        out.push(self.pet_item_refresh(&chr, active.slot, active.item_id, true));
+        out.push(self.pet_item_refresh(&chr, active, true));
         // The pet eats, on every screen it is on.
         let ate = Reply {
             opcode: net::pet::PET_ACTION_COMMAND,
@@ -419,20 +452,20 @@ impl Session {
         }
         self.pet_hunger_due_ms = Some(now_ms + net::petfood::PET_HUNGER_INTERVAL_MS);
         let Some(chr) = self.claimed_character() else { return Vec::new() };
-        let st = self.pet_state(chr.id, active.item_id);
+        let st = self.pet_state(Some(active.pet_id));
         let fullness = st.fullness.saturating_sub(1);
         if fullness > 0 {
-            let _ = self.store.set_pet_vitals(chr.id, active.item_id, st.level, st.closeness, fullness);
+            let _ = self.store.set_pet_vitals(active.pet_id, st.level, st.closeness, fullness);
             crate::server::log(&format!(
                 "   pet: character {}'s pet {} is hungrier: fullness {} -> {fullness}",
                 chr.id, active.item_id, st.fullness
             ));
-            return vec![self.pet_item_refresh(&chr, active.slot, active.item_id, true)];
+            return vec![self.pet_item_refresh(&chr, active, true)];
         }
         // Starved: one closeness gone, and home it goes.
         let closeness = st.closeness.saturating_sub(1);
-        let _ = self.store.set_pet_vitals(chr.id, active.item_id, st.level, closeness, 0);
-        let _ = self.store.set_pet_active(chr.id, active.item_id, false);
+        let _ = self.store.set_pet_vitals(active.pet_id, st.level, closeness, 0);
+        let _ = self.store.set_pet_active(chr.id, active.pet_id, false);
         self.active_pet = None;
         self.pet_hunger_due_ms = None;
         crate::server::log(&format!(
@@ -442,21 +475,21 @@ impl Session {
         let gone = Reply {
             opcode: net::pet::PET_ACTIVATED,
             body: net::pet::pet_deactivated(chr.id),
-            what: format!("PetActivated: {} went home hungry (fullness 0)", self.pet_name(chr.id, active.item_id)),
+            what: format!("PetActivated: {} went home hungry (fullness 0)", self.pet_name(Some(active.pet_id), active.item_id)),
         };
         if self.config.broadcast_pets {
             self.bus().publish(self.subscriber, chr.map_id, gone.clone(), None);
         }
         self.bus().set_companions(self.subscriber, Vec::new());
-        let mut out = self.notice(format!("{} is starving and went back home.", self.pet_name(chr.id, active.item_id)));
+        let mut out = self.notice(format!("{} is starving and went back home.", self.pet_name(Some(active.pet_id), active.item_id)));
         out.push(gone);
-        out.push(self.pet_item_refresh(&chr, active.slot, active.item_id, false));
+        out.push(self.pet_item_refresh(&chr, active, false));
         out
     }
 
     /// The name the pet goes by: the player's, from a Pet Name Tag, or the item's own.
-    pub(super) fn pet_name(&self, character_id: u32, item_id: u32) -> String {
-        self.pet_state(character_id, item_id)
+    pub(super) fn pet_name(&self, pet_id: Option<u32>, item_id: u32) -> String {
+        self.pet_state(pet_id)
             .name
             .unwrap_or_else(|| self.config.item_names.get(&item_id).cloned().unwrap_or_default())
     }
@@ -473,49 +506,53 @@ impl Session {
     /// than summoned from nowhere.
     pub(super) fn restore_active_pet(&mut self) {
         let Some(character_id) = self.claimed.as_ref().map(|c| c.character_id) else { return };
-        let Ok(Some(item_id)) = self.store.active_pet(character_id) else { return };
+        let Ok(Some(row)) = self.store.active_pet(character_id) else { return };
+        let (pet_id, item_id) = (row.pet_id, row.item_id);
+        // **By number, not by species**: with two Huskies in the bag, the one that was out is
+        // the one whose row carries this id.
         let slot = self
             .store
             .bag_items(character_id, store::InventoryType::Cash)
             .ok()
             .into_iter()
             .flatten()
-            .find(|r| r.item.item_id == item_id)
+            .find(|r| r.item.pet_id == Some(pet_id))
             .map(|r| r.slot);
         match slot {
             Some(slot) => {
-                self.active_pet = Some(ActivePet { slot, item_id });
+                self.active_pet = Some(ActivePet { slot, item_id, pet_id });
                 crate::server::log(&format!(
-                    "   pet: character {character_id} had pet {item_id} (Cash slot {slot}) out when they \
-                     last left; it comes back out on this login"
+                    "   pet: character {character_id} had pet {item_id} #{pet_id} (Cash slot {slot}) out \
+                     when they last left; it comes back out on this login"
                 ));
             }
             None => {
-                let _ = self.store.set_pet_active(character_id, item_id, false);
+                let _ = self.store.set_pet_active(character_id, pet_id, false);
                 crate::server::log(&format!(
-                    "   pet: character {character_id}'s stored active pet {item_id} is no longer in the \
-                     Cash tab; put away in the store rather than summoned from nowhere"
+                    "   pet: character {character_id}'s stored active pet {item_id} #{pet_id} is no longer \
+                     in the Cash tab; put away in the store rather than summoned from nowhere"
                 ));
             }
         }
     }
 
-    /// The pet an item is meant for, as `(Cash slot, item id)`: the one the request's serial
-    /// names (`net::pet::pet_serial` - the item id is its low half, the character its high),
-    /// or the pet that is out when no serial came. `None` when it is not in the Cash tab.
-    fn pet_named_by(&self, chr: &net::opcode::Character, serial: Option<u64>) -> Option<(u16, u32)> {
-        let item_id = match serial {
+    /// The pet an item is meant for: the one the request's serial names (`net::pet::pet_serial`
+    /// - the **pet id** is its low half, the character its high), or the pet that is out when
+    /// no serial came. `None` when it is not in the Cash tab. A name tag used on one Husky
+    /// names that Husky.
+    fn pet_named_by(&self, chr: &net::opcode::Character, serial: Option<u64>) -> Option<ActivePet> {
+        let pet_id = match serial {
             Some(sn) if (sn >> 32) as u32 == chr.id => (sn & 0xFFFF_FFFF) as u32,
             Some(_) => return None,
-            None => self.active_pet?.item_id,
+            None => self.active_pet?.pet_id,
         };
         self.store
             .bag_items(chr.id, store::InventoryType::Cash)
             .ok()
             .into_iter()
             .flatten()
-            .find(|r| r.item.item_id == item_id && net::inventory::is_pet(item_id))
-            .map(|r| (r.slot, item_id))
+            .find(|r| r.item.pet_id == Some(pet_id) && net::inventory::is_pet(r.item.item_id))
+            .map(|r| ActivePet { slot: r.slot, item_id: r.item.item_id, pet_id })
     }
 
     /// **A pet skill item** - Auto HP, Auto MP, Auto Move, Expanded Auto Move - used on a pet.
@@ -533,14 +570,15 @@ impl Session {
         let unlock = || crate::mesodrop::unlock_unhandled_latching_request(opcode);
         let Some(chr) = self.claimed_character() else { return unlock() };
         let Some(bit) = net::bag::pet_skill_bit_for_item(req.item_id) else { return unlock() };
-        let Some((pet_slot, pet_item)) = self.pet_named_by(&chr, req.pet_serial) else {
+        let Some(pet) = self.pet_named_by(&chr, req.pet_serial) else {
             crate::server::log(&format!(
                 "   pet skill: character {} used {} for a pet this server cannot find (serial {:?}); kept",
                 chr.id, req.item_id, req.pet_serial
             ));
             return self.cash_item_notice_for(opcode, "That skill needs a pet to learn it. Nothing was used up.".to_string());
         };
-        let skills = match self.store.learn_pet_skill(chr.id, pet_item, bit) {
+        let pet_item = pet.item_id;
+        let skills = match self.store.learn_pet_skill(pet.pet_id, bit) {
             Ok(m) => m,
             Err(e) => {
                 crate::server::log(&format!("   pet skill: storing the skill failed: {e}; the item is kept"));
@@ -554,10 +592,10 @@ impl Session {
         ));
         let mut out = unlock();
         out.extend(self.stack_change_replies(store::InventoryType::Cash, req.slot, 0));
-        let out_now = self.pet_is_active(pet_item);
-        out.push(self.pet_item_refresh(&chr, pet_slot, pet_item, out_now));
+        let out_now = self.pet_is_active(pet.pet_id);
+        out.push(self.pet_item_refresh(&chr, pet, out_now));
         if out_now {
-            out.extend(self.resummon_for_owner(&chr, pet_item));
+            out.extend(self.resummon_for_owner(&chr, pet));
         }
         out
     }
@@ -581,10 +619,11 @@ impl Session {
         while name.len() > net::bag::PET_NAME_LEN - 1 {
             name.pop();
         }
-        let Some((pet_slot, pet_item)) = self.pet_named_by(&chr, req.pet_serial) else {
+        let Some(pet) = self.pet_named_by(&chr, req.pet_serial) else {
             return self.cash_item_notice_for(opcode, "That tag needs a pet to name. Nothing was used up.".to_string());
         };
-        if let Err(e) = self.store.set_pet_name(chr.id, pet_item, &name) {
+        let pet_item = pet.item_id;
+        if let Err(e) = self.store.set_pet_name(pet.pet_id, &name) {
             crate::server::log(&format!("   pet name: storing {name:?} failed: {e}; the tag is kept"));
             return unlock();
         }
@@ -592,8 +631,8 @@ impl Session {
         crate::server::log(&format!("   pet name: character {} named pet {pet_item} {name:?}; the tag is used up", chr.id));
         let mut out = unlock();
         out.extend(self.stack_change_replies(store::InventoryType::Cash, req.slot, 0));
-        let out_now = self.pet_is_active(pet_item);
-        out.push(self.pet_item_refresh(&chr, pet_slot, pet_item, out_now));
+        let out_now = self.pet_is_active(pet.pet_id);
+        out.push(self.pet_item_refresh(&chr, pet, out_now));
         if out_now {
             let renamed = Reply {
                 opcode: net::pet::PET_NAME_CHANGED,
@@ -603,7 +642,7 @@ impl Session {
             if self.config.broadcast_pets {
                 self.bus().publish(self.subscriber, chr.map_id, renamed.clone(), None);
                 // Whoever arrives next is handed the pet under its new name.
-                let pet = self.field_pet(&chr, pet_item);
+                let pet = self.field_pet(&chr, pet);
                 self.bus().set_companions(
                     self.subscriber,
                     vec![Reply {
@@ -621,8 +660,8 @@ impl Session {
     /// Put the owner's pet away and summon it again **on the owner's screen only** - a fresh
     /// `CPet::Init` that has read the pet's Cash item as it is now. The map is not told: the
     /// remote pet has no item to re-read.
-    fn resummon_for_owner(&self, chr: &net::opcode::Character, item_id: u32) -> Vec<Reply> {
-        let pet = self.field_pet(chr, item_id);
+    fn resummon_for_owner(&self, chr: &net::opcode::Character, which: ActivePet) -> Vec<Reply> {
+        let pet = self.field_pet(chr, which);
         vec![
             Reply {
                 opcode: net::pet::PET_ACTIVATED,
@@ -654,7 +693,7 @@ impl Session {
         if !self.config.broadcast_pets {
             return;
         }
-        let pet = self.field_pet(chr, active.item_id);
+        let pet = self.field_pet(chr, active);
         let gone = Reply {
             opcode: net::pet::PET_ACTIVATED,
             body: net::pet::pet_deactivated(chr.id),
@@ -673,13 +712,13 @@ impl Session {
     /// The pet as `0x0277` describes it: its name, the pairing serial, and the spot under the
     /// character. With no position reported yet it stands at the origin, which the client's
     /// own physics then drops onto whatever is below.
-    fn field_pet(&self, chr: &net::opcode::Character, item_id: u32) -> net::pet::FieldPet {
+    fn field_pet(&self, chr: &net::opcode::Character, which: ActivePet) -> net::pet::FieldPet {
         let (x, y) = self.last_position.unwrap_or((0, 0));
         let landing = self.config.footholds.landing(chr.map_id, x, y);
         net::pet::FieldPet {
-            item_id,
-            name: self.pet_name(chr.id, item_id),
-            serial: net::pet::pet_serial(chr.id, item_id).get(),
+            item_id: which.item_id,
+            name: self.pet_name(Some(which.pet_id), which.item_id),
+            serial: net::pet::pet_serial(chr.id, which.pet_id).get(),
             x,
             y: landing.as_ref().map_or(y, |l| l.y),
             move_action: self.config.pet_move_action.unwrap_or(0),
@@ -689,13 +728,14 @@ impl Session {
 
     /// The Cash-tab item re-sent at its slot with its `active` byte as `active` says and the
     /// pairing serial set. An Add at an occupied slot replaces what the client holds there.
-    fn pet_item_refresh(&self, chr: &net::opcode::Character, slot: u16, item_id: u32, active: bool) -> Reply {
-        let vitals = self.pet_vitals(chr.id, item_id);
-        let name = self.pet_name(chr.id, item_id);
+    fn pet_item_refresh(&self, chr: &net::opcode::Character, which: ActivePet, active: bool) -> Reply {
+        let ActivePet { slot, item_id, pet_id } = which;
+        let vitals = self.pet_vitals(Some(pet_id));
+        let name = self.pet_name(Some(pet_id), item_id);
         let blob = net::bag::pet_item_with_state(
             item_id,
             &name,
-            Some(net::pet::pet_serial(chr.id, item_id)),
+            Some(net::pet::pet_serial(chr.id, pet_id)),
             u8::from(active),
             &vitals,
         );
@@ -703,7 +743,7 @@ impl Session {
             opcode: net::inventory::INVENTORY_OPERATION,
             body: net::inventory::inventory_added(store::InventoryType::Cash as i8, slot as i16, &blob),
             what: format!(
-                "InventoryOperation: Cash slot {slot} re-sent as pet {item_id} with active={} and its serial",
+                "InventoryOperation: Cash slot {slot} re-sent as pet {item_id} #{pet_id} with active={} and its serial",
                 u8::from(active)
             ),
         }

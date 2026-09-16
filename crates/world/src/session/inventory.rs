@@ -42,18 +42,15 @@ impl Session {
             // `active` is this session's word - 1 while the pet is summoned - and since
             // 2026-09-15 `restore_active_pet` sets it from the store at claim time, so a pet
             // that was out at the last log-out is out in this record too. session/pet.rs.
-            let (name, vitals) = match self.claimed.as_ref().map(|c| c.character_id) {
-                Some(id) => (self.pet_name(id, item.item_id), self.pet_vitals(id, item.item_id)),
-                None => (
-                    self.config.item_names.get(&item.item_id).cloned().unwrap_or_default(),
-                    net::bag::PetVitals::default(),
-                ),
-            };
+            // **Per pet, by `Item::pet_id`.** Two Huskies are two rows with two numbers, so
+            // each gets its own name, vitals and active byte; a pet with no number yet reads
+            // as fresh under the item's own name.
+            let (name, vitals) = (self.pet_name(item.pet_id, item.item_id), self.pet_vitals(item.pet_id));
             return net::bag::pet_item_with_state(
                 item.item_id,
                 &name,
                 cash_sn,
-                u8::from(self.pet_is_active(item.item_id)),
+                u8::from(item.pet_id.is_some_and(|id| self.pet_is_active(id))),
                 &vitals,
             );
         }

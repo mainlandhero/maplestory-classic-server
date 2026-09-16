@@ -235,6 +235,7 @@ impl Session {
                     item_id: equip_id,
                     kind: store::ItemKind::Equip(Some(new_stats)),
                     failed_slots: applied.after.failed_slots,
+                    pet_id: None,
                 };
                 let blob = self.item_blob(&refreshed);
                 let pos = match target {
@@ -375,6 +376,7 @@ impl Session {
                     item_id: equip_id,
                     kind: store::ItemKind::Equip(Some(*stats)),
                     failed_slots,
+                    pet_id: None,
                 };
                 self.store
                     .set_inventory_slot(character_id, store::InventoryType::Equip, slot, &item)

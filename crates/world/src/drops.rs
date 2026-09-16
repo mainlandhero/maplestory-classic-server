@@ -1614,7 +1614,7 @@ mod tests {
     /// A scrolled equip must come back the same object, not the same item id.
     #[test]
     fn an_equip_keeps_its_rolled_stats_across_the_round_trip() {
-        let scrolled = Item { item_id: SWORD, kind: ItemKind::Equip(Some(rolled())), failed_slots: 0 };
+        let scrolled = Item { item_id: SWORD, kind: ItemKind::Equip(Some(rolled())), failed_slots: 0, pet_id: None };
         let mut t = DropTable::new();
         t.drop_item(dropping(scrolled, 0));
         let id = t.on_field(MAP).next().unwrap().object_id;
@@ -1632,7 +1632,7 @@ mod tests {
     /// `None` stats mean "derive from the WZ template" and are NOT the same as zeros.
     #[test]
     fn a_fresh_equip_stays_fresh_rather_than_becoming_all_zero_stats() {
-        let fresh = Item { item_id: SWORD, kind: ItemKind::FRESH_EQUIP, failed_slots: 0 };
+        let fresh = Item { item_id: SWORD, kind: ItemKind::FRESH_EQUIP, failed_slots: 0, pet_id: None };
         let mut t = DropTable::new();
         t.drop_item(dropping(fresh, 0));
         let id = t.on_field(MAP).next().unwrap().object_id;
@@ -2055,7 +2055,7 @@ mod tests {
     #[test]
     fn drop_walk_away_come_back_and_pick_it_up() {
         let mut t = DropTable::new();
-        let sword = Item { item_id: SWORD, kind: ItemKind::Equip(Some(rolled())), failed_slots: 0 };
+        let sword = Item { item_id: SWORD, kind: ItemKind::Equip(Some(rolled())), failed_slots: 0, pet_id: None };
 
         // The owner drags the sword out of the window on map 1.
         let answer = t.drop_item(dropping(sword, 1_000));
