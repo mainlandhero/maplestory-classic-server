@@ -350,7 +350,12 @@ Write-Host 'checking the shipped binaries import nothing outside Windows...' -Fo
 $WindowsDlls = @(
     'kernel32.dll', 'advapi32.dll', 'ws2_32.dll', 'ntdll.dll',
     'bcrypt.dll', 'bcryptprimitives.dll', 'iphlpapi.dll',
-    'api-ms-win-core-synch-l1-2-0.dll'
+    'api-ms-win-core-synch-l1-2-0.dll',
+    # The launcher (in bin\ since 2026-09-16 for maplecw-auth --launcher to publish) is a GUI
+    # program: the window, the file dialog, OpenGL for egui, the theme and the shell. Each of
+    # these has shipped with every Windows since XP; none is a redistributable.
+    'user32.dll', 'gdi32.dll', 'shell32.dll', 'shlwapi.dll', 'ole32.dll',
+    'comdlg32.dll', 'dwmapi.dll', 'imm32.dll', 'opengl32.dll', 'uxtheme.dll'
 )
 $bad = @()
 foreach ($b in $binaries) {
