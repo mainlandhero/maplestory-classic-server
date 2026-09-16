@@ -235,6 +235,24 @@ pub enum Network {
 /// it, not a guess at which of the eight Ant Tunnel maps was meant.
 pub const DUNGEON_STOPS: [u32; 1] = [10_005_070];
 
+/// One stop that belongs to a single row rather than to a network, at its own price.
+///
+/// The owner, 2026-09-16: *"Lyn in Lith Harbor who currently behaves like a Taxi should have an
+/// additional destination to allow travelers to go back to Maple Island Southperry for
+/// 20,000 mesos. This should only exist at Lyn and not at other Taxis."* A network stop is
+/// offered by every row in the network at the row's one fare, which is exactly what this must
+/// not be - so it is a field on the row, not a row in a network, and [`destinations`] appends
+/// it after the network's stops so the existing line numbers do not move.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stop {
+    pub map_id: u32,
+    pub fare: u32,
+}
+
+/// Lyn's way back: Southperry, `60` in `gm-handbook/maps.txt`, the map Shanks stands on
+/// (`crate::shanks::HOME_MAP`), for **20,000 mesos**. **[I]** the price is the owner's.
+pub const SOUTHPERRY_RETURN: Stop = Stop { map_id: 60, fare: 20_000 };
+
 /// How an NPC talks. Same mechanism, different fare, different stops - different words.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Voice {
@@ -304,8 +322,11 @@ pub struct Taxi {
     pub network: Network,
     /// What a ride from this row costs. [`FARE_MESOS`] for a cab, [`FERRY_FARE_MESOS`] for the
     /// ferry - carried per row rather than read from a constant, so the two cannot be confused
-    /// at the one place that actually moves the money.
+    /// at the one place that actually moves the money. A row's [`Stop`] has its own price;
+    /// [`fare_to`] is the one place that decides which applies.
     pub fare: u32,
+    /// This row's own extra stop, if it has one. Only Lyn does: [`SOUTHPERRY_RETURN`].
+    pub extra: Option<Stop>,
 }
 
 /// Every taxi in this client, and there are exactly eight rows.
@@ -338,14 +359,14 @@ pub struct Taxi {
 /// what the data says; both work, and they differ only in voice.
 pub const TAXIS: &[Taxi] = &[
     // ---- the Victoria Island cabs, unchanged -------------------------------------------
-    Taxi { template: 104, name: "VIP Cab", home_map: 10_000_000, voice: Voice::Cab, network: Network::Dungeon, fare: VIP_FARE_MESOS },
-    Taxi { template: 900_003, name: "Lyn", home_map: 10_000_000, voice: Voice::TourGuide, network: Network::Victoria, fare: FARE_MESOS },
-    Taxi { template: 200, name: "Regular Cab", home_map: 10_001_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS },
-    Taxi { template: 301, name: "Regular Cab", home_map: 10_002_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS },
-    Taxi { template: 302, name: "VIP Cab", home_map: 10_002_000, voice: Voice::Cab, network: Network::Dungeon, fare: VIP_FARE_MESOS },
-    Taxi { template: 400, name: "Regular Cab", home_map: 10_003_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS },
-    Taxi { template: 500, name: "Regular Cab", home_map: 10_004_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS },
-    Taxi { template: 600, name: "Regular Cab", home_map: 10_005_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS },
+    Taxi { template: 104, name: "VIP Cab", home_map: 10_000_000, voice: Voice::Cab, network: Network::Dungeon, fare: VIP_FARE_MESOS, extra: None },
+    Taxi { template: 900_003, name: "Lyn", home_map: 10_000_000, voice: Voice::TourGuide, network: Network::Victoria, fare: FARE_MESOS, extra: Some(SOUTHPERRY_RETURN) },
+    Taxi { template: 200, name: "Regular Cab", home_map: 10_001_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS, extra: None },
+    Taxi { template: 301, name: "Regular Cab", home_map: 10_002_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS, extra: None },
+    Taxi { template: 302, name: "VIP Cab", home_map: 10_002_000, voice: Voice::Cab, network: Network::Dungeon, fare: VIP_FARE_MESOS, extra: None },
+    Taxi { template: 400, name: "Regular Cab", home_map: 10_003_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS, extra: None },
+    Taxi { template: 500, name: "Regular Cab", home_map: 10_004_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS, extra: None },
+    Taxi { template: 600, name: "Regular Cab", home_map: 10_005_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS, extra: None },
 
     // ---- the Ossyria line ---------------------------------------------------------------
     // Three stops, and the ONLY way a player reaches the third-job instructors: Victoria
@@ -368,9 +389,9 @@ pub const TAXIS: &[Taxi] = &[
     // the same failure as a warden behind a door that does not open. The Orbis Ticketing Booth
     // is different and was checked separately: `20000000 top00 -> 20000010` is a real portal,
     // so the Platform Usher is reachable and is used.
-    Taxi { template: 605, name: "Eurek the Alchemist", home_map: 10_005_000, voice: Voice::Wanderer, network: Network::Ossyria, fare: FERRY_FARE_MESOS },
-    Taxi { template: 1001, name: "Platform Usher", home_map: 20_000_010, voice: Voice::Ferryman, network: Network::Ossyria, fare: FERRY_FARE_MESOS },
-    Taxi { template: 605, name: "Eurek the Alchemist", home_map: 20_001_000, voice: Voice::Wanderer, network: Network::Ossyria, fare: FERRY_FARE_MESOS },
+    Taxi { template: 605, name: "Eurek the Alchemist", home_map: 10_005_000, voice: Voice::Wanderer, network: Network::Ossyria, fare: FERRY_FARE_MESOS, extra: None },
+    Taxi { template: 1001, name: "Platform Usher", home_map: 20_000_010, voice: Voice::Ferryman, network: Network::Ossyria, fare: FERRY_FARE_MESOS, extra: None },
+    Taxi { template: 605, name: "Eurek the Alchemist", home_map: 20_001_000, voice: Voice::Wanderer, network: Network::Ossyria, fare: FERRY_FARE_MESOS, extra: None },
 ];
 
 /// Is this NPC a taxi? `None` means "not one of mine - carry on down the click chain".
@@ -412,6 +433,19 @@ pub fn taxi_for(template: u32, map: u32) -> Option<&'static Taxi> {
 /// `Session::on_npc_click` resolves the click against `config.npcs[chr.map_id]`, so the
 /// character is on `home_map` by construction.
 pub fn destinations(taxi: &Taxi) -> Vec<u32> {
+    let mut maps = network_stops(taxi);
+    // **The row's own stop goes LAST**, after the network's sorted list, so adding one does
+    // not renumber the lines a player already knows - and a test pins the cabs' five.
+    if let Some(stop) = taxi.extra {
+        if stop.map_id != taxi.home_map && !maps.contains(&stop.map_id) {
+            maps.push(stop.map_id);
+        }
+    }
+    maps
+}
+
+/// The stops a row shares with its network, ascending map id, its own excluded.
+fn network_stops(taxi: &Taxi) -> Vec<u32> {
     // **A dungeon cab's stops are a list, not the other cabs' home maps.** Ant Tunnel Park
     // has no taxi standing in it, so the derivation below would give it an empty menu.
     if taxi.network == Network::Dungeon {
@@ -429,6 +463,16 @@ pub fn destinations(taxi: &Taxi) -> Vec<u32> {
     maps.sort_unstable();
     maps.dedup();
     maps
+}
+
+/// What a ride from `taxi` to `map_id` costs: the row's own stop at its own price, anything
+/// else at the row's fare. **The one place the two prices are told apart**; `board`, the
+/// refusal and the menu line all read it.
+pub fn fare_to(taxi: &Taxi, map_id: u32) -> u32 {
+    match taxi.extra {
+        Some(stop) if stop.map_id == map_id => stop.fare,
+        _ => taxi.fare,
+    }
 }
 
 /// The destination a menu number names, or `None` for a number this taxi never offered.
@@ -540,14 +584,26 @@ pub fn menu_text(taxi: &Taxi, config: &Config) -> String {
     out.push_str(LINE_BREAK);
     for (selection, map) in destinations(taxi).into_iter().enumerate() {
         out.push_str(LINE_BREAK);
-        out.push_str(&menu_line(selection as u32, &map_name(config, map)));
+        out.push_str(&menu_line(selection as u32, &line_label(taxi, config, map)));
     }
     out
 }
 
+/// What a destination's line says. A network stop is its map name; the row's own stop names
+/// its price too, because the header quoted the other one - "Southperry (Maple Island) -
+/// 20000 mesos" under a header that said the tour is 500.
+pub fn line_label(taxi: &Taxi, config: &Config, map_id: u32) -> String {
+    let name = map_name(config, map_id);
+    match taxi.extra {
+        Some(stop) if stop.map_id == map_id => {
+            format!("{name} (Maple Island) - {} mesos", stop.fare)
+        }
+        _ => name,
+    }
+}
+
 /// The fare could not be taken. **`have` is what the store said, not what anyone assumed.**
-fn cannot_afford(taxi: &Taxi, have: u32) -> String {
-    let fare = taxi.fare;
+fn cannot_afford(taxi: &Taxi, fare: u32, have: u32) -> String {
     match taxi.voice {
         Voice::Cab => format!(
             "The fare is #b{fare} mesos#k and you're carrying #b{have}#k. \
@@ -757,13 +813,14 @@ fn board(store: &Store, config: &Config, character_id: u32, taxi: &Taxi, map_id:
             ),
         };
     }
-    match store.add_mesos(character_id, -i64::from(taxi.fare)) {
-        Ok(balance) => Step::Ride { map_id, map_name, fare: taxi.fare, balance },
+    let fare = fare_to(taxi, map_id);
+    match store.add_mesos(character_id, -i64::from(fare)) {
+        Ok(balance) => Step::Ride { map_id, map_name, fare, balance },
         Err(store::StoreError::NotEnoughMesos { have, .. }) => Step::Refused {
-            text: cannot_afford(taxi, have),
+            text: cannot_afford(taxi, fare, have),
             why: format!(
-                "taxi {} REFUSED a ride to {map_id} ({map_name}): character {character_id} has {have} mesos and the fare is {}. NO FARE TAKEN, NO TELEPORT",
-                taxi.template, taxi.fare
+                "taxi {} REFUSED a ride to {map_id} ({map_name}): character {character_id} has {have} mesos and the fare is {fare}. NO FARE TAKEN, NO TELEPORT",
+                taxi.template
             ),
         },
         Err(e) => Step::Refused {
@@ -807,17 +864,17 @@ pub fn script_replies(taxi: &Taxi, step: &Step) -> Vec<crate::Reply> {
 }
 
 /// A convenience for the caller's log line: what a ride out of this taxi is worth saying.
-pub fn ride_note(taxi: &Taxi, chr: &Character, map_id: u32, map_name: &str, balance: u32) -> String {
+pub fn ride_note(taxi: &Taxi, chr: &Character, map_id: u32, map_name: &str, fare: u32, balance: u32) -> String {
     format!(
-        "taxi {} ({}) took {} mesos from {} and is sending them to map {map_id} ({map_name}); {balance} left",
-        taxi.template, taxi.name, taxi.fare, chr.name
+        "taxi {} ({}) took {fare} mesos from {} and is sending them to map {map_id} ({map_name}); {balance} left",
+        taxi.template, taxi.name, chr.name
     )
 }
 
 /// The set of every map a taxi can send anyone to, for a start-up sanity line if the
 /// coordinator wants one. Cheap, and it is the whole blast radius of this feature.
 pub fn all_destinations() -> HashSet<u32> {
-    TAXIS.iter().map(|t| t.home_map).collect()
+    TAXIS.iter().flat_map(destinations).collect()
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1020,7 +1077,7 @@ mod tests {
         assert!(taxi_for(605, 20_001_000).is_some(), "Eurek is a port in El Nath");
         assert!(taxi_for(605, 10_005_000).is_some(), "and in Sleepywood - they cross");
         assert!(taxi_for(605, 10_000_000).is_none(), "but they do not stand in Lith Harbor");
-        assert_eq!(all_destinations().len(), 8, "six towns plus Orbis and El Nath");
+        assert_eq!(all_destinations().len(), 10, "six towns, Orbis and El Nath, Ant Tunnel Park, and Lyn's Southperry");
     }
 
     /// **Every row stands where the table says, read from the dump rather than from memory.**
@@ -1141,11 +1198,19 @@ mod tests {
                 Network::Ossyria => 2,  // three ports minus its own
                 Network::Dungeon => DUNGEON_STOPS.len(), // Ant Tunnel Park, and no cab is in it
             };
+            let want = want + usize::from(t.extra.is_some());
             assert_eq!(d.len(), want, "row {} on map {}", t.template, t.home_map);
             assert!(!d.contains(&t.home_map), "row {} offers its own map", t.template);
-            let mut sorted = d.clone();
+            // Ascending map id across the network's stops; a row's own stop is LAST, so it
+            // never renumbers a line - and it is excluded from the network containment below.
+            let network: Vec<u32> = d.iter().copied().filter(|m| Some(*m) != t.extra.map(|e| e.map_id)).collect();
+            let mut sorted = network.clone();
             sorted.sort_unstable();
-            assert_eq!(d, sorted, "the order is ascending map id");
+            assert_eq!(network, sorted, "the order is ascending map id");
+            if let Some(extra) = t.extra {
+                assert_eq!(d.last(), Some(&extra.map_id), "row {}'s own stop is the last line", t.template);
+            }
+            let d = network;
             // **Every destination is served by a row in this row's own network.** Written
             // as "there exists such a row" rather than "the row on that map is in this
             // network", because Sleepywood hosts one of each - it is the interchange - and
@@ -1183,8 +1248,13 @@ mod tests {
         }
         assert_eq!(
             destinations(lyn()),
-            vec![10_001_000, 10_002_000, 10_003_000, 10_004_000, 10_005_000],
-            "the cabs are exactly as they were"
+            vec![10_001_000, 10_002_000, 10_003_000, 10_004_000, 10_005_000, SOUTHPERRY_RETURN.map_id],
+            "the five towns exactly as they were, then Lyn's own way back"
+        );
+        assert_eq!(
+            destinations(henesys_cab()),
+            vec![10_000_000, 10_002_000, 10_003_000, 10_004_000, 10_005_000],
+            "a cab is exactly as it was"
         );
         // From Sleepywood, Eurek sails to Orbis and El Nath and to no town on their own island.
         let out = taxi_for(605, 10_005_000).expect("Eurek is the Sleepywood port");
@@ -1207,9 +1277,10 @@ mod tests {
         let cfg = config();
         for t in TAXIS {
             let text = menu_text(t, &cfg);
-            for (i, map) in destinations(t).into_iter().enumerate() {
+            let d = destinations(t);
+            for (i, map) in d.iter().copied().enumerate() {
                 let sel = i as u32;
-                let name = map_name(&cfg, map);
+                let name = line_label(t, &cfg, map);
                 assert!(
                     text.contains(&menu_line(sel, &name)),
                     "taxi {} has no line #L{sel}# for {name}: {text:?}",
@@ -1222,7 +1293,7 @@ mod tests {
                     t.template
                 );
             }
-            assert_eq!(destination(t, 5), None, "there is no sixth stop");
+            assert_eq!(destination(t, d.len() as u32), None, "there is no stop past the last line");
             assert_eq!(destination(t, 0xFFFF_FFFE), None, "the client's own -2 is not a stop");
         }
     }
@@ -1306,7 +1377,7 @@ mod tests {
         let cfg = config();
         for t in TAXIS {
             let mut lines = vec![menu_text(t, &cfg), header(t)];
-            lines.push(cannot_afford(t, 120));
+            lines.push(cannot_afford(t, t.fare, 120));
             lines.push(cannot_go(t, "Henesys"));
             lines.push(no_such_stop(t, 5));
             for l in lines {
@@ -1517,7 +1588,7 @@ mod tests {
         for map in destinations(lyn()) {
             assert!(text.contains(&map_name(&cfg, map)), "{map} missing from {text:?}");
         }
-        assert_eq!(text.matches("#L").count(), 5, "five selectable lines: {text:?}");
+        assert_eq!(text.matches("#L").count(), 6, "five towns and the way back: {text:?}");
         assert_eq!(script_replies(lyn(), &opening(lyn(), &cfg).unwrap()).len(), 1, "ONE box");
     }
 
@@ -1544,8 +1615,80 @@ mod tests {
             assert!(t.contains("#d#L0# "), "the client's own line format: {t:?}");
         }
         // And their refusals keep the voice.
-        assert!(cannot_afford(lyn(), 10).contains("tour"), "{}", cannot_afford(lyn(), 10));
+        assert!(cannot_afford(lyn(), FARE_MESOS, 10).contains("tour"), "{}", cannot_afford(lyn(), FARE_MESOS, 10));
         assert!(no_such_stop(lyn(), 5).contains("tour"), "{}", no_such_stop(lyn(), 5));
-        assert!(!cannot_afford(henesys_cab(), 10).contains("tour"));
+        assert!(!cannot_afford(henesys_cab(), FARE_MESOS, 10).contains("tour"));
+    }
+
+    // -- Lyn's way back to Maple Island ---------------------------------------------------
+
+    /// **Only Lyn sells the trip back to Southperry, and only at 20,000.** The owner, 2026-09-16:
+    /// *"This should only exist at Lyn and not at other Taxis."* Every other row - cabs,
+    /// VIP cabs, the ferry - is asked, and none of them names map 60.
+    #[test]
+    fn only_lyn_offers_southperry_and_the_others_are_untouched() {
+        assert_eq!(SOUTHPERRY_RETURN.map_id, crate::shanks::HOME_MAP, "the map Shanks stands on");
+        assert_eq!(SOUTHPERRY_RETURN.fare, 20_000);
+        assert_eq!(lyn().extra, Some(SOUTHPERRY_RETURN));
+        for t in TAXIS {
+            if t.template == lyn().template {
+                continue;
+            }
+            assert_eq!(t.extra, None, "row {} ({}) has an extra stop", t.template, t.name);
+            assert!(
+                !destinations(t).contains(&SOUTHPERRY_RETURN.map_id),
+                "row {} ({}) offers Southperry",
+                t.template,
+                t.name
+            );
+            assert_eq!(fare_to(t, SOUTHPERRY_RETURN.map_id), t.fare, "no row but Lyn prices it");
+        }
+        // The line is the sixth, and it says its own price under a header that quoted 500.
+        let mut cfg = config();
+        cfg.map_names.insert(SOUTHPERRY_RETURN.map_id, "Southperry".to_string());
+        assert_eq!(destination(lyn(), 5), Some(SOUTHPERRY_RETURN.map_id));
+        let text = menu_text(lyn(), &cfg);
+        let label = line_label(lyn(), &cfg, SOUTHPERRY_RETURN.map_id);
+        assert!(label.contains("Southperry") && label.contains("20000 mesos"), "{label}");
+        assert!(text.contains(&menu_line(5, &label)), "{text:?}");
+        assert!(text.contains(&FARE_MESOS.to_string()), "the tour's own price is still quoted: {text:?}");
+        assert!(label.is_ascii());
+    }
+
+    /// **The way back costs 20,000 and the tour still costs 500**, from the same menu, and
+    /// the refusal for the one quotes the one.
+    #[test]
+    fn the_trip_to_southperry_charges_twenty_thousand_and_the_tour_still_five_hundred() {
+        let mut cfg = config();
+        cfg.fields.insert(SOUTHPERRY_RETURN.map_id);
+        cfg.map_names.insert(SOUTHPERRY_RETURN.map_id, "Southperry".to_string());
+
+        // 19,999: refused, and the sentence names 20000, not 500.
+        let (store, id) = store_with(19_999);
+        let step = route(&store, &cfg, id, lyn(), &MenuReply { selection: Some(5) });
+        let Step::Refused { text, why } = step else { panic!("expected a refusal: {step:?}") };
+        assert!(text.contains("20000") && text.contains("19999"), "{text}");
+        assert!(!text.contains("500 mesos"), "{text}");
+        assert!(why.contains("NO FARE TAKEN"), "{why}");
+        assert_eq!(store.mesos(id).unwrap(), 19_999);
+        // ...but the same purse buys a 500-meso tour to Henesys.
+        let step = route(&store, &cfg, id, lyn(), &MenuReply { selection: Some(0) });
+        let Step::Ride { map_id, fare, balance, .. } = step else { panic!("expected Ride: {step:?}") };
+        assert_eq!((map_id, fare, balance), (10_001_000, FARE_MESOS, 19_499));
+
+        // 20,000 exactly: rides to Southperry with nothing left.
+        let (store, id) = store_with(20_000);
+        let step = route(&store, &cfg, id, lyn(), &MenuReply { selection: Some(5) });
+        let Step::Ride { map_id, map_name, fare, balance } = step.clone() else { panic!("expected Ride: {step:?}") };
+        assert_eq!((map_id, fare, balance), (SOUTHPERRY_RETURN.map_id, 20_000, 0));
+        assert_eq!(map_name, "Southperry");
+        assert_eq!(store.mesos(id).unwrap(), 0);
+        assert!(script_replies(lyn(), &step).is_empty(), "a ride sends no script");
+
+        // And a cab shown the same number is refused as "no such stop", charging nothing.
+        let (store, id) = store_with(50_000);
+        let step = route(&store, &cfg, id, henesys_cab(), &MenuReply { selection: Some(5) });
+        assert!(matches!(step, Step::Refused { .. }), "{step:?}");
+        assert_eq!(store.mesos(id).unwrap(), 50_000);
     }
 }
