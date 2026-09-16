@@ -172,6 +172,25 @@ pub mod pickup {
     pub const ITEM: i8 = 0;
     /// Mesos entered the purse. `u8, i32 gain, u16 smallChange, i32 bonus`. **[L]**
     pub const MESO: i8 = 1;
+    /// **The bag is full.** No body after the mode byte. `142d593a4 cmp edx,-1` sets
+    /// `world+0x37a4`; the field's per-frame update `FUN_1428923e0` calls `FUN_142dada50`
+    /// at most once per **2000 ms** (`14289246c cmp eax,0x7d0`), which posts string
+    /// `0x00F2` *"You can't get anymore items."* to the on-screen message area
+    /// (`FUN_142572050`, the EXP line's printer) and clears the latch. **[L]** So the
+    /// client owns both the wording and the rate: a pet retrying every drop draws one
+    /// line per two seconds, not one per retry. Read 2026-09-16 with `tools/dis_at.py` and
+    /// `tools/dump_stringids.py --id 242`; the jump table at `142d59d60` maps the rest:
+    ///
+    /// ```text
+    /// -5 -> 0x12CE "You can't pick that up."
+    /// -4 -> 0x00F3 'You cannot pick up this item.'
+    /// -3 -> 0x00F4 'You cannot acquire any items.'  + chat 11: 0x00F5 "game file damaged"
+    /// -2 -> 0x085B 'This item is unavailable for pick-up.'
+    ///  5 -> 0x12CF "You can't pick up the mesos, because you've already reached your maximum amount."
+    ///  3, out of range -> 0x00F1 'Failed to acquire for an unknown reason.'
+    ///  4 -> nothing
+    /// ```
+    pub const INVENTORY_FULL: i8 = -1;
 }
 
 /// The `where` byte of [`pickup::ITEM`], which picks the sentence. **[L]**
@@ -462,6 +481,28 @@ pub fn item_pickup(item_id: u32, count: u32, slot: u8, quiet: bool) -> Vec<u8> {
     w.u32(item_id);
     w.u32(count);
     w.u8(slot);
+    w.into_vec()
+}
+
+/// *"You can't get anymore items."* in the message area, where the EXP line draws - the
+/// client's own inventory-full line, wording and rate both its own. See
+/// [`pickup::INVENTORY_FULL`].
+///
+/// The owner, 2026-09-16: *"It's time to also remove the "Your bag would not take it" message
+/// from the chat. There should be a similar line that indicates your inventory is full in
+/// the area where players see EXP gained from killing monsters. We need to use that default
+/// behavior instead of our custom message."*
+///
+/// ```text
+/// u8   0      kind, DROP_PICKUP
+/// u8   0      quiet - read before the sub-mode, unused by this arm
+/// i8   -1     the sub-mode; the handler returns right after setting the latch
+/// ```
+pub fn inventory_full() -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(kind::DROP_PICKUP);
+    w.u8(0);
+    w.i8(pickup::INVENTORY_FULL);
     w.into_vec()
 }
 
@@ -841,6 +882,16 @@ pub fn item_gained_in_chat(item_id: u32, count: u32) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    /// The inventory-full body is three bytes and the third is the client's `-1`, read as
+    /// an `i8` and compared as `-1` at `142d593a4` - a `0xFF` written as a u8 is the same
+    /// byte, and this pins that it is the byte the handler wants.
+    #[test]
+    fn inventory_full_is_kind_zero_quiet_zero_mode_minus_one() {
+        assert_eq!(super::inventory_full(), vec![0x00, 0x00, 0xFF]);
+        assert_eq!(super::pickup::INVENTORY_FULL, -1);
+        assert_ne!(super::pickup::INVENTORY_FULL, super::pickup::ITEM);
+    }
+
     use super::*;
 
     /// **The party share is the `smallChange` field alone**: gain 0 (no white line, no

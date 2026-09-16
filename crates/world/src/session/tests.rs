@@ -5633,10 +5633,13 @@ fn a_pick_up_the_bag_refuses_still_clears_the_clients_latch() {
          item, mesos included. Replies were: {:?}",
         out.iter().map(|r| format!("0x{:04X}", r.opcode)).collect::<Vec<_>>()
     );
+    // The reason used to be a yellow chat line; since 2026-09-16 it is the client's own
+    // "You can't get anymore items." - 0x0089 sub-mode -1 - in the message area.
     assert!(
-        out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE),
-        "and the reason, which is the half that already worked"
+        out.iter().any(|r| r.opcode == net::message::MESSAGE && r.body == net::message::inventory_full()),
+        "and the reason, as the client's own inventory-full line"
     );
+    assert!(out.iter().all(|r| r.opcode != net::notice::CHAT_NOTICE), "and nothing in the chat log");
     assert_eq!(
         s.fields.with_drops(map, |d| d.len()),
         1,
@@ -11585,7 +11588,11 @@ fn a_summoned_pet_picks_up_a_mob_drop_but_not_a_players_own_drop() {
     let full_drop = mob_equip(&mut s);
     let out = s.handle(&pet_request(full_drop));
     assert!(out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "the unlock");
-    assert!(out.iter().all(|r| r.opcode != net::notice::CHAT_NOTICE), "the pet's refusal is silent: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(out.iter().all(|r| r.opcode != net::notice::CHAT_NOTICE), "nothing in the chat log: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    // The client's own "You can't get anymore items." - a 3-byte 0x0089 the client throttles
+    // to one line per two seconds itself, so the pet's retries cannot spam it.
+    let full = out.iter().find(|r| r.opcode == net::message::MESSAGE).expect("the client's inventory-full line");
+    assert_eq!(full.body, net::message::inventory_full());
     assert!(out.iter().all(|r| r.opcode != net::drops::DROP_LEAVE_FIELD), "and the drop stays on the floor");
     assert_eq!(s.fields.with_drops(map, |d| d.len()), 1, "the one drop on the floor is the refused one");
     let mut by_hand_full = crate::drops::CLIENT_DROP_PICK_UP.to_le_bytes().to_vec();
@@ -11594,7 +11601,9 @@ fn a_summoned_pet_picks_up_a_mob_drop_but_not_a_players_own_drop() {
     by_hand_full.extend_from_slice(&[0u8; 17]);
     let out = s.handle(&by_hand_full);
     assert!(out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "the unlock");
-    let line = out.iter().find(|r| r.opcode == net::notice::CHAT_NOTICE).expect("the player's own click is told");
+    assert!(out.iter().all(|r| r.opcode != net::notice::CHAT_NOTICE), "our own yellow line is gone for good: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    let line = out.iter().find(|r| r.opcode == net::message::MESSAGE).expect("the player's own click gets the client's line");
+    assert_eq!(line.body, net::message::inventory_full());
     assert!(line.what.contains("full"), "{}", line.what);
     assert_eq!(s.fields.with_drops(map, |d| d.len()), 1, "still on the floor");
 }
