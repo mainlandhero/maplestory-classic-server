@@ -4401,6 +4401,69 @@ fn an_exp_coupon_triples_a_kill_and_expires() {
     assert!(note.is_empty());
 }
 
+/// **The coupon and the potion both put an icon top-right, and the coupon's comes down when
+/// it stops multiplying.** The owner, 2026-09-16: *"the EXP coupon effects are not applying the
+/// appropriate buff icon on the top right of player's screen ... make sure 2x and 3x coupons
+/// have the proper buff durations applied"* and *"make sure that Magic Potions and other
+/// similar potions are applying the buff icons as well."*
+///
+/// Two defects, one packet. The potion's `0x007D` carried its item id as a POSITIVE reason,
+/// which the client reads as a skill id, and there is no skill 2002001 to draw. The coupon
+/// sent no `0x007D` at all. Now: the potion's entry names `-2002001`; the coupon sends CTS
+/// 163 `ExpBuffRate` worth its percent for its duration with `-2450001` as the reason; the
+/// tick at the coupon's expiry resets 163 in the same breath as the multiplier ends.
+#[test]
+fn an_exp_coupon_and_a_magic_potion_send_their_stat_with_the_item_as_a_negative_reason() {
+    let (mut s, store, id) = gm_session();
+    // The two rows as `gm-handbook/consumables.txt` carries them: Magic Potion `mad 10` for
+    // ten minutes, the 3x coupon `expBuff 300` for fifteen.
+    s.config = Arc::new(Config {
+        consumables: crate::consumables::Consumables::parse(
+            "2002001, 0, 0, 0, 0, 600000, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+2450001, 0, 0, 0, 0, 900000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 300, 0, 0
+",
+        ),
+        ..(*s.config).clone()
+    });
+    let potion = store.add_item(id, store::InventoryType::Use, &store::Item::bundle(2_002_001, 1), 100).unwrap()[0].slot;
+    let coupon = store.add_item(id, store::InventoryType::Use, &store::Item::bundle(2_450_001, 1), 100).unwrap()[0].slot;
+
+    let out = s.on_use_item(&net::useitem::use_item(0, potion as i16, 2_002_001, 0));
+    let set = first_stat_set(&out).expect("the potion grants a stat");
+    let (bits, entries) = stat_set(set);
+    assert_eq!(bits, vec![net::buff::CTS_MAGIC_ATTACK]);
+    assert_eq!(entries, vec![(10, net::buff::item_reason(2_002_001), 600_000)]);
+    assert_eq!(entries[0].1 as i32, -2_002_001, "the reason is the item, negated - a positive one is a skill id");
+
+    let out = s.on_use_item(&net::useitem::use_item(0, coupon as i16, 2_450_001, 0));
+    let set = first_stat_set(&out).expect("the coupon now grants a stat, for the icon");
+    let (bits, entries) = stat_set(set);
+    assert_eq!(bits, vec![net::buff::CTS_EXP_BUFF_RATE], "bit 163, ExpBuffRate, and nothing else");
+    assert_eq!(entries, vec![(300, net::buff::item_reason(2_450_001), 900_000)]);
+    assert!(s.holds(net::buff::CTS_EXP_BUFF_RATE), "held, so the tick can take it down");
+    assert_eq!(s.with_exp_coupon(100).0, 300, "and the multiplier is running");
+    assert!(out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE && notice_text(r).contains("3x experience")));
+
+    // Ten minutes on: the potion's 0x007E, and only the potion's - the coupon has five
+    // minutes left and is still multiplying.
+    s.clock_ms += 600_000;
+    let out = s.buff_tick(s.clock_ms);
+    let reset = out.iter().find(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET).expect("the potion's icon comes down");
+    let cleared = net::buff::bits_in_mask(&reset.body[3..3 + net::buff::MASK_LEN]);
+    assert_eq!(cleared, vec![net::buff::CTS_MAGIC_ATTACK]);
+    assert!(s.holds(net::buff::CTS_EXP_BUFF_RATE), "the coupon is on its own clock");
+    assert_eq!(s.with_exp_coupon(100).0, 300);
+
+    // Fifteen: one 0x007E clearing 163, the multiplier gone in the same instant.
+    s.clock_ms += 300_000;
+    let out = s.buff_tick(s.clock_ms);
+    let reset = out.iter().find(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET).expect("the coupon's icon comes down");
+    let cleared = net::buff::bits_in_mask(&reset.body[3..3 + net::buff::MASK_LEN]);
+    assert_eq!(cleared, vec![net::buff::CTS_EXP_BUFF_RATE]);
+    assert!(!s.holds(net::buff::CTS_EXP_BUFF_RATE));
+    assert_eq!(s.with_exp_coupon(100).0, 100, "face value again");
+}
+
 /// **A second coupon replaces the first**, rather than stacking or being refused.
 ///
 /// Stacking would make two 2x coupons a 4x, which no version of this game does; refusing

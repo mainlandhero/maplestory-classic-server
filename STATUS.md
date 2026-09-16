@@ -224,6 +224,23 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-16: item buffs draw their icon - potions name `-itemId`, the EXP coupon rides CTS 163.**
+The owner: *"the EXP coupon effects are not applying the appropriate buff icon on the top right ...
+make sure 2x and 3x coupons have the proper buff durations applied"* and *"make sure that Magic
+Potions and other similar potions are applying the buff icons as well."* Two defects in one
+packet. `buff_from_item` sent every potion stat with `reason: item_id` - positive, which the
+client reads as a *skill* id; there is no skill 2002001, so nothing was drawn while the stat
+itself applied. The EXP coupon sent no `0x007D` at all (it multiplies server-side in
+`with_exp_coupon` and had no bit). Now `net::buff::item_reason` negates the id for every item
+stat, and the coupon adds CTS **163 `ExpBuffRate`** - the client's own name for that index
+(`research/first-job-buffs.md` App. A), standard 10-byte block at `0x140a22478` - worth its
+percent (200/300) for its duration, tracked in `self.buffs` so the tick's `0x007E` takes the
+icon down at the instant the multiplier stops. **The sign convention is [D]**: it is the modern
+reference's (`rOption = -itemID`) and every client's for a decade, but no instruction in this
+build has been read testing it; plan step 10 says what each outcome means. Test: the potion's
+entry is `(10, -2002001, 600000)`, the coupon's `(300, -2450001, 900000)` on bit 163 alone, and
+two ticks clear them on their own clocks.
+
 **2026-09-16: Sign out revokes the claim, and Start Game greys the instant it is pressed.** The owner:
 *"Can we make sign-out button actually revoke the claim please ... Make sure it also disables the
 Start Game button once signed out."* The button used to be local and said so. Now the sign-in
