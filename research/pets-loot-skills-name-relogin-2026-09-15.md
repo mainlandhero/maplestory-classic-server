@@ -85,15 +85,26 @@ same pet on one character share a row.
 telling its server it did a trick locally. Filed as a client report, answered with nothing; the
 client went on.
 
-## 6. Show Pet Info: still greyed, and not solved here
+## 6. Show Pet Info: greyed once, enabled the next time - state, not code
 
-The button is disabled in `FUN_1414be310` (`research/msexe-userinfo-pet.c` line 225: `if
-(local_40 == 0) ... vtbl+0x70(x, 0)`). `local_40` is filled by something between its declaration
-and that test that this pass did not find - it is not `GetPet` by inspection of the greps. No
-packet is involved for the owner's own window (nothing left the client when it opened), so it is
-a local condition on the pet object or the Cash item. **Open.** The right next instrument is a
-watch on `FUN_1414be310`'s stores to `[rsp+..]` for `local_40`, or the Ghidra decompile with the
-locals renamed - not a guess at which field.
+The owner, minutes after the report and **on the same old build**: *"for some reason this time the
+show pet info works"* - the panel shows Husky, level 1, closeness 0, fullness 100, the Blue Top
+Hat. So it is not a packet the server owes. The gate, read from the listing of `FUN_1414be310`
+(`tools/listing.py`, 0x1414be793..0x1414be83f) **[L]**:
+
+```text
+1414be786  FUN_1414be0e0(window, &pair)      pair.second = window+0x310[ window+0x2e8 -> +0x90 ][1]
+1414be797  r15 = pair.second; null -> button vtbl+0x70(0)         DISABLED
+1414be7ff  FUN_142770370(DAT_143aa8518) > 0  the local user's pet slot 0 is non-null
+1414be818  test byte [r15+0x1c], 8           and the entry's flag bit 3
+           both -> vtbl+0x70(1)              ENABLED
+```
+
+`window+0x310` is the info window's own pet array, filled when the window is built; `+0x2e8`
+is the entry it shows and `+0x90` the pet index, which must be 0. A window built before the pet
+was out - or before the re-sent Cash item paired with it - has no entry, and the button stays
+grey until the window is rebuilt. Not pursued further; if it greys again, the one observation
+worth making is whether Character Info was opened before or after the summon.
 
 ## What changed
 

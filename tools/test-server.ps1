@@ -2004,8 +2004,9 @@
           RE-LOGIN: log out with the Husky out, log back in.
             it is standing beside you on arrival, Cash tab shows it summoned -> DONE
             it is in the bag -> paste the "pet: character" log line at claim time
-          SHOW PET INFO: still greyed. NOT fixed - the gate is a local in the client's info
-          window this pass did not find. Do not spend time on it.
+          SHOW PET INFO: worked on your second look, same build - the window's own pet list
+          is built when it opens. If it is ever grey again, say whether Character Info was
+          opened BEFORE the summon; that is the only measurement left on it.
 
      9. THE CRASH - a question, not a test.
         A 1.36 GB dump was written at 00:08 from a fault at 0x14090a6f0, an address that
@@ -4897,7 +4898,8 @@ function Show-TestPlan {
         Write-Host '       RE-LOGIN: log out with the Husky out, log back in:'
         Write-Host '         standing beside you on arrival -> DONE' -ForegroundColor Green
         Write-Host '         in the bag -> paste the "pet: character" claim-time line' -ForegroundColor Yellow
-        Write-Host '       SHOW PET INFO: still greyed. NOT fixed; do not spend time on it.' -ForegroundColor DarkGray
+        Write-Host '       SHOW PET INFO: worked on the second look. Grey again? say whether the' -ForegroundColor DarkGray
+        Write-Host '         window was opened BEFORE the summon - the only measurement left' -ForegroundColor DarkGray
         Write-Host ''
         Write-Host '  9. THE CRASH - a question, not a test.' -ForegroundColor White
         Write-Host '     A 1.36 GB dump at 00:08, fault 0x14090a6f0 - an address that'
