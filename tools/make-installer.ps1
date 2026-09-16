@@ -222,13 +222,21 @@ if (-not $SkipBuild) {
         & cargo build --release -p login -p world -p auth -p grap-stub -p launcher
         if ($LASTEXITCODE -ne 0) { Fail 'cargo build failed' }
 
-        if ($ClientOnly) {
-            # **The launcher, again, with a STATIC C runtime.**
-            #
-            # A client payload ships no install.ps1, so nothing checks for the Visual C++
-            # redistributable before the launcher runs - the launcher checks it itself, in
-            # crates\launcher\src\stub.rs. That check is only reachable if the launcher does
-            # not need the redistributable to START, which is what this build gives.
+        # **The launcher, again, with a STATIC C runtime - for EVERY package since 2026-09-16.**
+        #
+        # It used to be the -ClientOnly payload's alone: that payload ships no install.ps1,
+        # so nothing checks for the Visual C++ redistributable before the launcher runs -
+        # the launcher checks it itself (crates\launcher\src\stub.rs), which is only
+        # reachable if the launcher does not need the redistributable to START.
+        #
+        # Now the launcher UPDATES ITSELF from the server (launcher::selfupdate), and the
+        # server publishes the static-CRT copy tools\package-server.ps1 builds into this same
+        # target-static tree. Every launcher a player holds must therefore BE that build, or
+        # the first Start Game swaps it for the static one - harmless, but a package whose
+        # launcher replaces itself on first run is a package whose build identity lies. One
+        # launcher build, one digest: the setup zip, the client payload and the server's
+        # bin\ alike.
+        {
             #
             # grap64.dll is deliberately NOT built this way. It is injected into
             # MapleStory.exe, and tools\package-server.ps1's header is explicit that changing
@@ -253,13 +261,14 @@ if (-not $SkipBuild) {
     }
 }
 
-# The static launcher replaces the ordinary one in a client payload, and ONLY that one file.
+# The static launcher replaces the ordinary one in EVERY package, and ONLY that one file.
 #
 # **Not by repointing $rel**, which is what the first version of this did: only the LAUNCHER is
 # built in the static tree, so $rel pointing there made the very next step fail looking for
 # grap64.dll - which is deliberately still built the ordinary way and lives in target\release.
-# One override for one file.
-$staticExe = if ($ClientOnly) { Join-Path $staticTarget 'release\maplecw-launcher.exe' } else { $null }
+# One override for one file. Always, since 2026-09-16 - see the build step above.
+$staticExe = Join-Path $staticTarget 'release\maplecw-launcher.exe'
+if (-not (Test-Path $staticExe)) { Fail "$staticExe is missing - build without -SkipBuild" }
 if ($ClientOnly) {
     if (Test-Path $staticExe) {
         Write-Host "  the launcher will come from $staticExe"
@@ -313,9 +322,10 @@ New-Item -ItemType Directory -Path (Join-Path $stage 'bin') -Force | Out-Null
 foreach ($b in $binaries) {
     $dst = if ($b.To -eq '.') { $stage } else { Join-Path $stage $b.To }
     New-Item -ItemType Directory -Path $dst -Force | Out-Null
-    # The one override: a client payload's launcher comes from the static-CRT tree so it can
-    # start on a machine with no Visual C++ redistributable and say so. Everything else,
-    # grap64.dll included, comes from the ordinary build.
+    # The one override: the launcher comes from the static-CRT tree - the same file the server
+    # package publishes for self-update - so it starts on a machine with no Visual C++
+    # redistributable and matches the server byte for byte. Everything else, grap64.dll
+    # included, comes from the ordinary build.
     $src = if ($staticExe -and $b.From -eq 'maplecw-launcher.exe') {
         $staticExe
     } else {
