@@ -292,6 +292,31 @@ pub fn advancement_for(chr: &Character, npc_template: u32) -> Advancement {
     Advancement::Eligible { job: first.job, job_name: first.job_name }
 }
 
+/// The `Conversation::path` of the instructor's yes/no box. Disjoint from every other
+/// path prefix a yes/no handler claims (a test says so), like `shanks::ASK_PATH`.
+pub const ASK_PATH: &str = "firstjob.ask";
+
+/// **The question, with the requirements in it.** The owner, 2026-09-15: *"There should be a yes
+/// or no dialogue (including the requirement to job advance for the appropriate job) to make
+/// sure that the player is sure about their decision before job advancing them."* Only
+/// asked of a character `advancement_for` found `Eligible`, so the numbers in it are the
+/// ones just checked; the client's own quest text supplies the one-way warning.
+pub fn confirmation(chr: &Character, first: &FirstJob) -> String {
+    format!(
+        "You meet the requirements to become a {}: Level {} or above, and {} {} or more \
+         (you are Level {} with {} {}). A job advancement cannot be undone once made. \
+         Do you want to become a {} now?",
+        first.job_name,
+        LEVEL_MINIMUM,
+        first.stat.label(),
+        STAT_MINIMUM,
+        chr.level,
+        first.stat.label(),
+        first.stat.of(chr),
+        first.job_name
+    )
+}
+
 /// The sentence to put in the refusal box, or `None` when the character may advance.
 ///
 /// **A refusal is still an answer.** `CLAUDE.md`'s first expensive rule is that an

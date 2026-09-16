@@ -675,6 +675,21 @@
     Everything else below is either cheap (T0, T6), already built and waiting for its first
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
+     TR. THE FIRST JOB ADVANCEMENT ASKS FIRST. The owner, 2026-09-15: "the moment you click on
+         the first job instructors, you simply become that job. There should be a yes or
+         no dialogue (including the requirement)". An eligible click now opens the
+         instructor's yes/no box - "You meet the requirements to become a Swordsman:
+         Level 10 or above, and STR 35 or more (you are Level N with STR M). A job
+         advancement cannot be undone once made. Do you want to become a Swordsman now?" -
+         and the job changes ONLY on Yes (the eligibility check runs again first). No says
+         "Take your time"; closing the box does nothing. Refusals (level, stat, already
+         advanced) are unchanged. The box is the same npc_ask Shanks and Phil use.
+           1. a level-10 beginner with the stat clicks an instructor: the yes/no box with
+              the sentence above -> as designed. Press No: a "take your time" line, job
+              unchanged. Click again, press Yes: "Congratulations", the job changes and
+              the skill window has points -> fixed
+           2. click again after advancing: the "already taken that step" refusal, no box
+
      TQ. ACROSS CHANNELS: THE WORLD HUB ON 8483. The owner, 2026-09-14: party chat "should be
          broadcasted to all party members across channels", "do not use the database as
          a shared bus", "we can have a chat server hosted on 8483". Built: maplecw-chat,
@@ -3728,6 +3743,12 @@ function Show-TestPlan {
         Write-Host '  !item anything - granting a scroll destroys what (a) tests.'
         Write-Host '  IF THE CLIENT DIES, SAY WHICH STEP YOU WERE ON.' -ForegroundColor Red
 
+        Write-Host '  TR. THE FIRST JOB ADVANCEMENT ASKS FIRST.' -ForegroundColor Magenta
+        Write-Host '      An eligible click opens a yes/no box naming the requirements and'
+        Write-Host '      the one-way warning; the job changes ONLY on Yes.'
+        Write-Host '        No -> "take your time", job unchanged; Yes -> advanced -> fixed'
+        Write-Host '        a second click after advancing -> the refusal, no box'
+        Write-Host ''
         Write-Host '  TQ. ACROSS CHANNELS: THE WORLD HUB (maplecw-chat, 8483, chat-hub.log).' -ForegroundColor Magenta
         Write-Host '      Every channel dials it. Party requests are echoed to every'
         Write-Host '      channel in one order (a party now exists across channels);'

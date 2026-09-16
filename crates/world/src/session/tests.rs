@@ -2054,7 +2054,7 @@ fn clicking_an_instructor_advances_the_job() {
     assert!(!out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED), "no job packet before an answer");
     let ask = out.iter().find(|r| r.opcode == net::script::SCRIPT_MESSAGE).expect("the question");
     assert!(ask.what.contains("AskYesNo"), "{}", ask.what);
-    assert!(ask.what.contains("Warrior") && ask.what.contains("Level 10") && ask.what.contains("STR 35"), "the requirements are in the box: {}", ask.what);
+    assert!(ask.what.contains("Swordsman") && ask.what.contains("Level 10") && ask.what.contains("STR 35"), "the requirements are in the box: {}", ask.what);
     assert!(ask.what.contains("cannot be undone"), "{}", ask.what);
     // No: a sentence, nothing else, and the job is untouched. Closing the box: nothing.
     let out = s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_NO));
