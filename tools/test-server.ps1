@@ -2046,9 +2046,10 @@
           Tester2 sees the pet SNAP / teleport / freeze      -> the x/y or count still misaligns;
                        paste the 0x0278 body (should be charId, petIdx, tick, then x=-, y=)
           The owner's own pet is unaffected either way (that never went through the wire).
-        The crash was: the client's 0x0202 path has no leading key u32, so a verbatim rebroadcast
-        read the pet's X (-97) as the element count, appended nothing, and null-derefed. We now
-        insert the 0x0202 tick as that key. --no-broadcast-pets is the owner-local fallback.
+        The crash was: the 0x0202 head is 5 bytes (petIdx, u8) and we took it as 9, so the
+        rebroadcast path started 4 bytes in and the pet's X (-97) was read as the element
+        count -> nothing appended -> null-deref. The path goes out whole now.
+        --no-broadcast-pets is the owner-local fallback.
 
     STILL OPEN - do not spend the run confirming these are broken
     ------------------------------------------------------------

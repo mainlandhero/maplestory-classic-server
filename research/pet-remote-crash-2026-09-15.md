@@ -128,23 +128,33 @@ as a latent hazard, now realised.
 pool) and then **consumes `petIdx` itself** - `0x142795b5e call 0x1406e8c20`, which advances the
 reader - before it tail-jumps (`0x142795bb1`) to `FUN_141ec3f20` with the reader positioned
 **after `petIdx`**. So `FUN_1404b2630` reads its fixed head from there: `u32 key, i16 x, i16 y,
-u16, u16, i16 count`. The client's `0x0202` move path, however, is `i16 x, i16 y, u16, u16, i16
-count, elements` - **no leading key**. Forwarded verbatim after `petIdx`, every field is four
-bytes early and the `i16 count` lands on the pet's X coordinate, `-97`. `FUN_1404b2630` bails at
-`0x1404b26b3 jle` on `count <= 0`, appends nothing, and the tail is null.
+u16, u16, i16 count` - the same `u32`-led block `0x00D9` and the mob's `0x02FF` carry.
 
-Decoded both live captures (1- and 2-element moves) at each candidate offset: reading from the
-byte after `petIdx` with a leading key inserted gives `x=-97, y=148, count=1` and `count=2`
-respectively; the verbatim copy gives `count=-97` / `-27137`. The mob broadcast `0x03D9` never
-hit this because `mob_move_broadcast` already writes two filler `u32`s before its path and the
-mob path is itself key-led - which is why 260 mob moves in the same run drew fine through the
-**same** `FUN_141d598b0`.
+The server was forwarding a path that started at `x`. Not because the client's path lacks the
+`u32` - it does not - but because `net::pet::CLIENT_PET_MOVE_HEAD_LEN` was **9** when the head is
+**5**. `tools/encodes.py 0x142b68a20`, the `0x0202` builder, writes `w_u32` (petIdx), `w_u8`, and
+then calls the path encoder `FUN_141d57c60` **[L]**. The research of 2026-09-13 had read the path's
+own leading `u32` as a "tick" in the head (`[D]`); it is `0` in all 7 278 captured `0x0202` bodies,
+as `0x00D9`'s path `u32` is, which is not what a tick looks like. So "everything after the
+nine-byte head" began four bytes into the path, every field was read four bytes early, and the
+`i16 count` landed on the pet's X coordinate, `-97`. `FUN_1404b2630` bails at `0x1404b26b3 jle` on
+`count <= 0`, appends nothing, and the tail is null.
 
-**The fix.** `net::pet::pet_move_broadcast` now emits `charId, petIdx, tick, <the 0x0202 path>` -
-the `0x0202` tick (its head bytes 4..8) becomes the leading key the applier reads into
-`path+0x40` and ignores, so x/y/count line up. It also drops any zero-element path defensively,
-closing §6.1's hazard for this packet. Pets broadcast by default again (`Config::broadcast_pets`,
-`--no-broadcast-pets` to fall back to owner-local).
+Decoded both live captures (1- and 2-element moves) as the observer reads them: from the byte
+after `petIdx`, with the path taken from body offset 5, `x=-97, y=148, count=1` and `count=2`;
+with the path taken from offset 9, `count=-97` / `-27137`. The mob broadcast `0x03D9` never hit
+this because `mob_move_broadcast` forwards the mob's path whole - which is why 260 mob moves in
+the same run drew fine through the **same** `FUN_141d598b0`.
+
+**The fix.** `CLIENT_PET_MOVE_HEAD_LEN = 5`, and `net::pet::pet_move_broadcast` emits `charId,
+petIdx, <the 0x0202 path from byte 5, verbatim>`. It also drops any zero-element path
+defensively, closing §6.1's hazard for this packet. Pets broadcast by default again
+(`Config::broadcast_pets`, `--no-broadcast-pets` to fall back to owner-local).
+
+*A first cut of this correction "inserted the tick as the key" - copying body bytes 4..8 in front
+of the path from byte 9. That produces the same bytes as the right answer on every capture so
+far (4..9 are all zero) and would have drifted the moment they were not; the builder's own writes
+settled which four bytes belong to the path. Same-day review caught it.*
 
 The generalisation is this file's own: *the remote pet was under-constructed* was a plausible
 inference from two function sizes, and it was wrong. The dump said `rbp` was a real object and
