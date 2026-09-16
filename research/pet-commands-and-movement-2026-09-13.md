@@ -48,7 +48,11 @@ answers. `inc` is carried through the table so that adding closeness is one chan
 ## 3. Movement
 
 `0x0202` is the pet's own move report: **504 of them after a summon and 0 before**, head
-`u32 petIdx, u32 tick, u8` and then the movement path, whose first point is the exact spot the
+`u32 petIdx, u8` (five bytes - **corrected 2026-09-15**: this said `u32 petIdx, u32 tick, u8`, and
+the "tick" was the path's own leading `u32`; `tools/encodes.py 0x142b68a20` shows the builder
+writes `w_u32, w_u8` then the path encoder, and taking the head as nine bytes crashed every
+observer of a pet move - `research/pet-remote-crash-2026-09-15.md`) and then the movement path,
+`u32`-led like `0x00D9`'s, whose first point is the exact spot the
 server placed the pet **[L]**. `Session::on_pet_move` forwards the path **byte for byte** inside
 `0x0278` (`FUN_141ec3f20` hands everything after the pet index to `FUN_141d598b0`, the path applier
 `research/user-pool-tables.md` names for remote characters), published to the map and **not**

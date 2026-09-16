@@ -239,10 +239,11 @@ this build. **Root cause (corrected the same day, from the crash dump's register
 malformed, not the client.** The dump faulted with `rax = 0`, `rbp = 0x4f935ad8` a valid path
 container - a zero-element null-deref (`research/remote-move-verification.md` §6.1), not a
 missing visual. The `0x0278` dispatcher consumes `petIdx` (`0x142795b5e`) then the applier reads
-`u32 key, i16 x, i16 y, u16, u16, i16 count`; the client's `0x0202` path has **no leading key**,
-so a verbatim copy read the pet's X (`-97`) as the count, appended nothing, and dereferenced the
-empty list tail. `net::pet::pet_move_broadcast` now inserts the `0x0202` tick as that leading key
-and drops any zero-element path. **Pets broadcast by default again** (`Config::broadcast_pets =
+`u32 key, i16 x, i16 y, u16, u16, i16 count`. The client's `0x0202` path HAS that leading key;
+`CLIENT_PET_MOVE_HEAD_LEN` was 9 when the builder `FUN_142b68a20` writes a five-byte head
+(`w_u32 petIdx, w_u8`, then the path encoder), so the forwarded "path" began four bytes in, the
+pet's X (`-97`) was read as the count, nothing was appended and the empty list tail was
+dereferenced. The head is 5 now and the path goes out whole; a zero-element path is dropped. **Pets broadcast by default again** (`Config::broadcast_pets =
 true`, `--no-broadcast-pets` for the owner-local fallback). `research/pet-remote-crash-2026-09-15.md`,
 fixture `research/fixtures/pet-remote-move-crashes-observer-2026-09-15.log`, dump
 `dumps/maplecw-crash-1057776-c0000005-1.dmp`. NEXT GOAL: confirm on two screens that Tester2 sees
