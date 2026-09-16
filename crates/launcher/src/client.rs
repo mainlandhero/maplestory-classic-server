@@ -1021,6 +1021,31 @@ mod tests {
         assert!(steps[0].contains("48 83 ec 28"), "{steps:?}");
     }
 
+    /// **The version gate reverts the patch; the re-assert puts it back.** Joanne, via the owner
+    /// 2026-09-16: a published package showed "Nexon Launcher failed to load" until a manual
+    /// patch, and their script found the byte UNPATCHED. `prepare` patches, then the version
+    /// gate overwrites `MapleStory.exe` with an unpatched server copy - so `prepare_and_launch`
+    /// runs this a second time, after the version gate, on whatever is on disk.
+    #[test]
+    fn a_patch_reverted_by_a_client_download_is_re_applied() {
+        let temp = TempDir::new("gate5");
+        let dir = temp.path().to_path_buf();
+        let exe = client_with_gate_bytes(&dir, super::NEXON_GATE_UNPATCHED);
+
+        // prepare()'s patch.
+        super::patch_nexon_launcher_gate(&dir).unwrap();
+        assert_eq!(gate_bytes(&exe), super::NEXON_GATE_PATCHED);
+
+        // The version gate downloads the server's UNPATCHED canonical exe over it.
+        client_with_gate_bytes(&dir, super::NEXON_GATE_UNPATCHED);
+        assert_eq!(gate_bytes(&exe), super::NEXON_GATE_UNPATCHED, "the download reverted it");
+
+        // The second call - the fix. The launched exe is patched again.
+        let steps = super::patch_nexon_launcher_gate(&dir).unwrap();
+        assert_eq!(gate_bytes(&exe), super::NEXON_GATE_PATCHED);
+        assert!(steps[0].contains("jne -> jmp"), "{steps:?}");
+    }
+
     /// A client that cannot be read is WARNED about and never refused.
     ///
     /// `prepare` checks the executable exists a step earlier, so anything reaching here is a

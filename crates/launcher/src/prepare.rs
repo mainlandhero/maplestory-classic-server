@@ -313,6 +313,29 @@ pub fn prepare_and_launch(
                 Level::Good,
                 format!("running client version {} - confirmed by the server", outcome.version()),
             );
+
+            // **Re-assert the Nexon gate byte AFTER the version gate.** The owner, 2026-09-16:
+            // Joanne's client showed "Nexon Launcher failed to load" on every launch of a
+            // published package until they patched `MapleStory.exe` by hand, and their manual
+            // script found the byte UNPATCHED - even though the package ships it patched.
+            //
+            // `prepare` patched it above, then this version gate overwrote `MapleStory.exe`
+            // with the server's canonical copy (`clientpatch::install`), and their server serves
+            // an UNPATCHED exe (an older `--client-dir`, from before the in-launcher patch),
+            // so the download silently reverted `prepare`'s patch. The comment above claimed
+            // the folder was "in the same prepared state as the canonical client the server
+            // publishes" - true only when the server's exe is itself patched, which is not a
+            // property the launcher can assume.
+            //
+            // So the gate patch is idempotent and runs on whatever the version gate left on
+            // disk. When the server already serves a patched exe this is a no-op ("already
+            // patched"); when it serves an unpatched one this is what stops the dialog. A
+            // patched server also avoids the 76 MB re-download this download implies - see the
+            // note in `tools/package-server.ps1`.
+            for step in client::patch_nexon_launcher_gate(&layout.client_dir)? {
+                let level = if step.starts_with("WARNING") { Level::Warn } else { Level::Good };
+                log(level, step);
+            }
         }
         // No pin, no TLS, no way to ask - and the answer to "which version should I run" must
         // not come from an unauthenticated source. Same refusal as sign-in gives.
