@@ -722,6 +722,11 @@
               unchanged. Click again, press Yes: "Congratulations", the job changes and
               the skill window has points -> fixed
            2. click again after advancing: the "already taken that step" refusal, no box
+           3. (2026-09-16) the Yes also hands over the Beginner's set, free: Long Sword
+              (Swordsman), Wooden Wand (Magician), War Bow (Archer), Triangular Zamadar
+              AND Garnier (Rogue). The congratulations names it, a grey "gained" chat
+              line draws, and it is in the Equip tab -> fixed. A full Equip tab: the job
+              still changes and a yellow line says the item could not be placed.
 
      TQ. ACROSS CHANNELS: THE WORLD HUB ON 8483. The owner, 2026-09-14: party chat "should be
          broadcasted to all party members across channels", "do not use the database as
@@ -3808,6 +3813,9 @@ function Show-TestPlan {
         Write-Host '      the one-way warning; the job changes ONLY on Yes.'
         Write-Host '        No -> "take your time", job unchanged; Yes -> advanced -> fixed'
         Write-Host '        a second click after advancing -> the refusal, no box'
+        Write-Host '        Yes also hands over the Beginner''s weapon (Grendel: Wooden Wand;' -ForegroundColor Magenta
+        Write-Host '        the Rogue gets Zamadar AND Garnier): named in the box, grey'
+        Write-Host '        "gained" line, in the Equip tab -> fixed'
         Write-Host ''
         Write-Host '  TQ. ACROSS CHANNELS: THE WORLD HUB (maplecw-chat, 8483, chat-hub.log).' -ForegroundColor Magenta
         Write-Host '      Every channel dials it. Party requests are echoed to every'

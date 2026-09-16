@@ -947,21 +947,62 @@ impl Session {
                         &format!("Something went wrong and your job was not changed: {e}"),
                     );
                 }
-                let mut out = self.instructor_says(
-                    template,
-                    &format!(
-                        "Congratulations. You are now a {job_name}. Open your skill window - \
-                         you have skill points to spend."
-                    ),
-                );
-                out.push(self.job_change_reply(was, job));
-                out
+                // **The Beginner's set, after the save and never before it.** The owner,
+                // 2026-09-16: Grendel hands a just-advanced Magician a free Beginner's Wooden
+                // Wand. The gift hangs off the transition: a failed save above gives nothing,
+                // and a gift that cannot be placed (a full Equip tab) is SAID, not swallowed -
+                // the job is still changed, because the job is the thing that was asked for.
+                let (gifts, mut out) = self.starter_equips_for(template);
+                let mut text = format!("Congratulations. You are now a {job_name}.");
+                if !gifts.is_empty() {
+                    text.push_str(&format!(" Take this with you - {} - it is yours, free.", gifts.join(" and ")));
+                }
+                text.push_str(" Open your skill window - you have skill points to spend.");
+                let mut says = self.instructor_says(template, &text);
+                says.append(&mut out);
+                says.push(self.job_change_reply(was, job));
+                says
             }
             _ => match crate::jobs::refusal(&chr, template) {
                 Some(text) => self.instructor_says(template, &text),
                 None => Vec::new(),
             },
         }
+    }
+
+    /// Hand over the instructor's `starter_equips`, one of each. Returns the names that were
+    /// actually placed (for the instructor's sentence) and the packets that put them in the
+    /// bag - the Add rows plus the grey chat line a quest reward draws, so a starter wand
+    /// reads the same way a quest's mirror does. A gift that cannot be placed becomes a
+    /// notice naming the item and the reason, and is left out of the sentence.
+    fn starter_equips_for(&mut self, template: u32) -> (Vec<String>, Vec<Reply>) {
+        let Some(first) = crate::jobs::first_job_at(template) else { return (Vec::new(), Vec::new()) };
+        let mut names = Vec::new();
+        let mut out = Vec::new();
+        for &item_id in first.starter_equips {
+            match self.give_item(item_id, 1, "the first job advancement's Beginner's equipment") {
+                Ok((line, replies)) => {
+                    out.extend(replies);
+                    // The `what` is the log line: `line` says who got what into which slot.
+                    out.push(Reply {
+                        opcode: net::stats::USER_EFFECT_LOCAL,
+                        body: net::message::item_gained_in_chat(item_id, 1),
+                        what: format!(
+                            "UserEffectLocal item line: {} ({template}) with the {} advancement - {line} - chat category 6, grey",
+                            first.npc_name, first.job_name
+                        ),
+                    });
+                    names.push(format!("a #b{}#k", self.item_name(item_id)));
+                }
+                Err(why) => {
+                    out.extend(self.notice(format!(
+                        "{} could not hand you item {item_id}: {why}",
+                        first.npc_name
+                    )));
+                }
+            }
+        }
+        (names, out)
     }
 
     /// Put Phil's job-path choice on screen, or say why not.
