@@ -32,6 +32,22 @@
 //! order is not arbitrary: a developer who has just rebuilt `grap-stub` expects the launcher
 //! to install what they built, not a copy baked in at some earlier compile. The embedded
 //! bytes are the answer for a machine that has no repo, which is the case they exist for.
+//!
+//! # Since 2026-09-16: the NEWER of the two wins, and a self-updated launcher refreshes the file
+//!
+//! The rule above had a hole the self-update opened. An installed machine has `grap64.dll`
+//! beside the launcher from the setup zip, and the launcher now replaces *itself* from the
+//! server; but "a real file is preferred" meant the stub it carried was never looked at, so a
+//! guard-page change shipped in a new launcher reached nobody until they re-ran the installer.
+//! On 2026-09-16 the guard's retirement window changed for exactly the run that had just
+//! died, and it would have stayed at the old value on every installed client.
+//!
+//! So the two are compared, and when they differ the newer one is used: the on-disk file if
+//! it was modified after this launcher's executable was - the developer case, a stub rebuilt
+//! after the launcher - and otherwise the embedded copy, which is then **written over the
+//! on-disk file** so the folder holds what the launcher will install. Identical bytes are
+//! left alone. A launcher that has just replaced itself is newer than everything beside it,
+//! which is what makes the update carry the stub with it.
 
 use std::path::{Path, PathBuf};
 
@@ -56,12 +72,15 @@ pub enum StubSource {
     OnDisk(PathBuf),
     /// Written out of the launcher itself, to the given path.
     Extracted(PathBuf),
+    /// The file at the path the layout resolved was older than this launcher and differed
+    /// from the copy it carries, so it was rewritten with that copy.
+    Refreshed(PathBuf),
 }
 
 impl StubSource {
     pub fn path(&self) -> &Path {
         match self {
-            StubSource::OnDisk(p) | StubSource::Extracted(p) => p,
+            StubSource::OnDisk(p) | StubSource::Extracted(p) | StubSource::Refreshed(p) => p,
         }
     }
 
@@ -71,6 +90,11 @@ impl StubSource {
             StubSource::Extracted(p) => {
                 format!("stub: written out of the launcher -> {}", p.display())
             }
+            StubSource::Refreshed(p) => format!(
+                "stub: {} was older than this launcher and differed from the copy it carries - \
+                 rewritten with the launcher's copy",
+                p.display()
+            ),
         }
     }
 }
@@ -88,9 +112,27 @@ impl StubSource {
 /// on one rule is not duplication when the thing being guarded is irreversible: the real DLL
 /// is backed up exactly once, and a bad first run destroys the only copy.
 pub fn resolve(preferred: &Path, scratch_dir: &Path) -> Result<StubSource, String> {
+    let launcher_modified = std::env::current_exe()
+        .ok()
+        .and_then(|exe| std::fs::metadata(exe).ok())
+        .and_then(|m| m.modified().ok());
+    resolve_with(preferred, scratch_dir, launcher_modified)
+}
+
+/// [`resolve`] with the launcher's own modification time supplied, so a test can put the
+/// launcher on either side of the file. `None` means "unknown", and an unknown launcher age
+/// keeps the on-disk file, the older rule.
+pub fn resolve_with(
+    preferred: &Path,
+    scratch_dir: &Path,
+    launcher_modified: Option<std::time::SystemTime>,
+) -> Result<StubSource, String> {
     if preferred.is_file() {
         let len = std::fs::metadata(preferred).map(|m| m.len()).unwrap_or(0);
         if len >= crate::client::MIN_STUB_BYTES {
+            if let Some(refreshed) = refresh_from_embedded(preferred, launcher_modified) {
+                return Ok(refreshed);
+            }
             return Ok(StubSource::OnDisk(preferred.to_path_buf()));
         }
         // A file that is there but too small is a worse sign than no file at all, and
@@ -122,6 +164,34 @@ pub fn resolve(preferred: &Path, scratch_dir: &Path) -> Result<StubSource, Strin
     std::fs::write(&out, bytes)
         .map_err(|e| format!("could not write the built-in stub to {}: {e}", out.display()))?;
     Ok(StubSource::Extracted(out))
+}
+
+/// Rewrite `on_disk` with the embedded stub when the launcher is the newer of the two and
+/// the bytes differ. `None` when there is nothing to do: no embedded copy, unknown launcher
+/// age, the file is newer than the launcher, the bytes already match, or the file could not
+/// be read. A write that fails is `None` too - the on-disk file is then used as before, and
+/// the failure is not worth refusing a launch over: the guard's behaviour would be the older
+/// build's, which is the state every launch before today had.
+fn refresh_from_embedded(
+    on_disk: &Path,
+    launcher_modified: Option<std::time::SystemTime>,
+) -> Option<StubSource> {
+    let embedded = EMBEDDED?;
+    if (embedded.len() as u64) < crate::client::MIN_STUB_BYTES {
+        return None;
+    }
+    let launcher_modified = launcher_modified?;
+    let file_modified = std::fs::metadata(on_disk).ok()?.modified().ok()?;
+    if file_modified > launcher_modified {
+        // Newer than the launcher: a developer's fresh build. Theirs wins.
+        return None;
+    }
+    let current = std::fs::read(on_disk).ok()?;
+    if current == embedded {
+        return None;
+    }
+    std::fs::write(on_disk, embedded).ok()?;
+    Some(StubSource::Refreshed(on_disk.to_path_buf()))
 }
 
 /// The DLL `grap64.dll` needs and Windows does not ship.
@@ -187,13 +257,53 @@ mod tests {
         assert!(real.is_ok(), "{real:?}");
     }
 
+    use std::time::{Duration, SystemTime};
+
+    fn set_modified(path: &Path, when: SystemTime) {
+        std::fs::File::options().write(true).open(path).unwrap().set_modified(when).unwrap();
+    }
+
+    /// The developer case: a stub rebuilt AFTER the launcher is the one to install, whatever
+    /// the launcher carries.
     #[test]
-    fn a_real_file_is_preferred_over_the_built_in_copy() {
+    fn a_real_file_newer_than_the_launcher_is_preferred_over_the_built_in_copy() {
         let t = TempDir::new("stub-ondisk");
         let path = t.path().join("grap64.dll");
         std::fs::write(&path, vec![7u8; 4096]).unwrap();
+        let launcher = SystemTime::now() - Duration::from_secs(3600);
 
-        let got = resolve(&path, t.path()).expect("a big enough file is usable");
+        let got = resolve_with(&path, t.path(), Some(launcher)).expect("a big enough file is usable");
+        assert_eq!(got, StubSource::OnDisk(path.clone()));
+        assert_eq!(std::fs::read(&path).unwrap(), vec![7u8; 4096], "untouched");
+
+        // And an unknown launcher age keeps the old rule.
+        let got = resolve_with(&path, t.path(), None).unwrap();
+        assert_eq!(got, StubSource::OnDisk(path));
+    }
+
+    /// **The installed-machine case, which the self-update opened.** The stub beside the
+    /// launcher came from the setup zip; the launcher has since replaced itself with one that
+    /// carries a newer stub. The file is older than the launcher and differs, so it is
+    /// rewritten with the launcher's copy - and the next `stub_gameguard` installs that.
+    #[test]
+    fn a_real_file_older_than_the_launcher_is_refreshed_from_the_built_in_copy() {
+        let Some(embedded) = EMBEDDED else {
+            return; // a debug build with no stub compiled in has nothing to refresh from
+        };
+        let t = TempDir::new("stub-refresh");
+        let path = t.path().join("grap64.dll");
+        std::fs::write(&path, vec![7u8; 4096]).unwrap();
+        set_modified(&path, SystemTime::now() - Duration::from_secs(7200));
+        let launcher = SystemTime::now() - Duration::from_secs(3600);
+
+        let got = resolve_with(&path, t.path(), Some(launcher)).unwrap();
+        assert_eq!(got, StubSource::Refreshed(path.clone()));
+        assert_eq!(std::fs::read(&path).unwrap(), embedded, "the file now holds the launcher's stub");
+        assert!(got.describe().contains("rewritten with the launcher's copy"), "{}", got.describe());
+
+        // Identical bytes are left alone, whatever the ages say.
+        set_modified(&path, SystemTime::now() - Duration::from_secs(7200));
+        let got = resolve_with(&path, t.path(), Some(launcher)).unwrap();
         assert_eq!(got, StubSource::OnDisk(path));
     }
 

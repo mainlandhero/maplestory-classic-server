@@ -224,6 +224,14 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-16 17:20: a self-updated launcher now refreshes `grap64.dll` beside it.** Found while
+shipping the entry below: `stub::resolve` preferred the on-disk stub over the compiled-in copy,
+so the setup zip's 09-12 stub on D:\MapleCW (and Joanne's) would have kept the 600 s window
+through every launcher self-update. Now the newer of the two wins - the file if modified after
+the launcher's executable (a developer's rebuild), else the launcher's copy is written over it
+and the log says "rewritten with the launcher's copy". Identical bytes are left alone. Tests in
+`stub.rs`; `docs/launcher.md`.
+
 **2026-09-16 17:00: the guard page recycles at 200 s and the reserve is 16 M, because the 16:46
 run spent 8 M in four and a half minutes.** The owner: *"I thought we fixed all heap corruptions with
 a guard, why is there more?"* then *"Okay, let's recycle sooner."* `D:\MapleCW\previous-runs\
