@@ -1453,9 +1453,9 @@ mod tests {
     /// own `0x0277` for the arrival is not sent back to the owner. And putting the pet away
     /// clears it, so the next arrival is not handed a pet that is no longer out.
     ///
-    /// **This is the `broadcast_pets = true` path.** It is off by default since the
-    /// 2026-09-15 crash (`Config::broadcast_pets`), so the test turns it on to exercise it;
-    /// `a_pet_is_owner_local_by_default_and_no_arrival_is_handed_it` pins the default.
+    /// The pet-broadcast path, which is the default (`Config::broadcast_pets`). The move
+    /// packet's own shape was the 2026-09-15 crash - see `net::pet::pet_move_broadcast`;
+    /// `a_pet_is_owner_local_when_broadcast_is_disabled` pins the off fallback.
     #[test]
     fn a_pet_summoned_before_another_player_arrives_is_handed_to_them_after_the_owners_spawn() {
         let (store, config, fields) = channel();
@@ -1470,7 +1470,8 @@ mod tests {
         store.add_item(ids[0], store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
         let mut item_names = std::collections::HashMap::new();
         item_names.insert(5_000_006u32, "Husky".to_string());
-        let config = Arc::new(Config { item_names, broadcast_pets: true, ..(*config).clone() });
+        let config = Arc::new(Config { item_names, ..(*config).clone() });
+        assert!(config.broadcast_pets, "pets are broadcast by default");
 
         let mut owner = Session::joining(store.clone(), config.clone(), fields.clone());
         let mut arrival = Session::joining(store, config, fields.clone());
@@ -1518,15 +1519,11 @@ mod tests {
         );
     }
 
-    /// **A pet is owner-local by default: no other client is ever handed it.** Summoning a
-    /// pet on `the owner` crashed the second client `Tester2` in the same map on 2026-09-15 - the
-    /// remote-user pet path builds no visual, so the pet's first move faulted at
-    /// `0x141d59bf3` (`research/pet-remote-crash-2026-09-15.md`). Nothing the server puts in
-    /// the packet fixes a client that cannot render a remote pet, so by default the pet does
-    /// not leave the owner's own screen. Neither the live observer nor a later arrival is
-    /// handed it, and the owner's own summon is unaffected.
+    /// **`broadcast_pets = false` is owner-local: no other client is ever handed the pet.**
+    /// The safe fallback if the remote pet ever misbehaves again - neither the live observer
+    /// nor a later arrival gets a `0x0277`/`0x0278`, and the owner's own pet is unaffected.
     #[test]
-    fn a_pet_is_owner_local_by_default_and_no_arrival_is_handed_it() {
+    fn a_pet_is_owner_local_when_broadcast_is_disabled() {
         let (store, config, fields) = channel();
         let account = store.create_account("maplecw", "correct horse battery").unwrap();
         let mut ids = Vec::new();
@@ -1539,9 +1536,7 @@ mod tests {
         store.add_item(ids[0], store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
         let mut item_names = std::collections::HashMap::new();
         item_names.insert(5_000_006u32, "Husky".to_string());
-        // The default: broadcast_pets is NOT set, so it is false.
-        let config = Arc::new(Config { item_names, ..(*config).clone() });
-        assert!(!config.broadcast_pets, "the crash-safe default");
+        let config = Arc::new(Config { item_names, broadcast_pets: false, ..(*config).clone() });
 
         let mut owner = Session::joining(store.clone(), config.clone(), fields.clone());
         let mut observer = Session::joining(store, config, fields.clone());

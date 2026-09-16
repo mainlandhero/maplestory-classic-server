@@ -2038,11 +2038,17 @@
       A level-up gives +16 max HP and +12 max MP.
       Etc items and mesos survive a relog; Garnet Ores stack into one slot.
       !setrates 2 3 5 -> one banner naming all three; !rates reads them back.
-      PET + SECOND CLIENT: summon a pet on the owner with Tester2 standing in the same map.
-        Tester2 must NOT crash. Pets are owner-local now (Tester2 will not SEE the pet -
-        that is deliberate: the remote pet had no visual and its first move null-derefed,
-        research/pet-remote-crash-2026-09-15.md). --broadcast-pets re-enables the crash for
-        investigation only.
+      PET + SECOND CLIENT (the social pet, fixed 2026-09-15): summon a pet on the owner with
+        Tester2 standing in the same map, then WALK the owner around.
+          Tester2 sees the Husky walk smoothly beside the owner  -> DONE, the move packet is fixed
+          Tester2's client EXITS on the owner's first step        -> the leading-key fix is wrong;
+                       grab the new outbound 0x0278 body from world-ch0.log and the dump
+          Tester2 sees the pet SNAP / teleport / freeze      -> the x/y or count still misaligns;
+                       paste the 0x0278 body (should be charId, petIdx, tick, then x=-, y=)
+          The owner's own pet is unaffected either way (that never went through the wire).
+        The crash was: the client's 0x0202 path has no leading key u32, so a verbatim rebroadcast
+        read the pet's X (-97) as the element count, appended nothing, and null-derefed. We now
+        insert the 0x0202 tick as that key. --no-broadcast-pets is the owner-local fallback.
 
     STILL OPEN - do not spend the run confirming these are broken
     ------------------------------------------------------------
