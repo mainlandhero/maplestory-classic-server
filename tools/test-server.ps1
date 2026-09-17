@@ -2059,8 +2059,11 @@
                Auto Move NOT learned, and it takes drops only by walking onto them -> as
                designed now. Still sweeping from afar -> the grade leaked; paste bytes 61..63
                of its item ("pet item" line in world-ch0.log)
-            b. use the Expanded Auto Move Skill item (Cash Shop, 100 LP, Pets tab): tooltip
-               says (Learned), the pet blinks out and back; kill a snail ~200 px away:
+            b. FIRST use Auto Move (5190002), THEN Expanded Auto Move (5190003): the client
+               refuses Expanded on its own ("...a pet that has the auto-loot function") - it
+               is a chain, Auto Move must be learned first (2026-09-16 evening, the bits were
+               scrambled and are fixed now). After BOTH: tooltip says Expanded Auto Move
+               (Learned), the pet blinks out and back; kill a snail ~200 px away:
                  the drop flies to the pet with no walk, lands in the bag -> DONE; say the
                        farthest distance that still works (the box is 600 x 590 around it)
                  (Learned) but still walk-over only -> the box did not take: paste the
@@ -5093,7 +5096,8 @@ function Show-TestPlan {
         Write-Host '       Now tied to the BOUGHT Expanded Auto Move; no free Auto Move bits.'
         Write-Host '         a. fresh Husky: NOT learned, walk-over only -> as designed' -ForegroundColor Green
         Write-Host '            still sweeps from afar -> the grade leaked; paste item bytes 61..63' -ForegroundColor Yellow
-        Write-Host '         b. use Expanded Auto Move Skill (5190003): (Learned), pet blinks; a'
+        Write-Host '         b. Auto Move (5190002) FIRST, then Expanded (5190003) - it is a chain,'
+        Write-Host '            Expanded alone is refused. After both: (Learned), pet blinks; a'
         Write-Host '            drop ~200 px away FLIES to it, no walk -> DONE; say how far' -ForegroundColor Green
         Write-Host '            (Learned) but walk-over only -> paste the PetPickupRange line' -ForegroundColor Yellow
         Write-Host '            "unregistered" -> WZ keys missing from THIS package (backport)' -ForegroundColor Yellow

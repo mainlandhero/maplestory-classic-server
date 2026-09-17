@@ -224,6 +224,18 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-16 late: the pet-skill bits were `1 << index` and the client's are not - fixed, and
+the vacuum is a two-item chain.** The owner, applying Expanded Auto Move on a fresh Husky: *"You do
+not have a pet that can use this skill."* The client-side gate reads the pet's learned mask
+(`pet+0x1c`) and Expanded Auto Move needs Auto Move first. Two findings: (1) `net::bag`'s bits
+were `1 << index`, but `FUN_1414b89b0` and the modern `PetSkill` enum both give `Item Pouch
+0x01, Expanded Auto Move 0x02, Auto Move 0x04, Ignore Item 0x08, Auto HP 0x20, Auto MP 0x40` -
+so every skill item was teaching the wrong skill and a learned Auto Move showed as "Ignore Item
+(Learned)". Corrected, `the_pet_skill_bits_match_the_clients_own_mask` pins them. (2) The vacuum
+is Auto Move (`5190002`) THEN Expanded Auto Move (`5190003`); the box then rides `0x0198` on
+wonderGrade 6 as before. `research/pet-vacuum-wondergrade-2026-09-16.md` §7. 2132 tests. Plan
+step 8 LOOT has the order.
+
 **2026-09-16 evening: the vacuum is the client's, keyed on `wonderGrade == 6`, and it is now
 tied to the bought Expanded Auto Move.** The owner: *"longRange belongs to a Pet Skill that the
 clients have to purchase and activate ... Decompile the pet functions first to figure out if

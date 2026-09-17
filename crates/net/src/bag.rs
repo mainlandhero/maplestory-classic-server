@@ -349,17 +349,35 @@ pub const PET_DATE_DEAD: u64 = 150_211_584_000_000_000;
 /// Pouch. Currently it is missing the Item Pouch skill by default"* - so Meso Magnet showed on
 /// its own and Item Pouch did not. It is innate. **[D]**
 ///
-/// The bit is `1 << index`. **[I]** on the shift itself - the table gives the order and the
-/// tooltip is the test - but the order is measured.
-pub const PET_SKILL_ITEM_POUCH: u16 = 1 << 0;
+/// **The bit is NOT `1 << index`** - that was [I], and it was wrong. The owner, 2026-09-16, using
+/// the Expanded Auto Move item: *"You do not have a pet that can use this skill."* The client's
+/// own tooltip builder `FUN_1414b89b0` maps each skill index to a bit off `ebx = 4`:
+/// index 0 -> `ebx-3 = 1`, 2 -> `ebx-2 = 2`, 3 -> `ebx = 4`, 5 -> `ebx+4 = 8`, 1 -> `0x20`,
+/// 4 -> `0x40`, 6 -> `0x80`. So the learned mask this client reads at `pet+0x1c` is:
+///
+/// ```text
+///   0x01 Item Pouch   0x02 Expanded Auto Move   0x04 Auto Move   0x08 Ignore Item
+///   0x20 Auto HP      0x40 Auto MP              0x80 Auto Buff
+/// ```
+///
+/// **[L]**, and the modern reference's `PetSkill` enum is byte-for-byte the same
+/// (`ITEM_PICKUP 0x1, EXPANDED_AUTO_MOVE 0x2, AUTO_MOVE 0x4, IGNORE_ITEM 0x8, AUTO_HP 0x20`).
+/// The old `1 << index` values put Auto HP on Expanded Auto Move's bit, Expanded on Auto
+/// Move's, and Auto Move on Ignore Item's - which is why a "learned" Auto Move showed as
+/// "Ignore Item (Learned)" and every skill item taught the wrong thing.
+pub const PET_SKILL_ITEM_POUCH: u16 = 0x01;
+/// See [`PET_SKILL_ITEM_POUCH`]. Bought as item `5190003` (its key is `longRange`).
+pub const PET_SKILL_EXPANDED_AUTO_MOVE: u16 = 0x02;
+/// See [`PET_SKILL_ITEM_POUCH`]. Bought as item `5190002` (its key is `dropSweep`). **The
+/// client requires this before it will apply Expanded Auto Move** - the chain the refusal
+/// above was enforcing.
+pub const PET_SKILL_AUTO_MOVE: u16 = 0x04;
+/// See [`PET_SKILL_ITEM_POUCH`]. Index 5; no item this server sells grants it.
+pub const PET_SKILL_IGNORE_ITEM: u16 = 0x08;
 /// See [`PET_SKILL_ITEM_POUCH`]. Bought as item `5190000`.
-pub const PET_SKILL_AUTO_HP: u16 = 1 << 1;
-/// See [`PET_SKILL_ITEM_POUCH`]. Bought as item `5190003`.
-pub const PET_SKILL_EXPANDED_AUTO_MOVE: u16 = 1 << 2;
-/// See [`PET_SKILL_ITEM_POUCH`]. Bought as item `5190002`.
-pub const PET_SKILL_AUTO_MOVE: u16 = 1 << 3;
+pub const PET_SKILL_AUTO_HP: u16 = 0x20;
 /// See [`PET_SKILL_ITEM_POUCH`]. Bought as item `5190001`.
-pub const PET_SKILL_AUTO_MP: u16 = 1 << 4;
+pub const PET_SKILL_AUTO_MP: u16 = 0x40;
 
 /// **What every pet knows the day it is bought.** The owner, 2026-09-13: *"the Husky should by
 /// default come with Meso Magnet and Item Pouch."*
@@ -823,6 +841,25 @@ mod tests {
 #[cfg(test)]
 mod pet_tests {
     use super::*;
+
+    /// **The learned-mask bits are the client's, not `1 << index`.** `FUN_1414b89b0` and the
+    /// modern `PetSkill` enum agree; a scramble here taught every skill item the wrong skill.
+    #[test]
+    fn the_pet_skill_bits_match_the_clients_own_mask() {
+        assert_eq!(PET_SKILL_ITEM_POUCH, 0x01);
+        assert_eq!(PET_SKILL_EXPANDED_AUTO_MOVE, 0x02);
+        assert_eq!(PET_SKILL_AUTO_MOVE, 0x04);
+        assert_eq!(PET_SKILL_IGNORE_ITEM, 0x08);
+        assert_eq!(PET_SKILL_AUTO_HP, 0x20);
+        assert_eq!(PET_SKILL_AUTO_MP, 0x40);
+        // The four the shop sells, and the skill each item's WZ key grants.
+        assert_eq!(pet_skill_bit_for_item(5_190_000), Some(PET_SKILL_AUTO_HP));
+        assert_eq!(pet_skill_bit_for_item(5_190_001), Some(PET_SKILL_AUTO_MP));
+        assert_eq!(pet_skill_bit_for_item(5_190_002), Some(PET_SKILL_AUTO_MOVE));
+        assert_eq!(pet_skill_bit_for_item(5_190_003), Some(PET_SKILL_EXPANDED_AUTO_MOVE));
+        // Item Pouch is the default; none of the four are in it.
+        assert_eq!(PET_SKILLS_LEARNED_AT_START, PET_SKILL_ITEM_POUCH);
+    }
 
     /// **Expanded Auto Move, bought, is what makes the pet a vacuum** - not the WZ keys and
     /// not a free bit. The item's `wonderGrade` (`u16` after `giantRate`, `0x140304730`, item
