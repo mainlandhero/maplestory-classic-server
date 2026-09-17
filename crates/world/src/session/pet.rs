@@ -72,6 +72,29 @@ pub(super) struct ActivePet {
 }
 
 impl Session {
+    /// **`0x0198`, after every SetField: the long-range pickup boxes.** The client keeps them
+    /// in two globals that are `(0,0,0,0)` until a server says otherwise, and consults them
+    /// only for a pet whose item carries `wonderGrade 6` - which `net::bag::pet_wonder_grade`
+    /// sets once Expanded Auto Move is bought. So this is the second half of that purchase:
+    /// without it a pet that learned the skill would sweep a box of no size and pick up
+    /// nothing at all, which on screen is "the skill broke my pet".
+    ///
+    /// Sent whether or not a pet is out (36 bytes; the box is per client, not per pet), and
+    /// on every SetField because the keymap and the SP pools ride the same way and for the
+    /// same reason: a portal walk must not be a second way to lose it.
+    pub(super) fn pet_pickup_range_reply(&self) -> Reply {
+        let [l, t, r, b] = net::pet::PET_VACUUM_BOX;
+        Reply {
+            opcode: net::pet::PET_PICKUP_RANGE,
+            body: net::pet::pet_pickup_range(net::pet::PET_VACUUM_BOX, net::pet::PET_VACUUM_BOX, &[]),
+            what: format!(
+                "PetPickupRange: the long-range box ({l},{t})..({r},{b}) around a pet whose item \
+                 says wonderGrade 6 - i.e. one that bought Expanded Auto Move. Every other pet \
+                 keeps the client's own (-25,-50,25,10)."
+            ),
+        }
+    }
+
     /// **`0x0202`: the pet walked, so everyone on the map is told.** The owner, 2026-09-13:
     /// *"broadcast player pet movement so other people can see pets moving even if it is not
     /// their own."*

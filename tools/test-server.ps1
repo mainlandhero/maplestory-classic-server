@@ -1380,7 +1380,8 @@
               nothing at all                                 -> paste the lines after 0x0147
               double-click again: it goes away               -> the toggle works
             AND THE VACUUM: see step 8, LOOT - the pet's request is 0x0205 (settled
-            2026-09-15) and every pet is a vacuum pet in both WZ and mask since 2026-09-16.
+            2026-09-15); the box is the client's, keyed on wonderGrade 6 via the BOUGHT
+            Expanded Auto Move since 2026-09-16 evening.
               the pet never moves toward drops                              -> the keys are
                          not what this pet code reads; say so
               the pet takes your OWN dropped item                           -> the byte is
@@ -2047,17 +2048,25 @@
         Tester2 sees the Husky, no crash). Every item below left a packet in world-ch0.log and
         each is answered now; none has been on a screen. As the owner with the Husky out, Tester2
         watching:
-          LOOT, AND THE VACUUM (needs the REBUILT client package: the keys are WZ). Every pet
-          now declares pickupItem/sweepForDrop/longRange AND has the three bits in its mask
-          (open Show Pet Info / the pet tooltip: Item Pouch, Auto Move, Expanded Auto Move
-          all "(Learned)"). Kill a snail some distance from the Husky:
-            the Husky goes for the drop from far off and it lands in the bag, no click ->
-                       DONE; say roughly how far it reaches - that radius is Nexon's code
-            it takes the drop only when it walks onto it -> the keys are declared (tooltip
-                       says Learned) but the pet code ignores them on this build; say so
-            it stays on the floor                        -> paste the "pet pick-up" log lines
-            the tooltip says "unregistered" for Auto Move -> the client package was not
-                       rebuilt/installed (python tools\backport_install.py --install, client closed)
+          LOOT, AND THE VACUUM - REWRITTEN 2026-09-16 EVENING. The afternoon's WZ trio reached
+          the client and did nothing (you saw it: walk-over only). Decompiled: the pickup box
+          is keyed on the pet ITEM's wonderGrade == 6, fed by 0x0198; sweepForDrop/longRange
+          never reach it. You: "longRange belongs to a Pet Skill the clients have to purchase."
+          So: no pet is born with Auto Move / Expanded Auto Move any more (Item Pouch only);
+          the item's wonderGrade is 6 once Expanded Auto Move (5190003) is bought; 0x0198
+          carries the box after every SetField. NO client rebuild needed for this one.
+            a. fresh Husky (or one that only had the free bits): tooltip shows Expanded
+               Auto Move NOT learned, and it takes drops only by walking onto them -> as
+               designed now. Still sweeping from afar -> the grade leaked; paste bytes 61..63
+               of its item ("pet item" line in world-ch0.log)
+            b. use the Expanded Auto Move Skill item (Cash Shop, 100 LP, Pets tab): tooltip
+               says (Learned), the pet blinks out and back; kill a snail ~200 px away:
+                 the drop flies to the pet with no walk, lands in the bag -> DONE; say the
+                       farthest distance that still works (the box is 600 x 590 around it)
+                 (Learned) but still walk-over only -> the box did not take: paste the
+                       PetPickupRange line after your SetField and the pet item bytes
+                 "unregistered" in the tooltip -> the WZ keys are missing from THIS client's
+                       package (backport_install.py --install) - a different failure
           NPC SHOP DUPLICATES (2026-09-16). The owner: "duplicate items in the NPC shop, one
           being regular price, another being 10 times cheaper ... across multiple if not
           all NPC shops." The cheap twin was our Sell row (the WZ sell price); the
@@ -4236,7 +4245,7 @@ function Show-TestPlan {
         Write-Host '           appears, item not summoned -> the pairing serial; say so'
         Write-Host '           client dies at the click -> paste client-exit.log + the 0x0277 line' -ForegroundColor Yellow
         Write-Host '           nothing -> paste the lines after 0x0147;  click again -> it goes away'
-        Write-Host '         VACUUM: see step 8 LOOT (0x0205 settled; all pets vacuum since 09-16)' -ForegroundColor DarkGray
+        Write-Host '         VACUUM: see step 8 LOOT (0x0205 settled; bought Expanded Auto Move = wonderGrade 6)' -ForegroundColor DarkGray
         Write-Host '      v) THE HUSKY RENDERS. CLOSED. THREE TWO-CLIENT FIXES, one launch,' -ForegroundColor Green
         Write-Host '         Tester2 as the second client:'
         Write-Host '         (a) THE SECOND CLIENT SEES THE PET: a Presence now carries the' -ForegroundColor Yellow
@@ -5079,13 +5088,15 @@ function Show-TestPlan {
         Write-Host '  8. THE PET, SIX THINGS - from your two-client run. The walk is' -ForegroundColor White
         Write-Host '     CONFIRMED. Each item below left a packet and is answered now; none'
         Write-Host '     has been on a screen. As the owner, Husky out, Tester2 watching:'
-        Write-Host '       LOOT + VACUUM (REBUILT client package: the keys are WZ). Tooltip must'
-        Write-Host '       say Item Pouch / Auto Move / Expanded Auto Move all (Learned). Kill a'
-        Write-Host '       snail some distance from the Husky:'
-        Write-Host '         it goes for the drop from far off, lands in the bag -> DONE; say how far' -ForegroundColor Green
-        Write-Host '         only when it walks onto it -> keys declared, pet code ignores them' -ForegroundColor Yellow
-        Write-Host '         stays on the floor -> paste the "pet pick-up" log lines' -ForegroundColor Yellow
-        Write-Host '         tooltip says unregistered -> package not rebuilt/installed' -ForegroundColor Yellow
+        Write-Host '       LOOT + VACUUM, REWRITTEN (evening). The box is the CLIENT''s, keyed on'
+        Write-Host '       the pet item''s wonderGrade 6 + a 0x0198 box; the WZ keys never reach it.'
+        Write-Host '       Now tied to the BOUGHT Expanded Auto Move; no free Auto Move bits.'
+        Write-Host '         a. fresh Husky: NOT learned, walk-over only -> as designed' -ForegroundColor Green
+        Write-Host '            still sweeps from afar -> the grade leaked; paste item bytes 61..63' -ForegroundColor Yellow
+        Write-Host '         b. use Expanded Auto Move Skill (5190003): (Learned), pet blinks; a'
+        Write-Host '            drop ~200 px away FLIES to it, no walk -> DONE; say how far' -ForegroundColor Green
+        Write-Host '            (Learned) but walk-over only -> paste the PetPickupRange line' -ForegroundColor Yellow
+        Write-Host '            "unregistered" -> WZ keys missing from THIS package (backport)' -ForegroundColor Yellow
         Write-Host '       NPC SHOP DUPLICATES (2026-09-16): the 10x-cheaper twin was our Sell row;'
         Write-Host '         gone. Any shop: each item ONCE at its real price -> fixed. Sell a Red' -ForegroundColor Yellow
         Write-Host '         Potion from the right panel: still works. Panel MISSING or sale refused' -ForegroundColor Yellow

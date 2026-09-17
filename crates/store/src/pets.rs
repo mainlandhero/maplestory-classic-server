@@ -76,12 +76,17 @@ pub struct ActivePetRow {
     pub item_id: u32,
 }
 
-/// The mask every pet has - Item Pouch, Expanded Auto Move, Auto Move: a vacuum pet (the owner,
-/// 2026-09-16). Mirrors `net::bag::PET_SKILLS_LEARNED_AT_START`; `store` does not depend on
-/// that constant so the crate boundary stays one-way, and a test here pins the two together.
-/// **ORed into every mask on read**, so a row written before the auto-move bits were default
-/// (the live server's rows are `1` or `3`) reads as a vacuum pet without a migration.
-pub const PET_SKILLS_AT_START: u16 = 0b1101;
+/// The mask every pet has - **Item Pouch**, and nothing else. Mirrors
+/// `net::bag::PET_SKILLS_LEARNED_AT_START`; `store` does not depend on that constant so the
+/// crate boundary stays one-way, and a test here pins the two together. **ORed into every mask
+/// on read**, so a row from before the pouch was default reads with it and no migration.
+///
+/// For most of 2026-09-16 this was `0b1101` - the two Auto Move bits free on every pet. The owner,
+/// that evening: *"longRange belongs to a Pet Skill that the clients have to purchase and
+/// activate ... we need to tie it to the pet skill instead of having that for free."* A pet
+/// that had the bits only from this default loses them on read; one that BOUGHT them has the
+/// bit in its row (`learn_pet_skill` stores `bits | PET_SKILLS_AT_START`) and keeps it.
+pub const PET_SKILLS_AT_START: u16 = 0b0001;
 
 /// The `pets` table, the migration of the old `character_pets` rows onto it, and a number
 /// for every pet item that has none. Called from `Store::open` after `inventory` has its
@@ -416,13 +421,13 @@ mod tests {
         assert_eq!(store.learn_pet_skill(husky, 1 << 4).unwrap(), PET_SKILLS_AT_START | (1 << 1) | (1 << 4));
         assert_eq!(
             store.pet_state(husky).unwrap(),
-            PetState { name: Some("Dummy".to_string()), skills: 0b1_1111, active: true, ..PetState::fresh() }
+            PetState { name: Some("Dummy".to_string()), skills: PET_SKILLS_AT_START | (1 << 1) | (1 << 4), active: true, ..PetState::fresh() }
         );
         // The vitals ride the same row and leave the rest alone.
         store.set_pet_vitals(husky, 4, 7, 63).unwrap();
         let st = store.pet_state(husky).unwrap();
         assert_eq!((st.level, st.closeness, st.fullness), (4, 7, 63));
-        assert_eq!((st.name.as_deref(), st.skills, st.active), (Some("Dummy"), 0b1_1111, true));
+        assert_eq!((st.name.as_deref(), st.skills, st.active), (Some("Dummy"), PET_SKILLS_AT_START | (1 << 1) | (1 << 4), true));
         assert_eq!(PET_SKILLS_AT_START, net::bag::PET_SKILLS_LEARNED_AT_START, "the two crates agree on the default");
     }
 

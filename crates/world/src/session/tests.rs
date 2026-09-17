@@ -11504,7 +11504,7 @@ fn a_pet_skill_item_sets_the_bit_and_is_used_up() {
     let out = s.handle(&use_pet_item_body(skill_slot, 5_190_000, id, pet_of(&store, id, 5_000_006), None));
 
     let state = store.pet_state(pet_of(&store, id, 5_000_006)).unwrap();
-    assert_eq!(state.skills, net::bag::PET_SKILLS_LEARNED_AT_START | net::bag::PET_SKILL_AUTO_HP, "the vacuum trio and Auto HP");
+    assert_eq!(state.skills, net::bag::PET_SKILLS_LEARNED_AT_START | net::bag::PET_SKILL_AUTO_HP, "Item Pouch and Auto HP");
     let cash = store.bag_items(id, store::InventoryType::Cash).unwrap();
     assert!(cash.iter().all(|r| r.item.item_id != 5_190_000), "the skill item is used up: {cash:?}");
     assert!(out.iter().any(|r| r.what.contains("re-sent as pet 5000006")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
@@ -11522,9 +11522,62 @@ fn a_pet_skill_item_sets_the_bit_and_is_used_up() {
     s.handle(&use_pet_item_body(slot, 5_190_002, id, pet_of(&store, id, 5_000_006), None));
     assert_eq!(
         store.pet_state(pet_of(&store, id, 5_000_006)).unwrap().skills,
-        net::bag::PET_SKILLS_LEARNED_AT_START | net::bag::PET_SKILL_AUTO_HP,
-        "Auto Move was already in the default; the item changes nothing but is used up"
+        net::bag::PET_SKILLS_LEARNED_AT_START | net::bag::PET_SKILL_AUTO_HP | net::bag::PET_SKILL_AUTO_MOVE,
+        "Auto Move is bought, not born with - the owner, 2026-09-16 evening"
     );
+}
+
+/// **Expanded Auto Move is the vacuum, and it is bought.** The owner, 2026-09-16: *"longRange
+/// belongs to a Pet Skill that the clients have to purchase and activate. If we already send
+/// that for free, we need to tie it to the pet skill."* The client's own test for the wide
+/// pickup box is the pet item's `wonderGrade == 6` (`FUN_14038a5b0`, `FUN_140374c80`), read
+/// from the item body's `u16` after `giantRate`. So: a fresh Husky's item says 0 and sweeps
+/// the walk-over box; the moment the Expanded Auto Move item is used, the re-sent item says
+/// 6 and the pet is put away and back out so `CPet::Init` re-reads it. And the box itself
+/// rides `0x0198` after every SetField, because the client's copy is `(0,0,0,0)` until told.
+#[test]
+fn expanded_auto_move_bought_turns_the_pets_wonder_grade_to_six_and_the_box_rides_every_set_field() {
+    let (mut s, store, id) = gm_session();
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_190_003, 1), 2).unwrap();
+    s.last_position = Some((300, -50));
+    s.on_pet_activate(&hex("509a18140100"));
+    let pet_id = pet_of(&store, id, 5_000_006);
+    let serial = Some(net::pet::pet_serial(id, pet_id));
+
+    // Before: Item Pouch only, wonderGrade 0 - byte 69 with the serial riding (61 + 8).
+    let pet = bag_pet(&store, id, 5_000_006);
+    let blob = s.item_blob_with_cash_sn(&pet, serial);
+    assert_eq!(&blob[54..56], &net::bag::PET_SKILL_ITEM_POUCH.to_le_bytes(), "born with Item Pouch alone");
+    assert_eq!(&blob[69..71], &0u16.to_le_bytes(), "wonderGrade 0: the walk-over box");
+
+    let slot = cash_slot_of(&store, id, 5_190_003);
+    let out = s.handle(&use_pet_item_body(slot, 5_190_003, id, pet_id, None));
+    assert_eq!(
+        store.pet_state(pet_id).unwrap().skills,
+        net::bag::PET_SKILL_ITEM_POUCH | net::bag::PET_SKILL_EXPANDED_AUTO_MOVE
+    );
+    let pet = bag_pet(&store, id, 5_000_006);
+    let blob = s.item_blob_with_cash_sn(&pet, serial);
+    assert_eq!(&blob[69..71], &6u16.to_le_bytes(), "wonderGrade 6: the 0x0198 box");
+    // The re-sent item in the reply carries the same six.
+    let resent = out.iter().find(|r| r.opcode == net::inventory::INVENTORY_OPERATION && r.what.contains("re-sent as pet")).expect("the pet item goes back out");
+    let at = resent.body.windows(2).rposition(|w| w == 6u16.to_le_bytes()).expect("a 6 in the body");
+    assert!(at > 40, "the six sits in the pet tail, not the header: {at}");
+    let summons: Vec<u8> = out.iter().filter(|r| r.opcode == net::pet::PET_ACTIVATED).map(|r| r.body[8]).collect();
+    assert_eq!(summons, vec![0, 1], "put away and back out, so CPet::Init re-reads the grade");
+
+    // The box: after every SetField, 36 bytes, the near box first. A warp is one SetField;
+    // the field table has to know the map or !map refuses rather than strand the character.
+    let mut fields = std::collections::HashSet::new();
+    fields.insert(40u32);
+    s.config = Arc::new(Config { fields, ..(*s.config).clone() });
+    let field = s.handle(&gm_chat("!map 40"));
+    assert!(field.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "the warp happens: {:?}", field.iter().map(|r| &r.what).collect::<Vec<_>>());
+    let range = field.iter().find(|r| r.opcode == net::pet::PET_PICKUP_RANGE).expect("0x0198 after SetField");
+    assert_eq!(range.body.len(), 36);
+    assert_eq!(&range.body[..16], &net::pet::pet_pickup_range(net::pet::PET_VACUUM_BOX, net::pet::PET_VACUUM_BOX, &[])[..16]);
+    assert_eq!(&range.body[32..36], &[0, 0, 0, 0], "no item selects the far box");
 }
 
 /// **A Pet Name Tag renames the pet everywhere it is.** The owner, 2026-09-15: *"I also tried to

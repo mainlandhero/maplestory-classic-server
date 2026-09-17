@@ -505,6 +505,8 @@ impl Session {
         // Bowman at level 12, got the 7 SP in the advance 0x007C, then a portal wiped them.
         // Now every SetField re-sends the real balance. session/skills.rs.
         out.extend(self.skill_point_reply(chr));
+        // The pet's long-range pickup box, for the same reason. session/pet.rs.
+        out.push(self.pet_pickup_range_reply());
         out
     }
 
