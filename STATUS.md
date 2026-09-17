@@ -224,6 +224,26 @@ checks an item's requirements against the stat block it is handed [L, one screen
 2026-09-09 "no top at select" is closed: base STR 27 failed the Blue Sergeant's 30. **This
 server still enforces no equip requirements at all**; that is now a known, open gate.
 
+**2026-09-16 evening: the vacuum is the client's, keyed on `wonderGrade == 6`, and it is now
+tied to the bought Expanded Auto Move.** The owner: *"longRange belongs to a Pet Skill that the
+clients have to purchase and activate ... Decompile the pet functions first to figure out if
+vacuum already exists before we take the burden of the calculations."* It exists
+(`research/pet-vacuum-wondergrade-2026-09-16.md`, all [L]): `FUN_14179e990`, the only caller of
+the `0x0205` builder, scans drops against a box around the pet - the constant `(-25,-50,25,10)`
+unless `FUN_14038a5b0` reads the pet's wonder grade as 6 (`FUN_140374c80` is `cmp ecx,6`), in
+which case it uses a box the server supplied in **`0x0198`** (two 16-byte boxes and an item-id
+list; `(0,0,0,0)` until sent). The grade comes from the pet ITEM's `u16` after `giantRate`
+(`0x140304730`, `+0xba`), which this server wrote as 0. `sweepForDrop`/`longRange` are a
+*declared* mask the tooltip reads and the pickup chain never does - which is why the afternoon's
+WZ trio (verified in D:\MapleCW's packed `Pet_000.wz`) changed nothing. Now:
+`PET_SKILLS_LEARNED_AT_START` is Item Pouch alone (store `0b0001`; a pet that had the Auto Move
+bits only by default loses them on read, one that bought them keeps its row); the pet item's
+wonderGrade is 6 iff Expanded Auto Move is in the mask (`net::bag::pet_wonder_grade`); `0x0198`
+rides after every SetField with Nexon's own unreferenced `(-300,-370,300,220)` at `0x14327c640`
+as the box. Zero server calculation per pet - the client scans, as it always did. Tests: the
+grade follows the bit and nothing else; buying `5190003` flips the re-sent item's bytes 61..63
+from 0 to 6 and re-summons; `0x0198` after a warp. 2132 world/net/store. Plan step 8 LOOT.
+
 **2026-09-16 17:20: a self-updated launcher now refreshes `grap64.dll` beside it.** Found while
 shipping the entry below: `stub::resolve` preferred the on-disk stub over the compiled-in copy,
 so the setup zip's 09-12 stub on D:\MapleCW (and Joanne's) would have kept the 600 s window

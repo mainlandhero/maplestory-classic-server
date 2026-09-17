@@ -136,6 +136,45 @@ pub const PET_ACTION: u16 = 0x0279;
 /// `Session::on_pick_up` already takes it by the pet offset.
 pub const CLIENT_PET_PICK_UP: u16 = 0x0205;
 
+/// Server -> client: **the pet's long-range pickup boxes.** `0x0198`, case `0x198` of the
+/// `0x70..0x19f` dispatcher (`research/msexe-gamestage-cases.txt`), handled inline by
+/// `FUN_14113d920` -> `FUN_140424370`. `research/pet-vacuum-wondergrade-2026-09-16.md`.
+///
+/// ```text
+/// raw[16]  near box   l, t, r, b as i32       -> 0x143aca528, used when nothing below matches
+/// raw[16]  far box    l, t, r, b as i32       -> 0x143aca538
+/// u32      count
+/// u32 x n  item ids: the far box applies while the character has one (FUN_1407b3df0)
+/// ```
+///
+/// **The box is used only for a pet whose item says `wonderGrade == 6`**
+/// ([`crate::bag::PET_WONDER_GRADE_VACUUM`]); every other pet keeps the constant
+/// `(-25,-50,25,10)` around itself, and this packet changes nothing for it. Until this
+/// packet arrives both boxes are `(0,0,0,0)` - a grade-6 pet would pick up NOTHING - so it
+/// rides after every SetField, the way the keymap and the SP pools do.
+pub const PET_PICKUP_RANGE: u16 = 0x0198;
+
+/// The near box this server sends: `(-300,-370,300,220)` around the pet, `[L]` as bytes -
+/// the four `i32` sitting at `0x14327c640`, immediately after the walk-over box the pickup
+/// scan starts from (`0x14327c630`, `(-25,-50,25,10)`), and referenced by nothing in the
+/// image: Nexon's own long-range constant, compiled in beside the short one and left for the
+/// packet to supply. Six hundred wide and nearly six hundred tall is most of a screen, which
+/// is what a Luna Petite pet reaches in the modern game.
+pub const PET_VACUUM_BOX: [i32; 4] = [-300, -370, 300, 220];
+
+/// The `0x0198` body: `near`, `far`, and the item ids that select `far`.
+pub fn pet_pickup_range(near: [i32; 4], far: [i32; 4], far_items: &[u32]) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    for v in near.iter().chain(far.iter()) {
+        w.u32(*v as u32);
+    }
+    w.u32(far_items.len() as u32);
+    for id in far_items {
+        w.u32(*id);
+    }
+    w.into_vec()
+}
+
 /// **Client -> server: the pet did a trick on its own client.** `FUN_141ebe480`, `u32 petIdx,
 /// u8, u16 interact index` - sent once, right before the chat line that triggered it (`world-
 /// ch0.log` 02:56:28.893: `0004` then "bad", interact 4). A report: the server already answers
@@ -395,6 +434,24 @@ pub const fn pet_activated_len(name_len: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    /// `0x0198` as `FUN_140424370` reads it: two raw 16-byte boxes, a count, then the ids.
+    #[test]
+    fn the_pickup_range_body_is_two_boxes_a_count_and_the_ids() {
+        let b = super::pet_pickup_range(super::PET_VACUUM_BOX, [-1, -2, 3, 4], &[5_000_006]);
+        assert_eq!(b.len(), 16 + 16 + 4 + 4);
+        let i32_at = |o: usize| i32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+        assert_eq!([i32_at(0), i32_at(4), i32_at(8), i32_at(12)], [-300, -370, 300, 220]);
+        assert_eq!([i32_at(16), i32_at(20), i32_at(24), i32_at(28)], [-1, -2, 3, 4]);
+        assert_eq!(i32_at(32), 1);
+        assert_eq!(i32_at(36), 5_000_006);
+        let none = super::pet_pickup_range(super::PET_VACUUM_BOX, super::PET_VACUUM_BOX, &[]);
+        assert_eq!(none.len(), 36);
+        assert_eq!(&none[32..36], &[0, 0, 0, 0]);
+        // The box is a superset of the walk-over one, and centred where a pet stands.
+        assert!(super::PET_VACUUM_BOX[0] < -25 && super::PET_VACUUM_BOX[2] > 25);
+        assert!(super::PET_VACUUM_BOX[1] < -50 && super::PET_VACUUM_BOX[3] > 10);
+    }
+
     use super::*;
 
     /// The two captured bodies from 2026-09-13 18:02: tick, then slot 1.

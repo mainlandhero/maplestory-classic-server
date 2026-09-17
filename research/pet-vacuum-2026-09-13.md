@@ -49,6 +49,10 @@ pet code acts on them: the loader stores them, and 370 modern pets ship them.
 
 ## 3a. 2026-09-16: back on, for every pet, in both halves
 
+**SUPERSEDED the same evening** - `pet-vacuum-wondergrade-2026-09-16.md`. The keys reached the
+client and did nothing: the pickup box is keyed on the pet item's `wonderGrade == 6` and fed by
+`0x0198`, and the grade now follows the *bought* Expanded Auto Move bit. The free bits are gone.
+
 Between §2 and today the two keys went to `0` (the skill-item work of 2026-09-13 §4 made Auto
 Move a purchase), so no classic pet has actually been a vacuum pet on any run. The owner, 2026-09-16:
 *"Can we turn all pets into vacuum pets, so they loot from long range similar to current Luna

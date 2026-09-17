@@ -1138,6 +1138,8 @@ impl Session {
         if let Some(chr) = self.claimed_character() {
             out.extend(self.skill_point_reply(&chr));
         }
+        // And the pet's long-range pickup box. session/pet.rs.
+        out.push(self.pet_pickup_range_reply());
         out
     }
 
