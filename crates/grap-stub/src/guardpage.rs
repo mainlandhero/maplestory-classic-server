@@ -296,6 +296,7 @@ pub(crate) fn mask_text(mask: u32) -> String {
 pub(crate) const MAX_SLOTS: usize = 16 * 1024 * 1024;
 
 /// The reserve the 16:46 run of 2026-09-16 had, and spent at ~254 s. `[L]`
+#[cfg(test)] // the 12:01 and 16:46 runs are what the sizing TESTS argue with
 pub(crate) const MAX_SLOTS_UNTIL_0916: usize = 8 * 1024 * 1024;
 
 /// Reserve sizes to try, in slots, largest first. A 32 GiB reservation in a 64-bit process
@@ -352,6 +353,7 @@ const REUSE_AFTER_MS: u64 = 200_000;
 
 /// The window every run before 2026-09-16 had. Kept for the 12:01 model's test, which has to
 /// reproduce *that* run's fallback with *that* run's window.
+#[cfg(test)] // the 12:01 and 16:46 runs are what the sizing TESTS argue with
 pub(crate) const REUSE_AFTER_MS_UNTIL_0916: u64 = 600_000;
 
 /// The header value stamped on a quarantined slot: **greater than `0x98`**, so every one of the
@@ -375,15 +377,20 @@ pub(crate) fn page_of(addr: usize) -> usize {
 // longest session this project has had.
 
 /// Slots served in the first 60 s: the startup burst, ~10 000/s. `[L]`
+#[cfg(test)] // the 12:01 and 16:46 runs are what the sizing TESTS argue with
 pub(crate) const MEASURED_BURST_60S: usize = 627_172;
 /// Sustained rate afterwards: +93 635, +93 637, +93 643, +93 621 per 60 s. `[L]`
+#[cfg(test)] // the 12:01 and 16:46 runs are what the sizing TESTS argue with
 pub(crate) const MEASURED_STEADY_PER_S: usize = 1_560;
 /// The cursor that run had, and which was spent between its 300 s and 360 s heartbeats. `[L]`
+#[cfg(test)] // the 12:01 and 16:46 runs are what the sizing TESTS argue with
 pub(crate) const OLD_MAX_SLOTS: usize = 1_048_576;
 /// Allocations that had fallen back by the 600 s heartbeat, when recycling began. `[L]`
+#[cfg(test)] // the 12:01 and 16:46 runs are what the sizing TESTS argue with
 pub(crate) const MEASURED_FALLBACK_AT_600S: usize = 419_588;
 /// Live `0x20` slots at every heartbeat after the first three minutes: ~26 000. `[L]`
 /// One committed page each, so ~104 MB - not the ~230 MB predicted before the launch.
+#[cfg(test)] // the 12:01 and 16:46 runs are what the sizing TESTS argue with
 pub(crate) const MEASURED_LIVE_0X20: usize = 26_000;
 
 // ---- the 16:46 run of 2026-09-16, which spent the 8 M reserve in four and a half minutes --
