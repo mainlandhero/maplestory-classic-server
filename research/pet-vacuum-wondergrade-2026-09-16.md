@@ -98,3 +98,31 @@ tooltip says *(Learned)*, and a drop up to ~300 px away flies to the pet with no
 halves are needed and both are measurable separately: no wide pickup with *(Learned)* showing
 means the `0x0198` box or the grade did not take (paste `world-ch0.log`'s `PetPickupRange`
 line and the pet item bytes 61..63); a wide pickup WITHOUT the skill means the grade leaked.
+
+## 7. The learned-mask bits were scrambled - the refusal that found it
+
+2026-09-16, first client test after §5: the owner double-clicked the Expanded Auto Move item and
+got the client's own **"You do not have a pet that can use this skill. ( This skill can only
+be equipped on a pet that has the auto-loot function. )"** - a client-side refusal, no packet
+sent.
+
+Two findings:
+
+* **`net::bag`'s pet-skill bits were `1 << index`, and the client's are not.** The tooltip
+  builder `FUN_1414b89b0` derives each skill's bit from `ebx = 4`: index 0 -> `1`, 2 -> `2`,
+  3 -> `4`, 5 -> `8`, 1 -> `0x20`, 4 -> `0x40`, 6 -> `0x80`. The modern `PetSkill` enum is
+  identical. So the real mask is `Item Pouch 0x01, Expanded Auto Move 0x02, Auto Move 0x04,
+  Ignore Item 0x08, Auto HP 0x20, Auto MP 0x40, Auto Buff 0x80`. Our `1 << index` put Auto HP
+  on `0x02` (Expanded's bit), Expanded on `0x04` (Auto Move's), Auto Move on `0x08` (Ignore
+  Item's) - which is why a pet that had "learned Auto Move" showed **Ignore Item (Learned)**
+  in the tooltip, and every skill item taught the wrong skill. Fixed to the client's values;
+  `the_pet_skill_bits_match_the_clients_own_mask` pins them.
+
+* **The client enforces a chain: Expanded Auto Move needs Auto Move learned first.** The pet's
+  learned mask (`pet+0x1c`, from the item body's `petSkill`) is what the gate reads - not the
+  declared WZ keys, which already carry `sweepForDrop`. A fresh pet has Item Pouch only, so the
+  gate refuses Expanded Auto Move until Auto Move (`5190002`, `dropSweep`) is applied. That is
+  the "auto-loot function" the message names. So the vacuum is a two-item purchase: Auto Move,
+  then Expanded Auto Move, at which point `pet_wonder_grade` sets 6 and `0x0198` widens the box.
+  **[D]** on which bit exactly the gate tests (Auto Move 0x04 by elimination: the pet had Item
+  Pouch and was still refused); the run confirms the order works with the corrected bits.
