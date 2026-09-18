@@ -313,14 +313,28 @@ impl Session {
     pub(super) fn pet_entry_replies(&self, chr: &net::opcode::Character) -> Vec<Reply> {
         let Some(active) = self.active_pet else { return Vec::new() };
         let pet = self.field_pet(chr, active);
-        vec![Reply {
-            opcode: net::pet::PET_ACTIVATED,
-            body: net::pet::pet_activated(chr.id, &pet),
-            what: format!(
-                "PetActivated: {} ({}) back beside {} after the field entry, at ({}, {})",
-                pet.name, pet.item_id, chr.name, pet.x, pet.y
-            ),
-        }]
+        vec![
+            Reply {
+                opcode: net::pet::PET_ACTIVATED,
+                body: net::pet::pet_activated(chr.id, &pet),
+                what: format!(
+                    "PetActivated: {} ({}) back beside {} after the field entry, at ({}, {})",
+                    pet.name, pet.item_id, chr.name, pet.x, pet.y
+                ),
+            },
+            // **The post-summon item write, without which the pet spawns sad and inert.** The owner,
+            // 2026-09-17: *"whenever the pet first spawn in on either login field load or map
+            // change, it appears sad and non-functional ... until it is re-summoned ... or
+            // feeding the pet."* The `0x0277` above carries neither fullness nor the pet's
+            // learned skills nor its wonderGrade (`pet_activated` sends `wonderGrade 0`), so a
+            // pet summoned by that alone reads as hungry and never vacuums. `CPet` takes its
+            // real state from the Cash item, and it re-reads it on a `0x0070` Add to the pet's
+            // slot *after* it is active - which is exactly what makes a re-summon
+            // (`on_pet_activate`) and a feed (`on_use_pet_food`) both fix it. The item is in the
+            // SetField bag restore too, but that write lands before the pet is active and does
+            // not trigger the re-read. So the field entry sends the same refresh those two do.
+            self.pet_item_refresh(chr, active, true),
+        ]
     }
 
     /// Whether the pet numbered `pet_id` is the one this session has out - the `active` byte

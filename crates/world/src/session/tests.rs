@@ -11210,8 +11210,10 @@ fn a_double_click_on_the_husky_summons_it_and_a_second_puts_it_away() {
     // A field entry sends the pet again, because the client rebuilt its pools.
     let chr = s.claimed_character().unwrap();
     let again = s.pet_entry_replies(&chr);
-    assert_eq!(again.len(), 1);
+    assert_eq!(again.len(), 2, "the 0x0277 AND the post-summon item write - without the second the pet spawns sad and inert (2026-09-17)");
     assert_eq!(again[0].opcode, net::pet::PET_ACTIVATED);
+    assert_eq!(again[1].opcode, net::inventory::INVENTORY_OPERATION, "the item refresh CPet re-reads its state from");
+    assert!(again[1].what.contains("active=1"), "and it says the pet is out");
     // And the record's own pet body now says active - the bag's row, which carries the pet
     // id the active byte is keyed on since 2026-09-16.
     let blob = s.item_blob(&bag_pet(&store, id, 5_000_006));
