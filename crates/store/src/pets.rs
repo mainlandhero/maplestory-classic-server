@@ -109,6 +109,78 @@ pub(crate) fn create_tables(conn: &Connection) -> Result<()> {
     )?;
     migrate_character_pets(conn)?;
     number_unnumbered_pets(conn)?;
+    remap_skill_bits_once(conn)?;
+    Ok(())
+}
+
+/// The learned-skill mask as `net::bag` numbered it until 2026-09-16 (`1 << index`, [I]), and
+/// as the client actually reads it (`FUN_1414b89b0` and the modern `PetSkill` enum, [L]).
+/// Item Pouch was right by luck; the other four each landed on a neighbouring skill, which is
+/// how a pet that "learned Auto Move" showed **Ignore Item (Learned)**.
+///
+/// ```text
+///   item      skill               old bit   new bit
+///   5190000   Auto HP             0x02      0x20
+///   5190003   Expanded Auto Move  0x04      0x02
+///   5190002   Auto Move           0x08      0x04
+///   5190001   Auto MP             0x10      0x40
+///             Item Pouch          0x01      0x01
+/// ```
+///
+/// Pure, so the table can be tested against the rows the live server actually holds.
+pub fn remap_old_skill_bits(old: u16) -> u16 {
+    let mut new = old & 0x01;
+    if old & 0x02 != 0 {
+        new |= 0x20;
+    }
+    if old & 0x04 != 0 {
+        new |= 0x02;
+    }
+    if old & 0x08 != 0 {
+        new |= 0x04;
+    }
+    if old & 0x10 != 0 {
+        new |= 0x40;
+    }
+    // Nothing this server ever wrote reaches 0x20 and up; a row that has them was not ours.
+    new | (old & !0x1F)
+}
+
+/// Rewrite every `pets.skills` from the old numbering to the client's, **once**.
+///
+/// The marker table is the single-use guard, the same shape as
+/// [`migrate_character_pets`]'s rename: a second open finds it and does nothing. Every row
+/// on the live server predates the fix (the last package deployed before it carried the old
+/// numbering), so remapping all of them is exact there. **On a box that ran a fixed build
+/// before this migration existed** (the owner's own, 2026-09-17), a row bought under the new bits
+/// is remapped as if it were old - bounded to that day's test pets, and said in the log.
+fn remap_skill_bits_once(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS pets_skill_bits_remapped_2026_09_17 (done INTEGER NOT NULL)",
+    )?;
+    let done: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pets_skill_bits_remapped_2026_09_17",
+        [],
+        |r| r.get(0),
+    )?;
+    if done > 0 {
+        return Ok(());
+    }
+    let rows: Vec<(i64, i64)> = {
+        let mut stmt = conn.prepare("SELECT pet_id, skills FROM pets ORDER BY pet_id")?;
+        let it = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        it.collect::<rusqlite::Result<_>>()?
+    };
+    for (pet_id, old) in rows {
+        let new = remap_old_skill_bits(old as u16);
+        if i64::from(new) != old {
+            conn.execute(
+                "UPDATE pets SET skills = ?2 WHERE pet_id = ?1",
+                rusqlite::params![pet_id, i64::from(new)],
+            )?;
+        }
+    }
+    conn.execute("INSERT INTO pets_skill_bits_remapped_2026_09_17 (done) VALUES (1)", [])?;
     Ok(())
 }
 
@@ -348,6 +420,37 @@ mod tests {
     }
 
     const HUSKY: u32 = 5_000_006;
+
+    /// **The old `1 << index` rows read as the client's bits, once.** The repo's own
+    /// `maplecw.db` holds `skills = 11` for Lucy: Item Pouch | old Auto HP | old Auto Move,
+    /// which under the client's numbering is Item Pouch | Expanded Auto Move | Ignore Item -
+    /// exactly the "Ignore Item (Learned)" the owner's tooltip showed. After the remap it is
+    /// `0x25`: Item Pouch | Auto Move | Auto HP.
+    #[test]
+    fn old_skill_bits_are_remapped_to_the_clients_once() {
+        assert_eq!(remap_old_skill_bits(0x01), 0x01, "Item Pouch was right all along");
+        assert_eq!(remap_old_skill_bits(0x02), 0x20, "old Auto HP");
+        assert_eq!(remap_old_skill_bits(0x04), 0x02, "old Expanded Auto Move");
+        assert_eq!(remap_old_skill_bits(0x08), 0x04, "old Auto Move");
+        assert_eq!(remap_old_skill_bits(0x10), 0x40, "old Auto MP");
+        assert_eq!(remap_old_skill_bits(11), 0x25, "Lucy's row: Pouch | Auto Move | Auto HP");
+        assert_eq!(remap_old_skill_bits(0b1101), 0x07, "the 2026-09-16 default: Pouch | Expanded | Auto Move");
+        assert_eq!(remap_old_skill_bits(3), 0x21, "the live server's `3`: Pouch | Auto HP");
+
+        // Through the store: a row written the old way, then the store opened again.
+        let (store, chr) = store_with_character();
+        let husky = buy(&store, chr, HUSKY);
+        {
+            let conn = store.conn();
+            conn.execute("UPDATE pets SET skills = 11 WHERE pet_id = ?1", [husky]).unwrap();
+            conn.execute("DELETE FROM pets_skill_bits_remapped_2026_09_17", []).unwrap();
+        }
+        assert_eq!(store.pet_state(husky).unwrap().skills, 0x25 | PET_SKILLS_AT_START);
+        // And only once: a NEW-bit row written after the marker is left alone.
+        assert_eq!(store.learn_pet_skill(husky, 0x02).unwrap(), 0x27);
+        create_tables(&store.conn()).unwrap();
+        assert_eq!(store.pet_state(husky).unwrap().skills, 0x27, "not remapped a second time");
+    }
 
     /// Put a pet in the Cash tab and hand back its number.
     fn buy(store: &Store, chr: u32, item_id: u32) -> u32 {

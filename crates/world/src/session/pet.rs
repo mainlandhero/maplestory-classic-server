@@ -74,10 +74,10 @@ pub(super) struct ActivePet {
 impl Session {
     /// **`0x0198`, after every SetField: the long-range pickup boxes.** The client keeps them
     /// in two globals that are `(0,0,0,0)` until a server says otherwise, and consults them
-    /// only for a pet whose item carries `wonderGrade 6` - which `net::bag::pet_wonder_grade`
-    /// sets once Expanded Auto Move is bought. So this is the second half of that purchase:
-    /// without it a pet that learned the skill would sweep a box of no size and pick up
-    /// nothing at all, which on screen is "the skill broke my pet".
+    /// only for a pet whose item carries `wonderGrade 6` - which every pet's item does
+    /// (`net::bag::PET_WONDER_GRADE_VACUUM`; the owner, 2026-09-17: the in-range vacuum is free).
+    /// So this is the other half of that grade: without it every pet would sweep a box of no
+    /// size and pick up nothing at all, which on screen is "the vacuum does not work".
     ///
     /// Sent whether or not a pet is out (36 bytes; the box is per client, not per pet), and
     /// on every SetField because the keymap and the SP pools ride the same way and for the
@@ -89,8 +89,8 @@ impl Session {
             body: net::pet::pet_pickup_range(net::pet::PET_VACUUM_BOX, net::pet::PET_VACUUM_BOX, &[]),
             what: format!(
                 "PetPickupRange: the long-range box ({l},{t})..({r},{b}) around a pet whose item \
-                 says wonderGrade 6 - i.e. one that bought Expanded Auto Move. Every other pet \
-                 keeps the client's own (-25,-50,25,10)."
+                 says wonderGrade 6 - every pet's does; the in-range vacuum is free. Without \
+                 this the client's copy is (0,0,0,0) and nothing is picked up."
             ),
         }
     }

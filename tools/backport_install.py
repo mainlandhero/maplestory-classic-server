@@ -479,8 +479,9 @@ def main():
             #   consumeHP/MP  Auto HP/MP Pouch    items 5190000/1, 100 LP - never declared
             #
             # The vacuum does NOT come from longRange here: it is the item's wonderGrade == 6
-            # (net::bag::pet_wonder_grade, set once Expanded Auto Move is learned), which the
-            # client also labels "Petite Luna". So removing these two keys leaves the vacuum,
+            # (net::bag::PET_WONDER_GRADE_VACUUM, on every pet - the in-range vacuum is free,
+            # The owner 2026-09-17), which the client also labels "Petite Luna". So removing these
+            # two keys leaves the vacuum,
             # the Petite Luna designation and the ability to register the skills all intact -
             # it only stops the fresh pet from advertising skills it has not learned.
             #

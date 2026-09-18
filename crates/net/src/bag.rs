@@ -387,8 +387,8 @@ pub const PET_SKILL_AUTO_MP: u16 = 0x40;
 /// and by evening: *"longRange belongs to a Pet Skill that the clients have to purchase and
 /// activate. If we already send that for free, we need to tie it to the pet skill instead of
 /// having that for free."* So the four shop items (`5190000..3`) each teach a bit no pet is
-/// born with, and the long-range pickup follows the Expanded Auto Move bit through
-/// [`pet_wonder_grade`]. The owner, 2026-09-17: *"The only default skills it should have is Meso
+/// born with. (The in-range vacuum is NOT one of them - it is free, [`PET_WONDER_GRADE_VACUUM`]
+/// on every item.) the owner, 2026-09-17: *"The only default skills it should have is Meso
 /// Magnet and Item Pouch."* The installer (step 4c) declares only `pickupItem` now, so a fresh
 /// pet's tooltip lists only those two; a purchased skill still lists as *(Learned)* off the
 /// mask, without its WZ key, so the declaration is not what lets it be bought.
