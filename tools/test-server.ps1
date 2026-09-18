@@ -1480,6 +1480,17 @@
                          -> CONFIRMED 2026-09-18 14:51 (!hair 42540, two clients side by side)
               the hair changes but the character flickers / a CLIENT FAULT -> paste
                          client-exit.log; the pair ran on an avatar mid-animation
+            EQUIPMENT TOO (2026-09-18, the owner: "Whenever a client is changing their
+            equipment, either a cash equipment or a regular equipment, it is not being
+            immediately reflected on other clients"): only the pet-hat slot was watched;
+            now ANY change to the worn set - regular, cash, pet hat, on or off - sends the
+            observers the same leave + enter (+ pet) for that one character.
+              put on / take off a weapon and a Deco-tab outfit on one client: the other
+                         shows it within ~0.1 s, same spot -> DONE
+              the changer's copy jumps / blinks / loses its pet -> say which; same
+                         readings as the hair step below
+              still old gear on the 2nd client -> paste the 0x0225 / 0x0224 lines that
+                         follow the 0x0070 in world-chN.log
             THE OTHER CLIENT (2026-09-18, same run): it got the 0x0224 and drew nothing -
             research/user-enter-field.md had it: a 0x0224 for an id already in the pool
             is a silent no-op. So the observers now get 0x0225 (leave) then 0x0224 (enter,
@@ -4447,6 +4458,9 @@ function Show-TestPlan {
         Write-Host '         !hair 42540 is the cheap form (no reload now either).'
         Write-Host '           own screen: changes the MOMENT you Confirm -> CONFIRMED 14:51' -ForegroundColor Green
         Write-Host '           flicker / CLIENT FAULT -> paste client-exit.log' -ForegroundColor Yellow
+        Write-Host '         EQUIPMENT TOO: any worn change (regular, cash, pet hat, on/off) now' -ForegroundColor Yellow
+        Write-Host '         sends the observers leave + enter for that character.' -ForegroundColor Yellow
+        Write-Host '           2nd client shows the new gear in ~0.1s -> DONE; else paste 0x0225/0x0224' -ForegroundColor Green
         Write-Host '         THE OTHER CLIENT drew nothing: a 0x0224 for an id it already has is' -ForegroundColor Yellow
         Write-Host '         a no-op. Observers now get 0x0225 + 0x0224 + pets for that character.' -ForegroundColor Yellow
         Write-Host '           2nd client: new hair in ~0.1s, same spot, pet still there -> DONE' -ForegroundColor Green

@@ -1698,7 +1698,9 @@ mod tests {
     /// character again the way a fresh sighting arrives - `0x0225`, the `0x0224` with the hat
     /// in the look, and the pet right behind it (2026-09-18: a bare second `0x0224` was a
     /// no-op in the pool, measured; the put-away-and-summon this used to add on top is gone
-    /// with it). **[I]** on the remote redraw; the wire is what this pins.
+    /// with it). Since 2026-09-18 every worn change does this, not only the pet slot -
+    /// `a_worn_change_is_re_announced_to_the_map` in `session::tests` has the regular and
+    /// cash cases. **[I]** on the remote redraw; the wire is what this pins.
     #[test]
     fn a_hat_put_on_the_pet_is_re_announced_to_the_map() {
         let (store, config, fields) = channel();
