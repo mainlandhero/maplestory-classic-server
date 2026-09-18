@@ -625,8 +625,14 @@ def main():
     # "the tab says 2,000" and "the server charged 3,900" from ever both being true.
     for tool in ["dump_names.py", "dump_equips.py", "dump_itemdata.py", "dump_commodity.py",
                  "dump_pets.py", "gen_item_rules.py"]:
+        # cwd=REPO: the handbook tools name their inputs and outputs relative to the repo
+        # (`client-patched\Data\...`, `gm-handbook\...`). The owner runs this from an elevated
+        # window that opens in system32, and on 2026-09-17 every archive installed and then
+        # dump_names.py reported "no archive at client-patched\Data\String\String_000.wz" -
+        # the file it had just been handed, looked for in the wrong directory. CLAUDE.md's
+        # oldest rule about their machine, one directory up from where it usually bites.
         p = subprocess.run([sys.executable, os.path.join(REPO, "tools", tool)], capture_output=True,
-                           text=True, encoding="utf-8", errors="replace")
+                           text=True, encoding="utf-8", errors="replace", cwd=REPO)
         tail = (p.stdout.strip().splitlines() or [""])[-1]
         print("   %-20s %s" % (tool, tail if p.returncode == 0 else "FAILED: " + p.stderr.strip()[-200:]))
         if p.returncode != 0:
