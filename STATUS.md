@@ -249,6 +249,15 @@ zeros, two empty vectors (ITEM / CITIZENSHIP tabs), petInfo echoed; a refusal is
 result. `net::charinfo`, `session::charinfo`; `research/character-info-2026-09-18.md` (an
 agent's decode, [L] for every field's address). Never on a screen; plan TO(c) has the readings.
 
+**2026-09-18: the fame messages lose their doubled apostrophes.** The owner, off a screenshot:
+*"Too many apostrophes."* The server sends only the names; `'%s''s level of fame` is the
+client's own template, four of them (`0x00FA`, `0x00FB`, `0x0103`, `0x0104`) in the encrypted
+string table. `grap_stub::fametext` rewrites them in place the way `beautytext` does - same
+length, trailing spaces, bytes produced with each entry's own key (the plaintext-difference
+shortcut fails on a byte that decrypted through the table's NUL quirk, and `0x00FA` has one).
+`-NoFameTextPatch` is the off switch. Unverified on screen; the plan's fame step has the
+reading.
+
 **2026-09-18, third attempt: another player's look change is `0x02AE`, the user pool's own
 in-place redress.** The owner: *"The leave-and-enter path causes the pets to reload for that client,
 and it causes a brief blink. That is undesirable. Please find another suitable way."* An agent
