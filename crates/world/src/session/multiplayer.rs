@@ -1368,6 +1368,80 @@ mod tests {
         assert_eq!(fields.parties().party(party).unwrap().pickup_rights, crate::party::PICKUP_ALL);
     }
 
+    /// **A leader who leaves the game hands the party to its highest-level member; a channel
+    /// change hands nothing over; a member who drops is simply gone.** The owner, 2026-09-18:
+    /// *"when a party leader disconnects from the game, the party leader needs to be handed
+    /// over to the next highest level player automatically."* Three members, levels 10 / 20 /
+    /// 15 in join order: the level-20 one leads after the leader logs out, not the first to
+    /// join. Every remaining member gets the withdraw and the refreshed window.
+    #[test]
+    fn a_leader_who_leaves_the_game_hands_the_party_to_the_highest_level_member() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        // Two channels, so a Change Channel can be minted rather than refused.
+        let config = Arc::new(Config {
+            channels: vec!["127.0.0.1:8485".parse().unwrap(), "127.0.0.1:8486".parse().unwrap()],
+            ..Config::default()
+        });
+        let fields = Arc::new(Fields::new());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let make = |name: &str, level: u32| {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: 104_040_000, ..Default::default() };
+            let mut made = store.create_character(account, 0, &chr).unwrap();
+            made.level = level;
+            store.save_character_progress(&made).unwrap();
+            store.create_migration(account, made.id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(made.id);
+            s.on_field_entered();
+            (s, made.id)
+        };
+        let (mut leader, leader_id) = make("Cobalt", 10);
+        let (mut mid, mid_id) = make("Tester2", 15);
+        let (mut high, high_id) = make("Tester3", 20);
+        let created = leader.run_party_request(leader_id, crate::party::Request::Create { name: "the owner's Party".into() });
+        let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        for (s, id) in [(&mut mid, mid_id), (&mut high, high_id)] {
+            let _ = leader.run_party_request(leader_id, crate::party::Request::Invite { target: id });
+            let _ = s.tick(1_000);
+            let _ = s.run_party_request(id, crate::party::Request::Accept { party });
+            let _ = leader.tick(2_000);
+        }
+        assert_eq!(fields.parties().party(party).unwrap().members, vec![leader_id, mid_id, high_id], "join order");
+        assert_eq!(fields.parties().party(party).unwrap().leader, leader_id);
+        let _ = mid.tick(3_000);
+        let _ = high.tick(3_000);
+
+        // The leader logs out: the level-20 member leads, not the level-15 one who joined first.
+        let out = leader.on_log_out();
+        assert!(out.iter().any(|r| r.opcode == net::notice::LOG_OUT_RESULT), "the log out is still answered");
+        let p = fields.parties().party(party).cloned().expect("the party outlives its leader");
+        assert_eq!(p.leader, high_id, "the highest-level member leads");
+        assert_eq!(p.members, vec![mid_id, high_id], "the leader is out of the party");
+        for (s, id) in [(&mut mid, mid_id), (&mut high, high_id)] {
+            let mail = s.tick(4_000);
+            let codes: Vec<u8> = mail.iter().filter(|r| r.opcode == net::party::PARTY_RESULT).map(|r| r.body[0]).collect();
+            assert!(codes.contains(&net::party::result::WITHDRAW), "member {id} is told the leader left: {codes:?}");
+            assert!(codes.contains(&net::party::result::PARTY_STATE), "member {id} gets the refreshed window: {codes:?}");
+        }
+        // Said once: dropping the logged-out session says nothing more.
+        drop(leader);
+        assert_eq!(fields.parties().party(party).unwrap().members, vec![mid_id, high_id]);
+
+        // The new leader changes channel: a handover, the seat is kept.
+        // `ChangeChannelRequest::parse` peeks four bytes for the preamble before the target.
+        let req = vec![1u8, 0, 0, 0];
+        let cc = high.on_change_channel(&req);
+        let handing_over = high.handing_over;
+        drop(high);
+        assert!(handing_over, "the change marked the session as handing over: {:?}", cc.iter().map(|r| &r.what).collect::<Vec<_>>());
+        assert_eq!(fields.parties().party(party).unwrap().leader, high_id, "a channel change keeps the leader");
+        assert_eq!(fields.parties().party(party).unwrap().members, vec![mid_id, high_id]);
+
+        // The last member's socket drops without a log out (a crash): the party ends.
+        drop(mid);
+        assert!(fields.parties().party(party).is_none() || fields.parties().party(party).unwrap().members == vec![high_id], "the crashed member is gone");
+    }
+
     /// The `0x00E7` body the client sends for a typed line: u32 tick, the text, u8 tab.
     fn gm_chat_body(text: &str) -> Vec<u8> {
         let mut b = net::opcode::CLIENT_CHAT.to_le_bytes().to_vec();

@@ -116,6 +116,56 @@ impl super::Session {
         self.party_outcome_replies(actor, &described, outcome)
     }
 
+    /// **This connection is going away for good: take the character out of its party, and if
+    /// it led, hand the party to the highest-level member left.**
+    ///
+    /// The owner, 2026-09-18: *"when a party leader disconnects from the game, the party leader
+    /// needs to be handed over to the next highest level player automatically."* Until now
+    /// nothing called `Parties::disconnect` at all - a leader who dropped stayed leader,
+    /// offline, and the party could neither invite nor be led.
+    ///
+    /// The successor is chosen HERE, from the store, because the registry knows no levels and
+    /// the hub keeps no database: the remaining member with the highest level, ties to the
+    /// earliest joined (the party's own member order). It rides as
+    /// [`crate::party::Request::Disconnect`] through `run_party_request`, so with a hub every
+    /// channel applies the same request in the same order and answers from the echo, and
+    /// without one it is applied here - exactly as a Leave would be. The registry re-checks
+    /// the successor is a member; a stale pick falls back to join order rather than failing.
+    ///
+    /// Called from `on_log_out` and, for a crash or a dropped socket, from `Drop`; the flag
+    /// makes the second call a no-op. A channel change never calls it (`handing_over`). The
+    /// replies to the departing character are discarded - there is nobody to send them to;
+    /// every other member is reached through `deliver`.
+    pub(super) fn leave_party_on_disconnect(&mut self) {
+        if self.party_told_of_disconnect {
+            return;
+        }
+        let Some(me) = self.claimed_character().map(|c| c.id) else { return };
+        let Some(party) = self.fields.parties().party_of(me).cloned() else { return };
+        self.party_told_of_disconnect = true;
+        let successor = if party.leader == me {
+            let mut best: Option<(u32, u32)> = None; // (level, id); the first maximum wins a tie
+            for &id in party.members.iter().filter(|&&c| c != me) {
+                let level = self.store.character_brief(id).ok().flatten().map(|b| b.level).unwrap_or(0);
+                if best.map_or(true, |(l, _)| level > l) {
+                    best = Some((level, id));
+                }
+            }
+            best.map(|(_, id)| id)
+        } else {
+            None
+        };
+        crate::server::log(&format!(
+            "   party: character {me} is leaving the game{}; party {} is told",
+            match successor {
+                Some(s) => format!(" as leader of party {} - leadership goes to {s}, its highest-level member", party.id),
+                None => String::new(),
+            },
+            party.id
+        ));
+        let _ = self.run_party_request(me, crate::party::Request::Disconnect { successor });
+    }
+
     /// The packets for one applied request - the refusal, or the effects.
     pub(super) fn party_outcome_replies(
         &mut self,

@@ -601,6 +601,9 @@ impl Session {
             Ok(seed) => seed,
             Err(e) => return self.change_channel_refused(format!("could not mint a migration: {e}")),
         };
+        // The socket that closes after this reply is a handover, not a departure: the party
+        // keeps this character's seat for the session that claims the migration.
+        self.handing_over = true;
         // **We used to answer this with `0x0011`, and that is worse than useless.**
         //
         // The owner, 2026-08-21: *"I tried swapping to channel 2, the transfer did not go
@@ -717,6 +720,9 @@ impl Session {
     /// socket is not settled, and the next run answers it for free: watch whether the
     /// following packet lands in `login.log` or `world.log`.
     pub(super) fn on_log_out(&mut self) -> Vec<Reply> {
+        // The character is leaving the game: the party is told now, while the store and the
+        // hub can still be reached in an orderly way. `session/party.rs`.
+        self.leave_party_on_disconnect();
         // The conversation and the field's chatter belong to a session that is ending.
         self.conversation = None;
         self.chatter.clear();

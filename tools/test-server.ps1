@@ -746,6 +746,24 @@
               line draws, and it is in the Equip tab -> fixed. A full Equip tab: the job
               still changes and a yellow line says the item could not be placed.
 
+     TW. A PARTY LEADER WHO LEAVES THE GAME HANDS THE PARTY TO ITS HIGHEST-LEVEL MEMBER
+         (2026-09-18). The owner: "when a party leader disconnects from the game, the party
+         leader needs to be handed over to the next highest level player automatically."
+         Until now nothing told the party about a disconnect at all: a leader who dropped
+         stayed leader, offline. Now a log out, a crash or a dropped socket takes the
+         character out of the party; if they led, the remaining member with the highest
+         level (ties: earliest joined) leads. A CHANNEL CHANGE is a handover and changes
+         nothing. Through the hub, so every channel agrees. Two clients minimum, three
+         to see the level rule:
+           1. The owner (leader) + Tester2 (lower level) + Tester3 (higher level) in a party;
+              The owner logs out: Tester3 becomes leader (crown moves in both windows), the owner
+              is gone from the list -> fixed. Tester2 leader -> join order won; paste
+              the "party: character N is leaving the game" line (it names the pick)
+           2. The owner closes the client instead (crash path): the same
+           3. the new leader changes channel: still leader after, still in the party
+              -> as designed. Gone from the party -> the handover flag did not hold;
+              paste the Change Channel lines from world-chN.log
+
      TQ. ACROSS CHANNELS: THE WORLD HUB ON 8483. The owner, 2026-09-14: party chat "should be
          broadcasted to all party members across channels", "do not use the database as
          a shared bus", "we can have a chat server hosted on 8483". Built: maplecw-chat,
@@ -4039,6 +4057,11 @@ function Show-TestPlan {
         Write-Host '        Yes also hands over the Beginner''s weapon (Grendel: Wooden Wand;' -ForegroundColor Magenta
         Write-Host '        the Rogue gets Zamadar AND Garnier): named in the box, grey'
         Write-Host '        "gained" line, in the Equip tab -> fixed'
+        Write-Host ''
+        Write-Host '  TW. A LEADER WHO LEAVES THE GAME HANDS THE PARTY TO ITS HIGHEST-LEVEL MEMBER.' -ForegroundColor Magenta
+        Write-Host '      Log out or close the client as leader: the highest-level member leads,'
+        Write-Host '      you are gone from the list -> fixed. A channel change keeps everything.'
+        Write-Host '        join order won instead -> paste the "leaving the game" line' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  TQ. ACROSS CHANNELS: THE WORLD HUB (maplecw-chat, 8483, chat-hub.log).' -ForegroundColor Magenta
         Write-Host '      Every channel dials it. Party requests are echoed to every'

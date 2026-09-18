@@ -250,6 +250,19 @@ pub enum Request {
     /// button sends no value (`rights` is the request's constant slot, kept for the log), and
     /// each press flips the party between [`PICKUP_ALL`] and [`PICKUP_LEADER_ONLY`].
     SetPickupRights { rights: u8 },
+    /// **The actor's connection went away** - a log out, a crash, a dropped socket; NOT a
+    /// channel change, which the session tells apart. Never sent by the client; the session
+    /// raises it on its way out so the party learns, through the same hub path as every other
+    /// request, that the seat is empty.
+    ///
+    /// `successor` is the caller's choice of new leader if the actor led - the **highest-level
+    /// remaining member** (the owner, 2026-09-18: *"the party leader needs to be handed over to the
+    /// next highest level player automatically"*), chosen by the session because the registry
+    /// knows no levels and the hub knows no database. The registry validates it: a successor
+    /// who is not a remaining member is ignored and the first in join order leads instead, so
+    /// a stale or malformed frame cannot make a stranger the leader. For a non-leader the
+    /// value is meaningless and ignored.
+    Disconnect { successor: Option<CharacterId> },
 }
 
 /// Why a [`Request`] changed nothing.
@@ -640,6 +653,7 @@ impl Parties {
             Request::Expel { target } => self.expel(actor, target),
             Request::ChangeLeader { target } => self.change_leader(actor, target),
             Request::SetPickupRights { rights } => self.set_pickup_rights(actor, rights),
+            Request::Disconnect { successor } => Ok(self.disconnect_to(actor, successor)),
         }
     }
 
@@ -802,13 +816,23 @@ impl Parties {
     /// row while the player reconnects. Nothing in this client decides it, so it is **[I]**,
     /// and it is the one behaviour here that a caller might reasonably want to change.
     pub fn disconnect(&mut self, who: CharacterId) -> Vec<Effect> {
+        self.disconnect_to(who, None)
+    }
+
+    /// [`Parties::disconnect`] with the caller's pick of successor - see
+    /// [`Request::Disconnect`]. `preferred` leads if it is still a member after `who` is gone;
+    /// otherwise the first remaining member in join order does, as before.
+    pub fn disconnect_to(&mut self, who: CharacterId, preferred: Option<CharacterId>) -> Vec<Effect> {
         let mut out = self.drop_invites_to(who);
         let Some(party) = self.of.get(&who).copied() else { return out };
         let leader = self.parties[&party].leader;
         out.extend(self.remove_member(party, who, Departure::Disconnected));
         if leader == who {
             if let Some(p) = self.parties.get_mut(&party) {
-                if let Some(&next) = p.members.first() {
+                let next = preferred
+                    .filter(|c| p.members.contains(c))
+                    .or_else(|| p.members.first().copied());
+                if let Some(next) = next {
                     p.leader = next;
                     out.push(Effect::LeaderChanged { party, from: who, to: next });
                 }
@@ -1431,6 +1455,50 @@ mod tests {
     }
 
     // --- leadership ---------------------------------------------------------------------
+
+    /// **A disconnecting leader hands the party to the successor the session chose**, and a
+    /// successor who is not a member - a stale frame, a typo - falls back to join order rather
+    /// than crowning a stranger. The owner, 2026-09-18: the next highest level player, chosen by
+    /// the session (this registry knows no levels), honoured here.
+    #[test]
+    fn a_disconnecting_leader_hands_over_to_the_chosen_successor_or_the_first_in_line() {
+        let (mut p, id) = party_of(3);
+        let members = p.party(id).unwrap().members.clone();
+        let (leader, second, third) = (members[0], members[1], members[2]);
+        // The chosen successor (the third to join) leads, not the first in line.
+        let effects = p.apply(0, leader, Request::Disconnect { successor: Some(third) }).unwrap();
+        assert!(effects.contains(&Effect::LeaderChanged { party: id, from: leader, to: third }), "{effects:?}");
+        assert!(matches!(effects.iter().find(|e| matches!(e, Effect::Departed { .. })), Some(Effect::Departed { how: Departure::Disconnected, who, .. }) if *who == leader));
+        assert_eq!(p.party(id).unwrap().leader, third);
+        assert!(!p.party(id).unwrap().has(leader), "the disconnected leader is out of the party");
+        assert_eq!(p.party(id).unwrap().members, vec![second, third]);
+        p.check_invariants().unwrap();
+        // A successor who is not a member: the first in line (now `second`) leads.
+        let effects = p.apply(0, third, Request::Disconnect { successor: Some(leader) }).unwrap();
+        assert!(effects.contains(&Effect::LeaderChanged { party: id, from: third, to: second }), "{effects:?}");
+        assert_eq!(p.party(id).unwrap().leader, second);
+        p.check_invariants().unwrap();
+        // The last member's disconnect ends the party; a stranger's changes nothing.
+        let effects = p.apply(0, second, Request::Disconnect { successor: None }).unwrap();
+        assert!(effects.iter().any(|e| matches!(e, Effect::Disbanded { .. })), "{effects:?}");
+        assert!(p.party(id).is_none());
+        assert!(p.apply(0, 9_999, Request::Disconnect { successor: None }).unwrap().is_empty());
+        p.check_invariants().unwrap();
+    }
+
+    /// A non-leader's disconnect removes them and moves no leadership, whatever `successor`
+    /// says.
+    #[test]
+    fn a_disconnecting_member_leaves_and_the_leader_stays() {
+        let (mut p, id) = party_of(3);
+        let members = p.party(id).unwrap().members.clone();
+        let (leader, second, third) = (members[0], members[1], members[2]);
+        let effects = p.apply(0, second, Request::Disconnect { successor: Some(third) }).unwrap();
+        assert!(!effects.iter().any(|e| matches!(e, Effect::LeaderChanged { .. })), "{effects:?}");
+        assert_eq!(p.party(id).unwrap().leader, leader);
+        assert_eq!(p.party(id).unwrap().members, vec![leader, third]);
+        p.check_invariants().unwrap();
+    }
 
     #[test]
     fn change_leader_moves_the_leadership_and_keeps_everyone() {
