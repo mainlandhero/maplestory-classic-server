@@ -1091,6 +1091,33 @@ mod tests {
         assert_eq!(bus.drain(watcher).len(), 100);
     }
 
+    /// **A map-wide post stops at the map's edge.** The owner, 2026-09-18: *"Clients don't need
+    /// to be told about things happening on another map if they are not on that map."* Every
+    /// field-level packet on this bus is map-scoped - `publish`, `publish_to_character` and
+    /// this - and only person-addressed things (party, whisper, an EXP share) may cross a map.
+    /// The `nobody else` half is the one worth asserting: a fade that fanned out to the
+    /// channel would cost every idle client a packet per expired drop anywhere.
+    #[test]
+    fn a_map_wide_post_reaches_everyone_on_that_map_and_nobody_off_it() {
+        let bus = Bus::new();
+        let a = bus.join();
+        let b = bus.join();
+        let elsewhere = bus.join();
+        let nowhere = bus.join();
+        bus.enter_field(a, presence(200, 1));
+        bus.enter_field(b, presence(201, 1));
+        bus.enter_field(elsewhere, presence(202, 2));
+        for id in [a, b, elsewhere] {
+            let _ = bus.drain(id);
+        }
+        assert_eq!(bus.publish_to_map(1, reply(0x046F, "fade")), 2, "two on map 1, counted");
+        assert_eq!(bus.drain(a).len(), 1);
+        assert_eq!(bus.drain(b).len(), 1, "the poster is not excluded - there is none");
+        assert!(bus.drain(elsewhere).is_empty(), "map 2 hears nothing");
+        assert!(bus.drain(nowhere).is_empty(), "a connection in no field hears nothing");
+        assert_eq!(bus.publish_to_map(3, reply(0x046F, "fade")), 0, "an empty map is ordinary");
+    }
+
     // ---------------------------------------------------------------------------
     // The second channel: a fact to a character.
     // ---------------------------------------------------------------------------
