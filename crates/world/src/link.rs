@@ -89,7 +89,8 @@ mod req {
     pub const CHANGE_LEADER: u8 = 6;
     pub const SET_PICKUP_RIGHTS: u8 = 7;
     /// `u32 successor` after it; 0 is "none" (a character id is never 0 -
-    /// `store::FIRST_CHARACTER_ID` is 200).
+    /// `store::FIRST_CHARACTER_ID` is 200); then `u8 last_online` (1: no other member of the
+    /// party is online anywhere, so the party is disbanded whoever the actor is).
     pub const DISCONNECT: u8 = 8;
 }
 
@@ -133,9 +134,10 @@ fn write_request(w: &mut PacketWriter, r: &crate::party::Request) {
             w.u8(req::SET_PICKUP_RIGHTS);
             w.u8(*rights);
         }
-        Request::Disconnect { successor } => {
+        Request::Disconnect { successor, last_online } => {
             w.u8(req::DISCONNECT);
             w.u32(successor.unwrap_or(0));
+            w.u8(u8::from(*last_online));
         }
     }
 }
@@ -163,7 +165,8 @@ fn read_request(r: &mut PacketReader) -> Option<crate::party::Request> {
         req::SET_PICKUP_RIGHTS => Request::SetPickupRights { rights: r.u8().ok()? },
         req::DISCONNECT => {
             let successor = r.u32().ok()?;
-            Request::Disconnect { successor: (successor != 0).then_some(successor) }
+            let last_online = r.u8().ok()? != 0;
+            Request::Disconnect { successor: (successor != 0).then_some(successor), last_online }
         }
         _ => return None,
     })
@@ -725,8 +728,8 @@ mod tests {
             Frame::PartyRequest { actor: 213, now: 5, request: Request::Expel { target: 214 } },
             Frame::PartyRequest { actor: 213, now: 6, request: Request::ChangeLeader { target: 214 } },
             Frame::PartyRequest { actor: 213, now: 7, request: Request::SetPickupRights { rights: 1 } },
-            Frame::PartyRequest { actor: 213, now: 8, request: Request::Disconnect { successor: Some(214) } },
-            Frame::PartyRequest { actor: 213, now: 9, request: Request::Disconnect { successor: None } },
+            Frame::PartyRequest { actor: 213, now: 8, request: Request::Disconnect { successor: Some(214), last_online: false } },
+            Frame::PartyRequest { actor: 213, now: 9, request: Request::Disconnect { successor: None, last_online: true } },
             Frame::PartySnapshot {
                 parties: vec![crate::party::Party { id: 1, name: "P".into(), leader: 213, members: vec![213, 214], pickup_rights: 1 }],
                 next_id: 2,

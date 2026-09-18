@@ -355,7 +355,7 @@ pub struct Session {
     /// the socket closes; `Drop` does it for a crash), so `Drop` does not say it twice.
     party_told_of_disconnect: bool,
     /// The party window has been pushed once this session, at the first field entry: a seat
-    /// persists across a disconnect, so a returning member's window is rebuilt from the
+    /// persists across a disconnect (while another member is online), so a returning member's window is rebuilt from the
     /// registry. Once, not per portal. session/party.rs `party_window_on_login`.
     party_window_sent: bool,
 

@@ -1383,9 +1383,10 @@ mod tests {
     }
 
     /// **A leader who leaves the game hands the crown to the highest-level member still online
-    /// and keeps their seat; a party persists with everyone offline; a leader with nobody
-    /// online to hand to disbands it; a channel change hands nothing over.** The owner,
-    /// 2026-09-18, both messages. Three members, levels 10 / 15 / 20 in join order.
+    /// and keeps their seat; the last member online to leave - leader or not - disbands the
+    /// party; a channel change hands nothing over.** The owner, 2026-09-18, all three messages,
+    /// the last being *"If everyone is offline, the party shouldn't exist?"*. Three members,
+    /// levels 10 / 15 / 20 in join order.
     #[test]
     fn a_leader_who_leaves_the_game_hands_the_crown_to_the_highest_level_member_online() {
         let store = Arc::new(Store::open_in_memory().unwrap());
@@ -1458,16 +1459,33 @@ mod tests {
         assert!(handing_over, "the change marked the session as handing over: {:?}", cc.iter().map(|r| &r.what).collect::<Vec<_>>());
         assert_eq!(members(&fields), Some((mid_id, vec![leader_id, mid_id, high_id])), "a channel change keeps the leader and the seats");
 
-        // 5. Everyone else offline; the returning old leader is a member, so their crash
-        //    changes nothing - the party persists with nobody online.
+        // 5. The returning old leader is now the only member online, and a plain member. Their
+        //    crash is the last connection going: the party does not outlive it.
         drop(back);
-        assert_eq!(members(&fields), Some((mid_id, vec![leader_id, mid_id, high_id])), "a party persists with every member offline");
+        assert!(members(&fields).is_none(), "the last member online left: a party with nobody in the game does not exist");
 
-        // 6. The leader comes back alone and crashes: nobody online to hand to -> disbanded.
+        // 6. Whoever comes back next has no party and no window.
         let (alone, windows) = join(mid_id);
-        assert_eq!(windows, 1, "the window on login");
+        assert_eq!(windows, 0, "no party, no 0x0D at login");
         drop(alone);
-        assert!(members(&fields).is_none(), "no online member to hand the crown to: the party is disbanded");
+        assert!(members(&fields).is_none());
+
+        // 7. The mirror of 5: a LEADER alone online, crashing, disbands too (both branches of
+        //    the same request).
+        let (mut a, _) = join(leader_id);
+        let (mut b, _) = join(high_id);
+        let created = a.run_party_request(leader_id, crate::party::Request::Create { name: "Again".into() });
+        let again = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        let _ = a.run_party_request(leader_id, crate::party::Request::Invite { target: high_id });
+        let _ = b.tick(5_000);
+        let _ = b.run_party_request(high_id, crate::party::Request::Accept { party: again });
+        let _ = a.tick(6_000);
+        let seats = |fields: &Arc<Fields>| fields.parties().party(again).map(|p| (p.leader, p.members.len()));
+        assert_eq!(seats(&fields), Some((leader_id, 2)));
+        drop(b);
+        assert_eq!(seats(&fields), Some((leader_id, 2)), "a member left with the leader online: nothing moves");
+        drop(a);
+        assert!(seats(&fields).is_none(), "the leader was the last one online: disbanded");
     }
 
     /// The `0x00E7` body the client sends for a typed line: u32 tick, the text, u8 tab.
