@@ -2103,6 +2103,18 @@
                the old archive (the same install that carries roll/angry). "Auto Buff"
                alone -> the strip missed autoBuff; paste "wz-dump cat
                ...Item\Pet\Pet_000.wz 5002829.img" info lines.
+            0. THE VACUUM AT LOGIN / MAP CHANGE (2026-09-18). The owner: "the vacuum
+               functionality does not work until the pet is re-summoned or fed at least
+               once." A re-summon and a feed both land on a pet the client has FINISHED
+               building; the field-entry batch does not, and it fixed the sad face but
+               not the vacuum. So now, on your FIRST MOVE after any field entry with a
+               pet out, the server sends the re-summon sequence once: the pet blinks out
+               and back (one blink) and its item is re-sent. Never before you move.
+                 log in with a pet out, take one step: one blink, then kill a snail a
+                 screen away - the drop flies to the pet -> fixed. Same after a portal.
+                 No blink on the first step -> the 0x00D9 did not reach the arm; paste the
+                 first three lines after the SetField in world-chN.log. A blink but still
+                 no vacuum -> timing was not it; say so, that kills the [I]
             2. buy Lil Frieren, summon: it draws, walks, name tag, no crash -> DONE. Its
                tooltip ends "Commands: sit, slap, iloveyou, sleep, talk, roll, angry". Type
                "roll", then "angry": it rolls / looks angry (the two animations Nexon's
@@ -5183,6 +5195,11 @@ function Show-TestPlan {
         Write-Host '            no suck-up -> paste PetPickupRange + item bytes 61..63' -ForegroundColor Yellow
         Write-Host '         b. buy Auto Move (5190002) then Expanded (5190003) - a chain; each' -ForegroundColor Green
         Write-Host '            lists (Learned) and changes the pet WALKING to drops; say what moves' -ForegroundColor Green
+        Write-Host '       PET VACUUM AT LOGIN/MAP CHANGE (2026-09-18): on your FIRST MOVE after' -ForegroundColor Magenta
+        Write-Host '         any field entry the pet blinks out and back once (the re-summon that'
+        Write-Host '         works, sent when the client is provably live). Then a drop a screen'
+        Write-Host '         away flies to it -> fixed. No blink on the first step -> paste the' -ForegroundColor Yellow
+        Write-Host '         lines after the SetField; blink but no vacuum -> timing was not it.' -ForegroundColor Yellow
         Write-Host '       COLLAB PETS + EVERY PET EQUIP (2026-09-17, installed; rebuild the client'
         Write-Host '         package). Pets tab: Lil Frieren/Fern/Stark/Ubel at 1000; Pet Equip:' -ForegroundColor Yellow
         Write-Host '         all 10 hats + 4 weapons at 100; ALL 15 pets'' icons carry the purple P' -ForegroundColor Yellow

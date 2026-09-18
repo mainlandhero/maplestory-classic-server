@@ -310,9 +310,12 @@ impl Session {
     /// runs first and its `Presence` carries the pet as a companion, so `Bus::enter_field`
     /// posts the owner's spawn and then the pet to the field. Publishing it here as well sent
     /// every other player the pet twice per field entry.
-    pub(super) fn pet_entry_replies(&self, chr: &net::opcode::Character) -> Vec<Reply> {
+    pub(super) fn pet_entry_replies(&mut self, chr: &net::opcode::Character) -> Vec<Reply> {
         let Some(active) = self.active_pet else { return Vec::new() };
         let pet = self.field_pet(chr, active);
+        // The rest of the job is done once the client is demonstrably live - see
+        // `pet_settle_replies`. Armed here, on every field entry that has a pet out.
+        self.pet_settle_pending = true;
         vec![
             Reply {
                 opcode: net::pet::PET_ACTIVATED,
@@ -335,6 +338,40 @@ impl Session {
             // not trigger the re-read. So the field entry sends the same refresh those two do.
             self.pet_item_refresh(chr, active, true),
         ]
+    }
+
+    /// **The pet is put away and summoned again, with its item re-sent, on the first move
+    /// after a field entry** - once per entry, nothing at all otherwise.
+    ///
+    /// The owner, 2026-09-18: *"Pets still do not function upon initial login or map change. While
+    /// they no longer look sad/droopy upon initial spawn, the vacuum functionality does not
+    /// work until the pet is re-summoned or fed at least once with pet food. Can we have the
+    /// vacuum functionality always be present when the pet is summoned please?"*
+    ///
+    /// What the two working cases have in common is WHEN they land: a re-summon
+    /// (`on_pet_activate`) and a feed (`on_use_pet_food`) both write the pet's item to a pet
+    /// the client has finished building, on a field it has finished loading. The field-entry
+    /// batch (`pet_entry_replies`) sends the same summon and the same item write, and it fixed
+    /// the sad face but not the vacuum - so whatever `CPet` reads the vacuum grade from, it
+    /// reads it in a state the SetField batch is too early for. [I] on the mechanism; [L] on
+    /// the two sequences that work and the one that does not, all three the owner's screen.
+    ///
+    /// So the sequence that works is sent again, at a moment that is provably after the
+    /// field is live: the client's own first `0x00D9` move after the entry. It is the
+    /// re-summon a skill item uses (`resummon_for_owner`: put-away, summon - one blink) and
+    /// then the item write, for the owner only; the map already has the pet from the entry
+    /// and is told nothing. Idempotent: the flag is cleared before anything is sent, and a
+    /// session with no pet out sends nothing.
+    pub(super) fn pet_settle_replies(&mut self) -> Vec<Reply> {
+        if !self.pet_settle_pending {
+            return Vec::new();
+        }
+        self.pet_settle_pending = false;
+        let Some(active) = self.active_pet else { return Vec::new() };
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let mut out = self.resummon_for_owner(&chr, active);
+        out.push(self.pet_item_refresh(&chr, active, true));
+        out
     }
 
     /// Whether the pet numbered `pet_id` is the one this session has out - the `active` byte

@@ -11929,6 +11929,56 @@ fn two_huskies_have_two_names_and_the_right_one_comes_back() {
     assert_eq!(&summons[0].body[4 + 4 + 1 + 1 + 4 + 2 + 5..][..8], &net::pet::pet_serial(id, b).get().to_le_bytes());
 }
 
+/// **The pet is settled on the first move after a field entry: put away, summoned, item
+/// re-sent - once.** The owner, 2026-09-18: *"the vacuum functionality does not work until the pet
+/// is re-summoned or fed at least once ... Can we have the vacuum functionality always be
+/// present when the pet is summoned please?"* The field-entry batch already sends a summon
+/// and the item; what a re-summon and a feed have that it lacks is landing on a pet the
+/// client has finished building. The client's first move after the entry is the earliest
+/// packet that proves it has, so that is when the working sequence goes out - and only then.
+#[test]
+fn the_pet_is_resummoned_and_its_item_resent_on_the_first_move_after_a_field_entry() {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Wisp".to_string(), ..Default::default() };
+    let id = store.create_character(account, 0, &chr).unwrap().id;
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+    store.create_migration(account, id, 0, 0).unwrap();
+    let mut s = Session::new(store.clone(), Arc::new(Config::default()));
+    s.claim_for_character(id);
+    s.last_position = Some((300, -50));
+    let a_move = || { let mut b = net::usermove::CLIENT_USER_MOVE.to_le_bytes().to_vec(); b.extend_from_slice(&[0u8; 8]); b };
+    let pet_replies = |out: &[Reply]| out.iter().filter(|r| r.opcode == net::pet::PET_ACTIVATED || r.opcode == net::inventory::INVENTORY_OPERATION).map(|r| (r.opcode, r.body[8])).collect::<Vec<_>>();
+
+    // No pet out: a move sends nothing.
+    assert!(pet_replies(&s.handle(&a_move())).is_empty());
+
+    // Summon, then a field entry (a portal, a re-login): the entry's own summon + item write...
+    s.on_pet_activate(&hex("509a18140100"));
+    assert!(s.pet_is_active(pet_of(&store, id, 5_000_006)));
+    let entered = s.on_field_entered();
+    assert!(entered.iter().any(|r| r.opcode == net::pet::PET_ACTIVATED), "the entry summons");
+    // ...and then, on the FIRST move, the settle: put away, summoned, item re-sent - the
+    // sequence a re-summon and a feed use.
+    let out = s.handle(&a_move());
+    let kinds: Vec<(u16, u8)> = pet_replies(&out);
+    assert_eq!(kinds.len(), 3, "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert_eq!((kinds[0].0, kinds[0].1), (net::pet::PET_ACTIVATED, 0), "put away");
+    assert_eq!((kinds[1].0, kinds[1].1), (net::pet::PET_ACTIVATED, 1), "summoned again");
+    assert_eq!(kinds[2].0, net::inventory::INVENTORY_OPERATION, "and the item, so CPet re-reads it");
+    assert!(out.iter().any(|r| r.what.contains("re-sent as pet 5000006")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    // The second move: nothing. The settle is once per entry.
+    assert!(pet_replies(&s.handle(&a_move())).is_empty(), "once");
+    // A later field entry arms it again.
+    s.on_field_entered();
+    assert_eq!(pet_replies(&s.handle(&a_move())).len(), 3, "re-armed by the next entry");
+    // A pet put away before the first move: the entry armed it, and it sends nothing.
+    s.on_field_entered();
+    s.on_pet_activate(&hex("509a18140100"));
+    assert!(s.active_pet_item().is_none());
+    assert!(pet_replies(&s.handle(&a_move())).is_empty(), "no pet out, nothing to settle");
+}
+
 /// **Two pets, two sets of vitals, one out at a time, and all of it survives a re-login.**
 ///
 /// The owner, 2026-09-16: *"double check and make sure that pet fullness and closeness is
