@@ -293,6 +293,21 @@ ICON_ORIGIN_X = -2  # what every classic cap icon carries
 ICON_FIT = 32
 
 
+def stub_payload(build_dir):
+    """The 10-byte payload every real icon stub carries: one BGRA4444 pixel, deflated. Written
+    once per build. **Every real icon is a 1x1 stub in the property image that outlinks to
+    an originless pixel node in the `_Canvas` archive**, and the engine builds its canvas from
+    the PIXEL node - so an origin on an inline canvas moved the picture (2026-09-18 evening:
+    the tooltip drew a face 32 px low, then a hair; the ITEM tab cell, which computes its own
+    position, did not care). Ours are the same two nodes now."""
+    path = os.path.join(build_dir, "icon-stub.bin")
+    if not os.path.exists(path):
+        os.makedirs(build_dir, exist_ok=True)
+        with open(path, "wb") as fh:
+            fh.write(zlib.compress(b"\x00\x00", 9))
+    return path
+
+
 def to_bgra4444(rgba, w, h):
     """RGBA8888 -> the client's BGRA4444 (format 1): low byte G|B nibbles, high byte A|R -
     the inverse of `wz_png.to_rgba`. Rounded, so 255 -> 15 and 0 -> 0 exactly.
@@ -473,7 +488,7 @@ def cover_icons(build_dir, source, manifest, add):
     modern client's lists read `iconRaw`, this client's read `icon` (the tooltip reads
     `iconRaw`, which is why it drew). A copy of the `iconRaw` pixels under `info/icon`, with
     its origin, as a `newcanvas` row on the property image. Returns the ids patched."""
-    wz_png = _wz_png()
+    # (no pixel work here since the outlink form: the stub borrows the iconRaw pixels)
     patched = []
     for items in manifest["sets"].values():
         for it in items:
@@ -488,34 +503,18 @@ def cover_icons(build_dir, source, manifest, add):
             if raw is None or not raw[3]:
                 print("  cover icon %-8d %s: neither info/icon nor an outlinked info/iconRaw - left alone" % (it["id"], it["name"]))
                 continue
-            cimg, node = raw[3].split("/_Canvas/", 1)[1].split("/", 1)
             tree_rel = "Character/" + it["type"]
             out_dir = os.path.join(build_dir, "cover-icons", dest[:-4])
             os.makedirs(out_dir, exist_ok=True)
-            r = subprocess.run([WZ_DUMP, "canvas", modern_part(source, tree_rel + "/_Canvas", cimg), cimg, out_dir, node],
-                               capture_output=True, text=True, encoding="utf-8", errors="replace")
-            if r.returncode != 0:
-                raise SystemExit("wz-dump canvas for %s failed: %s" % (it["id"], r.stderr.strip()))
-            entries = {e["node"].strip("/"): e for e in json.load(open(os.path.join(out_dir, "manifest.json"), encoding="utf-8"))}
-            e = entries.get(node)
-            if e is None:
-                raise SystemExit("%s: %s names %s, which the canvas image does not hold" % (it["id"], image, raw[3]))
-            payload = open(os.path.join(out_dir, e["file"]), "rb").read()
-            rgba = wz_png.to_rgba(wz_png.inflate(payload), e["width"], e["height"], e["format"])
-            # Into the cell's box like a hair icon (Ubel's Staff is 34x33); the origin keeps
-            # the cap convention, (-2, height).
-            rgba, w, h = fit_icon(rgba, e["width"], e["height"], ICON_FIT)
-            payload_out = os.path.join(out_dir, "icon.bin")
-            with open(payload_out, "wb") as fh:
-                fh.write(zlib.compress(to_bgra4444(rgba, w, h), 9))
-            wz_png.write_png(pathlib.Path(os.path.join(out_dir, "icon.png")), rgba, w, h)
+            # A stub that borrows the iconRaw PIXELS the copied canvas image already holds -
+            # the same shape as the iconRaw stub beside it, and exactly what a real icon is.
             tsv = os.path.join(out_dir, "icon.tsv")
             with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
-                fh.write("# %s: info/icon copied from info/iconRaw (the modern image has no icon node; this client's lists read icon), fitted to %d\n" % (it["name"], ICON_FIT))
-                fh.write("info/icon\tnewcanvas\t%d,%d,1,%s,%d,%d\n" % (w, h, payload_out, ICON_ORIGIN_X, h))
+                fh.write("# %s: an info/icon stub outlinking to the iconRaw pixels (the modern image has no icon node; this client's lists read icon)\n" % it["name"])
+                fh.write("info/icon\tnewcanvas\t1,1,1,%s,%d,%d,%s\n" % (stub_payload(build_dir), raw[2][0], raw[2][1], raw[3]))
             add(tree_rel, "patch\t%s\t%s" % (dest, tsv))
             patched.append(it["id"])
-            print("  cover icon %-8d %s: info/icon from iconRaw (%dx%d -> %dx%d)" % (it["id"], it["name"], e["width"], e["height"], w, h))
+            print("  cover icon %-8d %s: info/icon stub -> %s" % (it["id"], it["name"], raw[3]))
     return patched
 
 
@@ -561,12 +560,24 @@ def look_icons(build_dir, source, manifest, add):
             with open(payload, "wb") as fh:
                 fh.write(zlib.compress(to_bgra4444(rgba, w, h), 9))
             wz_png.write_png(pathlib.Path(os.path.join(out_dir, "icon.png")), rgba, w, h)
+            # Two nodes per icon, the shape of a real one: the pixels, originless, in the
+            # `_Canvas` archive under this image's own name (created there if the image has
+            # none - a colour variant's does not exist), and a 1x1 stub with the origin and
+            # the outlink in the property image.
+            pixels = os.path.join(out_dir, "pixels.tsv")
+            with open(pixels, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write("# %s %s: the icon pixels, rendered from the part's own default frame (%s); BGRA4444, no origin, like every _Canvas node\n"
+                         % (kind, dest, ", ".join(l for l in layers)))
+                for node in ("icon", "iconRaw"):
+                    fh.write("info/%s\tnewcanvas\t%d,%d,1,%s,-,-\n" % (node, w, h, payload))
+            add(tree_rel + "/_Canvas", "patch\t%s\t%s" % (dest, pixels))
             tsv = os.path.join(out_dir, "icon.tsv")
             with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
-                fh.write("# %s %s: info/icon and info/iconRaw rendered from the part's own default frame (%s); BGRA4444 like every classic icon; origin (%d, %d) like a cap icon\n"
-                         % (kind, dest, ", ".join(l for l in layers), ICON_ORIGIN_X, h))
+                fh.write("# %s %s: info/icon and info/iconRaw stubs, origin (%d, %d) like a cap icon, outlinking to the _Canvas pixels\n"
+                         % (kind, dest, ICON_ORIGIN_X, h))
                 for node in ("icon", "iconRaw"):
-                    fh.write("info/%s\tnewcanvas\t%d,%d,1,%s,%d,%d\n" % (node, w, h, payload, ICON_ORIGIN_X, h))
+                    fh.write("info/%s\tnewcanvas\t1,1,1,%s,%d,%d,%s/_Canvas/%s/info/%s\n"
+                             % (node, stub_payload(build_dir), ICON_ORIGIN_X, h, tree_rel, dest, node))
             add(tree_rel, "patch\t%s\t%s" % (dest, tsv))
             done += 1
         counts[kind] = (done, skipped)

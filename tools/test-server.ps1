@@ -1621,8 +1621,23 @@
                              16-tall face with origin 16 landed 16 px too low. Every
                              synthesised icon is a full 32x32 canvas now, art centred,
                              origin (-2, 32) - a cap's shape. Installed, read back, --check.
+                         FOURTH LOOK (two screenshots): Fern Hair's cell draws (the gate
+                         patch held); the tooltip image is STILL low-left, enlarged, for a
+                         classic face and Fern Face alike, and the 32x32 padding moved
+                         nothing. The tooltip's draw is a call into the graphics engine
+                         with the canvas the engine built from the PIXEL node - for a real
+                         icon that is the originless node in the _Canvas archive (the stub
+                         in the property image holds the origin and an _outlink); ours
+                         were inline, so the engine's canvas carried origin (-2, 32) and
+                         the picture landed 32 px low. Every synthesised icon is now the
+                         real shape: a 1x1 stub with origin + _outlink in the property
+                         image, pixels without origin in _Canvas (a colour variant gets a
+                         new _Canvas image of its own). The weapon covers' icon is a stub
+                         onto their iconRaw pixels. Installed 16:1x, read back, --check.
                          Fern Hair's cell drawn, its tooltip image inside the frame, the
                          face tooltips inside the frame -> DONE
+                         still low-left -> the engine reads the STUB's origin after all;
+                         say so and the next variant is origin (0, 0) on the stub
                          Fern Hair still blank + no "LOOKGATE: patched" line -> the hook
                          did not arm; paste the LOOKGATE lines from maplecw-hook.log
                          images inside the frame but a grey smear beside them -> say so;
@@ -4623,8 +4638,10 @@ function Show-TestPlan {
         Write-Host '           3rd look: Fern Hair blank everywhere = the client''s id gate (<= 3xxxx);' -ForegroundColor Yellow
         Write-Host '           the hook patches it now (LOOKGATE in maplecw-hook.log). Tooltip images' -ForegroundColor Yellow
         Write-Host '           sat too low = origin; every icon is a 32x32 cap-shaped canvas now.' -ForegroundColor Yellow
-        Write-Host '           Fern Hair cell + tooltip image inside the frame -> DONE; still blank' -ForegroundColor Green
-        Write-Host '           -> paste the LOOKGATE lines from maplecw-hook.log' -ForegroundColor Yellow
+        Write-Host '           4th look: cell draws; tooltip still low-left -> ours were INLINE canvases,' -ForegroundColor Yellow
+        Write-Host '           real icons are stub+_outlink with originless pixels: now the same shape.' -ForegroundColor Yellow
+        Write-Host '           tooltip image inside the frame -> DONE; still low-left -> say so' -ForegroundColor Green
+        Write-Host '           (next variant: origin 0,0 on the stub); cell blank -> LOOKGATE lines' -ForegroundColor Yellow
         Write-Host '           the cell under the PET: its Top Hat -> CONFIRMED' -ForegroundColor DarkGray
         Write-Host '           hair/face blank, equips fine -> icons not installed; a DEATH on open ->' -ForegroundColor Yellow
         Write-Host '           relaunch -NoLookItems, paste client-exit.log; blank everywhere -> 0x00A2 line' -ForegroundColor Yellow

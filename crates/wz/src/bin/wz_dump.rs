@@ -447,30 +447,36 @@ fn cmd_build(out: &Path, version: &str, spec: &Path, base: Option<&Path>) -> wz:
                         // not list them; the installer renders one from the part's own
                         // canvases. Refuses to overwrite a node that exists - that is what
                         // `canvas` is for, and a silent replace would hide a wrong path.
+                        // `w,h,format,<payload file>,ox,oy[,outlink]`: `ox,oy` may be `-,-` for a
+                        // pixel node with NO origin (what every `_Canvas` archive node is), and
+                        // `outlink` makes the node a 1x1 stub that borrows its pixels - the shape
+                        // of every real icon: the stub with the origin in the property image,
+                        // the pixels, originless, in `_Canvas`. The engine builds its canvas from
+                        // the pixel node, so an origin put on an INLINE canvas moves the picture
+                        // (2026-09-18 evening, the tooltip drew a face 32 px low).
                         if cols[1] == "newcanvas" {
                             let Some(cols2) = cols.get(2) else { return Err(bad()) };
-                            let parts: Vec<&str> = cols2.splitn(6, ',').collect();
-                            if parts.len() != 6 {
-                                eprintln!("line {}: newcanvas row wants w,h,format,<payload file>,ox,oy: {pl:?}", lineno + 1);
+                            let parts: Vec<&str> = cols2.splitn(7, ',').collect();
+                            if parts.len() < 6 {
+                                eprintln!("line {}: newcanvas row wants w,h,format,<payload file>,ox,oy[,outlink]: {pl:?}", lineno + 1);
                                 return Err(bad());
                             }
                             let num = |i: usize| parts[i].trim().parse::<i32>().map_err(|_| bad());
-                            let (w, h, fmt, ox, oy) = (num(0)?, num(1)?, num(2)?, num(4)?, num(5)?);
+                            let (w, h, fmt) = (num(0)?, num(1)?, num(2)?);
+                            let origin = if parts[4].trim() == "-" { None } else { Some((num(4)?, num(5)?)) };
                             let payload = io(Path::new(parts[3].trim()), std::fs::read(parts[3].trim()))?;
                             if target.get_path(cols[0]).is_some() {
                                 eprintln!("line {}: {name} already has a node at {} - use `canvas` to replace pixels", lineno + 1, cols[0]);
                                 return Err(bad());
                             }
-                            target.set_path(
-                                cols[0],
-                                Owned::Canvas {
-                                    width: w,
-                                    height: h,
-                                    format: fmt,
-                                    payload,
-                                    children: vec![("origin".to_string(), Owned::Vector(ox, oy))],
-                                },
-                            );
+                            let mut children = Vec::new();
+                            if let Some((ox, oy)) = origin {
+                                children.push(("origin".to_string(), Owned::Vector(ox, oy)));
+                            }
+                            if let Some(link) = parts.get(6).map(|l| l.trim()).filter(|l| !l.is_empty()) {
+                                children.push(("_outlink".to_string(), Owned::String(link.to_string())));
+                            }
+                            target.set_path(cols[0], Owned::Canvas { width: w, height: h, format: fmt, payload, children });
                             n += 1;
                             continue;
                         }
