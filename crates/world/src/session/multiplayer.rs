@@ -397,21 +397,20 @@ impl Session {
     /// completely respawns and appear sad/hungry until moments later"* - the remote `CUser`
     /// and its pet are destroyed and rebuilt, which is what that sequence is.
     ///
-    /// **So the default is `0x0138 UserAvatarModified`**, the client's own in-place update:
-    /// the character id and the compact look, which the handler applies to the copy it
-    /// already has. In the shipped image that apply sits behind a `je` that is always taken
-    /// (`research/beauty-2026-09-09.md` §4.2); the launcher's `grap_stub::avatarmod` patch
-    /// turns that jump into two nops, and every client goes through the launcher. On a client
-    /// launched with `avatarmod=off` the packet is a silent no-op, which is the old behaviour:
-    /// the copy updates at the next field entry.
+    /// **Measured 2026-09-18 14:07, and `0x0138` did nothing**: read afterwards, its apply
+    /// walks the user's *summoned* map and never the player, so it could not have. The owner:
+    /// *"The leave-and-enter path causes the pets to reload for that client, and it causes a
+    /// brief blink. That is undesirable. Please find another suitable way."*
     ///
-    /// **Measured 2026-09-18 14:07, and the in-place packet did nothing**: the patch applied,
-    /// the observer received the `0x0138`, its handler ran and returned normally, and the copy
-    /// was not redrawn (the owner: *"Changing equipment once again no longer publishes to other
-    /// clients"*). So the default is back to the leave + enter + pet, which publishes with a
-    /// blink; `Config::look_change_reenter = false` (`--look-in-place`) keeps the `0x0138`
-    /// path as the opt-in for the next attempt. Either way the stored spawn is refreshed so
-    /// a later joiner gets the new look. `research/beauty-2026-09-09.md` §8.3.
+    /// **The way is `0x02AE`** (`net::lookupdate`): a user-pool by-id packet on the chair
+    /// relay's own router that decodes the look straight into the pooled user and rebuilds
+    /// its avatar - the same rebuild that dressed it on entry. One per observer, carrying the
+    /// changed character's id; the router cannot address the local player, and the local
+    /// redraw is already the `0x007C` / `0x0070` path. `Config::look_change_reenter`
+    /// (`--look-reenter`) keeps the leave + enter + pet as the fallback. Either way the stored
+    /// spawn is refreshed so a later joiner gets the new look.
+    /// `research/remote-redress-2026-09-18.md`; **[D]** that the rebuild draws - never on a
+    /// screen. Plan step TO(c).
     pub(super) fn broadcast_look_change(&mut self, chr: &net::opcode::Character) {
         let Some(map) = self.bus().map_of(self.subscriber) else { return };
         let presence = self.presence(chr);
@@ -425,26 +424,27 @@ impl Session {
             }
             crate::server::log(&format!(
                 "   look change for character {} (hair {}, face {}): leave + enter + {pets} pet(s) \
-                 broadcast to field {map} (the default; the copy blinks and its pet respawns - 0x0138 was measured inert 2026-09-18)",
+                 broadcast to field {map} (--look-reenter; the copy blinks and its pet respawns)",
                 chr.id, chr.hair, chr.face
             ));
             return;
         }
-        let modified = Reply {
-            opcode: net::opcode::USER_AVATAR_MODIFIED,
-            body: net::opcode::user_avatar_modified(chr),
+        let update = Reply {
+            opcode: net::lookupdate::USER_LOOK_UPDATE_REMOTE,
+            body: net::lookupdate::user_look_update_remote(chr),
             what: format!(
-                "UserAvatarModified: character {} redressed in place - hair {}, face {}, {} worn. \
-                 Applied only by a client whose launcher opened the 0x0138 gate (avatarmod); a no-op elsewhere.",
+                "UserLookUpdateRemote: character {} redressed in place - hair {}, face {}, {} worn, {} bytes. \
+                 The pool decodes the look into its copy and rebuilds the avatar; no leave, no enter.",
                 chr.id,
                 chr.hair,
                 chr.face,
-                chr.equips.len()
+                chr.equips.len(),
+                net::lookupdate::user_look_update_remote_len(chr)
             ),
         };
-        self.bus().publish(self.subscriber, map, modified, None);
+        self.bus().publish(self.subscriber, map, update, None);
         crate::server::log(&format!(
-            "   look change for character {} (hair {}, face {}): one 0x0138 to field {map} (--look-in-place, measured inert 2026-09-18 - expect the copy NOT to change)",
+            "   look change for character {} (hair {}, face {}): one 0x02AE to field {map}, no leave, no enter, pet untouched",
             chr.id, chr.hair, chr.face
         ));
     }
@@ -1766,13 +1766,10 @@ mod tests {
         assert!(worn.iter().any(|e| e.slot == crate::session::pet::PET_EQUIP_WORN_SLOT && e.item_id == 1_802_006), "{worn:?}");
 
         let heard: Vec<u16> = watcher.tick(2_000).into_iter().map(|r| r.opcode).collect();
-        // The default is the leave, the look with the hat, then the pet behind it - the
-        // 0x0138 in-place packet was measured inert on 2026-09-18 and is opt-in.
-        assert_eq!(
-            heard,
-            vec![net::userpool::USER_LEAVE_FIELD, net::userpool::USER_ENTER_FIELD, net::pet::PET_ACTIVATED],
-            "leave, the look with the hat, the pet once: {heard:x?}"
-        );
+        // One in-place 0x02AE with the hat in the look; no leave, no enter, and the pet is NOT
+        // re-sent, because the observer's copy of the owner (and its pet) is never destroyed.
+        // [D] whether the remote pet re-reads the hat from the rebuilt look; the plan says so.
+        assert_eq!(heard, vec![net::lookupdate::USER_LOOK_UPDATE_REMOTE], "one in-place redress and nothing else: {heard:x?}");
         // And the announced look now carries the hat at body slot 14.
         let chr = owner.claimed_character().unwrap();
         let look_bytes = net::opcode::avatar_look(&chr);

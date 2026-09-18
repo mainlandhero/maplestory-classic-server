@@ -154,17 +154,18 @@ pub struct Config {
     /// **How the other players' copy of a character is redressed** when its look changes -
     /// an equip on or off, a hair or face coupon, the pet's hat.
     ///
-    /// `true` (the default since the 2026-09-18 14:07 run): `0x0225` then `0x0224` then the
-    /// pet for that one character, what a fresh sighting gets. Works on any client; the
-    /// observer's copy blinks and its pet respawns (the owner, both reported).
+    /// `false` (the default): one `0x02AE` per observer - the user pool's own in-place
+    /// redress, which decodes the look into the pooled user and rebuilds its avatar
+    /// (`net::lookupdate`; `research/remote-redress-2026-09-18.md`). No leave, no enter, no
+    /// blink, the pet copy untouched. The owner, 2026-09-18: *"Please find another suitable way
+    /// without leave-and-enter."* Never on a screen yet; it rides the chair relay's router.
     ///
-    /// `false` (`--look-in-place`): one `0x0138 UserAvatarModified` per observer, with the
-    /// launcher's `avatarmod` patch opening the client's own apply. **Measured inert**: with
-    /// the patch applied, the packet reached the observer, its handler ran and returned in
-    /// 56 us, and nothing was redrawn (`client-patched\maplecw-hook.log` 14:07:33.141,
-    /// `world-ch0.log` 18:07:33). The owner: *"Changing equipment once again no longer publishes
-    /// to other clients."* Kept as the opt-in for the next attempt at a blink-free update;
-    /// `research/beauty-2026-09-09.md` §8.3.
+    /// `true` (`--look-reenter`): `0x0225` then `0x0224` then the pet for that one character,
+    /// what a fresh sighting gets. Works on any client; the observer's copy blinks and its pet
+    /// respawns. The fallback if `0x02AE` is refuted on screen.
+    ///
+    /// (`0x0138 UserAvatarModified`, tried 14:07 the same day, is retired: its apply walks the
+    /// user's summoned map, never the player - measured inert, then read.)
     pub look_change_reenter: bool,
 
     /// Where every portal leads, keyed by `(map, portal name)`.
@@ -2378,7 +2379,7 @@ impl Default for Config {
             inventory_slots: None,
             pet_move_action: None,
             broadcast_pets: true,
-            look_change_reenter: true,
+            look_change_reenter: false,
             chairs: HashMap::new(),
             portals: HashMap::new(),
             portal_index: HashMap::new(),
