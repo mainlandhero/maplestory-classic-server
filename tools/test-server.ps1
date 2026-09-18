@@ -2064,6 +2064,16 @@
             b. buy Auto Move (5190002), then Expanded Auto Move (5190003) - a chain, Expanded
                is refused until Auto Move is learned. Each then lists as (Learned). What they
                change on screen is the pet WALKING to drops; say what you see move.
+          SIGNATURE STYLE PRICES (2026-09-17). The owner: "200 LP individually, or 800 LP for
+          the signature set of all of them" (was 2000 / 8000). The price is in the CLIENT's
+          Commodity.img and the server debits from gm-handbook/commodity.txt; BOTH come
+          from `python tools/backport_install.py --install` (client closed), which also
+          regenerates the handbook. Until that is run, the shop still shows and charges
+          the old prices - consistently, so nothing breaks, it is just not done yet.
+            1. after --install: Cash Shop, Special tab: the box 800, each set coupon 200
+               -> fixed. Buy one: the wallet drops by 200 (the balance line) -> fixed
+            2. still 2000 / 8000 -> --install was not run, or the client is the old
+               package; the tag and the charge will still agree with each other
           LEAF POINT EXCHANGE COUPONS (2026-09-17). The owner: "when you use one of these items,
           it gives the player who used them the appropriate amount of Leaf Points in their
           account." 2430004..2430008 = 1,000 / 5,000 / 10,000 / 50,000 / 100,000. They are
@@ -5107,6 +5117,10 @@ function Show-TestPlan {
         Write-Host '            no suck-up -> paste PetPickupRange + item bytes 61..63' -ForegroundColor Yellow
         Write-Host '         b. buy Auto Move (5190002) then Expanded (5190003) - a chain; each' -ForegroundColor Green
         Write-Host '            lists (Learned) and changes the pet WALKING to drops; say what moves' -ForegroundColor Green
+        Write-Host '       SIGNATURE STYLE PRICES (2026-09-17): 200 LP a set coupon, 800 the box'
+        Write-Host '         (was 2000/8000). Needs backport_install.py --install (client closed):' -ForegroundColor Yellow
+        Write-Host '         it writes the client WZ AND regenerates commodity.txt. Special tab' -ForegroundColor Yellow
+        Write-Host '         shows 800/200 and a buy debits 200 -> fixed; still 2000 -> not installed' -ForegroundColor Yellow
         Write-Host '       LEAF POINT COUPONS (2026-09-17): !item 2430004, double-click it in the'
         Write-Host '         Use tab: "You received 1,000 Leaf Points", coupon gone, Cash Shop' -ForegroundColor Yellow
         Write-Host '         balance up -> fixed. Nothing happens -> paste the "<- 0x" line the' -ForegroundColor Yellow

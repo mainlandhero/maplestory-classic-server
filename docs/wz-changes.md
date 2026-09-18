@@ -84,7 +84,7 @@ Why each shape is what it is, with the measurement behind it:
 
 | classic archive | op | what |
 |---|---|---|
-| `Etc/Etc_000.wz` `Commodity.img` | `patch` rows **159..167** | the box (SN `120000000`, 8000 LP) and the eight set coupons (`120000001..120000008`, 2000 LP each); `Period 0`, `Class 0` (the NEW badge), `Gender 2`, `OnSale 1`. Prices **[E]** 2026-09-10 |
+| `Etc/Etc_000.wz` `Commodity.img` | `patch` rows **159..167** | the box (SN `120000000`, **800 LP**) and the eight set coupons (`120000001..120000008`, **200 LP** each); `Period 0`, `Class 0` (the NEW badge), `Gender 2`, `OnSale 1`. Prices **[E]** 2026-09-17 (8000 / 2000 from 2026-09-10 until then) |
 | `Etc/Etc_000.wz` `Commodity.img` | `patch` rows **168..175** | the eight pets the classic shop never listed (`5000000, 5000002..5000007, 5000010`), SN `160000003..160000010`, 100 LP, `Period 0` - under the Pets tab by the SN arithmetic (category 6 / scope 600) |
 | `Etc/Etc_000.wz` `CashShopCategory.img` | `patch` `2/0/name` `str` "Signature Style", `2/0/commoditySN/<n>` | the Special tab (category 2), which shipped empty, gets a sub-tab listing the nine serials |
 
