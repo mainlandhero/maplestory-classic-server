@@ -236,6 +236,19 @@ is Auto Move (`5190002`) THEN Expanded Auto Move (`5190003`); the box then rides
 wonderGrade 6 as before. `research/pet-vacuum-wondergrade-2026-09-16.md` §7. 2132 tests. Plan
 step 8 LOOT has the order.
 
+**2026-09-18: double-clicking another player opens their Character Info - `0x01FC` answered
+with `0x00A2`.** The owner: *"I just tried double clicking on Tester2 to display the Character Info
+window as the owner."* The click was on the wire (`u32 tick, u32 id, str "", u8 petInfo`) and
+unanswered - and both its builders set the shared request latch, so it also froze ~35 other
+request senders until the next map change. The reply was found without guessing an opcode: the
+double-click handler's window singleton -> its one constructor site -> dispatcher case `0xA2`,
+which also clears the latch (the opcode table's two candidates for `0xA2` were both wrong, and
+the first guess `0x00BE` is the NPC pool). Body: result, id, name, level, job, fame, guild, the
+pet out (item id, name, level, closeness, fullness, then the whole pet item behind a flag) or
+zeros, two empty vectors (ITEM / CITIZENSHIP tabs), petInfo echoed; a refusal is a lone non-zero
+result. `net::charinfo`, `session::charinfo`; `research/character-info-2026-09-18.md` (an
+agent's decode, [L] for every field's address). Never on a screen; plan TO(c) has the readings.
+
 **2026-09-18 evening: another player's look change is redrawn IN PLACE - `0x0138`, gate opened
 by the hook.** The leave + enter worked and the owner measured its cost: *"a weird super brief
 character blink ... The regular maplestory does not have this behavior"*, and with a pet out

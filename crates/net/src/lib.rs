@@ -26,6 +26,7 @@ pub mod classicshop;
 pub mod bag;
 pub mod beautycoupon;
 pub mod buff;
+pub mod charinfo;
 pub mod cashitem;
 pub mod cashshop;
 pub mod broadcast;
