@@ -30,6 +30,23 @@ use crate::PacketWriter;
 /// said nothing back, which is why the item never moved.
 pub const CLIENT_INVENTORY_MOVE: u16 = 0x0107;
 
+/// **Consolidate Item** - the inventory window's gather button. `u32 tick, u8 invType`, five
+/// bytes, builder `FUN_142cc5600` (`research/msexe-packet-fields.txt`; first seen on the
+/// wire 2026-09-18, `3a1b2700 04` for the Etc tab). Same latch as [`CLIENT_INVENTORY_MOVE`]:
+/// the builder sets `+0x2330`, so it must be answered. It is answered with `0x0070`s - one
+/// mode 1 per stack whose count changed and one mode 3 per slot emptied - and never with a
+/// guessed "GatherItemResult": the two candidate opcodes for that (`0x0096` and `0x00A0` in
+/// `research/msexe-gamestage-opcodes.md`) disagree, and every `0x0070` shape used here has
+/// been on a screen. **[L]** for the body, **[I]** that a stack of mode-1 entries redraws
+/// the tab the way the real result would.
+pub const CLIENT_GATHER_ITEMS: u16 = 0x0105;
+
+/// The inventory tab a [`CLIENT_GATHER_ITEMS`] asks about: `1` Equip .. `5` Cash. `None` when
+/// the body is short.
+pub fn parse_gather_request(body: &[u8]) -> Option<u8> {
+    body.get(4).copied()
+}
+
 /// The reply that actually moves the item: **`0x0070` InventoryOperation**.
 ///
 /// The one opcode name in the whole game-stage table that is *read out of this client*

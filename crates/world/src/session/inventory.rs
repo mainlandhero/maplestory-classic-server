@@ -436,6 +436,85 @@ impl Session {
     }
 
 
+    /// **Consolidate Item.** Every stack of the same item in the tab is poured into the
+    /// earlier stacks of it, up to the item's stack limit; the store does the arithmetic
+    /// (`Store::consolidate_bag`) and this sends one `0x0070` per changed slot.
+    ///
+    /// The owner, 2026-09-18, on clicking it and seeing nothing: *"This button should make sure
+    /// that all items that can be stacked without violating their max stack size should be
+    /// done."* and *"Consolidate items should also additionally move all items to take the
+    /// first available slots in the inventory."* Until this the request fell to the generic
+    /// latch unlock and did nothing. The slides go out as bag-to-bag mode-2 moves, after the
+    /// quantities and removals, in ascending destination order, so each destination is empty
+    /// on the client's side when the move lands.
+    ///
+    /// The stack limit is `config.shops.max_stack` - the one pick-ups, shops and quest
+    /// rewards use to build stacks in the first place - so this merges exactly what those
+    /// would have merged, no further. A tab with nothing to merge is still answered, with
+    /// the nCount-0 `0x0070`: the request latches the client.
+    pub(super) fn on_gather_items(&mut self, payload: &[u8]) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let Some(tab) = net::inventory::parse_gather_request(payload) else {
+            return self.gather_answered_empty(0, "short body");
+        };
+        let inv = match store::InventoryType::from_wire(i16::from(tab)) {
+            Ok(inv) => inv,
+            Err(_) => return self.gather_answered_empty(tab, "not an inventory tab"),
+        };
+        let shops = self.config.shops.clone();
+        let cap = move |item_id: u32| shops.max_stack(item_id);
+        let changes = match self.store.consolidate_bag(chr.id, inv, &cap) {
+            Ok(c) => c,
+            Err(e) => return self.gather_answered_empty(tab, &format!("store refused: {e}")),
+        };
+        if changes.is_empty() {
+            return self.gather_answered_empty(tab, "nothing to merge");
+        }
+        crate::server::log(&format!(
+            "   consolidate: character {} tab {inv:?} - {} slot(s) changed: {changes:?}",
+            chr.id,
+            changes.len()
+        ));
+        let inv_type = inv.as_u8() as i8;
+        changes
+            .iter()
+            .map(|c| match *c {
+                store::StackChange::Quantity { slot, quantity } => Reply {
+                    opcode: net::inventory::INVENTORY_OPERATION,
+                    body: net::inventory::inventory_quantity(inv_type, slot as i16, quantity),
+                    what: format!(
+                        "InventoryOperation: consolidate - {inv:?} slot {slot} now holds {quantity}. bExclRequestSent = 1 clears the +0x2330 latch the 0x0105 set."
+                    ),
+                },
+                store::StackChange::Emptied { slot } => Reply {
+                    opcode: net::inventory::INVENTORY_OPERATION,
+                    body: net::inventory::inventory_removed(inv_type, slot as i16),
+                    what: format!(
+                        "InventoryOperation: consolidate - {inv:?} slot {slot} poured out entirely, removed. bExclRequestSent = 1 clears the +0x2330 latch the 0x0105 set."
+                    ),
+                },
+                store::StackChange::Moved { from, to } => Reply {
+                    opcode: net::inventory::INVENTORY_OPERATION,
+                    body: net::inventory::inventory_move_result(inv_type, from as i16, to as i16),
+                    what: format!(
+                        "InventoryOperation: consolidate - {inv:?} slot {from} slides up to {to}, the first free slot. Bag-to-bag, no avatar tail."
+                    ),
+                },
+            })
+            .collect()
+    }
+
+    /// The consolidate that changed nothing - still a reply, because `0x0105` latches.
+    fn gather_answered_empty(&self, tab: u8, why: &str) -> Vec<Reply> {
+        vec![Reply {
+            opcode: net::inventory::INVENTORY_OPERATION,
+            body: net::inventory::inventory_rejected(),
+            what: format!(
+                "InventoryOperation: consolidate tab {tab} - {why}; nCount 0, nothing moves, bExclRequestSent = 1 clears the +0x2330 latch the 0x0105 set."
+            ),
+        }]
+    }
+
     /// How many of the item in `slot` fit in one stack, from `info/slotMax`.
     ///
     /// **`0` and `1` both mean "does not stack"**, and `0` is what every equip has because

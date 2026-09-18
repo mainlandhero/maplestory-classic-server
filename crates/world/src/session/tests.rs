@@ -9844,6 +9844,77 @@ fn a_meso_drop_leaves_the_character_and_reaches_the_floor() {
     assert!(!out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION));
 }
 
+/// **Consolidate Item merges the stacks and slides everything up, and every step is a
+/// `0x0070` the client has drawn before.** The owner, 2026-09-18, clicking it on the Use tab:
+/// *"This button should make sure that all items that can be stacked without violating their
+/// max stack size should be done."* and *"Consolidate items should also additionally move all
+/// items to take the first available slots in the inventory. Such as that blue potion should
+/// be consolidated upwards to be below the red potion."*
+///
+/// Their screen, plus a second red stack: red 54 in slot 1, orange 21 in 2, red 60 in 5, blue
+/// 100 in 11. After: red 100, orange 21, red 14, blue 100 in slots 1..4. The wire is checked
+/// packet by packet - a mode 1 for each changed count, then the two slides as bag-to-bag
+/// mode 2s in ascending destination order - and the rows agree with it. Every packet leads
+/// with `bExclRequestSent = 1`, because `0x0105` latches. Dispatched through `handle`, so the
+/// arm is covered and the request can no longer fall to the generic unlock.
+#[test]
+fn consolidate_item_merges_the_stacks_then_slides_them_up_and_answers_with_0x0070s() {
+    let (mut s, store, id) = claimed_session();
+    let usable = store::InventoryType::Use;
+    for (slot, item) in [
+        (1u16, store::Item::bundle(2_000_000, 54)),
+        (2, store::Item::bundle(2_010_000, 21)),
+        (5, store::Item::bundle(2_000_000, 60)),
+        (11, store::Item::bundle(2_000_002, 100)),
+    ] {
+        store.set_inventory_slot(id, usable, slot, &item).unwrap();
+    }
+    let mut packet = net::inventory::CLIENT_GATHER_ITEMS.to_le_bytes().to_vec();
+    packet.extend_from_slice(&[0x3a, 0x1b, 0x27, 0x00, usable.as_u8()]); // tick, invType
+
+    let out = s.handle(&packet);
+    let ops: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::inventory::INVENTORY_OPERATION).collect();
+    assert_eq!(ops.len(), out.len(), "nothing but 0x0070s: {out:?}");
+    assert!(ops.iter().all(|r| r.body[0] == 1), "every one clears the latch");
+    // mode 1: slot 1 -> 100, slot 5 -> 14; then mode 2: 5 -> 3, 11 -> 4.
+    let entries: Vec<(u8, i16, i16)> = ops
+        .iter()
+        .map(|r| {
+            let mode = r.body[7];
+            let pos = i16::from_le_bytes([r.body[9], r.body[10]]);
+            let tail = i16::from_le_bytes([r.body[11], r.body[12]]);
+            (mode, pos, tail)
+        })
+        .collect();
+    assert_eq!(
+        entries,
+        vec![
+            (net::inventory::MODE_QUANTITY, 1, 100),
+            (net::inventory::MODE_QUANTITY, 5, 14),
+            (net::inventory::MODE_MOVE, 5, 3),
+            (net::inventory::MODE_MOVE, 11, 4),
+        ],
+        "{:?}",
+        ops.iter().map(|r| &r.what).collect::<Vec<_>>()
+    );
+    assert!(ops.iter().all(|r| r.body[8] == usable.as_u8()), "all on the Use tab");
+    assert!(ops[2].body.len() == 13 && ops[3].body.len() == 13, "bag-to-bag: header 7 + entry 6, no avatar tail");
+    let rows: Vec<(u16, u32, u16)> = store
+        .bag_items(id, usable)
+        .unwrap()
+        .into_iter()
+        .map(|i| (i.slot, i.item.item_id, i.item.kind.quantity()))
+        .collect();
+    assert_eq!(rows, vec![(1, 2_000_000, 100), (2, 2_010_000, 21), (3, 2_000_000, 14), (4, 2_000_002, 100)]);
+
+    // A second click finds nothing to do and still answers - with the nCount-0 unlock.
+    let again = s.handle(&packet);
+    assert_eq!(again.len(), 1, "{again:?}");
+    assert_eq!(again[0].opcode, net::inventory::INVENTORY_OPERATION);
+    assert_eq!(again[0].body.len(), net::inventory::INVENTORY_REJECTED_LEN, "nCount 0");
+    assert_eq!(again[0].body[0], 1, "and the latch still clears");
+}
+
 /// **A negative amount must not credit the player.**
 ///
 /// `0x0143`'s amount is a signed `i32` and the client's own check (`cmp rdi, rax / jle`)

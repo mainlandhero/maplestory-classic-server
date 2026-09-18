@@ -752,6 +752,25 @@
               line draws, and it is in the Equip tab -> fixed. A full Equip tab: the job
               still changes and a yellow line says the item could not be placed.
 
+     TX. CONSOLIDATE ITEM WORKS (2026-09-18). The owner clicked it on the Etc tab and nothing
+         happened - 0x0105 (u32 tick, u8 tab) fell to the generic latch unlock. The owner: "all
+         items that can be stacked without violating their max stack size should be" and
+         "move all items to take the first available slots in the inventory". Now: every
+         later stack of an item is poured into the earlier ones up to slotMax, then every
+         stack slides up so the tab has no gaps, order kept. Answered with plain 0x0070s
+         (mode 1 counts, mode 3 emptied slots, then mode 2 bag-to-bag slides) - no guessed
+         GatherItemResult opcode. Equips, pets and slotMax-1 items never merge.
+           1. Use tab as on the screenshot (red 54, orange 21, a gap, blue 100): click
+              Consolidate Item: the blue potion lands right after the orange, no gap,
+              no "New" mark, the tab still usable (drag something) -> fixed
+           2. two part-stacks of one item (split a stack first): one full stack and the
+              remainder, the remainder AFTER the full one; counts add up -> fixed
+           3. a tab with nothing to do: nothing changes, the tab stays usable -> fixed
+              a frozen tab after any of these -> the nCount-0 reply did not clear the
+              latch; paste the "consolidate" lines from world-ch0.log
+              the client dies on the click -> paste client-exit.log; the mode-2 slide
+              is the suspect (it is the shape a drag uses, but never in a burst)
+
      TW. A PARTY LEADER WHO LEAVES THE GAME HANDS THE PARTY TO ITS HIGHEST-LEVEL MEMBER
          (2026-09-18). The owner: "the party leader needs to be handed over to the next
          highest level player automatically", then: "Only the party leader should be
@@ -4117,6 +4136,14 @@ function Show-TestPlan {
         Write-Host '        Yes also hands over the Beginner''s weapon (Grendel: Wooden Wand;' -ForegroundColor Magenta
         Write-Host '        the Rogue gets Zamadar AND Garnier): named in the box, grey'
         Write-Host '        "gained" line, in the Equip tab -> fixed'
+        Write-Host ''
+        Write-Host '  TX. CONSOLIDATE ITEM WORKS (2026-09-18): stacks merge up to slotMax, then' -ForegroundColor Magenta
+        Write-Host '      everything slides up with no gaps, order kept. Plain 0x0070s, no new opcode.'
+        Write-Host '        1. Use tab as on your screenshot: click it -> the blue potion sits right'
+        Write-Host '           after the orange, no gap, no New mark, tab still usable -> fixed'
+        Write-Host '        2. split a stack, click: one full stack + the remainder AFTER it -> fixed'
+        Write-Host '        3. nothing to do: nothing changes, tab still usable -> fixed'
+        Write-Host '        frozen tab -> paste the "consolidate" lines; client dies -> client-exit.log' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  TW. A LEADER WHO LEAVES THE GAME HANDS THE PARTY TO ITS HIGHEST-LEVEL MEMBER.' -ForegroundColor Magenta
         Write-Host '      Log out or close the client as leader: the highest-level ONLINE member'

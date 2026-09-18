@@ -1354,6 +1354,81 @@ impl Store {
         Ok(outcome)
     }
 
+    /// **Consolidate Item: pour every stack of the same item into the earlier stacks of it,
+    /// up to `max_stack`.** The owner, 2026-09-18: *"This button should make sure that all items
+    /// that can be stacked without violating their max stack size should be done."*
+    ///
+    /// Slots are walked in ascending order and a later stack is poured into the earliest
+    /// stack of the same item with room, so what remains after this is: every stack of an
+    /// item but the last at `max_stack`, the last holding the remainder, in the slots the
+    /// earliest stacks occupied - and then **every remaining stack slides up to the first
+    /// free slots**, in the order it had. The owner, same day: *"Consolidate items should also
+    /// additionally move all items to take the first available slots in the inventory. Such
+    /// as that blue potion should be consolidated upwards to be below the red potion."*
+    ///
+    /// Only bundles take part. An equip never stacks, a pet is a bundle with a `pet_id` and
+    /// two pets are two pets whatever their item id (`place_into_bag` says the same), and an
+    /// item whose `max_stack` is 0 or 1 is left exactly as it is. `max_stack` is a callback
+    /// for the reason [`Store::add_item`] gives: `info/slotMax` lives in the world crate.
+    ///
+    /// One transaction, and the returned list is **every row that changed**, in the order
+    /// the writes - and the `0x0070`s - have to happen: the new quantities (mode 1) and the
+    /// emptied slots (mode 3) first, then the slides (mode 2) in ascending destination order,
+    /// so each destination is already empty when its move lands, on disk and on screen. Empty
+    /// when nothing changed, which the session still answers - the request latches the
+    /// client.
+    pub fn consolidate_bag(
+        &self,
+        character_id: u32,
+        inv_type: InventoryType,
+        max_stack: &dyn Fn(u32) -> u16,
+    ) -> Result<Vec<StackChange>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let bag = read_bag(&tx, character_id)?;
+        let stacks: Vec<Stack> = bag
+            .items_in(inv_type)
+            .map(|i| Stack {
+                slot: i.slot,
+                item_id: i.item.item_id,
+                quantity: i.item.kind.quantity(),
+                cap: if i.item.kind.is_equip() || i.item.pet_id.is_some() {
+                    1
+                } else {
+                    max_stack(i.item.item_id)
+                },
+            })
+            .collect();
+        let changes = plan_consolidation(&stacks);
+        for c in &changes {
+            match *c {
+                StackChange::Quantity { slot, quantity } => {
+                    tx.execute(
+                        "UPDATE inventory SET quantity = ?4
+                          WHERE character_id = ?1 AND inv_type = ?2 AND slot = ?3",
+                        rusqlite::params![i64::from(character_id), inv_type.as_u8(), slot, quantity],
+                    )?;
+                }
+                StackChange::Emptied { slot } => {
+                    tx.execute(
+                        "DELETE FROM inventory
+                          WHERE character_id = ?1 AND inv_type = ?2 AND slot = ?3",
+                        rusqlite::params![i64::from(character_id), inv_type.as_u8(), slot],
+                    )?;
+                }
+                StackChange::Moved { from, to } => {
+                    tx.execute(
+                        "UPDATE inventory SET slot = ?4
+                          WHERE character_id = ?1 AND inv_type = ?2 AND slot = ?3",
+                        rusqlite::params![i64::from(character_id), inv_type.as_u8(), from, to],
+                    )?;
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(changes)
+    }
+
     /// Resize one bag. Returns the count actually stored, which is clamped to
     /// `net::opcode::MIN_INVENTORY_SLOTS ..= net::opcode::MAX_INVENTORY_SLOTS`.
     ///
@@ -1385,6 +1460,84 @@ impl Store {
         )?;
         Ok(slots)
     }
+}
+
+/// One occupied slot as [`plan_consolidation`] sees it: where, what, how many, and how many
+/// of it fit in one slot (`1` for anything that does not stack).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stack {
+    pub slot: u16,
+    pub item_id: u32,
+    pub quantity: u16,
+    pub cap: u16,
+}
+
+/// One row [`Store::consolidate_bag`] changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StackChange {
+    /// The stack in `slot` now holds `quantity` (more, for a stack that was poured into;
+    /// fewer, for one that was partly poured out).
+    Quantity { slot: u16, quantity: u16 },
+    /// The stack in `slot` was poured out entirely and the slot is empty.
+    Emptied { slot: u16 },
+    /// The stack in `from` slid up to `to`, the first slot free once everything before it had
+    /// slid. Always `to < from`, and always listed after every `Quantity` and `Emptied`.
+    Moved { from: u16, to: u16 },
+}
+
+/// **The consolidation, as arithmetic.** Walks `stacks` in slot order; each stack is poured,
+/// as far as it goes, into the earlier stacks of the same item that still have room under
+/// `cap`; then whatever is left slides up so the occupied slots are `1..=n` in the order they
+/// had. Pure, so every branch is a unit test; [`Store::consolidate_bag`] writes what this
+/// returns. Quantities and emptied slots first, in slot order, then the slides in ascending
+/// destination order - see [`StackChange::Moved`].
+pub fn plan_consolidation(stacks: &[Stack]) -> Vec<StackChange> {
+    let mut work: Vec<Stack> = stacks.to_vec();
+    work.sort_by_key(|s| s.slot);
+    let before: Vec<u16> = work.iter().map(|s| s.quantity).collect();
+    for later in 1..work.len() {
+        if work[later].cap <= 1 {
+            continue;
+        }
+        for earlier in 0..later {
+            if work[later].quantity == 0 {
+                break;
+            }
+            let e = work[earlier];
+            if e.item_id != work[later].item_id || e.cap <= 1 || e.quantity == 0 {
+                continue;
+            }
+            let room = e.cap.saturating_sub(e.quantity);
+            let moved = room.min(work[later].quantity);
+            if moved == 0 {
+                continue;
+            }
+            work[earlier].quantity += moved;
+            work[later].quantity -= moved;
+        }
+    }
+    let mut out: Vec<StackChange> = work
+        .iter()
+        .zip(before)
+        .filter(|(s, was)| s.quantity != *was)
+        .map(|(s, _)| {
+            if s.quantity == 0 {
+                StackChange::Emptied { slot: s.slot }
+            } else {
+                StackChange::Quantity { slot: s.slot, quantity: s.quantity }
+            }
+        })
+        .collect();
+    // The slide: the k-th surviving stack belongs in slot k. Ascending, so by the time a
+    // stack moves, every slot below its destination holds something that has already slid.
+    let mut next: u16 = 1;
+    for s in work.iter().filter(|s| s.quantity > 0) {
+        if s.slot != next {
+            out.push(StackChange::Moved { from: s.slot, to: next });
+        }
+        next += 1;
+    }
+    out
 }
 
 /// Insert-or-replace one inventory slot. Takes anything that derefs to a `Connection`, so the
@@ -2252,6 +2405,93 @@ mod tests {
             .map(|i| i.item.kind.quantity())
             .collect();
         assert_eq!(counts, vec![100, 100, 100, 10]);
+    }
+
+    /// **Consolidate, as arithmetic.** 50 / 80 / 90 of one item at cap 100 becomes 100 / 100
+    /// / 20 in place; two singles of another become 2 and an empty slot; an equip, a pet and
+    /// a cap-1 item are untouched; a stack already full is untouched and reported as nothing;
+    /// then everything after the emptied slot slides up one, in order.
+    #[test]
+    fn consolidation_pours_later_stacks_into_earlier_ones_up_to_the_cap_then_slides_up() {
+        let s = |slot, item_id, quantity, cap| Stack { slot, item_id, quantity, cap };
+        let plan = plan_consolidation(&[
+            s(1, 4_000_000, 50, 100),
+            s(2, 4_000_000, 80, 100),
+            s(3, 4_000_001, 1, 100),
+            s(4, 4_000_001, 1, 100),
+            s(5, 4_000_000, 90, 100),
+            s(6, 1_302_000, 1, 1), // an equip
+            s(7, 1_302_000, 1, 1), // another of the same equip: still two rows
+            s(8, 4_000_002, 1, 1), // slotMax 1 - the two never merge
+            s(9, 4_000_002, 1, 1),
+            s(10, 4_000_003, 100, 100), // already full
+            s(11, 4_000_003, 100, 100),
+        ]);
+        assert_eq!(
+            plan,
+            vec![
+                StackChange::Quantity { slot: 1, quantity: 100 },
+                StackChange::Quantity { slot: 2, quantity: 100 },
+                StackChange::Quantity { slot: 3, quantity: 2 },
+                StackChange::Emptied { slot: 4 },
+                StackChange::Quantity { slot: 5, quantity: 20 },
+                StackChange::Moved { from: 5, to: 4 },
+                StackChange::Moved { from: 6, to: 5 },
+                StackChange::Moved { from: 7, to: 6 },
+                StackChange::Moved { from: 8, to: 7 },
+                StackChange::Moved { from: 9, to: 8 },
+                StackChange::Moved { from: 10, to: 9 },
+                StackChange::Moved { from: 11, to: 10 },
+            ]
+        );
+        assert!(plan_consolidation(&[]).is_empty());
+        assert!(plan_consolidation(&[s(1, 4_000_000, 3, 100)]).is_empty(), "one stack in slot 1: nothing to do");
+        // Slot order, not row order: the EARLIER slot receives, and what is left slides.
+        assert_eq!(
+            plan_consolidation(&[s(9, 4_000_000, 10, 100), s(2, 4_000_000, 10, 100)]),
+            vec![StackChange::Quantity { slot: 2, quantity: 20 }, StackChange::Emptied { slot: 9 }, StackChange::Moved { from: 2, to: 1 }]
+        );
+        // The owner's screen: the blue potion two rows down slides up to sit after the last item.
+        assert_eq!(
+            plan_consolidation(&[s(1, 2_000_000, 54, 100), s(2, 2_010_000, 21, 100), s(11, 2_000_002, 100, 100)]),
+            vec![StackChange::Moved { from: 11, to: 3 }]
+        );
+    }
+
+    /// **And on the rows.** The transaction writes exactly the plan: the quantities land, the
+    /// emptied slot is gone, the equip and the pet are where they were, and a second call
+    /// finds nothing to do.
+    #[test]
+    fn consolidate_bag_writes_the_plan_and_is_idempotent() {
+        let store = Store::open_in_memory().unwrap();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = store.create_character(account, 0, &Character { name: "Sorter".into(), ..Default::default() }).unwrap();
+        let etc = InventoryType::Etc;
+        for (slot, item) in [
+            (1u16, Item::bundle(4_000_000, 50)),
+            (2, Item::bundle(4_000_000, 80)),
+            (3, Item::bundle(4_000_001, 1)),
+            (4, Item::bundle(4_000_001, 1)),
+            (5, Item::bundle(4_000_000, 90)),
+            (9, Item::bundle(4_000_004, 7)),
+        ] {
+            set_slot(&store.conn(), chr.id, etc, slot, &item).unwrap();
+        }
+        set_slot(&store.conn(), chr.id, InventoryType::Equip, 1, &Item::equip(1_302_000)).unwrap();
+        set_slot(&store.conn(), chr.id, InventoryType::Equip, 2, &Item::equip(1_302_000)).unwrap();
+        let cap = |_: u32| 100u16;
+        let changes = store.consolidate_bag(chr.id, etc, &cap).unwrap();
+        assert_eq!(changes.len(), 7, "{changes:?}");
+        let rows: Vec<(u16, u32, u16)> = store
+            .bag_items(chr.id, etc)
+            .unwrap()
+            .into_iter()
+            .map(|i| (i.slot, i.item.item_id, i.item.kind.quantity()))
+            .collect();
+        assert_eq!(rows, vec![(1, 4_000_000, 100), (2, 4_000_000, 100), (3, 4_000_001, 2), (4, 4_000_000, 20), (5, 4_000_004, 7)]);
+        assert_eq!(store.bag_items(chr.id, InventoryType::Equip).unwrap().len(), 2, "equips are not stacks");
+        assert!(store.consolidate_bag(chr.id, etc, &cap).unwrap().is_empty(), "nothing left to merge");
+        assert!(store.consolidate_bag(chr.id, InventoryType::Equip, &cap).unwrap().is_empty());
     }
 
     /// Equips never stack, whatever `max_stack` says.
