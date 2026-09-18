@@ -525,6 +525,22 @@ Or simply look for `FAILED` and `^---- `. A summary line is not a check; it is a
 this one is exactly the shape `CLAUDE.md` warns about everywhere else - a clean, confident
 number from an instrument nobody verified.
 
+### The full suite is heavy now - run it when publishing, not after every edit
+
+The owner, 2026-09-18: the workspace is past 2 600 tests and a full `cargo test --workspace` is
+no longer a quick check. **Run the full suite only when publishing the server files
+(`tools/package-server.ps1` / `tools/make-installer.ps1`) and only when asked to.** For
+ordinary work, run the crate or the filter that covers the change:
+
+```
+cargo test -p world -- beauty
+```
+
+A change to a shared crate (`net`, `store`) still needs the crates that depend on it, so
+name them: `cargo test -p store -p world`. The publish-time full run is the one whose count
+goes in the commit message and in `STATUS.md`; a filtered run's count is not a suite count
+and should not be written as one.
+
 ## Reverse engineering
 
 **`docs/ghidra.md`** — the working command line, JDK 21, the scripts, and the traps.
