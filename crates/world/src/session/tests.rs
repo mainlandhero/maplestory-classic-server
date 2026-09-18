@@ -8789,24 +8789,27 @@ fn a_hair_change_is_broadcast_to_the_other_clients_without_a_reload() {
     assert!(!out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "no reload for the changer");
 
     let seen = them.collect_mail();
-    // The owner, 2026-09-18, two clients side by side: a bare re-sent 0x0224 drew nothing on the
-    // other client - the pool ignores an id it already has (research/user-enter-field.md).
-    // So the observer gets a LEAVE for this one character, then the ENTER with the new look.
-    // (The 0x0138 in-place packet was tried the same evening and measured inert; it is the
-    // opt-in below.)
+    // The owner, 2026-09-18: a bare re-sent 0x0224 drew nothing (the pool ignores an id it has),
+    // the leave + enter drew it WITH a blink and a pet respawn, and 0x0138 walks the summoned
+    // map. So the observer gets ONE 0x02AE naming the changer: the pool decodes the look into
+    // its copy and rebuilds the avatar in place.
     let ops: Vec<u16> = seen.iter().map(|r| r.opcode).collect();
-    assert_eq!(ops, vec![net::userpool::USER_LEAVE_FIELD, net::userpool::USER_ENTER_FIELD], "leave then enter: {ops:x?}");
-    assert_eq!(u32::from_le_bytes(seen[0].body[..4].try_into().unwrap()), my_id, "the leave names the changer, nobody else");
-    assert!(seen[1].body.windows(4).any(|w| u32::from_le_bytes(w.try_into().unwrap()) == 42_600), "the enter carries the new hair");
+    assert_eq!(ops, vec![net::lookupdate::USER_LOOK_UPDATE_REMOTE], "one 0x02AE and nothing else: {ops:x?}");
+    let chr = me.claimed_character().unwrap();
+    assert_eq!(seen[0].body.len(), net::lookupdate::user_look_update_remote_len(&chr), "the exact length - one short faulted a client on the chair relay");
+    assert_eq!(u32::from_le_bytes(seen[0].body[..4].try_into().unwrap()), my_id, "it names the changer");
+    assert_eq!(seen[0].body[4], 1, "flag bit 0: a look follows");
+    assert_eq!(&seen[0].body[5..5 + 195 + 5 * chr.equips.len()], &net::opcode::avatar_look(&chr)[..], "then the compact look, byte for byte");
+    assert!(seen[0].body[5..].windows(4).any(|w| u32::from_le_bytes(w.try_into().unwrap()) == 42_600), "the look carries the new hair id");
 }
 
-/// **`--look-in-place` is the opt-in**: one 0x0138 naming the changer, carrying the new look
-/// byte for byte. Measured inert on 2026-09-18 even with the launcher's avatarmod patch;
-/// kept for the next attempt, so this pins what it sends, not that it draws.
+/// **`--look-reenter` is the fallback**: the leave, the enter with the new look, for that one
+/// character - what a fresh sighting gets. Works on any client, at the price of the blink and
+/// the pet respawn the owner measured; it is what to run if `0x02AE` is refuted on screen.
 #[test]
-fn with_look_in_place_a_hair_change_is_one_avatar_modified_for_the_other_clients() {
+fn with_look_reenter_a_hair_change_is_a_leave_then_an_enter_for_the_other_clients() {
     let (store, config, fields, account) = shared_channel(0, 30);
-    let config = Arc::new(Config { look_change_reenter: false, ..(*config).clone() });
+    let config = Arc::new(Config { look_change_reenter: true, ..(*config).clone() });
     let (mut me, my_id) = join_channel(&store, &config, &fields, account, "Stylist");
     me.on_field_entered();
     let (mut them, _) = join_channel(&store, &config, &fields, account, "Bystander");
@@ -8820,17 +8823,17 @@ fn with_look_in_place_a_hair_change_is_one_avatar_modified_for_the_other_clients
 
     let seen = them.collect_mail();
     let ops: Vec<u16> = seen.iter().map(|r| r.opcode).collect();
-    assert_eq!(ops, vec![net::opcode::USER_AVATAR_MODIFIED], "one 0x0138 and nothing else: {ops:x?}");
-    assert_eq!(u32::from_le_bytes(seen[0].body[..4].try_into().unwrap()), my_id, "it names the changer");
-    assert_eq!(&seen[0].body[4..], &net::opcode::avatar_look(&me.claimed_character().unwrap())[..], "then the compact look, byte for byte");
+    assert_eq!(ops, vec![net::userpool::USER_LEAVE_FIELD, net::userpool::USER_ENTER_FIELD], "leave then enter, no 0x02AE: {ops:x?}");
+    assert_eq!(u32::from_le_bytes(seen[0].body[..4].try_into().unwrap()), my_id, "the leave names the changer, nobody else");
+    assert!(seen[1].body.windows(4).any(|w| u32::from_le_bytes(w.try_into().unwrap()) == 42_600), "the enter carries the new hair");
 }
 
 /// **Putting on or taking off any equip reaches the other client at once.** The owner,
 /// 2026-09-18: *"Whenever a client is changing their equipment, either a cash equipment or a
 /// regular equipment, it is not being immediately reflected on other clients."* Only the
-/// pet-hat slot was watched. Now any change to the worn set sends the observers the leave
-/// and the enter with the new look and nothing else; a move that leaves the worn set as it
-/// was (bag to bag) sends them nothing.
+/// pet-hat slot was watched. Now any change to the worn set sends the observers one in-place
+/// `0x02AE` with the new look and nothing else; a move that leaves the worn set as it was
+/// (bag to bag) sends them nothing.
 #[test]
 fn a_worn_change_is_re_announced_to_the_map() {
     let (store, config, fields, account) = shared_channel(0, 30);
@@ -8847,9 +8850,9 @@ fn a_worn_change_is_re_announced_to_the_map() {
     let announced = |them: &mut Session, what: &str| {
         let seen = them.collect_mail();
         let ops: Vec<u16> = seen.iter().map(|r| r.opcode).collect();
-        assert_eq!(ops, vec![net::userpool::USER_LEAVE_FIELD, net::userpool::USER_ENTER_FIELD], "{what}: leave then enter and nothing else: {ops:x?}");
-        assert_eq!(u32::from_le_bytes(seen[0].body[..4].try_into().unwrap()), my_id, "{what}: the leave names the changer");
-        seen.into_iter().nth(1).unwrap().body
+        assert_eq!(ops, vec![net::lookupdate::USER_LOOK_UPDATE_REMOTE], "{what}: one in-place 0x02AE and nothing else: {ops:x?}");
+        assert_eq!(u32::from_le_bytes(seen[0].body[..4].try_into().unwrap()), my_id, "{what}: it names the changer");
+        seen.into_iter().next().unwrap().body
     };
     let wears = |body: &[u8], slot: u8, id: u32| body.windows(5).any(|w| w[0] == slot && w[1..5] == id.to_le_bytes());
 

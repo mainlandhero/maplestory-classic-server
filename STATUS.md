@@ -249,6 +249,24 @@ zeros, two empty vectors (ITEM / CITIZENSHIP tabs), petInfo echoed; a refusal is
 result. `net::charinfo`, `session::charinfo`; `research/character-info-2026-09-18.md` (an
 agent's decode, [L] for every field's address). Never on a screen; plan TO(c) has the readings.
 
+**2026-09-18, third attempt: another player's look change is `0x02AE`, the user pool's own
+in-place redress.** The owner: *"The leave-and-enter path causes the pets to reload for that client,
+and it causes a brief blink. That is undesirable. Please find another suitable way."* An agent
+read the client this time: `0x0138`'s apply walks the user's **summoned** map (`user+0x1200`,
+filled only by the `0x03A0..0x03C5` pool packets) and never the player - so 14:07 could not have
+drawn, and the hook's `avatarmod` patch is retired. The routine that dresses a user is the
+rebuild `FUN_140f80200(user+0x100)`, and one inbound packet reaches it for a user already in the
+pool: `0x02AE`, table C slot 3 beside the chair relay `0x02AD` (verified from the raw table
+bytes with `0x02AD` as the control), handler `FUN_1429d5290`: flag bit 0, the compact look
+decoded straight into `user+0x130`, three ring bytes, two u32, then the rebuild and the two
+post-passes every `0x0224` runs. `net::lookupdate` builds it (211 + 5 per worn item, length
+pinned - the chair relay one byte short faulted a client); `broadcast_look_change` sends one per
+observer by default; `--look-reenter` (`-LookReenter`) keeps the leave + enter as the fallback.
+`research/remote-redress-2026-09-18.md`, `research/msexe-remote-redress.c`. **[D]** that the
+rebuild draws - never on a screen; plan TO(c) has the readings. The same file corrects two
+older notes: `mob-combat.md` §7.2's "drop pool" at `0x3A0..0x3C5` is the summoned pool, and
+`beauty` §8.2's five "user-pool callers" of the dress primitive are the cash-shop preview widget.
+
 **2026-09-18 14:07 run: the in-place `0x0138` is INERT; leave + enter is the default again.**
 The owner: *"Changing equipment once again no longer publishes to other clients."* With the hook's
 `avatarmod` patch applied, the `0x0138` reached the observer, its handler ran and returned

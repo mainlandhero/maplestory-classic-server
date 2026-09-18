@@ -1577,21 +1577,26 @@
                          blank cells or the client dies -> the widget rejected an equip
                          body; paste the 0x00A2 line and client-exit.log
               nothing at all on the click -> the 0x0144 arm not reached; paste the line
-            THE OTHER CLIENTS: LEAVE + ENTER IS THE DEFAULT AGAIN (2026-09-18 14:07 run).
-            The in-place 0x0138 was tried with the hook's avatarmod patch opening the
-            client's apply, and MEASURED INERT: the patch applied (hook log 14:07:10.801),
-            the observer received the 0x0138 (world-ch0.log 18:07:33), its handler ran and
-            returned in 56 us (hook log 14:07:33.141), and the copy did not change - the owner:
-            "Changing equipment once again no longer publishes to other clients". So the
-            server sends the leave + enter (+ pet) for that one character by default: it
-            publishes every worn change, hair and face, with the brief blink and the pet
-            respawn that were reported. -LookInPlace opts back into the 0x0138 for the
-            next attempt (research/beauty-2026-09-09.md 8.3 - what the client's apply walks
-            for a remote user is the open question; no run needed until that is read).
-              change gear / hair on one client: the other shows it within ~0.1 s, with the
-                         blink -> as expected; the blink is the open item, not a regression
-              still nothing on the other client -> paste the "look change for" line and
-                         the 0x0225 / 0x0224 lines after it
+            THE OTHER CLIENTS: IN PLACE BY 0x02AE (2026-09-18, third attempt). The owner: "The
+            leave-and-enter path causes the pets to reload for that client, and it causes a
+            brief blink. That is undesirable. Please find another suitable way." Read this
+            time, not guessed: 0x0138's apply walks the user's SUMMONED map (0x03A0..0x03C5
+            pool objects), never the player - which is why 14:07 drew nothing and the hook
+            patch is retired. 0x02AE is a user-pool by-id packet on the CHAIR RELAY's own
+            router (0x02AD, confirmed on two screens): flag bit 0, then the compact look,
+            decoded straight into the pooled user and the avatar rebuilt with the call that
+            dressed it on entry. 211 + 5 per worn item; sent to the OTHER sessions with the
+            changed character's id. research/remote-redress-2026-09-18.md. NEVER ON A
+            SCREEN: [D] that the rebuild draws. Two clients, change gear / hair on one:
+              the other shows it within ~0.1 s, NO blink, the pet stays put and happy
+                         -> DONE (and the pet hat: put one on, the other's copy wears it)
+              nothing changes on the other client -> the rebuild did not draw; paste the
+                         0x02AE line from world-chN.log and the hook log's dispatch line
+                         for opcode=0x2ae; run -LookReenter meanwhile (blink, but visible)
+              the OBSERVING client dies -> the body length or a post-pass; paste the
+                         0x02AE line + its client-exit.log; -LookReenter meanwhile
+              changes, but a ring/marriage effect appears or the party window flickers
+                         -> the trailing bytes; say what you saw
             The bag-to-bag control: shuffling a potion sends the field nothing.
 
      TH. THE FACE COUPON opens no dialog and has no tooltip preview. The face's images are
@@ -2987,15 +2992,10 @@ param(
     # it 0xffffffff, invisible on this client's white panel). The hook patches six bytes of
     # that encrypted string to black by default; this is the off switch. beautytext.rs.
     [switch]$NoBeautyTextPatch,
-    # Leave the hook's avatarmod patch off (it opens the client's 0x0138 apply). Measured
-    # 2026-09-18: with the patch on, a 0x0138 reached the observer, its handler ran, and
-    # nothing was redrawn - so the patch is inert unless -LookInPlace is also given, and
-    # harmless either way. avatarmod.rs.
-    [switch]$NoAvatarModPatch,
-    # Redress another player's copy of a changed character with one 0x0138 instead of the
-    # default leave + enter (+ pet). The opt-in for the next attempt at a blink-free update;
-    # measured inert 2026-09-18. --look-in-place.
-    [switch]$LookInPlace,
+    # Redress another player's copy of a changed character with a leave + enter (+ pet) -
+    # the sequence that blinks and respawns the pet - instead of the default in-place 0x02AE.
+    # The fallback if 0x02AE is refuted on screen. --look-reenter.
+    [switch]$LookReenter,
     # Monsters are ON by default since 2026-08-19. -NoMobs turns them off.
     #
     # -Mobs used to be the opt-in, and it cost a launch: the owner stood on map 40, which has
@@ -4113,7 +4113,7 @@ foreach ($ch in 0..($Channels - 1)) {
     $chArgs += @('--link', "127.0.0.1:$ChatPort")
     # The channel answers by default now; only the deliberate silence needs a flag.
     if ($SilentChannel) { $chArgs += '--silent-channel' }
-    if ($LookInPlace) { $chArgs += '--look-in-place' }
+    if ($LookReenter) { $chArgs += '--look-reenter' }
     # The channel writes and ROLLS its own log now (50 MB, five kept). Stdout gets nothing
     # after the file opens; it is redirected to a .out stub so nothing is lost if it does.
     $chArgs += @('--log-file', "`"$chLog`"")
@@ -4587,12 +4587,14 @@ function Show-TestPlan {
         Write-Host '           raised your fame"; again -> "not anymore for today" -> DONE' -ForegroundColor Green
         Write-Host '           Item List shows the hat/coat/weapon/cover icons -> DONE; blank or' -ForegroundColor Green
         Write-Host '           a death -> paste the 0x00A2 line and client-exit.log' -ForegroundColor Yellow
-        Write-Host '         OTHER CLIENTS: LEAVE+ENTER IS THE DEFAULT AGAIN (14:07 run). The in-place' -ForegroundColor Yellow
-        Write-Host '         0x0138 reached the observer, its handler ran, nothing drew - inert.' -ForegroundColor Yellow
-        Write-Host '         Every worn/hair change publishes, with the blink + pet respawn (open item).' -ForegroundColor Yellow
-        Write-Host '           other client shows it in ~0.1s, blink -> expected' -ForegroundColor Green
-        Write-Host '           still nothing on the other client -> paste "look change for" + 0x0225/0x0224' -ForegroundColor Yellow
-        Write-Host '         -LookInPlace = the 0x0138 opt-in, for after the next read; no run needed.'
+        Write-Host '         OTHER CLIENTS: IN PLACE BY 0x02AE (third attempt). 0x0138 walks the SUMMONED' -ForegroundColor Magenta
+        Write-Host '         map, never the player (read, not guessed; hook patch retired). 0x02AE rides' -ForegroundColor Magenta
+        Write-Host '         the chair relay''s router: look decoded into the pooled user, avatar rebuilt.' -ForegroundColor Magenta
+        Write-Host '           other client: new gear/hair in ~0.1s, NO blink, pet stays -> DONE' -ForegroundColor Green
+        Write-Host '           nothing changes -> paste the 0x02AE line + hook dispatch opcode=0x2ae;' -ForegroundColor Yellow
+        Write-Host '             -LookReenter meanwhile (blink, but visible)' -ForegroundColor Yellow
+        Write-Host '           the OBSERVER dies -> paste 0x02AE line + client-exit.log; -LookReenter' -ForegroundColor Red
+        Write-Host '           a ring/marriage effect or party-window flicker -> say what you saw'
         Write-Host '  TH. FACE COUPON: no dialog, no preview. Images are fine; the'
         Write-Host '      ID is the one difference (22039; classic faces end at 21825).'
         Write-Host '      One chat line settles it: !face 22039' -ForegroundColor Yellow
@@ -5641,7 +5643,6 @@ if ($PoolSentry) {
 if ($HeapFix) { $Session = "$Session,heapfix=on" }
 if ($ClientHitNumberPatch) { $Session = "$Session,hitnumber=off" }
 if ($NoBeautyTextPatch) { $Session = "$Session,beautytext=off" }
-if ($NoAvatarModPatch) { $Session = "$Session,avatarmod=off" }
 if ($FreeGuard) { $Session = "$Session,freeguard=on" }
 elseif ($FreeGuardObserve) { $Session = "$Session,freeguard=observe" }
 if ($GuardPage) {
