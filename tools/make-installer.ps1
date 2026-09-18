@@ -29,7 +29,7 @@
 
       maplecw-launcher.exe    at the ROOT, and that is not cosmetic - see below
       grap64.dll              the GameGuard stub, also at the root
-      bin\            maplecw-login, maplecw-world, maplecw-useradd
+      bin\            maplecw-login, maplecw-world, maplecw-chat (the hub), maplecw-auth, maplecw-useradd
       client\         MapleStory.exe, its DLLs and Data\ - the WZ archives
       gm-handbook\    game tables generated from the WZ; the world server refuses to do
                       most of its job without them, and they are gitignored, so they have
@@ -288,6 +288,11 @@ $binaries = @(
     @{ From = 'grap64.dll';           To = '.';    Why = 'the GameGuard stub the launcher installs' },
     @{ From = 'maplecw-login.exe';    To = 'bin';  Why = 'the login / character-select server' },
     @{ From = 'maplecw-world.exe';    To = 'bin';  Why = 'a channel server' },
+    # The hub joined the server on 2026-09-15 and start-server.ps1 has dialed it since, but
+    # this list never learned of it - a setup-based install started WITHOUT it (the script
+    # tests for the file and carries on), so cross-channel parties, party chat and whispers
+    # were silently absent there. Found 2026-09-18 by hashing the two zips against each other.
+    @{ From = 'maplecw-chat.exe';     To = 'bin';  Why = 'the world hub the channels dial for parties, party chat and whispers across channels' },
     @{ From = 'maplecw-useradd.exe';  To = 'bin';  Why = 'creates the first account' },
     @{ From = 'maplecw-auth.exe';     To = 'bin';  Why = 'the sign-in service the launcher posts to' }
 )
