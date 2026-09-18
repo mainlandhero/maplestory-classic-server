@@ -291,8 +291,17 @@ pub enum MoveOutcome {
     /// Both slots were occupied and they exchanged.
     Swapped,
     /// Two stacks of the same item merged. `moved` crossed; `remaining` stayed in the source,
-    /// and 0 means the source slot is now empty.
-    Merged { moved: u16, remaining: u16 },
+    /// and 0 means the source slot is now empty; `destination` is what the destination holds
+    /// now. The owner, 2026-09-18: *"it should try to fill the stack first (any remaining after
+    /// the full stack will remain at the original position), if the resulting stack is
+    /// already full, then it will carry out the swap slots procedure."* - the second half is
+    /// [`MoveOutcome::Swapped`].
+    Merged { moved: u16, remaining: u16, destination: u16 },
+    /// Part of a stack went into an EMPTY destination: a new stack of `moved` there, and
+    /// `remaining` (never 0) still in the source. Told apart from [`MoveOutcome::Merged`]
+    /// because the client has to be sent an ADD for the new stack, not a new count for a
+    /// stack it does not have.
+    Split { moved: u16, remaining: u16 },
 }
 
 // -------------------------------------------------------------------------------------
@@ -1289,7 +1298,7 @@ impl Store {
                         dst,
                         &Item::bundle(source.item_id, moving),
                     )?;
-                    MoveOutcome::Merged { moved: moving, remaining: have - moving }
+                    MoveOutcome::Split { moved: moving, remaining: have - moving }
                 }
             }
             Some(target)
@@ -1342,7 +1351,7 @@ impl Store {
                             &Item::bundle(source.item_id, remaining),
                         )?;
                     }
-                    MoveOutcome::Merged { moved, remaining }
+                    MoveOutcome::Merged { moved, remaining, destination: target.kind.quantity() + moved }
                 }
             }
             Some(_) => {
@@ -2737,7 +2746,7 @@ mod tests {
         store.set_inventory_slot(chr, InventoryType::Use, 2, &Item::bundle(2000000, 70)).unwrap();
         assert_eq!(
             store.move_item(chr, InventoryType::Use, 1, 2, None, 100).unwrap(),
-            MoveOutcome::Merged { moved: 30, remaining: 10 }
+            MoveOutcome::Merged { moved: 30, remaining: 10, destination: 100 }
         );
         assert_eq!(
             store.inventory_slot(chr, InventoryType::Use, 2).unwrap().unwrap().kind.quantity(),
@@ -2768,7 +2777,7 @@ mod tests {
         store.set_inventory_slot(chr, InventoryType::Use, 2, &Item::bundle(2000000, 5)).unwrap();
         assert_eq!(
             store.move_item(chr, InventoryType::Use, 1, 2, None, 100).unwrap(),
-            MoveOutcome::Merged { moved: 5, remaining: 0 }
+            MoveOutcome::Merged { moved: 5, remaining: 0, destination: 10 }
         );
         assert!(store.inventory_slot(chr, InventoryType::Use, 1).unwrap().is_none());
     }

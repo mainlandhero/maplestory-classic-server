@@ -429,7 +429,70 @@ impl Session {
         };
         let count = (m.count >= 0).then_some(m.count as u16);
         let max_stack = self.max_stack(&chr, inv, src);
+        let moving = self.store.inventory_slot(chr.id, inv, src).ok().flatten();
         match self.store.move_item(chr.id, inv, src, dst, count, max_stack) {
+            // **A stack dropped on a stack of the same item fills it first.** The owner,
+            // 2026-09-18: *"it should try to fill the stack first (any remaining after the
+            // full stack will remain at the original position), if the resulting stack is
+            // already full, then it will carry out the swap slots procedure."* The store
+            // already did exactly that (`Store::move_item`); the REPLY was the bug: a merge
+            // was answered with the same mode-2 as a swap, and mode 2 in the client is an
+            // unconditional two-way exchange (`research/equip-crash.md`), so the screen
+            // swapped the two stacks while the rows had merged them - and every later drag
+            // on either slot moved the wrong thing. A merge is what the client draws from
+            // two mode-1 counts (or a count and a mode-3 for a source poured out), the same
+            // packets Consolidate Item uses.
+            Ok(store::MoveOutcome::Merged { moved, remaining, destination }) => {
+                let mut out = vec![Reply {
+                    opcode: net::inventory::INVENTORY_OPERATION,
+                    body: net::inventory::inventory_quantity(m.inv_type, m.dst, destination),
+                    what: format!(
+                        "InventoryOperation: MERGE {inv:?} slot {src} onto {dst} - {moved} crossed, the destination holds {destination} now. bExclRequestSent = 1 clears the +0x2330 latch."
+                    ),
+                }];
+                out.push(if remaining == 0 {
+                    Reply {
+                        opcode: net::inventory::INVENTORY_OPERATION,
+                        body: net::inventory::inventory_removed(m.inv_type, m.src),
+                        what: format!("InventoryOperation: MERGE - {inv:?} slot {src} poured out entirely, removed."),
+                    }
+                } else {
+                    Reply {
+                        opcode: net::inventory::INVENTORY_OPERATION,
+                        body: net::inventory::inventory_quantity(m.inv_type, m.src, remaining),
+                        what: format!("InventoryOperation: MERGE - {inv:?} slot {src} keeps {remaining}, the destination was full before the rest."),
+                    }
+                });
+                out
+            }
+            // Part of a stack into an empty slot: the source's new count, then the new stack
+            // as an ADD - the client has nothing in `dst` to count.
+            Ok(store::MoveOutcome::Split { moved, remaining }) => {
+                let Some(item) = moving else {
+                    return self.inventory_refused(&m, "split: the source row vanished between the read and the move");
+                };
+                let piece = store::Item { kind: store::ItemKind::Bundle { quantity: moved }, ..item };
+                let blob = self.bag_item_blob(inv, dst, &piece);
+                vec![
+                    Reply {
+                        opcode: net::inventory::INVENTORY_OPERATION,
+                        body: net::inventory::inventory_quantity(m.inv_type, m.src, remaining),
+                        what: format!(
+                            "InventoryOperation: SPLIT {inv:?} slot {src} - {moved} of item {} go to empty slot {dst}, {remaining} stay. bExclRequestSent = 1 clears the +0x2330 latch.",
+                            item.item_id
+                        ),
+                    },
+                    Reply {
+                        opcode: net::inventory::INVENTORY_OPERATION,
+                        body: net::inventory::inventory_added(m.inv_type, m.dst, &blob),
+                        what: format!(
+                            "InventoryOperation ADD: the split-off stack of {moved} x item {} into {inv:?} slot {dst} - {} byte blob.",
+                            item.item_id,
+                            blob.len()
+                        ),
+                    },
+                ]
+            }
             Ok(outcome) => self.inventory_moved(&m, format!("{inv:?} bag: {outcome:?}")),
             Err(e) => self.inventory_refused(&m, &format!("move refused: {e}")),
         }
@@ -543,21 +606,21 @@ impl Session {
         }]
     }
 
-    /// How many of the item in `slot` fit in one stack, from `info/slotMax`.
+    /// How many of the item in `slot` fit in one stack - `crate::shops::ShopTable::max_stack`,
+    /// the one number every stack builder uses (pick-ups, shops, quest rewards, Consolidate).
     ///
-    /// **`0` and `1` both mean "does not stack"**, and `0` is what every equip has because
-    /// the property is simply absent - 290 of 2785 items carry one. An unknown item also
-    /// lands here, and treating it as non-stacking is the safe direction: the worst case is
-    /// a merge that does not happen, against a merge that silently destroys the overflow.
+    /// It used to read `info/slotMax` directly and call an absent one "does not stack",
+    /// which was the safe direction for a lone drag; but pick-ups build 100-stacks of those
+    /// same items (`slotMax` is absent on 187 Etc and 285 Use items), so a drag of two such
+    /// stacks onto each other swapped where every other path merged. One rule now. An equip
+    /// or a pet never stacks whatever the rule says (`Store::move_item` checks the kind).
     pub(super) fn max_stack(&self, chr: &net::opcode::Character, inv: store::InventoryType, slot: u16) -> u16 {
         let Ok(items) = self.store.bag_items(chr.id, inv) else { return 1 };
         let Some(row) = items.iter().find(|i| i.slot == slot) else { return 1 };
-        self.config
-            .shops
-            .item_data
-            .get(&row.item.item_id)
-            .map(|d| d.slot_max.max(1))
-            .unwrap_or(1)
+        if row.item.pet_id.is_some() {
+            return 1;
+        }
+        self.config.shops.max_stack(row.item.item_id)
     }
 
 
