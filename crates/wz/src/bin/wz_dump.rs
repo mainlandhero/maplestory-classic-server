@@ -8,6 +8,16 @@
 //!   wz-dump build <out.wz> <version> <spec.tsv> [base.wz]
 //!                                        write an archive: the base's images verbatim, then
 //!                                        the spec's copies / merges / string patches
+//!
+//! `build` spec rows, tab separated:
+//!
+//!   copy    <image> <src.wz> <src image>
+//!   merge   <image> <src.wz> <src image> <k[=k2],...>   top-level keys onto the base image
+//!   inline  <image> <src.wz> <src image> <canvas.wz>    copy, with every outlinked canvas
+//!                                                       pulled in from <canvas.wz> - the
+//!                                                       classic PetEquip shape, no _Canvas
+//!   patch   <image> <rows.tsv>     rows: path <TAB> int|str|uol|del <TAB> value
+//!   strings <image> <rows.tsv>     rows: path <TAB> text
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -328,6 +338,70 @@ fn cmd_build(out: &Path, version: &str, spec: &Path, base: Option<&Path>) -> wz:
                     additions.push(ImageEntry { name: name.to_string(), bytes });
                 }
             }
+            "inline" => {
+                // A `copy` whose outlinked canvases are resolved against <canvas.wz> and
+                // written inline. For the trees the classic client keeps WITHOUT a
+                // `_Canvas` archive - `Character/PetEquip` - a copied stub would point at
+                // an image the client has no tree for and draw nothing. 2026-09-17, the
+                // four Lil Frieren pet weapons.
+                if f.len() < 5 {
+                    return Err(bad());
+                }
+                let (name, src, src_img, canvas) = (f[1], PathBuf::from(f[2]), f[3], PathBuf::from(f[4]));
+                for p in [&src, &canvas] {
+                    if !opened.contains_key(p) {
+                        opened.insert(p.clone(), Archive::open(p)?);
+                    }
+                }
+                let ar = &opened[&src];
+                let Some(node) = ar.root.get(src_img) else {
+                    eprintln!("line {}: {} has no image {src_img}", lineno + 1, src.display());
+                    return Err(bad());
+                };
+                let mut target = Owned::parse(ar.image_bytes(node)?)?;
+                let canvas_ar = &opened[&canvas];
+                let mut images: std::collections::HashMap<String, Owned> = std::collections::HashMap::new();
+                let mut misses: Vec<String> = Vec::new();
+                let filled = target.inline_outlinks(&mut |link: &str| {
+                    // `Character/PetEquip/_Canvas/01802653.img/5002828/stand0/0`: the image
+                    // is the segment ending in `.img`, the path is what follows it.
+                    let Some(at) = link.find(".img/") else {
+                        misses.push(link.to_string());
+                        return Ok(None);
+                    };
+                    let (img_part, path) = link.split_at(at + 4);
+                    let img_name = img_part.rsplit('/').next().unwrap_or(img_part).to_string();
+                    if !images.contains_key(&img_name) {
+                        let Some(n) = canvas_ar.root.get(&img_name) else {
+                            misses.push(link.to_string());
+                            return Ok(None);
+                        };
+                        images.insert(img_name.clone(), Owned::parse(canvas_ar.image_bytes(n)?)?);
+                    }
+                    let found = images[&img_name].get_path(path).cloned();
+                    if found.is_none() {
+                        misses.push(link.to_string());
+                    }
+                    Ok(found)
+                });
+                let filled = match filled {
+                    Ok(n) => n,
+                    Err(e) => {
+                        for m in &misses {
+                            eprintln!("line {}: {src_img}: outlink resolves to nothing in {}: {m}", lineno + 1, canvas.display());
+                        }
+                        return Err(e);
+                    }
+                };
+                let bytes = target.serialize_image();
+                println!(
+                    "inline  {name:<16} <- {}/{src_img}, {filled} canvas(es) pulled in from {} ({} bytes)",
+                    src.display(),
+                    canvas.display(),
+                    bytes.len()
+                );
+                additions.push(ImageEntry { name: name.to_string(), bytes });
+            }
             "strings" | "patch" => {
                 if f.len() < 3 {
                     return Err(bad());
@@ -350,6 +424,20 @@ fn cmd_build(out: &Path, version: &str, spec: &Path, base: Option<&Path>) -> wz:
                     }
                     let cols: Vec<&str> = pl.split('\t').collect();
                     let (path, value) = if typed {
+                        if cols.len() < 2 {
+                            eprintln!("line {}: patch row needs path, kind[, value]: {pl:?}", lineno + 1);
+                            return Err(bad());
+                        }
+                        // `del` takes a leaf AWAY. The modern pets carry `info/chatBalloon`
+                        // and `info/nameTag` naming UI nodes the classic client lacks;
+                        // rewriting them to some other number is still a lookup that fails.
+                        if cols[1] == "del" {
+                            if !target.remove_path(cols[0]) {
+                                println!("        {name}: del {} - nothing there (fine)", cols[0]);
+                            }
+                            n += 1;
+                            continue;
+                        }
                         if cols.len() < 3 {
                             eprintln!("line {}: patch row needs path, kind, value: {pl:?}", lineno + 1);
                             return Err(bad());

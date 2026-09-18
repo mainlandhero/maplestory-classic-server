@@ -38,6 +38,19 @@ listing has one set with all three hairs and all three clothes; and the modern s
 Three characters have no hairstyle: **Aura, Linie and Lügner's hair is a Cap** ("Aura Hair
 (Hat)", `1006910..1006912`, `islot HrCp`) worn over the head, plus a face.
 
+## The collaboration pets and their weapons (added 2026-09-17)
+
+The owner: *"backport these pets into our build as well as these pet equipment. All pets from
+these collaboration should be 1000 LP. Pet equipment should remain 100 LP each."*
+
+| layer | id(s) | what the WZ says |
+|---|---|---|
+| the pets | Pet `5002828..5002831` (Lil Frieren, Lil Fern, Lil Stark, Lil Übel) | each name is in the modern strings TWICE - a Heroic-world twin `5004047..5004050`; the lower id is taken. `Item/Pet/<id>.img`, pixels in `Item/Pet/_Canvas/<id>.img`, a tree the classic client has. `info`: `cash 1, life 90, pickupItem 1, sweepForDrop 1, wonderGrade 6, chatBalloon 911, nameTag 913, setItemID 1127, ...`; 21 `interact` entries with level bands like the classic pets'; 18 command words and 88 lines in `PetDialog.img` (the modern client keeps words and lines in ONE image) |
+| the weapons | PetEquip `1803148..1803151` (…'s Staff / Axe) | also twinned (`1803247..`, `isRebootPetitePetEquip`); the one whose single pet node is keyed by the chosen pet is taken - that node is what makes it fit that pet. `info/cash 1` (so: Deco tab), `tuc 8`, `incPAD/incMAD 10`. **Pixels outlink into a SHARED canvas image** `_Canvas/01802653.img`, and the classic client has NO `Character/PetEquip/_Canvas` tree - its own ten hats keep their pixels inline - so the installer pulls them in (`wz-dump build` `inline`) rather than copying the canvas image |
+
+`manifest.json` gains `pets`, `pet_equips` and `inline_canvas_images`; `strings.json` gains
+`Pet`, `PetCommand`, `PetDialog` and `ClassicWorld/PetEquip`.
+
 ## How the data is laid out, and why the extraction follows outlinks
 
 Both clients keep an equip as **two images**: the property tree in

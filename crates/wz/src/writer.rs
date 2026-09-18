@@ -357,6 +357,86 @@ impl Owned {
         cur.set(leaf, value);
     }
 
+    /// The node at a `/`-separated path, or `None`.
+    pub fn get_path(&self, path: &str) -> Option<&Owned> {
+        let mut cur = self;
+        for part in path.split('/').filter(|p| !p.is_empty()) {
+            cur = cur.get(part)?;
+        }
+        Some(cur)
+    }
+
+    /// Remove the node at a `/`-separated path. `true` when something was there.
+    ///
+    /// Exists for the modern pets (2026-09-17): their `info` carries `chatBalloon 911` and
+    /// `nameTag 913`, UI nodes the classic client does not have, and a leaf that names a
+    /// missing UI node is a lookup, not an ignored key. `set_path` cannot take a key away.
+    pub fn remove_path(&mut self, path: &str) -> bool {
+        let mut parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+        let Some(leaf) = parts.pop() else { return false };
+        let mut cur = self;
+        for part in parts {
+            let Some(next) = cur
+                .children_mut()
+                .and_then(|k| k.iter_mut().find(|(n, _)| n == part))
+                .map(|(_, v)| v)
+            else {
+                return false;
+            };
+            cur = next;
+        }
+        let Some(kids) = cur.children_mut() else { return false };
+        let before = kids.len();
+        kids.retain(|(n, _)| n != leaf);
+        kids.len() != before
+    }
+
+    /// **Pull every `_outlink`ed canvas into this tree**, replacing each 1x1 stub with the
+    /// pixels the link names and dropping the `_outlink` leaf. `resolve` is handed the link
+    /// text (`Character/PetEquip/_Canvas/01802653.img/5002828/stand0/0`) and returns the
+    /// canvas at that path, or `None` when there is nothing there - which fails the call,
+    /// because a stub left pointing at a canvas image the target client does not have is a
+    /// pet equip that draws nothing.
+    ///
+    /// The stub's own children (`origin`, `z`, `delay`) are kept: that is where the classic
+    /// client keeps them in an inline image (`PetEquip/01802006.img`, whose canvases carry
+    /// `origin` and no link). Returns how many stubs were filled.
+    pub fn inline_outlinks<F>(&mut self, resolve: &mut F) -> Result<usize>
+    where
+        F: FnMut(&str) -> Result<Option<Owned>>,
+    {
+        let mut filled = 0;
+        let link = match self {
+            Owned::Canvas { children, .. } => children
+                .iter()
+                .find(|(n, _)| n == "_outlink")
+                .and_then(|(_, v)| if let Owned::String(s) = v { Some(s.clone()) } else { None }),
+            _ => None,
+        };
+        if let Some(link) = link {
+            let Some(target) = resolve(&link)? else {
+                return Err(WzError::BadEntryType { kind: 0xEC, offset: 0 });
+            };
+            let Owned::Canvas { width, height, format, payload, .. } = target else {
+                return Err(WzError::BadEntryType { kind: 0xEC, offset: 1 });
+            };
+            if let Owned::Canvas { width: w, height: h, format: f, payload: p, children } = self {
+                *w = width;
+                *h = height;
+                *f = format;
+                *p = payload;
+                children.retain(|(n, _)| n != "_outlink");
+            }
+            filled += 1;
+        }
+        if let Some(kids) = self.children_mut() {
+            for (_, child) in kids.iter_mut() {
+                filled += child.inline_outlinks(resolve)?;
+            }
+        }
+        Ok(filled)
+    }
+
     /// Serialise as a whole image (`Property` root).
     pub fn serialize_image(&self) -> Vec<u8> {
         let mut w = WzWriter::new();
@@ -592,6 +672,68 @@ mod tests {
         // And the reader agrees it is a link, which is what the client will see.
         let node = crate::prop::parse_image(&bytes).unwrap();
         assert_eq!(node.get("32").and_then(|v| v.as_str()), Some("30"));
+    }
+
+    /// A stub canvas with an `_outlink` becomes the pixels it names, keeps its own `origin`,
+    /// loses the link, and a link that resolves to nothing fails rather than leaving a stub.
+    /// This is the shape the classic client's `PetEquip` images have (inline pixels, no
+    /// `_Canvas` tree), which the modern pet weapons must take to draw at all.
+    #[test]
+    fn outlinked_stubs_are_inlined_and_a_dangling_link_fails() {
+        let stub = |link: &str| Owned::Canvas {
+            width: 1,
+            height: 1,
+            format: 1,
+            payload: vec![0; 10],
+            children: vec![
+                ("origin".to_string(), Owned::Vector(35, 11)),
+                ("_outlink".to_string(), Owned::String(link.to_string())),
+            ],
+        };
+        let mut img = Owned::Object(Vec::new());
+        img.set_path("5002828/stand0/0", stub("Character/PetEquip/_Canvas/01802653.img/5002828/stand0/0"));
+        img.set_path("5002828/stand0/1", stub("Character/PetEquip/_Canvas/01802653.img/5002828/stand0/0"));
+        img.set_path("info/tuc", Owned::Int(8));
+        let mut asked = Vec::new();
+        let n = img
+            .inline_outlinks(&mut |link: &str| {
+                asked.push(link.to_string());
+                Ok(Some(Owned::Canvas { width: 31, height: 24, format: 1, payload: vec![7; 226], children: Vec::new() }))
+            })
+            .unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(asked.len(), 2);
+        let Some(Owned::Canvas { width, height, payload, children, .. }) = img.get_path("5002828/stand0/1") else {
+            panic!("{img:?}")
+        };
+        assert_eq!((*width, *height, payload.len()), (31, 24, 226));
+        assert!(children.iter().any(|(n, _)| n == "origin"), "the stub's own origin stays");
+        assert!(!children.iter().any(|(n, _)| n == "_outlink"), "the link is gone");
+        // And it survives the writer: the classic reader sees inline canvases.
+        let back = Owned::parse(&img.serialize_image()).unwrap();
+        assert_eq!(back.canvases().len(), 2);
+        assert!(back.canvases().iter().all(|(_, w, _, _, len)| *w == 31 && *len == 226));
+
+        let mut dangling = Owned::Object(Vec::new());
+        dangling.set_path("x/0", stub("Character/PetEquip/_Canvas/nowhere.img/x/0"));
+        assert!(dangling.inline_outlinks(&mut |_: &str| Ok(None)).is_err());
+    }
+
+    /// `remove_path` takes a leaf away and says so; a path that is not there is `false`, and
+    /// the neighbours are untouched. `get_path` is its read half.
+    #[test]
+    fn remove_path_takes_one_leaf_and_reports_whether_it_was_there() {
+        let mut img = Owned::Object(Vec::new());
+        img.set_path("info/chatBalloon", Owned::Int(911));
+        img.set_path("info/nameTag", Owned::Int(913));
+        img.set_path("info/cash", Owned::Int(1));
+        assert!(img.remove_path("info/chatBalloon"));
+        assert!(!img.remove_path("info/chatBalloon"), "already gone");
+        assert!(!img.remove_path("nothing/here"));
+        assert!(img.get_path("info/chatBalloon").is_none());
+        assert!(matches!(img.get_path("info/nameTag"), Some(Owned::Int(913))));
+        assert!(matches!(img.get_path("info/cash"), Some(Owned::Int(1))));
+        assert_eq!(img.get_path("info").and_then(|n| n.children()).map(|k| k.len()), Some(2));
     }
 
     /// `encrypt_offset` is the exact inverse of the reader's decrypt, at the positions and

@@ -19,7 +19,9 @@ archive as the base. Every existing image is carried over byte for byte; ours ar
 | `Item/Cash/Cash_000.wz`, `Item/Consume/Consume_000.wz` | `merge`: an item image (`0522.img`) holds every item with that prefix, so only OUR nodes are taken from the modern image and laid onto the classic image of the same name (or an empty one) |
 | `Item/<Cash|Consume>/_Canvas/_Canvas_000.wz` | `merge`, the same keys |
 | `String/String_000.wz` | `strings`: `Eqp.img` (under `ClassicWorld/<Type>/<id>`), `Cash.img` and `Consume.img` (flat `<id>`) gain `name` and `desc` leaves |
-| `Item/Pet/Pet_000.wz` | `patch`: every pet gets `info/permanent` -> 1 and its start skills; **`info/life` is left alone** - zeroing it (the modern permanent pet's shape) is what made a summoned pet invisible, see the note at the patch rows; the eight pets the classic shop never listed get Commodity rows under the Pets tab |
+| `Item/Pet/Pet_000.wz` | `patch`: every pet gets `info/permanent` -> 1 and its start skills; **`info/life` is left alone** - zeroing it (the modern permanent pet's shape) is what made a summoned pet invisible, see the note at the patch rows; the eight pets the classic shop never listed get Commodity rows under the Pets tab. **The four collaboration pets** (2026-09-17, Lil Frieren / Fern / Stark / Übel) are `copy`ed in whole - property image here, pixels into `Item/Pet/_Canvas` - then patched like the classic eleven, plus `del` of the leaves that name UI nodes this client lacks (`chatBalloon`, `nameTag`, `setItemID`) |
+| `Character/PetEquip/PetEquip_000.wz` | `inline`: the four collaboration pet weapons. The classic client keeps pet-equip pixels INSIDE the property image (its ten hats have no `_Canvas` tree at all), so a plain `copy` of the modern image would leave 1x1 stubs pointing at a tree that is not there; `inline` follows every outlink into the modern `_Canvas` archive and writes the pixels in place |
+| `String/String_000.wz` | ...and `Pet.img` (name, desc, descD), `PetCommand.img` (the words) and `PetDialog.img` (the lines) for the four pets - which is where `tools/dump_pets.py` reads a pet's commands from |
 | `Effect/Effect_000.wz`, `Effect/_Canvas/_Canvas_000.wz` | `merge`: the classic client has no `ItemEff.img` at all, so a NEW one is made from the set items' worn-effect nodes (Himmel's Blessing, 1103918) and a new canvas `ItemEff.img` from the holders their outlinks name (1103930) |
 
 The modern client is opened read-only as the SOURCE of every copy; nothing there is
@@ -51,6 +53,24 @@ EXTRACT = os.path.join(REPO, "backport", "signature-style")
 # regeneration, into gm-handbook/commodity.txt, which is what the server debits.
 SET_COUPON_PRICE_LP = 200
 COLLECTION_PRICE_LP = 800
+
+# The pets and pet equipment, in Leaf Points. The owner, 2026-09-17: *"All pets from these
+# collaboration should be 1000 LP. Pet equipment should remain 100 LP each."* The classic
+# eleven pets stay at the shipped rows' 100.
+COLLAB_PET_PRICE_LP = 1000
+PET_EQUIP_PRICE_LP = 100
+
+# The classic client's ten pet hats, `Character/PetEquip/PetEquip_000.wz` [L], with the
+# names `String/Eqp.img/ClassicWorld/PetEquip` gives them. The shipped Commodity.img sells
+# three of them (1802002, 1802005, 1802006 - SN 160100000..2); the owner, 2026-09-17: *"Currently
+# I only see 3 pet equipment, search the classic server WZ data and make sure all pet
+# equipment is available."* The other seven get rows here.
+CLASSIC_PET_EQUIPS = [
+    (1802000, "Red Ribbon"), (1802001, "Yellow Hat"), (1802002, "Red Hat"), (1802003, "Black Hat"),
+    (1802004, "Pink Laced Cap"), (1802005, "Sky Blue Laced Cap"), (1802006, "Blue Top Hat"),
+    (1802007, "Red Top Hat"), (1802008, "Rudolph's Hat"), (1802009, "Tree Hat"),
+]
+SHIPPED_PET_EQUIP_ROWS = {1802002, 1802005, 1802006}
 CLASSIC = os.path.join(REPO, "client-patched", "Data")
 CLASSIC_VERSION = "779"
 # The Signature Style Collection box: Nexon's id, and the id it wears in the classic client
@@ -280,7 +300,11 @@ def main():
         if key not in part_cache:
             part_cache[key] = modern_part(source, tree_rel + "/_Canvas", image)
         src = part_cache[key]
-        if tree_rel.startswith("Item/"):
+        if tree_rel == "Item/Pet":
+            # A pet's canvas image is its own (`_Canvas/5002828.img`), like a Character
+            # tree's and unlike the grouped `0568.img`: copied whole.
+            add(tree_rel + "/_Canvas", "copy\t%s\t%s\t%s" % (image, src, image))
+        elif tree_rel.startswith("Item/"):
             # **The keys come from the OUTLINKS, not from our item ids.** The three Frieren
             # set coupons share one icon: 5681544 and 5681545 outlink into
             # `0568.img/05681543/info/icon`, and the canvas image has no node of their own.
@@ -330,8 +354,17 @@ def main():
     # shows is this string, so it is renamed here - everywhere the NPC appears, which is the
     # one place a name can live. Reversible with --revert like everything else in this file.
     npc_strings = {"9010000": {"name": "MapleStory Administrator"}}
+    # The pets' three string images are flat `<id>/<leaf>` like Cash.img. `Pet.img` names the
+    # pet (and the tooltip's desc / descD); `PetCommand.img/<id>/cN` are the words a chat line
+    # is matched against and `PetDialog.img/<id>/<key>` the lines - `tools/dump_pets.py`
+    # enumerates pets from PetCommand.img's keys, so without these rows the pet would summon
+    # and never answer a command.
     for image, root in [("Eqp.img", strings["ClassicWorld"]), ("Cash.img", strings["Cash"]),
-                        ("Consume.img", strings["Consume"]), ("Npc.img", npc_strings)]:
+                        ("Consume.img", strings["Consume"]), ("Npc.img", npc_strings),
+                        ("Pet.img", strings.get("Pet", {})), ("PetCommand.img", strings.get("PetCommand", {})),
+                        ("PetDialog.img", strings.get("PetDialog", {}))]:
+        if not root:
+            continue
         tsv = os.path.join(args.build_dir, "strings-" + image + ".tsv")
         if image in ("Cash.img", "Consume.img"):
             # Renamed ids (RENAMES) carry their strings to the new id.
@@ -431,7 +464,32 @@ def main():
             (5000003, "Mini Kargo"), (5000004, "Black Kitty"), (5000005, "White Bunny"),
             (5000006, "Husky"), (5000007, "Black Pig"), (5000008, "Panda"),
             (5000009, "Dino Boy"), (5000010, "Dino Girl")]
-    for pet_id, pet_name in pets:
+    # 4d. The four collaboration pets. The owner, 2026-09-17: *"backport these pets into our build
+    #     as well as these pet equipment. All pets from these collaboration should be 1000
+    #     LP."* Property image copied whole from the modern `Item/Pet` (the canvas image is
+    #     copied by step 2 - the classic client HAS an `Item/Pet/_Canvas` tree), then the same
+    #     permanence / start-skill patch as the classic eleven, plus `del` rows for the
+    #     leaves that name things this client does not have: `chatBalloon 911` and
+    #     `nameTag 913` (the classic UI has ChatBalloon 0..25 and NameTag 3..14 - a leaf that
+    #     names a missing UI node is a lookup, not an ignored key [L]), `setItemID 1127` (no
+    #     SetItemInfo.img entry), and `sweepForDrop` (the pet agent's rule: a pet declares
+    #     only Item Pouch; Auto Move is bought). `multiPet`, `autoBuff`, `noPermanentTicket`,
+    #     `collabo`, `noPrism`, `wonderGrade` are left: unknown keys are skipped by name.
+    #     [I] on whether the classic client draws the modern animation set (`love`, `sleep`,
+    #     `what`, `roll`, `sit` are new; `rise`, `prone`, `nap`, `tedious`, `hand` are absent)
+    #     - the interact table only names nodes the image has, and the plan step is the test.
+    collab_pets = [(it["id"], it["name"]) for it in manifest.get("pets", [])]
+    for it in manifest.get("pets", []):
+        src = os.path.join(source, it["prop_archive"])
+        add("Item/Pet", "copy\t%d.img\t%s\t%d.img" % (it["id"], src, it["id"]))
+        tsv = os.path.join(args.build_dir, "pet-%07d-strip.tsv" % it["id"])
+        with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("# %s: modern-only leaves the classic client would look up and not find\n" % it["name"])
+            for leaf in ["chatBalloon", "nameTag", "setItemID", "sweepForDrop"]:
+                fh.write("info/%s\tdel\n" % leaf)
+        add("Item/Pet", "patch\t%d.img\t%s" % (it["id"], tsv))
+        print("  pet      %8d  %s" % (it["id"], it["name"]))
+    for pet_id, pet_name in pets + collab_pets:
         tsv = os.path.join(args.build_dir, "pet-%07d.tsv" % pet_id)
         with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
             # **`info/life` IS NO LONGER ZEROED, and that is the pet-invisibility fix.**
@@ -489,21 +547,54 @@ def main():
             # table (FUN_141ed1ad0) and shows with every key cleared.
             fh.write("info/pickupItem\tint\t1\n")
         add("Item/Pet", "patch\t%07d.img\t%s" % (pet_id, tsv))
+    # 4e. The four pet weapons: `inline` (see the module table) from the modern PetEquip
+    #     archive and its `_Canvas`. Nothing else to patch: `info/cash 1` puts them in the
+    #     Deco tab (`Config::tab_for`), and each image's one pet node is what makes the staff
+    #     fit its own pet and no other - the client's own rule, the same one its ten hats use
+    #     with eleven nodes each.
+    if manifest.get("pet_equips"):
+        pe_src = modern_part(source, "Character/PetEquip", "%08d.img" % manifest["pet_equips"][0]["id"])
+        pe_canvas = modern_part(source, "Character/PetEquip/_Canvas",
+                                sorted(manifest["inline_canvas_images"])[0].rsplit("/", 1)[1])
+        for it in manifest["pet_equips"]:
+            add("Character/PetEquip", "inline\t%08d.img\t%s\t%08d.img\t%s" % (it["id"], pe_src, it["id"], pe_canvas))
+            print("  petequip %8d  %s (fits %d)" % (it["id"], it["name"], it["pet"]))
+
     shipped_pet_rows = {5000001, 5000008, 5000009}  # SN 160000000..2 in the classic Commodity.img
     pet_rows_patch = os.path.join(args.build_dir, "patch-Commodity-pets.tsv")
     with open(pet_rows_patch, "w", encoding="utf-8", newline="\n") as fh:
         n = 0
-        for pet_id, pet_name in pets:
-            if pet_id in shipped_pet_rows:
-                continue
+        # The Pets tab (scope 600): the eight classic pets at the shipped rows' 100, then the
+        # collaboration pets at COLLAB_PET_PRICE_LP. SN 160000003.. in that order, so the
+        # eight keep the serials the 2026-09-13 install gave them.
+        priced_pets = [(pid, name, 100) for pid, name in pets if pid not in shipped_pet_rows] + \
+                      [(pid, name, COLLAB_PET_PRICE_LP) for pid, name in collab_pets]
+        for pet_id, pet_name, price in priced_pets:
             sn = 160_000_003 + n
             row = classic_rows + len(wares) + n
             n += 1
             fh.write("# %s\n" % pet_name)
             for field, value in [
-                ("SN", sn), ("ItemId", pet_id), ("Count", 1), ("Price", 100), ("Bonus", 0),
+                ("SN", sn), ("ItemId", pet_id), ("Count", 1), ("Price", price), ("Bonus", 0),
                 ("Period", 0), ("Priority", 100), ("ReqPOP", 0), ("ReqLEV", 0), ("Gender", 2),
-                ("OnSale", 1), ("originalPrice", 100), ("PbCash", 0), ("PbPoint", 0),
+                ("OnSale", 1), ("originalPrice", price), ("PbCash", 0), ("PbPoint", 0),
+                ("PbGift", 0), ("Refundable", 0), ("WebShop", 0), ("IsGift", 0),
+            ]:
+                fh.write("%d/%s\tint\t%d\n" % (row, field, value))
+        # The Pet Equip tab (scope 601, SN 1601xxxxx): the seven classic hats the shipped
+        # table left out, then the four collaboration weapons, all at PET_EQUIP_PRICE_LP.
+        # SN 160100003.. continues the shipped three.
+        pet_equips = [(pid, name) for pid, name in CLASSIC_PET_EQUIPS if pid not in SHIPPED_PET_EQUIP_ROWS] + \
+                     [(it["id"], it["name"]) for it in manifest.get("pet_equips", [])]
+        for i, (item_id, name) in enumerate(pet_equips):
+            sn = 160_100_003 + i
+            row = classic_rows + len(wares) + n
+            n += 1
+            fh.write("# %s\n" % name)
+            for field, value in [
+                ("SN", sn), ("ItemId", item_id), ("Count", 1), ("Price", PET_EQUIP_PRICE_LP), ("Bonus", 0),
+                ("Period", 0), ("Priority", 100), ("ReqPOP", 0), ("ReqLEV", 0), ("Gender", 2),
+                ("OnSale", 1), ("originalPrice", PET_EQUIP_PRICE_LP), ("PbCash", 0), ("PbPoint", 0),
                 ("PbGift", 0), ("Refundable", 0), ("WebShop", 0), ("IsGift", 0),
             ]:
                 fh.write("%d/%s\tint\t%d\n" % (row, field, value))
@@ -585,7 +676,7 @@ def main():
         # The world server debits and names from gm-handbook, regenerated by --install after the
         # copy. A handbook older than the installed String archive was made from other data.
         strings = os.path.join(CLASSIC, "String", "String_000.wz")
-        for table in ["items.txt", "equips.txt", "commodity.txt", "itemdata.txt"]:
+        for table in ["items.txt", "equips.txt", "commodity.txt", "itemdata.txt", "petcommands.txt"]:
             path = os.path.join(REPO, "gm-handbook", table)
             if not os.path.exists(path):
                 bad.append("gm-handbook/%s is missing" % table)

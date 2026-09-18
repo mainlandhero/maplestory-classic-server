@@ -2067,6 +2067,23 @@
             b. buy Auto Move (5190002), then Expanded Auto Move (5190003) - a chain, Expanded
                is refused until Auto Move is learned. Each then lists as (Learned). What they
                change on screen is the pet WALKING to drops; say what you see move.
+          THE COLLABORATION PETS AND EVERY PET EQUIP (2026-09-17, INSTALLED here - the
+          client package must be rebuilt from client-patched\Data). The owner: "backport these
+          pets ... as well as these pet equipment. All pets from these collaboration should
+          be 1000 LP. Pet equipment should remain 100 LP each ... make sure all pet
+          equipment is available." Cash Shop, Pets tab: Lil Frieren / Fern / Stark / Ubel
+          at 1000 LP (SN 160000011..14). Pet Equip sub-tab: all TEN classic hats and the
+          four weapons at 100 LP (was three hats). NEVER ON A SCREEN. Two things are [I]:
+          the classic client drawing a modern pet (its animation set differs) and the
+          weapon's inlined pixels.
+            1. Pets tab: the four at 1000, icons drawn; Pet Equip: 14 rows at 100 -> fixed
+            2. buy Lil Frieren, summon: it draws, walks, name tag, no crash -> DONE. Type
+               "sit" (a command word): it answers -> commands landed. Invisible pet with a
+               name tag -> paste bytes 61..63 of its item line; client dies on summon ->
+               the modern animation set, paste client-exit.log
+            3. buy Lil Frieren's Staff (Deco tab), equip it on Lil Frieren: it draws on the
+               pet -> the inline worked; on a Husky the client itself should refuse.
+               Draws nothing on the pet -> paste wz-dump cat ...PetEquip_000.wz 01803148.img
           SIGNATURE STYLE PRICES (2026-09-17). The owner: "200 LP individually, or 800 LP for
           the signature set of all of them" (was 2000 / 8000). The price is in the CLIENT's
           Commodity.img and the server debits from gm-handbook/commodity.txt; BOTH come
@@ -5121,6 +5138,11 @@ function Show-TestPlan {
         Write-Host '            no suck-up -> paste PetPickupRange + item bytes 61..63' -ForegroundColor Yellow
         Write-Host '         b. buy Auto Move (5190002) then Expanded (5190003) - a chain; each' -ForegroundColor Green
         Write-Host '            lists (Learned) and changes the pet WALKING to drops; say what moves' -ForegroundColor Green
+        Write-Host '       COLLAB PETS + EVERY PET EQUIP (2026-09-17, installed; rebuild the client'
+        Write-Host '         package). Pets tab: Lil Frieren/Fern/Stark/Ubel at 1000; Pet Equip:' -ForegroundColor Yellow
+        Write-Host '         all 10 hats + 4 weapons at 100 -> fixed. Buy + summon Lil Frieren: it' -ForegroundColor Yellow
+        Write-Host '         draws and answers "sit" -> DONE; dies/invisible -> paste the item line.' -ForegroundColor Yellow
+        Write-Host '         Equip its Staff (Deco tab) on it: draws on the pet -> the inline worked.' -ForegroundColor Yellow
         Write-Host '       SIGNATURE STYLE PRICES (2026-09-17): 200 LP a set coupon, 800 the box'
         Write-Host '         (was 2000/8000). Needs backport_install.py --install (client closed):' -ForegroundColor Yellow
         Write-Host '         it writes the client WZ AND regenerates commodity.txt. Special tab' -ForegroundColor Yellow
