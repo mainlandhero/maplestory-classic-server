@@ -2077,8 +2077,12 @@
           the classic client drawing a modern pet (its animation set differs) and the
           weapon's inlined pixels.
             1. Pets tab: the four at 1000, icons drawn; Pet Equip: 14 rows at 100 -> fixed
-            2. buy Lil Frieren, summon: it draws, walks, name tag, no crash -> DONE. Type
-               "sit" (a command word): it answers -> commands landed. Invisible pet with a
+            2. buy Lil Frieren, summon: it draws, walks, name tag, no crash -> DONE. Its
+               tooltip ends "Commands: sit, slap, iloveyou, sleep, talk, roll, angry". Type
+               "roll", then "angry": it rolls / looks angry (the two animations Nexon's
+               table never played); "sleep" -> it sleeps, "talk" -> the chat animation
+               (Nexon's acts were sat/asleep and are corrected) -> commands landed. A
+               refused command shows the puzzled look. Invisible pet with a
                name tag -> paste bytes 61..63 of its item line; client dies on summon ->
                the modern animation set, paste client-exit.log
             3. buy Lil Frieren's Staff (Deco tab), equip it on Lil Frieren: it draws on the
@@ -5158,7 +5162,8 @@ function Show-TestPlan {
         Write-Host '       COLLAB PETS + EVERY PET EQUIP (2026-09-17, installed; rebuild the client'
         Write-Host '         package). Pets tab: Lil Frieren/Fern/Stark/Ubel at 1000; Pet Equip:' -ForegroundColor Yellow
         Write-Host '         all 10 hats + 4 weapons at 100 -> fixed. Buy + summon Lil Frieren: it' -ForegroundColor Yellow
-        Write-Host '         draws and answers "sit" -> DONE; dies/invisible -> paste the item line.' -ForegroundColor Yellow
+        Write-Host '         draws, tooltip lists 7 commands, answers "roll"/"angry"/"sleep"/"talk"' -ForegroundColor Yellow
+        Write-Host '         with the right animation -> DONE; dies/invisible -> paste the item line.' -ForegroundColor Yellow
         Write-Host '         Equip its Staff (Deco tab) on it: draws on the pet -> the inline worked.' -ForegroundColor Yellow
         Write-Host '       SIGNATURE STYLE PRICES (2026-09-17): 200 LP a set coupon, 800 the box'
         Write-Host '         (was 2000/8000). Needs backport_install.py --install (client closed):' -ForegroundColor Yellow

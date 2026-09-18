@@ -2699,8 +2699,130 @@
     "setItemID": 1127
    },
    "interact": 21,
-   "commands": 18,
-   "lines": 88
+   "commands": 20,
+   "lines": 128,
+   "animations": [
+    "angry",
+    "chat",
+    "cry",
+    "eat",
+    "fly",
+    "hang",
+    "hungry",
+    "jump",
+    "love",
+    "move",
+    "rest0",
+    "roll",
+    "sleep",
+    "stand0",
+    "stand1",
+    "what"
+   ],
+   "extra_commands": [
+    {
+     "index": 21,
+     "key": "c22",
+     "act": "roll",
+     "fail_act": "what",
+     "words": "roll|rollover|spin|tumble",
+     "prob": 70,
+     "inc": 1,
+     "success": [
+      "Here I go!",
+      "Wheee!"
+     ],
+     "fail": [
+      "Not right now.",
+      "...Must I?"
+     ]
+    },
+    {
+     "index": 22,
+     "key": "c23",
+     "act": "angry",
+     "fail_act": "what",
+     "words": "angry|grr|mad|hmph",
+     "prob": 70,
+     "inc": 1,
+     "success": [
+      "Hmph!",
+      "Grr...!"
+     ],
+     "fail": [
+      "I'm not angry.",
+      "Why would I be?"
+     ]
+    }
+   ],
+   "act_fixes": [
+    {
+     "index": 12,
+     "key": "c13",
+     "word": "sleep",
+     "success": "sleep",
+     "fail": "what",
+     "was": [
+      "dung",
+      "what"
+     ]
+    },
+    {
+     "index": 13,
+     "key": "c14",
+     "word": "sleep",
+     "success": "sleep",
+     "fail": "what",
+     "was": [
+      "dung",
+      "cry"
+     ]
+    },
+    {
+     "index": 14,
+     "key": "c15",
+     "word": "sleep",
+     "success": "sleep",
+     "fail": "what",
+     "was": [
+      "dung",
+      "chat"
+     ]
+    },
+    {
+     "index": 15,
+     "key": "c16",
+     "word": "talk",
+     "success": "chat",
+     "fail": "what",
+     "was": [
+      "sleep",
+      "hungry"
+     ]
+    },
+    {
+     "index": 16,
+     "key": "c17",
+     "word": "talk",
+     "success": "chat",
+     "fail": "what",
+     "was": [
+      "sleep",
+      "jump"
+     ]
+    },
+    {
+     "index": 17,
+     "key": "c18",
+     "word": "talk",
+     "success": "chat",
+     "fail": "what",
+     "was": [
+      "sleep",
+      "move"
+     ]
+    }
+   ]
   },
   {
    "prop_archive": "Item\\Pet\\Pet_000.wz",
@@ -2730,8 +2852,130 @@
     "setItemID": 1127
    },
    "interact": 21,
-   "commands": 18,
-   "lines": 88
+   "commands": 20,
+   "lines": 128,
+   "animations": [
+    "angry",
+    "chat",
+    "cry",
+    "eat",
+    "fly",
+    "hang",
+    "hungry",
+    "jump",
+    "love",
+    "move",
+    "rest0",
+    "roll",
+    "sleep",
+    "stand0",
+    "stand1",
+    "what"
+   ],
+   "extra_commands": [
+    {
+     "index": 21,
+     "key": "c22",
+     "act": "roll",
+     "fail_act": "what",
+     "words": "roll|rollover|spin|tumble",
+     "prob": 70,
+     "inc": 1,
+     "success": [
+      "Here I go!",
+      "Wheee!"
+     ],
+     "fail": [
+      "Not right now.",
+      "...Must I?"
+     ]
+    },
+    {
+     "index": 22,
+     "key": "c23",
+     "act": "angry",
+     "fail_act": "what",
+     "words": "angry|grr|mad|hmph",
+     "prob": 70,
+     "inc": 1,
+     "success": [
+      "Hmph!",
+      "Grr...!"
+     ],
+     "fail": [
+      "I'm not angry.",
+      "Why would I be?"
+     ]
+    }
+   ],
+   "act_fixes": [
+    {
+     "index": 12,
+     "key": "c13",
+     "word": "sleep",
+     "success": "sleep",
+     "fail": "what",
+     "was": [
+      "dung",
+      "what"
+     ]
+    },
+    {
+     "index": 13,
+     "key": "c14",
+     "word": "sleep",
+     "success": "sleep",
+     "fail": "what",
+     "was": [
+      "dung",
+      "cry"
+     ]
+    },
+    {
+     "index": 14,
+     "key": "c15",
+     "word": "sleep",
+     "success": "sleep",
+     "fail": "what",
+     "was": [
+      "dung",
+      "chat"
+     ]
+    },
+    {
+     "index": 15,
+     "key": "c16",
+     "word": "talk",
+     "success": "chat",
+     "fail": "what",
+     "was": [
+      "sleep",
+      "hungry"
+     ]
+    },
+    {
+     "index": 16,
+     "key": "c17",
+     "word": "talk",
+     "success": "chat",
+     "fail": "what",
+     "was": [
+      "sleep",
+      "jump"
+     ]
+    },
+    {
+     "index": 17,
+     "key": "c18",
+     "word": "talk",
+     "success": "chat",
+     "fail": "what",
+     "was": [
+      "sleep",
+      "move"
+     ]
+    }
+   ]
   },
   {
    "prop_archive": "Item\\Pet\\Pet_000.wz",
@@ -2761,8 +3005,130 @@
     "setItemID": 1127
    },
    "interact": 21,
-   "commands": 18,
-   "lines": 88
+   "commands": 20,
+   "lines": 128,
+   "animations": [
+    "angry",
+    "chat",
+    "cry",
+    "eat",
+    "fly",
+    "hang",
+    "hungry",
+    "jump",
+    "love",
+    "move",
+    "rest0",
+    "roll",
+    "sleep",
+    "stand0",
+    "stand1",
+    "what"
+   ],
+   "extra_commands": [
+    {
+     "index": 21,
+     "key": "c22",
+     "act": "roll",
+     "fail_act": "what",
+     "words": "roll|rollover|spin|tumble",
+     "prob": 70,
+     "inc": 1,
+     "success": [
+      "Here I go!",
+      "Wheee!"
+     ],
+     "fail": [
+      "Not right now.",
+      "...Must I?"
+     ]
+    },
+    {
+     "index": 22,
+     "key": "c23",
+     "act": "angry",
+     "fail_act": "what",
+     "words": "angry|grr|mad|hmph",
+     "prob": 70,
+     "inc": 1,
+     "success": [
+      "Hmph!",
+      "Grr...!"
+     ],
+     "fail": [
+      "I'm not angry.",
+      "Why would I be?"
+     ]
+    }
+   ],
+   "act_fixes": [
+    {
+     "index": 12,
+     "key": "c13",
+     "word": "sleep",
+     "success": "sleep",
+     "fail": "what",
+     "was": [
+      "dung",
+      "what"
+     ]
+    },
+    {
+     "index": 13,
+     "key": "c14",
+     "word": "sleep",
+     "success": "sleep",
+     "fail": "what",
+     "was": [
+      "dung",
+      "cry"
+     ]
+    },
+    {
+     "index": 14,
+     "key": "c15",
+     "word": "sleep",
+     "success": "sleep",
+     "fail": "what",
+     "was": [
+      "dung",
+      "chat"
+     ]
+    },
+    {
+     "index": 15,
+     "key": "c16",
+     "word": "talk",
+     "success": "chat",
+     "fail": "what",
+     "was": [
+      "sleep",
+      "hungry"
+     ]
+    },
+    {
+     "index": 16,
+     "key": "c17",
+     "word": "talk",
+     "success": "chat",
+     "fail": "what",
+     "was": [
+      "sleep",
+      "jump"
+     ]
+    },
+    {
+     "index": 17,
+     "key": "c18",
+     "word": "talk",
+     "success": "chat",
+     "fail": "what",
+     "was": [
+      "sleep",
+      "move"
+     ]
+    }
+   ]
   },
   {
    "prop_archive": "Item\\Pet\\Pet_000.wz",
@@ -2792,8 +3158,130 @@
     "setItemID": 1127
    },
    "interact": 21,
-   "commands": 18,
-   "lines": 88
+   "commands": 20,
+   "lines": 128,
+   "animations": [
+    "angry",
+    "chat",
+    "cry",
+    "eat",
+    "fly",
+    "hang",
+    "hungry",
+    "jump",
+    "love",
+    "move",
+    "rest0",
+    "roll",
+    "sleep",
+    "stand0",
+    "stand1",
+    "what"
+   ],
+   "extra_commands": [
+    {
+     "index": 21,
+     "key": "c22",
+     "act": "roll",
+     "fail_act": "what",
+     "words": "roll|rollover|spin|tumble",
+     "prob": 70,
+     "inc": 1,
+     "success": [
+      "Here I go!",
+      "Wheee!"
+     ],
+     "fail": [
+      "Not right now.",
+      "...Must I?"
+     ]
+    },
+    {
+     "index": 22,
+     "key": "c23",
+     "act": "angry",
+     "fail_act": "what",
+     "words": "angry|grr|mad|hmph",
+     "prob": 70,
+     "inc": 1,
+     "success": [
+      "Hmph!",
+      "Grr...!"
+     ],
+     "fail": [
+      "I'm not angry.",
+      "Why would I be?"
+     ]
+    }
+   ],
+   "act_fixes": [
+    {
+     "index": 12,
+     "key": "c13",
+     "word": "sleep",
+     "success": "sleep",
+     "fail": "what",
+     "was": [
+      "dung",
+      "what"
+     ]
+    },
+    {
+     "index": 13,
+     "key": "c14",
+     "word": "sleep",
+     "success": "sleep",
+     "fail": "what",
+     "was": [
+      "dung",
+      "cry"
+     ]
+    },
+    {
+     "index": 14,
+     "key": "c15",
+     "word": "sleep",
+     "success": "sleep",
+     "fail": "what",
+     "was": [
+      "dung",
+      "chat"
+     ]
+    },
+    {
+     "index": 15,
+     "key": "c16",
+     "word": "talk",
+     "success": "chat",
+     "fail": "what",
+     "was": [
+      "sleep",
+      "hungry"
+     ]
+    },
+    {
+     "index": 16,
+     "key": "c17",
+     "word": "talk",
+     "success": "chat",
+     "fail": "what",
+     "was": [
+      "sleep",
+      "jump"
+     ]
+    },
+    {
+     "index": 17,
+     "key": "c18",
+     "word": "talk",
+     "success": "chat",
+     "fail": "what",
+     "was": [
+      "sleep",
+      "move"
+     ]
+    }
+   ]
   }
  ],
  "pet_equips": [

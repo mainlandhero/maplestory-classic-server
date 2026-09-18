@@ -264,4 +264,48 @@ mod tests {
         }
         assert!(t.respond(5_000_006, 1, "hello there", 0).is_none());
     }
+
+    /// **The collaboration pets answer every command, including the three added for the
+    /// animations Nexon's own table never played.** The owner, 2026-09-17: *"If the pets have more
+    /// animations, make sure our pet chat commands support them."* `roll` and `angry` are
+    /// interact entries the installer writes into each pet's image (indexes 21 and 22, past
+    /// Nexon's 0..20); `slap` and `iloveyou` shipped with no lines (so the dump dropped them)
+    /// and now have some; `sleep` and `talk` shipped playing the rest and sleep animations
+    /// and now play `sleep` and `chat`. All read back through the table the server answers
+    /// from - a row that did not survive the strings or the dump fails here, not on a screen.
+    /// Runs only when the handbook was generated after the 2026-09-17 install.
+    #[test]
+    fn the_collaboration_pets_roll_and_get_angry_on_command() {
+        let path = Path::new("../../gm-handbook/petcommands.txt");
+        if !path.exists() {
+            return;
+        }
+        let t = PetCommands::load(path);
+        if t.respond(5_002_828, 1, "sit", 0).is_none() {
+            return; // the handbook predates the collaboration pets
+        }
+        for pet in [5_002_828u32, 5_002_829, 5_002_830, 5_002_831] {
+            for (word, act, index) in [
+                ("roll", "roll", 21u8), ("rollover", "roll", 21), ("angry", "angry", 22), ("grr", "angry", 22),
+            ] {
+                // roll 0 succeeds (0 < prob 70); roll 99 fails and plays the refusal.
+                let ok = t.respond(pet, 15, word, 0).unwrap_or_else(|| panic!("pet {pet} knows {word}"));
+                assert_eq!((ok.index, ok.success, ok.act.as_str()), (index, true, act), "pet {pet} {word}");
+                assert!(!ok.text.is_empty(), "pet {pet} {word} says something");
+                let no = t.respond(pet, 30, word, 99).unwrap();
+                assert_eq!((no.index, no.success, no.act.as_str()), (index, false, "what"), "pet {pet} {word} refusal");
+            }
+            // Nexon's own, through the same rows - with the lines supplied and the acts
+            // corrected: a pet told to sleep sleeps, and one told to talk talks.
+            for (word, act, level) in [
+                ("sit", "rest0", 1), ("slap", "cry", 1), ("bad", "cry", 25), ("iloveyou", "love", 1), ("mylove", "love", 30),
+                ("sleep", "sleep", 15), ("nap", "sleep", 30), ("talk", "chat", 15), ("chat", "chat", 30),
+            ] {
+                let r = t.respond(pet, level, word, 0).unwrap_or_else(|| panic!("pet {pet} knows {word} at level {level}"));
+                assert_eq!((r.success, r.act.as_str()), (true, act), "pet {pet} {word}");
+                assert!(!r.text.is_empty(), "pet {pet} {word} has a line");
+            }
+            assert_eq!(t.respond(pet, 15, "sleep", 99).unwrap().act, "what", "the refusal is the puzzled look, not hunger");
+        }
+    }
 }
