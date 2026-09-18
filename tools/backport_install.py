@@ -312,11 +312,33 @@ def to_bgra4444(rgba, w, h):
     return bytes(out)
 
 
+def pad_icon(rgba, w, h, box):
+    """`rgba` centred on a transparent `box` x `box` canvas. `(rgba, box, box)`.
+
+    **The equip tooltip anchors the image on the canvas ORIGIN and expects a cap-shaped icon:
+    ~30 tall with the origin at its bottom row.** The owner, 2026-09-18 evening, three
+    screenshots: a classic face (26x16, origin y 16) drew in the ITEM tab but its tooltip
+    image sat at the bottom-left of the preview frame, half outside it; the list cell places
+    by width and height (`FUN_141199600`: x centred, y bottom-aligned at posIcon) and was
+    fine. So every synthesised icon is a full 32x32 canvas with origin (-2, 32), the shape of
+    a cap's, and both widgets see what they were built for."""
+    if w == box and h == box:
+        return rgba, w, h
+    out = bytearray(box * box * 4)
+    x0, y0 = (box - w) // 2, (box - h) // 2
+    for y in range(h):
+        src = rgba[y * w * 4:(y + 1) * w * 4]
+        o = ((y0 + y) * box + x0) * 4
+        out[o:o + w * 4] = src
+    return bytes(out), box, box
+
+
 def fit_icon(rgba, w, h, box):
     """`rgba` scaled down to fit `box` x `box` (aspect kept; never scaled up), by area
-    averaging in premultiplied alpha so a soft edge stays a soft edge. `(rgba, w, h)`."""
+    averaging in premultiplied alpha so a soft edge stays a soft edge, then padded to the
+    box (`pad_icon`). `(rgba, box, box)`."""
     if w <= box and h <= box:
-        return rgba, w, h
+        return pad_icon(rgba, w, h, box)
     scale = max(w, h) / float(box)
     nw, nh = max(1, int(round(w / scale))), max(1, int(round(h / scale)))
     out = bytearray(nw * nh * 4)
@@ -338,7 +360,7 @@ def fit_icon(rgba, w, h, box):
             o = (y * nw + x) * 4
             if a:
                 out[o], out[o + 1], out[o + 2], out[o + 3] = r // a, g // a, b // a, a // n
-    return bytes(out), nw, nh
+    return pad_icon(bytes(out), nw, nh, box)
 
 
 def _image_names(archive):

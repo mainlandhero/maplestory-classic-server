@@ -545,6 +545,10 @@ pub unsafe fn install() {
     // The four fame messages, without the client's doubled apostrophes. ON by default;
     // `fametext=off` leaves them. crates/grap-stub/src/fametext.rs.
     crate::fametext::install();
+    // CItemInfo's id gate, `id / 10000 <= 3` -> `<= 6`, so a backported 4xxxx hair has an icon
+    // and a tooltip image like a classic one. ON by default; `lookgate=off` leaves it.
+    // crates/grap-stub/src/lookgate.rs.
+    crate::lookgate::install();
     // (2026-09-18: an `avatarmod` patch lived here for one run. It opened the 0x0138 apply,
     // which turned out to walk the user's SUMMONED map and never the player, so it could not
     // redraw anything on screen. Retired; another player's look change is `0x02AE`, a
