@@ -1575,28 +1575,13 @@
             "python C:\MapleCW\tools\backport_install.py --install"
             with the client closed (the other session does this with the rebuild), or launch
             with -NoLookItems for equips only.
-            THE APOSTROPHES (the owner, 2026-09-18, screenshot "'the owner' has raised 'Tester2''s
-            level of fame." / "You have raised 'the owner''s level of fame.": "Too many
-            apostrophes"). The quotes and the doubled possessive are the client's own
-            templates - string ids 0x00FA/0x00FB/0x0103/0x0104 in the encrypted table -
-            so the hook rewrites the four in place (fametext.rs, like the Beauty dialog's
-            colour; same length, trailing spaces). Off switch: -NoFameTextPatch.
-              up arrow on Tester2: chat says "You have raised Tester2's level of fame."
-                         (no quotes, one apostrophe), FAME reads 1 in the window;
-                         Tester2's screen: "the owner raised Tester2's level of fame." -> DONE
-              still 'the owner''s -> the table was decrypted before the hook ran; paste the
-                         FAMETEXT lines from maplecw-hook.log
-              garbled text or a cut-off line -> a byte did not take; paste the same lines
+            THE APOSTROPHES - CONFIRMED 2026-09-18 evening ("The fame message works fine
+            now"): the hook rewrites the four templates in place (fametext.rs); off switch
+            -NoFameTextPatch. Struck.
               the arrow again (either way, anyone): "can't ... anymore for today" -> DONE
               Tester2 fames the owner back: allowed (per giver) -> DONE
-              THE PET'S CELL (the owner, 2026-09-18: "the pet window for the owner's pet Lucy should
-              have a top hat showing, but in Character Info that slot is blank" - the pet
-              ITEM was sent there; it is the pet's EQUIP, worn slot 114, and its id in the
-              field before it). With a hat on the pet: the cell under the pet shows the
-              Top Hat with its icon, ReqLv as the hat's -> DONE; hover it: a SCROLLED hat
-              shows its scrolled stats (the row's own, the owner: "make sure ... all scrolled
-              information"); no hat -> the cell empty, no ReqLv line; still blank with a
-              hat on -> paste the 0x00A2 line
+              THE PET'S CELL - CONFIRMED 2026-09-18 evening ("The top hat now shows"): the
+              cell is the pet's equip from its worn row, scrolled stats included. Struck.
               Item List panel: Tester2's HAIR, FACE, then hat, coat, weapon, cash cover,
                          each with an icon -> DONE. Hover the hair: a tooltip with its
                          name -> the String.wz lookup works for a look id too
@@ -1617,27 +1602,10 @@
                          blank cells everywhere or a death with -NoLookItems -> the widget
                          rejected an equip body; paste the 0x00A2 line and client-exit.log
               nothing at all on the click -> the 0x0144 arm not reached; paste the line
-            THE OTHER CLIENTS: IN PLACE BY 0x02AE (2026-09-18, third attempt). The owner: "The
-            leave-and-enter path causes the pets to reload for that client, and it causes a
-            brief blink. That is undesirable. Please find another suitable way." Read this
-            time, not guessed: 0x0138's apply walks the user's SUMMONED map (0x03A0..0x03C5
-            pool objects), never the player - which is why 14:07 drew nothing and the hook
-            patch is retired. 0x02AE is a user-pool by-id packet on the CHAIR RELAY's own
-            router (0x02AD, confirmed on two screens): flag bit 0, then the compact look,
-            decoded straight into the pooled user and the avatar rebuilt with the call that
-            dressed it on entry. 211 + 5 per worn item; sent to the OTHER sessions with the
-            changed character's id. research/remote-redress-2026-09-18.md. NEVER ON A
-            SCREEN: [D] that the rebuild draws. Two clients, change gear / hair on one:
-              the other shows it within ~0.1 s, NO blink, the pet stays put and happy
-                         -> DONE (and the pet hat: put one on, the other's copy wears it)
-              nothing changes on the other client -> the rebuild did not draw; paste the
-                         0x02AE line from world-chN.log and the hook log's dispatch line
-                         for opcode=0x2ae; run -LookReenter meanwhile (blink, but visible)
-              the OBSERVING client dies -> the body length or a post-pass; paste the
-                         0x02AE line + its client-exit.log; -LookReenter meanwhile
-              changes, but a ring/marriage effect appears or the party window flickers
-                         -> the trailing bytes; say what you saw
-            The bag-to-bag control: shuffling a potion sends the field nothing.
+            THE OTHER CLIENTS: IN PLACE BY 0x02AE - CONFIRMED 2026-09-18 evening ("In place
+            look update is fine now"): no blink, the pet stays. The third attempt, and the
+            one that was read rather than guessed (research/remote-redress-2026-09-18.md);
+            -LookReenter is the leave + enter fallback, not needed. Struck.
 
      TH. THE FACE COUPON opens no dialog and has no tooltip preview. The face's images are
          installed and structurally identical to a classic face (checked node by node); the
@@ -2297,29 +2265,13 @@
                the old archive (the same install that carries roll/angry). "Auto Buff"
                alone -> the strip missed autoBuff; paste "wz-dump cat
                ...Item\Pet\Pet_000.wz 5002829.img" info lines.
-            0a. NO "NEW" MARK ON THE PET (2026-09-18). The owner: "Whenever I join the map for the
-               first time, I get a new item notification in my cash tab of my current
-               summoned pet." The pet item is re-sent on every field entry so CPet re-reads
-               it, and it was the one 0x0070 sent as mode 0 (an ADD, which the client marks
-               NEW); it is mode 5 now like the rest of the restored bag.
-                 log in / change map with a pet out: no highlighted cell in the Cash tab,
-                   and the pet still walks, eats and vacuums -> DONE
-                 no highlight but the pet is sad/inert until re-summoned -> mode 5 did not
-                   give CPet the active byte; say so, mode 0 comes back with the mark
-                 still highlighted -> the mark comes from somewhere else; paste the 0x0070
-                   lines for the Cash tab after the SetField
-            0. THE VACUUM AT LOGIN / MAP CHANGE (2026-09-18). The owner: "the vacuum
-               functionality does not work until the pet is re-summoned or fed at least
-               once." A re-summon and a feed both land on a pet the client has FINISHED
-               building; the field-entry batch does not, and it fixed the sad face but
-               not the vacuum. So now, on your FIRST MOVE after any field entry with a
-               pet out, the server sends the re-summon sequence once: the pet blinks out
-               and back (one blink) and its item is re-sent. Never before you move.
-                 log in with a pet out, take one step: one blink, then kill a snail a
-                 screen away - the drop flies to the pet -> fixed. Same after a portal.
-                 No blink on the first step -> the 0x00D9 did not reach the arm; paste the
-                 first three lines after the SetField in world-chN.log. A blink but still
-                 no vacuum -> timing was not it; say so, that kills the [I]
+            0a. NO "NEW" MARK ON THE PET - the pet item re-sent on field entry is mode 5
+               (2026-09-18). The owner's evening run: "Pets now work on initial summon"; no
+               word on the mark itself, so: no highlighted Cash cell on login -> struck;
+               still highlighted -> paste the Cash-tab 0x0070 lines after the SetField.
+            0. THE VACUUM AT LOGIN / MAP CHANGE - CONFIRMED 2026-09-18 evening ("Pets now
+               work on initial summon"): the re-summon on the first move after a field
+               entry. Struck.
             2. buy Lil Frieren, summon: it draws, walks, name tag, no crash -> DONE. Its
                tooltip ends "Commands: sit, slap, iloveyou, sleep, talk, roll, angry". Type
                "roll", then "angry": it rolls / looks angry (the two animations Nexon's
@@ -4632,27 +4584,16 @@ function Show-TestPlan {
         Write-Host '         worn equip and cash cover. Hair/face icons are RENDERED into the hybrid'
         Write-Host '         WZ by backport_install.py --install (client closed) - needed first, or'
         Write-Host '         launch with -NoLookItems for equips only.'
-        Write-Host '         APOSTROPHES: the hook rewrites the four fame templates in place (fametext;' -ForegroundColor Yellow
-        Write-Host '         -NoFameTextPatch off). "You have raised Tester2''s level of fame." and' -ForegroundColor Yellow
-        Write-Host '         "the owner raised Tester2''s level of fame." - no quotes, one apostrophe -> DONE' -ForegroundColor Green
-        Write-Host '           still ''the owner''''s or garbled -> paste the FAMETEXT lines from maplecw-hook.log' -ForegroundColor Yellow
+        Write-Host '         APOSTROPHES: CONFIRMED (fametext in the hook; -NoFameTextPatch off).' -ForegroundColor DarkGray
         Write-Host '           up on Tester2: "raised", FAME 1 in the window, Tester2 sees it; again ->' -ForegroundColor Green
         Write-Host '           "not anymore for today" -> DONE' -ForegroundColor Green
         Write-Host '           Item List: hair, face, hat/coat/weapon/cover, all with icons -> DONE' -ForegroundColor Green
         Write-Host '           (Fern''s Staff + Fern Hair were blank: covers had no info/icon, the hair' -ForegroundColor Yellow
         Write-Host '           icon was 46x56; both fixed in the install. Still blank -> say which)' -ForegroundColor Yellow
-        Write-Host '           the cell under the PET: its Top Hat with icon (scrolled stats on hover)' -ForegroundColor Green
-        Write-Host '           -> DONE; blank with a hat on -> paste the 0x00A2 line' -ForegroundColor Yellow
+        Write-Host '           the cell under the PET: its Top Hat -> CONFIRMED' -ForegroundColor DarkGray
         Write-Host '           hair/face blank, equips fine -> icons not installed; a DEATH on open ->' -ForegroundColor Yellow
         Write-Host '           relaunch -NoLookItems, paste client-exit.log; blank everywhere -> 0x00A2 line' -ForegroundColor Yellow
-        Write-Host '         OTHER CLIENTS: IN PLACE BY 0x02AE (third attempt). 0x0138 walks the SUMMONED' -ForegroundColor Magenta
-        Write-Host '         map, never the player (read, not guessed; hook patch retired). 0x02AE rides' -ForegroundColor Magenta
-        Write-Host '         the chair relay''s router: look decoded into the pooled user, avatar rebuilt.' -ForegroundColor Magenta
-        Write-Host '           other client: new gear/hair in ~0.1s, NO blink, pet stays -> DONE' -ForegroundColor Green
-        Write-Host '           nothing changes -> paste the 0x02AE line + hook dispatch opcode=0x2ae;' -ForegroundColor Yellow
-        Write-Host '             -LookReenter meanwhile (blink, but visible)' -ForegroundColor Yellow
-        Write-Host '           the OBSERVER dies -> paste 0x02AE line + client-exit.log; -LookReenter' -ForegroundColor Red
-        Write-Host '           a ring/marriage effect or party-window flicker -> say what you saw'
+        Write-Host '         OTHER CLIENTS IN PLACE BY 0x02AE: CONFIRMED - no blink, pet stays.' -ForegroundColor DarkGray
         Write-Host '  TH. FACE COUPON: no dialog, no preview. Images are fine; the'
         Write-Host '      ID is the one difference (22039; classic faces end at 21825).'
         Write-Host '      One chat line settles it: !face 22039' -ForegroundColor Yellow
@@ -5473,16 +5414,9 @@ function Show-TestPlan {
         Write-Host '            no suck-up -> paste PetPickupRange + item bytes 61..63' -ForegroundColor Yellow
         Write-Host '         b. buy Auto Move (5190002) then Expanded (5190003) - a chain; each' -ForegroundColor Green
         Write-Host '            lists (Learned) and changes the pet WALKING to drops; say what moves' -ForegroundColor Green
-        Write-Host '       NO "NEW" MARK ON THE PET (2026-09-18): the pet item re-sent on field' -ForegroundColor Yellow
-        Write-Host '         entry is mode 5 now, like the rest of the bag (mode 0 = the mark).' -ForegroundColor Yellow
-        Write-Host '           no highlighted Cash cell, pet still works -> DONE' -ForegroundColor Green
-        Write-Host '           pet sad/inert until re-summoned -> mode 5 lost the active byte' -ForegroundColor Yellow
-        Write-Host '           still highlighted -> paste the Cash-tab 0x0070 lines after SetField' -ForegroundColor Yellow
-        Write-Host '       PET VACUUM AT LOGIN/MAP CHANGE (2026-09-18): on your FIRST MOVE after' -ForegroundColor Magenta
-        Write-Host '         any field entry the pet blinks out and back once (the re-summon that'
-        Write-Host '         works, sent when the client is provably live). Then a drop a screen'
-        Write-Host '         away flies to it -> fixed. No blink on the first step -> paste the' -ForegroundColor Yellow
-        Write-Host '         lines after the SetField; blink but no vacuum -> timing was not it.' -ForegroundColor Yellow
+        Write-Host '       NO "NEW" MARK ON THE PET: mode 5 on the re-send. No highlighted Cash cell' -ForegroundColor Yellow
+        Write-Host '         on login -> struck; still highlighted -> paste the Cash-tab 0x0070 lines.' -ForegroundColor Yellow
+        Write-Host '       PET VACUUM AT LOGIN/MAP CHANGE: CONFIRMED ("Pets now work on initial summon").' -ForegroundColor DarkGray
         Write-Host '       COLLAB PETS + EVERY PET EQUIP (2026-09-17, installed; rebuild the client'
         Write-Host '         package). Pets tab: Lil Frieren/Fern/Stark/Ubel at 1000; Pet Equip:' -ForegroundColor Yellow
         Write-Host '         all 10 hats + 4 weapons at 100; ALL 15 pets'' icons carry the purple P' -ForegroundColor Yellow
