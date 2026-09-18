@@ -2078,7 +2078,13 @@
             1. Pets tab: the four at 1000, and EVERY pet's icon - all fifteen - drawn WITH
                the purple "P" badge at the bottom-right (Nexon's own CashItem_label/9,
                baked into the icon pixels, 2026-09-18: "every pet is now a Petite Luna
-               pet"); the same badge on the Cash-tab icon once bought -> fixed. And NO
+               pet"); the same badge on the Cash-tab icon once bought, and NOT on the pet
+               walking on the field (the badge was on a canvas two modern pets reuse as a
+               frame; only icon/iconRaw carry it now) -> fixed. THIS NEEDS
+               "python toolsackport_install.py --install" WITH THE CLIENT CLOSED - the
+               2026-09-18 evening install was refused because the client was open, and
+               the archives on disk are the earlier build (no roll/angry, badge on the
+               field pet). And NO
                "3 / 7 / 90 day(s)" line on any pet's shop tooltip (info/life is 0 on all
                fifteen; the classic tooltip has no "Unlimited" wording, it just omits the
                line) -> fixed. A days line -> the old archive. A summoned classic pet
@@ -5170,7 +5176,9 @@ function Show-TestPlan {
         Write-Host '       COLLAB PETS + EVERY PET EQUIP (2026-09-17, installed; rebuild the client'
         Write-Host '         package). Pets tab: Lil Frieren/Fern/Stark/Ubel at 1000; Pet Equip:' -ForegroundColor Yellow
         Write-Host '         all 10 hats + 4 weapons at 100; ALL 15 pets'' icons carry the purple P' -ForegroundColor Yellow
-        Write-Host '         badge (shop AND bag) and NO "N day(s)" tooltip line -> fixed.' -ForegroundColor Yellow
+        Write-Host '         badge (shop AND bag, NOT on the walking pet) and NO "N day(s)" line' -ForegroundColor Yellow
+        Write-Host '         -> fixed. NEEDS backport_install.py --install WITH THE CLIENT CLOSED:' -ForegroundColor Red
+        Write-Host '         the last install was refused (client open); disk has the older build.' -ForegroundColor Red
         Write-Host '         A classic pet summoned INVISIBLE -> life 0 was it after all; paste.' -ForegroundColor Yellow
         Write-Host '         Buy + summon Lil Frieren: it' -ForegroundColor Yellow
         Write-Host '         draws, tooltip lists 7 commands, answers "roll"/"angry"/"sleep"/"talk"' -ForegroundColor Yellow

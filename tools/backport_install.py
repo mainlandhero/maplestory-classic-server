@@ -188,7 +188,16 @@ def badge_pet_icons(build_dir, pet_id, pet_name, label, canvases):
     out_dir = os.path.join(build_dir, "petite-%d" % pet_id)
     os.makedirs(out_dir, exist_ok=True)
     rows = []
+    # **Only `icon` and `iconRaw`.** The owner, 2026-09-18, with Lil Frieren on the field: *"The
+    # collaboration pets have the P icons on them as part of the animation. This is
+    # undesirable."* The modern pets reuse `info/iconRawD` as an animation FRAME - eight of
+    # Lil Frieren's and three of Lil Fern's stubs (`stand0/0`, `chat/0`, ...) outlink to it
+    # [L] - so a badge on it walks around. `iconD`/`iconRawD` are the dead-doll icons, and a
+    # pet with `life 0` is never dead here, so neither is ever shown: left as Nexon drew
+    # them. No classic pet shares an icon with a frame; the rule is the same for all fifteen.
     for node, (w, h, fmt, payload) in sorted(canvases.items()):
+        if node not in ("icon", "iconRaw"):
+            continue
         rgba = wz_png.to_rgba(wz_png.inflate(payload), w, h, fmt)
         badged = composite(rgba, w, h, label, lw, lh, w - lw - LABEL_INSET, h - lh - LABEL_INSET)
         bgra = bytearray(badged)
@@ -200,7 +209,7 @@ def badge_pet_icons(build_dir, pet_id, pet_name, label, canvases):
         rows.append("info/%s\tcanvas\t%d,%d,2,%s" % (node, w, h, payload_out))
     tsv = os.path.join(out_dir, "badge.tsv")
     with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write("# %s: UI/CashShop.img/CashItem_label/%d (Nexon's Petite badge) composited into the four icons (BGRA8888)\n" % (pet_name, PETITE_LABEL_NODE))
+        fh.write("# %s: UI/CashShop.img/CashItem_label/%d (Nexon's Petite badge) composited into icon and iconRaw (BGRA8888); the D icons are animation frames on two modern pets and never shown\n" % (pet_name, PETITE_LABEL_NODE))
         fh.write("\n".join(rows) + "\n")
     return tsv, out_dir
 CLASSIC = os.path.join(REPO, "client-patched", "Data")
@@ -648,16 +657,12 @@ def main():
                                                extract_pet_icons(EXTRACT, it["id"]))
         add("Item/Pet/_Canvas", "patch\t%d.img\t%s" % (it["id"], badge_tsv))
         print("  badge    %8d  %s -> %s" % (it["id"], it["name"], os.path.relpath(badge_dir, REPO)))
-    # ...and the classic eleven, whose canvas images are already in the base archive: the
-    # icons come out of the PRISTINE `_Canvas` (the .bak, or the archive itself before any
-    # install), get the same label, and go back with a `patch` on the existing image.
-    pet_canvas_base = os.path.join(CLASSIC, "Item", "Pet", "_Canvas", "_Canvas_000.wz")
-    if os.path.exists(pet_canvas_base + ".bak"):
-        pet_canvas_base += ".bak"
         tsv = os.path.join(args.build_dir, "pet-%07d-strip.tsv" % it["id"])
         with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
             fh.write("# %s: modern-only leaves the classic client would look up and not find\n" % it["name"])
-            for leaf in ["chatBalloon", "nameTag", "setItemID", "sweepForDrop"]:
+            # `autoBuff` too (2026-09-18, the other session, for the owner: the tooltip listed
+            # Auto Buff and Auto Move as skills; a collab pet declares only Item Pouch).
+            for leaf in ["chatBalloon", "nameTag", "setItemID", "sweepForDrop", "autoBuff"]:
                 fh.write("info/%s\tdel\n" % leaf)
             # The commands added for the animations the modern table never plays (`roll`,
             # `angry`) - the owner, 2026-09-17. An interact entry in the pet's own image, shaped
@@ -683,6 +688,12 @@ def main():
                         fh.write("%s/%s/0/%d\tstr\t%s_%s%d\n" % (base, kind, i, t["key"], kind[0], i + 1))
         add("Item/Pet", "patch\t%d.img\t%s" % (it["id"], tsv))
         print("  pet      %8d  %s (+%d commands)" % (it["id"], it["name"], len(it.get("extra_commands", []))))
+    # ...and the classic eleven, whose canvas images are already in the base archive: the
+    # icons come out of the PRISTINE `_Canvas` (the .bak, or the archive itself before any
+    # install), get the same label, and go back with a `patch` on the existing image.
+    pet_canvas_base = os.path.join(CLASSIC, "Item", "Pet", "_Canvas", "_Canvas_000.wz")
+    if os.path.exists(pet_canvas_base + ".bak"):
+        pet_canvas_base += ".bak"
     for pet_id, pet_name in pets:
         badge_tsv, badge_dir = badge_pet_icons(args.build_dir, pet_id, pet_name, label,
                                                classic_pet_icons(pet_canvas_base, args.build_dir, pet_id))
