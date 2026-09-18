@@ -168,6 +168,13 @@ pub struct Config {
     /// user's summoned map, never the player - measured inert, then read.)
     pub look_change_reenter: bool,
 
+    /// **List the hair and the face in another player's Character Info ITEM tab** (default
+    /// `true`; `--no-look-items` turns it off). A hair or face entry is an equip slot under
+    /// the look id, and its icon is one `tools/backport_install.py` renders into the hybrid
+    /// Hair and Face archives (`look_icons`) - on a client without that install the entry
+    /// asks the widget for an icon that is not there. The owner, 2026-09-18. `session/charinfo.rs`.
+    pub charinfo_look_items: bool,
+
     /// Where every portal leads, keyed by `(map, portal name)`.
     ///
     /// Generated from the client's own `Map.wz` by `tools/dump_portals.py` - the data is the
@@ -2380,6 +2387,7 @@ impl Default for Config {
             pet_move_action: None,
             broadcast_pets: true,
             look_change_reenter: false,
+            charinfo_look_items: true,
             chairs: HashMap::new(),
             portals: HashMap::new(),
             portal_index: HashMap::new(),

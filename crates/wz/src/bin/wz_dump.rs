@@ -440,6 +440,40 @@ fn cmd_build(out: &Path, version: &str, spec: &Path, base: Option<&Path>) -> wz:
                             n += 1;
                             continue;
                         }
+                        // `newcanvas`: a canvas node that was NOT there, with its pixels
+                        // inline and an `origin` child - `w,h,format,<payload file>,ox,oy`.
+                        // The hair and face icons (2026-09-18): this client's Hair and Face
+                        // images carry no `info/icon`, so the Character Info ITEM tab could
+                        // not list them; the installer renders one from the part's own
+                        // canvases. Refuses to overwrite a node that exists - that is what
+                        // `canvas` is for, and a silent replace would hide a wrong path.
+                        if cols[1] == "newcanvas" {
+                            let Some(cols2) = cols.get(2) else { return Err(bad()) };
+                            let parts: Vec<&str> = cols2.splitn(6, ',').collect();
+                            if parts.len() != 6 {
+                                eprintln!("line {}: newcanvas row wants w,h,format,<payload file>,ox,oy: {pl:?}", lineno + 1);
+                                return Err(bad());
+                            }
+                            let num = |i: usize| parts[i].trim().parse::<i32>().map_err(|_| bad());
+                            let (w, h, fmt, ox, oy) = (num(0)?, num(1)?, num(2)?, num(4)?, num(5)?);
+                            let payload = io(Path::new(parts[3].trim()), std::fs::read(parts[3].trim()))?;
+                            if target.get_path(cols[0]).is_some() {
+                                eprintln!("line {}: {name} already has a node at {} - use `canvas` to replace pixels", lineno + 1, cols[0]);
+                                return Err(bad());
+                            }
+                            target.set_path(
+                                cols[0],
+                                Owned::Canvas {
+                                    width: w,
+                                    height: h,
+                                    format: fmt,
+                                    payload,
+                                    children: vec![("origin".to_string(), Owned::Vector(ox, oy))],
+                                },
+                            );
+                            n += 1;
+                            continue;
+                        }
                         // `canvas`: new pixels for a canvas that is already there. The Petite
                         // pets' "P" badge, composited into the icon by the installer.
                         if cols[1] == "canvas" {

@@ -8912,12 +8912,14 @@ fn double_clicking_another_player_answers_with_their_character_info() {
     chr8.level = 8;
     store.save_character_progress(&chr8).unwrap();
 
-    // No pet: the 60-byte body plus the name, level 8, job 0, pet item id 0, panel closed.
+    // No pet: the 60-byte body plus the name, level 8, job 0, pet item id 0, panel closed -
+    // plus the two look entries (hair, face) the ITEM tab lists since 2026-09-18 evening.
     let out = me.handle(&character_info_request(their_id, false));
     assert_eq!(out.len(), 1, "{out:?}");
     assert_eq!(out[0].opcode, net::charinfo::CHARACTER_INFO);
     let b = &out[0].body;
-    assert_eq!(b.len(), net::charinfo::CHARACTER_INFO_BASE_LEN + "Tester2".len());
+    let look_slot = net::opcode::equipped_item(chr8.hair, &net::opcode::EquipStats::default()).len();
+    assert_eq!(b.len(), net::charinfo::CHARACTER_INFO_BASE_LEN + "Tester2".len() + 2 * look_slot);
     assert_eq!(&b[..4], &[0, 0, 0, 0], "result 0: show it");
     assert_eq!(u32::from_le_bytes(b[4..8].try_into().unwrap()), their_id);
     assert_eq!(&b[10..17], b"Tester2");
@@ -10155,20 +10157,34 @@ fn fame_reaches_both_players_once_a_day_and_the_window_lists_what_they_wear() {
     back.extend_from_slice(&net::fame::give_fame_request(my_id, false));
     assert_eq!(them.handle(&back)[0].body, net::fame::fame_given("Wisp", false, -1), "a defame goes below zero");
 
-    // The window: fame 1, and once Tester2 wears a hat, one item in the ITEM tab.
+    // The window: fame 1, and once Tester2 wears a hat, the ITEM tab is hair, face, hat -
+    // the look first, as equip slots under the look ids, then what is worn.
+    store.set_character_look(their_id, Some(30_030), Some(20_000)).unwrap();
     store.set_inventory_slot(their_id, store::InventoryType::Equip, 1, &store::Item::equip(1_002_357)).unwrap();
     store.equip_from_bag(their_id, 1, 1).unwrap();
     let out: Vec<Reply> = me.handle(&character_info_request(their_id, false)).into_iter().filter(|r| r.opcode == net::charinfo::CHARACTER_INFO).collect();
     assert_eq!(out.len(), 1);
     let b = &out[0].body;
     assert_eq!(u32::from_le_bytes(b[25..29].try_into().unwrap()), 1, "fame 1 in the window");
-    let hat = net::opcode::equipped_item(1_002_357, &net::opcode::EquipStats::default());
+    let plain = net::opcode::EquipStats::default();
+    let entries: Vec<Vec<u8>> = [30_030, 20_000, 1_002_357].iter().map(|id| net::opcode::equipped_item(*id, &plain)).collect();
+    let total: usize = entries.iter().map(|e| e.len()).sum();
     let base = net::charinfo::CHARACTER_INFO_BASE_LEN + "Tester2".len();
-    assert_eq!(b.len(), base + hat.len(), "one whole equip slot behind the count");
-    // The count sits where the record count used to start: 60 + 7 - 9 (count, record count, flag).
+    assert_eq!(b.len(), base + total, "three whole equip slots behind the count");
+    // The count sits 9 bytes before the end of the base: count, record count, flag.
     let count_at = base - 9;
-    assert_eq!(u32::from_le_bytes(b[count_at..count_at + 4].try_into().unwrap()), 1, "item count 1");
-    assert_eq!(&b[count_at + 4..count_at + 4 + hat.len()], &hat[..], "the hat, type byte first");
+    assert_eq!(u32::from_le_bytes(b[count_at..count_at + 4].try_into().unwrap()), 3, "hair, face, hat");
+    let mut at = count_at + 4;
+    for (what, e) in ["hair 30030", "face 20000", "the hat"].iter().zip(&entries) {
+        assert_eq!(&b[at..at + e.len()], &e[..], "{what}, type byte first");
+        at += e.len();
+    }
+    // Equips only, for a client without the rendered hair/face icons.
+    let mut plain_config = (*me.config).clone();
+    plain_config.charinfo_look_items = false;
+    me.config = Arc::new(plain_config);
+    let out: Vec<Reply> = me.handle(&character_info_request(their_id, false)).into_iter().filter(|r| r.opcode == net::charinfo::CHARACTER_INFO).collect();
+    assert_eq!(u32::from_le_bytes(out[0].body[count_at..count_at + 4].try_into().unwrap()), 1, "--no-look-items: the hat alone");
 }
 
 /// **A negative amount must not credit the player.**
