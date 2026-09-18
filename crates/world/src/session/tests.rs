@@ -9915,6 +9915,52 @@ fn consolidate_item_merges_the_stacks_then_slides_them_up_and_answers_with_0x007
     assert_eq!(again[0].body[0], 1, "and the latch still clears");
 }
 
+/// **Sort Items: the consolidate, then the swaps that put the biggest stack first and break
+/// ties by name - each one a mode-2 onto an occupied slot, which is what a drag-swap is
+/// answered with.** The owner, 2026-09-18: *"Sort Items should sort by quantity, then name."*
+/// `Config::default()` has no item names, so every name is empty and the tie-break falls to
+/// the item id; the store test covers the names. Through `handle`, so the arm is covered.
+#[test]
+fn sort_items_consolidates_then_swaps_the_tab_into_order_and_answers_with_0x0070s() {
+    let (mut s, store, id) = claimed_session();
+    let usable = store::InventoryType::Use;
+    for (slot, item) in [
+        (1u16, store::Item::bundle(2_000_000, 54)),
+        (2, store::Item::bundle(2_010_000, 21)),
+        (5, store::Item::bundle(2_000_000, 60)),
+        (11, store::Item::bundle(2_000_002, 100)),
+    ] {
+        store.set_inventory_slot(id, usable, slot, &item).unwrap();
+    }
+    let mut packet = net::inventory::CLIENT_SORT_ITEMS.to_le_bytes().to_vec();
+    packet.extend_from_slice(&[0x5c, 0xc5, 0x4b, 0x00, usable.as_u8()]);
+
+    let out = s.handle(&packet);
+    assert!(out.iter().all(|r| r.opcode == net::inventory::INVENTORY_OPERATION && r.body[0] == 1), "{out:?}");
+    let entries: Vec<(u8, i16, i16)> = out
+        .iter()
+        .map(|r| (r.body[7], i16::from_le_bytes([r.body[9], r.body[10]]), i16::from_le_bytes([r.body[11], r.body[12]])))
+        .collect();
+    // The consolidate's four, then the swaps: after the slide the tab is red 100, orange 21,
+    // red 14, blue 100; wanted is red 100 (id 2000000 before 2000002 with no names), blue
+    // 100, orange 21, red 14 - one swap of slots 3 and 4... then 2 and 3.
+    assert_eq!(entries[..4], [(1, 1, 100), (1, 5, 14), (2, 5, 3), (2, 11, 4)]);
+    assert!(entries[4..].iter().all(|e| e.0 == net::inventory::MODE_MOVE), "{entries:?}");
+    let rows: Vec<(u16, u32, u16)> = store
+        .bag_items(id, usable)
+        .unwrap()
+        .into_iter()
+        .map(|i| (i.slot, i.item.item_id, i.item.kind.quantity()))
+        .collect();
+    assert_eq!(rows, vec![(1, 2_000_000, 100), (2, 2_000_002, 100), (3, 2_010_000, 21), (4, 2_000_000, 14)]);
+
+    // Sorted already: the nCount-0 unlock and nothing else.
+    let again = s.handle(&packet);
+    assert_eq!(again.len(), 1, "{again:?}");
+    assert_eq!(again[0].body.len(), net::inventory::INVENTORY_REJECTED_LEN);
+    assert_eq!(again[0].body[0], 1);
+}
+
 /// **A negative amount must not credit the player.**
 ///
 /// `0x0143`'s amount is a signed `i32` and the client's own check (`cmp rdi, rax / jle`)

@@ -1383,6 +1383,34 @@ impl Store {
         inv_type: InventoryType,
         max_stack: &dyn Fn(u32) -> u16,
     ) -> Result<Vec<StackChange>> {
+        self.rearrange_bag(character_id, inv_type, max_stack, &|stacks| plan_consolidation(stacks))
+    }
+
+    /// **Sort Items: consolidate, then put the tab in order - biggest stack first, then by
+    /// name.** The owner, 2026-09-18: *"Sort Items should sort by quantity, then name."* The
+    /// order is [`plan_sort`]'s; `name_of` is the item name table, which lives in the world
+    /// crate for the same reason `max_stack` does. Same transaction shape and the same
+    /// change list as [`Store::consolidate_bag`], plus the swaps that put the survivors in
+    /// order.
+    pub fn sort_bag(
+        &self,
+        character_id: u32,
+        inv_type: InventoryType,
+        max_stack: &dyn Fn(u32) -> u16,
+        name_of: &dyn Fn(u32) -> String,
+    ) -> Result<Vec<StackChange>> {
+        self.rearrange_bag(character_id, inv_type, max_stack, &|stacks| plan_sort(stacks, name_of))
+    }
+
+    /// The shared transaction under [`Store::consolidate_bag`] and [`Store::sort_bag`]: read
+    /// the tab as [`Stack`]s, let `plan` say what changes, write exactly that, in order.
+    fn rearrange_bag(
+        &self,
+        character_id: u32,
+        inv_type: InventoryType,
+        max_stack: &dyn Fn(u32) -> u16,
+        plan: &dyn Fn(&[Stack]) -> Vec<StackChange>,
+    ) -> Result<Vec<StackChange>> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let bag = read_bag(&tx, character_id)?;
@@ -1399,7 +1427,7 @@ impl Store {
                 },
             })
             .collect();
-        let changes = plan_consolidation(&stacks);
+        let changes = plan(&stacks);
         for c in &changes {
             match *c {
                 StackChange::Quantity { slot, quantity } => {
@@ -1423,6 +1451,7 @@ impl Store {
                         rusqlite::params![i64::from(character_id), inv_type.as_u8(), from, to],
                     )?;
                 }
+                StackChange::Swapped { a, b } => swap_slots(&tx, character_id, inv_type, a, b)?,
             }
         }
         tx.commit()?;
@@ -1483,6 +1512,12 @@ pub enum StackChange {
     /// The stack in `from` slid up to `to`, the first slot free once everything before it had
     /// slid. Always `to < from`, and always listed after every `Quantity` and `Emptied`.
     Moved { from: u16, to: u16 },
+    /// The stacks in `a` and `b` - **both occupied** - changed places. Only [`plan_sort`]
+    /// produces these, after every `Moved`, so by then the tab has no gaps and every swap is
+    /// between two full slots. On the wire it is the same mode-2 move a drag onto an occupied
+    /// slot is answered with, which the client draws as a swap (measured: every drag-swap
+    /// since 2026-08).
+    Swapped { a: u16, b: u16 },
 }
 
 /// **The consolidation, as arithmetic.** Walks `stacks` in slot order; each stack is poured,
@@ -1536,6 +1571,57 @@ pub fn plan_consolidation(stacks: &[Stack]) -> Vec<StackChange> {
             out.push(StackChange::Moved { from: s.slot, to: next });
         }
         next += 1;
+    }
+    out
+}
+
+/// **The sort, as arithmetic.** [`plan_consolidation`] first - merge, then slide, so the
+/// survivors sit in `1..=n` - and then the survivors are put in order by a sequence of swaps:
+/// for each slot `k` from 1, if it does not already hold the stack that belongs there, swap
+/// it with the slot that does. At most `n - 1` swaps, each between two occupied slots.
+///
+/// **The order** - the owner, 2026-09-18: *"Sort Items should sort by quantity, then name."*
+/// Largest stack first (`quantity` descending), then name A to Z (case-insensitive), then
+/// item id, then the slot the stack was in - so the result is total and two clicks agree.
+/// "Largest first" is the reading taken of "by quantity"; it is one comparator here and
+/// nothing else knows the direction.
+pub fn plan_sort(stacks: &[Stack], name_of: &dyn Fn(u32) -> String) -> Vec<StackChange> {
+    let mut out = plan_consolidation(stacks);
+    // Replay the merge and the slide to know what sits where before the swaps.
+    let mut work: Vec<Stack> = stacks.to_vec();
+    work.sort_by_key(|s| s.slot);
+    for c in &out {
+        match *c {
+            StackChange::Quantity { slot, quantity } => {
+                work.iter_mut().find(|s| s.slot == slot).expect("planned from these").quantity = quantity;
+            }
+            StackChange::Emptied { slot } => work.retain(|s| s.slot != slot),
+            StackChange::Moved { from, to } => {
+                work.iter_mut().find(|s| s.slot == from).expect("planned from these").slot = to;
+            }
+            StackChange::Swapped { .. } => unreachable!("consolidation never swaps"),
+        }
+    }
+    work.sort_by_key(|s| s.slot);
+    // `work[k - 1]` is what slot k holds now; `wanted` is what it should hold.
+    let mut wanted: Vec<Stack> = work.clone();
+    wanted.sort_by(|x, y| {
+        y.quantity
+            .cmp(&x.quantity)
+            .then_with(|| name_of(x.item_id).to_lowercase().cmp(&name_of(y.item_id).to_lowercase()))
+            .then_with(|| x.item_id.cmp(&y.item_id))
+            .then_with(|| x.slot.cmp(&y.slot))
+    });
+    // Stacks are told apart by the slot they held after the slide, which is unique.
+    let mut now: Vec<u16> = work.iter().map(|s| s.slot).collect(); // now[k-1] = id of stack in slot k
+    for (k, want) in wanted.iter().enumerate() {
+        let here = now[k];
+        if here == want.slot {
+            continue;
+        }
+        let other = now.iter().position(|&id| id == want.slot).expect("every stack is somewhere");
+        now.swap(k, other);
+        out.push(StackChange::Swapped { a: (other + 1) as u16, b: (k + 1) as u16 });
     }
     out
 }
@@ -2458,6 +2544,87 @@ mod tests {
         );
     }
 
+    /// **Sort, as arithmetic.** The owner's Use tab (arrows 325 and 350, red 54, orange 21, scroll
+    /// 6, apple 3, orange 7, blue 100) plus a second red stack to merge: after the merges
+    /// (the two reds, the two oranges) and the slide, the swaps put the biggest stack first
+    /// and break ties by name.
+    #[test]
+    fn sort_merges_slides_then_puts_the_biggest_stack_first_and_ties_by_name() {
+        let s = |slot, item_id, quantity| Stack { slot, item_id, quantity, cap: 100 };
+        let name = |id: u32| -> String {
+            match id {
+                2_060_000 => "Arrow for Bow",
+                2_061_000 => "Arrow for Crossbow",
+                2_000_000 => "Red Potion",
+                2_010_000 => "Orange",
+                2_040_000 => "Scroll",
+                2_010_001 => "Apple",
+                2_000_002 => "Blue Potion",
+                _ => "?",
+            }
+            .to_string()
+        };
+        let plan = plan_sort(
+            &[
+                s(1, 2_060_000, 325),
+                s(2, 2_061_000, 350),
+                s(3, 2_000_000, 54),
+                s(4, 2_010_000, 21),
+                s(5, 2_040_000, 6),
+                s(6, 2_010_001, 3),
+                s(7, 2_010_000, 7),
+                s(11, 2_000_002, 100),
+                s(12, 2_000_000, 46), // merges into slot 3 -> red 100
+            ],
+            &name,
+        );
+        // Replay the plan on a model of the tab and check the END state, which is the claim;
+        // the exact swap sequence is an implementation detail.
+        let mut tab: std::collections::BTreeMap<u16, (u32, u16)> = [
+            (1, (2_060_000, 325)), (2, (2_061_000, 350)), (3, (2_000_000, 54)), (4, (2_010_000, 21)),
+            (5, (2_040_000, 6)), (6, (2_010_001, 3)), (7, (2_010_000, 7)), (11, (2_000_002, 100)),
+            (12, (2_000_000, 46)),
+        ]
+        .into_iter()
+        .collect();
+        let mut phase = 0; // 0 quantities/empties, 1 slides, 2 swaps - never backwards
+        for c in &plan {
+            match *c {
+                StackChange::Quantity { slot, quantity } => { assert_eq!(phase, 0); tab.get_mut(&slot).unwrap().1 = quantity; }
+                StackChange::Emptied { slot } => { assert_eq!(phase, 0); tab.remove(&slot).unwrap(); }
+                StackChange::Moved { from, to } => {
+                    assert!(phase <= 1); phase = 1;
+                    let v = tab.remove(&from).unwrap();
+                    assert!(tab.insert(to, v).is_none(), "a slide lands on an empty slot");
+                }
+                StackChange::Swapped { a, b } => {
+                    assert!(phase <= 2); phase = 2;
+                    let (x, y) = (tab.remove(&a).expect("occupied"), tab.remove(&b).expect("occupied"));
+                    tab.insert(a, y);
+                    tab.insert(b, x);
+                }
+            }
+        }
+        let rows: Vec<(u16, u32, u16)> = tab.iter().map(|(k, (id, q))| (*k, *id, *q)).collect();
+        assert_eq!(
+            rows,
+            vec![
+                (1, 2_061_000, 350), // Arrow for Crossbow
+                (2, 2_060_000, 325), // Arrow for Bow
+                (3, 2_000_002, 100), // Blue Potion   - 100 ties with red: "Blue" before "Red"
+                (4, 2_000_000, 100), // Red Potion
+                (5, 2_010_000, 28),  // Orange - the two stacks merged first
+                (6, 2_040_000, 6),   // Scroll
+                (7, 2_010_001, 3),   // Apple
+            ]
+        );
+        assert!(plan.iter().filter(|c| matches!(c, StackChange::Swapped { .. })).count() <= 7, "at most n - 1 swaps");
+        // Already sorted: nothing at all.
+        assert!(plan_sort(&[s(1, 2_061_000, 350), s(2, 2_060_000, 325)], &name).is_empty());
+        // A tie on quantity AND name (two full stacks of one item) keeps slot order.
+        assert!(plan_sort(&[s(1, 2_010_000, 100), s(2, 2_010_000, 100)], &name).is_empty());
+    }
+
     /// **And on the rows.** The transaction writes exactly the plan: the quantities land, the
     /// emptied slot is gone, the equip and the pet are where they were, and a second call
     /// finds nothing to do.
@@ -2492,6 +2659,20 @@ mod tests {
         assert_eq!(store.bag_items(chr.id, InventoryType::Equip).unwrap().len(), 2, "equips are not stacks");
         assert!(store.consolidate_bag(chr.id, etc, &cap).unwrap().is_empty(), "nothing left to merge");
         assert!(store.consolidate_bag(chr.id, InventoryType::Equip, &cap).unwrap().is_empty());
+
+        // Sort the same tab: 100 / 100 / 2 / 20 / 7 -> 100, 100, 20, 7, 2 with the swaps
+        // written through `swap_slots`, and a second sort finds nothing.
+        let name = |id: u32| format!("item {id}");
+        let changes = store.sort_bag(chr.id, etc, &cap, &name).unwrap();
+        assert!(changes.iter().all(|c| matches!(c, StackChange::Swapped { .. })), "{changes:?}");
+        let rows: Vec<(u16, u32, u16)> = store
+            .bag_items(chr.id, etc)
+            .unwrap()
+            .into_iter()
+            .map(|i| (i.slot, i.item.item_id, i.item.kind.quantity()))
+            .collect();
+        assert_eq!(rows, vec![(1, 4_000_000, 100), (2, 4_000_000, 100), (3, 4_000_000, 20), (4, 4_000_004, 7), (5, 4_000_001, 2)]);
+        assert!(store.sort_bag(chr.id, etc, &cap, &name).unwrap().is_empty());
     }
 
     /// Equips never stack, whatever `max_stack` says.

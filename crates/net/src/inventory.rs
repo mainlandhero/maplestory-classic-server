@@ -41,8 +41,14 @@ pub const CLIENT_INVENTORY_MOVE: u16 = 0x0107;
 /// the tab the way the real result would.
 pub const CLIENT_GATHER_ITEMS: u16 = 0x0105;
 
-/// The inventory tab a [`CLIENT_GATHER_ITEMS`] asks about: `1` Equip .. `5` Cash. `None` when
-/// the body is short.
+/// **Sort Items** - the button beside Consolidate. The same five bytes (`u32 tick, u8
+/// invType`), builder `FUN_142cc5710`, first seen 2026-09-18 as `5cc54b00 01` for the Equip
+/// tab. Latches like its sibling and is answered the same way, with `0x0070`s: the
+/// consolidate's, then one mode-2 per swap that puts the tab in order.
+pub const CLIENT_SORT_ITEMS: u16 = 0x0106;
+
+/// The inventory tab a [`CLIENT_GATHER_ITEMS`] or [`CLIENT_SORT_ITEMS`] asks about: `1` Equip
+/// .. `5` Cash. `None` when the body is short.
 pub fn parse_gather_request(body: &[u8]) -> Option<u8> {
     body.get(4).copied()
 }

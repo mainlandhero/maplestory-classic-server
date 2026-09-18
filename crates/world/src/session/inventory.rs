@@ -453,25 +453,46 @@ impl Session {
     /// would have merged, no further. A tab with nothing to merge is still answered, with
     /// the nCount-0 `0x0070`: the request latches the client.
     pub(super) fn on_gather_items(&mut self, payload: &[u8]) -> Vec<Reply> {
+        self.rearrange_tab(payload, false)
+    }
+
+    /// **Sort Items.** The consolidate, then the tab in order: biggest stack first, then name
+    /// A to Z (`store::plan_sort` holds the comparator). The owner, 2026-09-18: *"Sort Items
+    /// should sort by quantity, then name."* The swaps go out as the same bag-to-bag mode-2
+    /// move a drag onto an occupied slot is answered with, which the client draws as a swap.
+    pub(super) fn on_sort_items(&mut self, payload: &[u8]) -> Vec<Reply> {
+        self.rearrange_tab(payload, true)
+    }
+
+    /// Consolidate Item and Sort Items share everything but the plan.
+    fn rearrange_tab(&mut self, payload: &[u8], sort: bool) -> Vec<Reply> {
+        let verb = if sort { "sort" } else { "consolidate" };
         let Some(chr) = self.claimed_character() else { return Vec::new() };
         let Some(tab) = net::inventory::parse_gather_request(payload) else {
-            return self.gather_answered_empty(0, "short body");
+            return self.gather_answered_empty(verb, 0, "short body");
         };
         let inv = match store::InventoryType::from_wire(i16::from(tab)) {
             Ok(inv) => inv,
-            Err(_) => return self.gather_answered_empty(tab, "not an inventory tab"),
+            Err(_) => return self.gather_answered_empty(verb, tab, "not an inventory tab"),
         };
         let shops = self.config.shops.clone();
         let cap = move |item_id: u32| shops.max_stack(item_id);
-        let changes = match self.store.consolidate_bag(chr.id, inv, &cap) {
+        let names = self.config.item_names.clone();
+        let name_of = move |item_id: u32| names.get(&item_id).cloned().unwrap_or_default();
+        let changes = if sort {
+            self.store.sort_bag(chr.id, inv, &cap, &name_of)
+        } else {
+            self.store.consolidate_bag(chr.id, inv, &cap)
+        };
+        let changes = match changes {
             Ok(c) => c,
-            Err(e) => return self.gather_answered_empty(tab, &format!("store refused: {e}")),
+            Err(e) => return self.gather_answered_empty(verb, tab, &format!("store refused: {e}")),
         };
         if changes.is_empty() {
-            return self.gather_answered_empty(tab, "nothing to merge");
+            return self.gather_answered_empty(verb, tab, "nothing to do");
         }
         crate::server::log(&format!(
-            "   consolidate: character {} tab {inv:?} - {} slot(s) changed: {changes:?}",
+            "   {verb}: character {} tab {inv:?} - {} change(s): {changes:?}",
             chr.id,
             changes.len()
         ));
@@ -497,20 +518,27 @@ impl Session {
                     opcode: net::inventory::INVENTORY_OPERATION,
                     body: net::inventory::inventory_move_result(inv_type, from as i16, to as i16),
                     what: format!(
-                        "InventoryOperation: consolidate - {inv:?} slot {from} slides up to {to}, the first free slot. Bag-to-bag, no avatar tail."
+                        "InventoryOperation: {verb} - {inv:?} slot {from} slides up to {to}, the first free slot. Bag-to-bag, no avatar tail."
+                    ),
+                },
+                store::StackChange::Swapped { a, b } => Reply {
+                    opcode: net::inventory::INVENTORY_OPERATION,
+                    body: net::inventory::inventory_move_result(inv_type, a as i16, b as i16),
+                    what: format!(
+                        "InventoryOperation: {verb} - {inv:?} slots {a} and {b} change places (a mode-2 onto an occupied slot, which the client draws as a swap). Bag-to-bag, no avatar tail."
                     ),
                 },
             })
             .collect()
     }
 
-    /// The consolidate that changed nothing - still a reply, because `0x0105` latches.
-    fn gather_answered_empty(&self, tab: u8, why: &str) -> Vec<Reply> {
+    /// The consolidate or sort that changed nothing - still a reply, because both latch.
+    fn gather_answered_empty(&self, verb: &str, tab: u8, why: &str) -> Vec<Reply> {
         vec![Reply {
             opcode: net::inventory::INVENTORY_OPERATION,
             body: net::inventory::inventory_rejected(),
             what: format!(
-                "InventoryOperation: consolidate tab {tab} - {why}; nCount 0, nothing moves, bExclRequestSent = 1 clears the +0x2330 latch the 0x0105 set."
+                "InventoryOperation: {verb} tab {tab} - {why}; nCount 0, nothing moves, bExclRequestSent = 1 clears the +0x2330 latch the request set."
             ),
         }]
     }

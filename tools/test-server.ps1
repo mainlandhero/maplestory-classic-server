@@ -770,6 +770,17 @@
               latch; paste the "consolidate" lines from world-ch0.log
               the client dies on the click -> paste client-exit.log; the mode-2 slide
               is the suspect (it is the shape a drag uses, but never in a burst)
+         SORT ITEMS (same day, same shape: 0x0106). The owner: "Sort Items should sort by
+         quantity, then name." It does the consolidate first, then puts the tab in order:
+         BIGGEST stack first, then name A to Z (ties: item id, then old slot). The reorder
+         goes out as mode-2 moves onto OCCUPIED slots - the packet a drag-swap is answered
+         with, so the client should draw each as a swap. "Biggest first" is the reading
+         taken of "by quantity"; one comparator flips it.
+           4. click Sort on the Use tab of the screenshot: 350 arrows, 325 arrows, blue
+              100, red 54, orange 21, orange 7, scroll 6, apple 3 (names break ties) ->
+              fixed. Smallest first / wrong order -> say what you see, the comparator
+              is one line. Two items in one slot or a blank slot -> the client did NOT
+              swap on an occupied mode-2; paste the "sort" lines from world-ch0.log
 
      TW. A PARTY LEADER WHO LEAVES THE GAME HANDS THE PARTY TO ITS HIGHEST-LEVEL MEMBER
          (2026-09-18). The owner: "the party leader needs to be handed over to the next
@@ -4143,7 +4154,11 @@ function Show-TestPlan {
         Write-Host '           after the orange, no gap, no New mark, tab still usable -> fixed'
         Write-Host '        2. split a stack, click: one full stack + the remainder AFTER it -> fixed'
         Write-Host '        3. nothing to do: nothing changes, tab still usable -> fixed'
-        Write-Host '        frozen tab -> paste the "consolidate" lines; client dies -> client-exit.log' -ForegroundColor Yellow
+        Write-Host '        4. SORT ITEMS: consolidate, then BIGGEST stack first, then name A-Z.' -ForegroundColor Magenta
+        Write-Host '           Your Use tab: 350 arrows, 325, blue 100, red 54, orange 21, orange 7,'
+        Write-Host '           scroll 6, apple 3 -> fixed. Wrong direction -> say so (one comparator).'
+        Write-Host '           Two items in one slot or a blank -> the swap did not draw; paste "sort"' -ForegroundColor Yellow
+        Write-Host '        frozen tab -> paste the "consolidate"/"sort" lines; client dies -> client-exit.log' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  TW. A LEADER WHO LEAVES THE GAME HANDS THE PARTY TO ITS HIGHEST-LEVEL MEMBER.' -ForegroundColor Magenta
         Write-Host '      Log out or close the client as leader: the highest-level ONLINE member'
