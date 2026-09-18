@@ -16,7 +16,9 @@
 //!   inline  <image> <src.wz> <src image> <canvas.wz>    copy, with every outlinked canvas
 //!                                                       pulled in from <canvas.wz> - the
 //!                                                       classic PetEquip shape, no _Canvas
-//!   patch   <image> <rows.tsv>     rows: path <TAB> int|str|uol|del <TAB> value
+//!   patch   <image> <rows.tsv>     rows: path <TAB> int|str|uol|del|canvas <TAB> value
+//!                                  (canvas: value is `w,h,format,<payload file>` - raw WZ
+//!                                  pixel payload, zlib-compressed, as `wz-dump canvas` writes)
 //!   strings <image> <rows.tsv>     rows: path <TAB> text
 
 use std::path::{Path, PathBuf};
@@ -434,6 +436,28 @@ fn cmd_build(out: &Path, version: &str, spec: &Path, base: Option<&Path>) -> wz:
                         if cols[1] == "del" {
                             if !target.remove_path(cols[0]) {
                                 println!("        {name}: del {} - nothing there (fine)", cols[0]);
+                            }
+                            n += 1;
+                            continue;
+                        }
+                        // `canvas`: new pixels for a canvas that is already there. The Petite
+                        // pets' "P" badge, composited into the icon by the installer.
+                        if cols[1] == "canvas" {
+                            let Some(cols2) = cols.get(2) else { return Err(bad()) };
+                            let parts: Vec<&str> = cols2.splitn(4, ',').collect();
+                            if parts.len() != 4 {
+                                eprintln!("line {}: canvas row wants w,h,format,<payload file>: {pl:?}", lineno + 1);
+                                return Err(bad());
+                            }
+                            let (w, h, fmt) = (
+                                parts[0].trim().parse::<i32>().map_err(|_| bad())?,
+                                parts[1].trim().parse::<i32>().map_err(|_| bad())?,
+                                parts[2].trim().parse::<i32>().map_err(|_| bad())?,
+                            );
+                            let payload = io(Path::new(parts[3].trim()), std::fs::read(parts[3].trim()))?;
+                            if !target.replace_canvas_pixels(cols[0], w, h, fmt, payload) {
+                                eprintln!("line {}: {name} has no canvas at {}", lineno + 1, cols[0]);
+                                return Err(bad());
                             }
                             n += 1;
                             continue;
