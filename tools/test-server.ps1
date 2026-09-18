@@ -1486,30 +1486,32 @@
                          -> CONFIRMED 2026-09-18 14:51 (!hair 42540, two clients side by side)
               the hair changes but the character flickers / a CLIENT FAULT -> paste
                          client-exit.log; the pair ran on an avatar mid-animation
-            EQUIPMENT TOO (2026-09-18, the owner: "Whenever a client is changing their
-            equipment, either a cash equipment or a regular equipment, it is not being
-            immediately reflected on other clients"): only the pet-hat slot was watched;
-            now ANY change to the worn set - regular, cash, pet hat, on or off - sends the
-            observers the same leave + enter (+ pet) for that one character.
-              put on / take off a weapon and a Deco-tab outfit on one client: the other
-                         shows it within ~0.1 s, same spot -> DONE
-              the changer's copy jumps / blinks / loses its pet -> say which; same
-                         readings as the hair step below
-              still old gear on the 2nd client -> paste the 0x0225 / 0x0224 lines that
-                         follow the 0x0070 in world-chN.log
-            THE OTHER CLIENT (2026-09-18, same run): it got the 0x0224 and drew nothing -
-            research/user-enter-field.md had it: a 0x0224 for an id already in the pool
-            is a silent no-op. So the observers now get 0x0225 (leave) then 0x0224 (enter,
-            new look) then the pets, for that ONE character - what a portal walk sends.
-              the 2nd client sees the new hair within ~0.1 s, the character stays where
-                         it was, its pet still there -> DONE
-              the 2nd client sees the new hair but the changer's PET vanished on its
-                         screen -> the pet spawn after the re-enter did not take; paste
-                         the three lines after "look change for" in world-chN.log
-              the changer's copy jumps to another spot / blinks for a moment -> say
-                         which; a jump means the remote position is stale, not the look
-              still the old hair on the 2nd client -> paste the 0x0225 / 0x0224 lines;
-                         next variant is the OBSERVER re-entering (its own SetField)
+            THE OTHER CLIENTS - IN PLACE, BY 0x0138 (2026-09-18 evening). The leave + enter
+            of the afternoon WORKED and was measured: "a weird super brief character blink
+            as it disappears and reappears ... The regular maplestory does not have this
+            behavior", and with a pet out "the pet completely respawns and appear
+            sad/hungry until moments later" - the remote CUser and its pet are destroyed
+            and rebuilt, which is what that sequence is. The client's own in-place update
+            is 0x0138 UserAvatarModified, whose apply sits behind a je that is always
+            taken (research/beauty-2026-09-09.md 4.2). The HOOK now turns that je
+            (142797ded) into two nops - avatarmod.rs, on by default, -NoAvatarModPatch
+            off - and the server sends ONE 0x0138 per look change (equip on/off, regular
+            or cash, hair, face, pet hat) instead of the leave + enter. -LookReenter is
+            the old sequence, the fallback. NEVER ON A SCREEN. [I]: the list the apply
+            walks (user+0x1200) holds the drawn avatar. Two clients side by side, change
+            gear / hair on one, watch the OTHER:
+              new gear / hair appears with NO blink, the pet stays put and stays happy
+                         -> DONE, and the hook log has "AVATARMOD: patched"
+              nothing changes on the 2nd client (and it does after a map change) -> the
+                         packet is a no-op even patched: the +0x1200 list is empty for a
+                         remote user. Paste maplecw-hook.log's AVATARMOD line; relaunch
+                         with -LookReenter meanwhile (blink, but visible)
+              the OBSERVING client dies (CLIENT FAULT in its client-exit.log) -> the apply
+                         ran on the wrong object; -NoAvatarModPatch -LookReenter, and paste
+                         the fault line
+              still blinks -> the server is on -LookReenter or the log says "leave +
+                         enter"; paste the "look change for" line
+            The bag-to-bag control: shuffling a potion sends the field nothing.
 
      TH. THE FACE COUPON opens no dialog and has no tooltip preview. The face's images are
          installed and structurally identical to a classic face (checked node by node); the
@@ -2904,6 +2906,15 @@ param(
     # it 0xffffffff, invisible on this client's white panel). The hook patches six bytes of
     # that encrypted string to black by default; this is the off switch. beautytext.rs.
     [switch]$NoBeautyTextPatch,
+    # Leave 0x0138 UserAvatarModified a no-op. By default the hook turns the always-taken je
+    # at 142797ded into two nops so another player's equip/hair change redraws their copy in
+    # place (no blink, pet untouched). This is the off switch; pair it with -LookReenter or
+    # nobody sees anybody's look change until a map change. avatarmod.rs.
+    [switch]$NoAvatarModPatch,
+    # Redress another player's copy of a changed character with a leave + enter (+ pet) -
+    # the sequence that blinks and respawns the pet - instead of one 0x0138. The server-side
+    # fallback for clients launched with -NoAvatarModPatch. --look-reenter.
+    [switch]$LookReenter,
     # Monsters are ON by default since 2026-08-19. -NoMobs turns them off.
     #
     # -Mobs used to be the opt-in, and it cost a launch: the owner stood on map 40, which has
@@ -4021,6 +4032,7 @@ foreach ($ch in 0..($Channels - 1)) {
     $chArgs += @('--link', "127.0.0.1:$ChatPort")
     # The channel answers by default now; only the deliberate silence needs a flag.
     if ($SilentChannel) { $chArgs += '--silent-channel' }
+    if ($LookReenter) { $chArgs += '--look-reenter' }
     # The channel writes and ROLLS its own log now (50 MB, five kept). Stdout gets nothing
     # after the file opens; it is redirected to a .out stub so nothing is lost if it does.
     $chArgs += @('--log-file', "`"$chLog`"")
@@ -4464,16 +4476,15 @@ function Show-TestPlan {
         Write-Host '         !hair 42540 is the cheap form (no reload now either).'
         Write-Host '           own screen: changes the MOMENT you Confirm -> CONFIRMED 14:51' -ForegroundColor Green
         Write-Host '           flicker / CLIENT FAULT -> paste client-exit.log' -ForegroundColor Yellow
-        Write-Host '         EQUIPMENT TOO: any worn change (regular, cash, pet hat, on/off) now' -ForegroundColor Yellow
-        Write-Host '         sends the observers leave + enter for that character.' -ForegroundColor Yellow
-        Write-Host '           2nd client shows the new gear in ~0.1s -> DONE; else paste 0x0225/0x0224' -ForegroundColor Green
-        Write-Host '         THE OTHER CLIENT drew nothing: a 0x0224 for an id it already has is' -ForegroundColor Yellow
-        Write-Host '         a no-op. Observers now get 0x0225 + 0x0224 + pets for that character.' -ForegroundColor Yellow
-        Write-Host '           2nd client: new hair in ~0.1s, same spot, pet still there -> DONE' -ForegroundColor Green
-        Write-Host '           new hair but the changer''s pet vanished -> paste the 3 lines' -ForegroundColor Yellow
-        Write-Host '             after "look change for" in world-chN.log' -ForegroundColor Yellow
-        Write-Host '           copy jumps / blinks -> say which (jump = stale position)' -ForegroundColor Yellow
-        Write-Host '           still old hair -> paste the 0x0225/0x0224 lines'
+        Write-Host '         OTHER CLIENTS, IN PLACE (evening): the leave+enter worked but BLINKED and' -ForegroundColor Magenta
+        Write-Host '         respawned the pet. Now the hook nops the je that gates 0x0138''s apply' -ForegroundColor Magenta
+        Write-Host '         (avatarmod, on by default) and the server sends ONE 0x0138 per look' -ForegroundColor Magenta
+        Write-Host '         change - equip on/off, cash, hair, face, pet hat. Watch the OTHER client:' -ForegroundColor Magenta
+        Write-Host '           new gear/hair, NO blink, pet stays put and happy -> DONE' -ForegroundColor Green
+        Write-Host '           nothing changes until a map change -> +0x1200 list empty; paste the' -ForegroundColor Yellow
+        Write-Host '             AVATARMOD hook line; run -LookReenter meanwhile' -ForegroundColor Yellow
+        Write-Host '           the OBSERVER dies -> -NoAvatarModPatch -LookReenter; paste the fault' -ForegroundColor Red
+        Write-Host '           still blinks -> server on -LookReenter; paste "look change for"'
         Write-Host '  TH. FACE COUPON: no dialog, no preview. Images are fine; the'
         Write-Host '      ID is the one difference (22039; classic faces end at 21825).'
         Write-Host '      One chat line settles it: !face 22039' -ForegroundColor Yellow
@@ -5522,6 +5533,7 @@ if ($PoolSentry) {
 if ($HeapFix) { $Session = "$Session,heapfix=on" }
 if ($ClientHitNumberPatch) { $Session = "$Session,hitnumber=off" }
 if ($NoBeautyTextPatch) { $Session = "$Session,beautytext=off" }
+if ($NoAvatarModPatch) { $Session = "$Session,avatarmod=off" }
 if ($FreeGuard) { $Session = "$Session,freeguard=on" }
 elseif ($FreeGuardObserve) { $Session = "$Session,freeguard=observe" }
 if ($GuardPage) {

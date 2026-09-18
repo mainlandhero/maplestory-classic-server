@@ -542,6 +542,11 @@ pub unsafe fn install() {
     // The Beauty Coupon dialog's white-on-white item name: six bytes in the encrypted string
     // table. ON by default; `beautytext=off` leaves it. crates/grap-stub/src/beautytext.rs.
     crate::beautytext::install();
+    // 0x0138 UserAvatarModified's apply, behind a je that is always taken: two nops, so
+    // another player's equip or hair change redraws their copy in place instead of the
+    // server's leave+enter (a blink, and the pet respawns). ON by default; `avatarmod=off`
+    // leaves it. crates/grap-stub/src/avatarmod.rs.
+    crate::avatarmod::install();
     // The session credential the client will carry itself. Gated on
     // `maplecw-hook.identity` holding a usable token; absent, it does not touch a byte.
     //

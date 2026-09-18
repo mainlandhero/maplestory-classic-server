@@ -151,6 +151,20 @@ pub struct Config {
     /// is the safe fallback that never touches another client.
     pub broadcast_pets: bool,
 
+    /// **How the other players' copy of a character is redressed** when its look changes -
+    /// an equip on or off, a hair or face coupon, the pet's hat.
+    ///
+    /// `false` (the default): one `0x0138 UserAvatarModified` per observer, which the client
+    /// applies in place **once the launcher's `avatarmod` patch has opened its gate**
+    /// (`grap_stub::avatarmod`; the apply sits behind a `je` that is always taken in the
+    /// shipped image). No blink, the pet is untouched. On a client without the patch the
+    /// packet is a silent no-op and the copy updates at the next field entry.
+    ///
+    /// `true` (`--look-reenter`): `0x0225` then `0x0224` then the pet for that one character,
+    /// what a fresh sighting gets. Works on any client; the observer's copy blinks and its pet
+    /// respawns (the owner, 2026-09-18, both reported). The fallback if the patch misbehaves.
+    pub look_change_reenter: bool,
+
     /// Where every portal leads, keyed by `(map, portal name)`.
     ///
     /// Generated from the client's own `Map.wz` by `tools/dump_portals.py` - the data is the
@@ -2362,6 +2376,7 @@ impl Default for Config {
             inventory_slots: None,
             pet_move_action: None,
             broadcast_pets: true,
+            look_change_reenter: false,
             chairs: HashMap::new(),
             portals: HashMap::new(),
             portal_index: HashMap::new(),

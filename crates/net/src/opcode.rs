@@ -1166,12 +1166,26 @@ pub fn look_layout(equips: &[(u8, u32)]) -> LookLayout {
     out
 }
 
-/// Dress a character already standing on a field. **Dead code in the client. Not sent.**
+/// Dress a character already standing on a field - **another player's copy of one**.
 ///
-/// This was the attempted way around the equipment blocker, and it could never have worked.
-/// The blocker itself is gone - the item decode is at `vtable+0x358`, not the `+0x330`
-/// accessor `research/equip-block.md` named, and RTTI was never needed to find it - so the
-/// character is dressed by the `SetField` record now; see [`equipped_block`].
+/// **Sent since 2026-09-18**, for a look change (equip, hair, face, pet hat), to everyone
+/// else on the map: `Session::broadcast_look_change`. The client's apply is behind a `je`
+/// that is always taken in the shipped image (below), and the launcher's
+/// `grap_stub::avatarmod` patch turns that jump into two nops, so a launched client applies
+/// it in place - no leave, no enter, no blink. On a client without the patch it is still the
+/// silent no-op described below.
+///
+/// **Not for the local character.** Sending it for our own id clears one dword and returns
+/// (`research/user-enter-field.md` §0); the player's own redraw is the `0x007C` look bits
+/// (`world::session::beautycoupon::look_stat_changed`) and the `SetField` record.
+///
+/// The history, kept because the reading of the bytes is still right - only its
+/// consequence changed once a patch was on the table:
+///
+/// This was the attempted way around the equipment blocker, and it could never have worked
+/// unpatched. The blocker itself is gone - the item decode is at `vtable+0x358`, not the
+/// `+0x330` accessor `research/equip-block.md` named, and RTTI was never needed to find it -
+/// so the local character is dressed by the `SetField` record; see [`equipped_block`].
 ///
 /// **Why `0x0138` is dead, at byte level.** Its apply is guarded by a call to `0x1407f5ce0`,
 /// which is three bytes - `33 c0 c3`, `xor eax,eax; ret` - followed by `TEST EAX,EAX / JZ`,
