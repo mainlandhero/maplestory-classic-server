@@ -405,12 +405,13 @@ impl Session {
     /// launched with `avatarmod=off` the packet is a silent no-op, which is the old behaviour:
     /// the copy updates at the next field entry.
     ///
-    /// `Config::look_change_reenter` (`--look-reenter`) keeps the leave + enter + pet
-    /// sequence as the fallback. Either way the stored spawn is refreshed so a later joiner
-    /// gets the new look.
-    ///
-    /// **[I]**: that the patched apply lands on the drawn avatar. Plan step TO(c) has the
-    /// readings for both modes.
+    /// **Measured 2026-09-18 14:07, and the in-place packet did nothing**: the patch applied,
+    /// the observer received the `0x0138`, its handler ran and returned normally, and the copy
+    /// was not redrawn (the owner: *"Changing equipment once again no longer publishes to other
+    /// clients"*). So the default is back to the leave + enter + pet, which publishes with a
+    /// blink; `Config::look_change_reenter = false` (`--look-in-place`) keeps the `0x0138`
+    /// path as the opt-in for the next attempt. Either way the stored spawn is refreshed so
+    /// a later joiner gets the new look. `research/beauty-2026-09-09.md` §8.3.
     pub(super) fn broadcast_look_change(&mut self, chr: &net::opcode::Character) {
         let Some(map) = self.bus().map_of(self.subscriber) else { return };
         let presence = self.presence(chr);
@@ -424,7 +425,7 @@ impl Session {
             }
             crate::server::log(&format!(
                 "   look change for character {} (hair {}, face {}): leave + enter + {pets} pet(s) \
-                 broadcast to field {map} (--look-reenter; the copy blinks and its pet respawns)",
+                 broadcast to field {map} (the default; the copy blinks and its pet respawns - 0x0138 was measured inert 2026-09-18)",
                 chr.id, chr.hair, chr.face
             ));
             return;
@@ -443,7 +444,7 @@ impl Session {
         };
         self.bus().publish(self.subscriber, map, modified, None);
         crate::server::log(&format!(
-            "   look change for character {} (hair {}, face {}): one 0x0138 to field {map}, no leave, no enter, pet untouched",
+            "   look change for character {} (hair {}, face {}): one 0x0138 to field {map} (--look-in-place, measured inert 2026-09-18 - expect the copy NOT to change)",
             chr.id, chr.hair, chr.face
         ));
     }
@@ -1765,9 +1766,13 @@ mod tests {
         assert!(worn.iter().any(|e| e.slot == crate::session::pet::PET_EQUIP_WORN_SLOT && e.item_id == 1_802_006), "{worn:?}");
 
         let heard: Vec<u16> = watcher.tick(2_000).into_iter().map(|r| r.opcode).collect();
-        // 2026-09-18, evening: one 0x0138 in place - no leave, no enter, and the pet is NOT
-        // re-sent, because the observer's copy of the owner (and its pet) is never destroyed.
-        assert_eq!(heard, vec![net::opcode::USER_AVATAR_MODIFIED], "one in-place redress and nothing else: {heard:x?}");
+        // The default is the leave, the look with the hat, then the pet behind it - the
+        // 0x0138 in-place packet was measured inert on 2026-09-18 and is opt-in.
+        assert_eq!(
+            heard,
+            vec![net::userpool::USER_LEAVE_FIELD, net::userpool::USER_ENTER_FIELD, net::pet::PET_ACTIVATED],
+            "leave, the look with the hat, the pet once: {heard:x?}"
+        );
         // And the announced look now carries the hat at body slot 14.
         let chr = owner.claimed_character().unwrap();
         let look_bytes = net::opcode::avatar_look(&chr);

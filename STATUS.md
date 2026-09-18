@@ -249,6 +249,15 @@ zeros, two empty vectors (ITEM / CITIZENSHIP tabs), petInfo echoed; a refusal is
 result. `net::charinfo`, `session::charinfo`; `research/character-info-2026-09-18.md` (an
 agent's decode, [L] for every field's address). Never on a screen; plan TO(c) has the readings.
 
+**2026-09-18 14:07 run: the in-place `0x0138` is INERT; leave + enter is the default again.**
+The owner: *"Changing equipment once again no longer publishes to other clients."* With the hook's
+`avatarmod` patch applied, the `0x0138` reached the observer, its handler ran and returned
+normally, and the copy did not change - reading (b) of the plan step, measured. So
+`Config::look_change_reenter` defaults to `true`: every worn / hair / face change publishes with
+the brief blink and the pet respawn, which remain the open item. `--look-in-place`
+(`-LookInPlace`) is the opt-in for the next attempt; the next step is static - what the
+client's apply walks for a remote user - and needs no launch. `research/beauty` §8.3.
+
 **2026-09-18 evening: another player's look change is redrawn IN PLACE - `0x0138`, gate opened
 by the hook.** The leave + enter worked and the owner measured its cost: *"a weird super brief
 character blink ... The regular maplestory does not have this behavior"*, and with a pet out

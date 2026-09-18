@@ -46,9 +46,10 @@ maplecw-world - one channel of the MapleCW game world
                    0. A test lever: 30 sends the client down the stance-1 arm, the
                    only pet arm that gives the pet's layer a z. See Config::pet_move_action
   --no-broadcast-pets  do NOT show a summoned pet to other players in the map.
-  --look-reenter       redress another player's copy of a changed character with a
-                       leave + enter (a blink) instead of 0x0138. The fallback for a
-                       client launched with avatarmod=off.
+  --look-in-place      redress another player's copy of a changed character with one
+                       0x0138 instead of the default leave + enter. Measured inert on
+                       2026-09-18 even with the launcher's avatarmod patch; opt-in for
+                       the next attempt. The default blinks but publishes.
                    Pets are broadcast by default (summon and movement); this is the
                    owner-local fallback. research/pet-remote-crash-2026-09-15.md
   --inventory-slots N  give every inventory N slots instead of the character's own,
@@ -227,10 +228,11 @@ fn main() -> ExitCode {
                 config.broadcast_pets = false;
                 Ok(())
             }
-            // A look change goes out as 0x0138 by default; this is the leave+enter fallback
-            // for a client whose avatarmod patch is off. Config::look_change_reenter.
-            "--look-reenter" => {
-                config.look_change_reenter = true;
+            // A look change goes out as leave + enter by default (it publishes, with a
+            // blink); this opts into the 0x0138 in-place packet, which was measured inert
+            // on 2026-09-18. Config::look_change_reenter.
+            "--look-in-place" => {
+                config.look_change_reenter = false;
                 Ok(())
             }
             "--portals" => value().map(|v| portals_path = PathBuf::from(v)),
