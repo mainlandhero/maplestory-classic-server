@@ -293,6 +293,25 @@ ICON_ORIGIN_X = -2  # what every classic cap icon carries
 ICON_FIT = 32
 
 
+def to_bgra4444(rgba, w, h):
+    """RGBA8888 -> the client's BGRA4444 (format 1): low byte G|B nibbles, high byte A|R -
+    the inverse of `wz_png.to_rgba`. Rounded, so 255 -> 15 and 0 -> 0 exactly.
+
+    **Every one of the 778 classic equip icon canvases is format 1** (a survey of
+    Cap/Weapon/Longcoat/Shoes/Glove/Accessory/Cape `_Canvas` archives, 2026-09-18 evening) and
+    the first hair/face icons went in as format 2: Fern Face drew in the list but its tooltip
+    showed a garbled block - 8888 pixels read two bytes per pixel - and Fern Hair drew
+    nowhere. So a synthesised icon is written in the one format the client has ever seen
+    under `info/icon`."""
+    out = bytearray(w * h * 2)
+    for i in range(w * h):
+        r, g, b, a = rgba[i * 4:i * 4 + 4]
+        q = lambda v: (v * 15 + 127) // 255
+        out[i * 2] = (q(g) << 4) | q(b)
+        out[i * 2 + 1] = (q(a) << 4) | q(r)
+    return bytes(out)
+
+
 def fit_icon(rgba, w, h, box):
     """`rgba` scaled down to fit `box` x `box` (aspect kept; never scaled up), by area
     averaging in premultiplied alpha so a soft edge stays a soft edge. `(rgba, w, h)`."""
@@ -464,16 +483,14 @@ def cover_icons(build_dir, source, manifest, add):
             # Into the cell's box like a hair icon (Ubel's Staff is 34x33); the origin keeps
             # the cap convention, (-2, height).
             rgba, w, h = fit_icon(rgba, e["width"], e["height"], ICON_FIT)
-            bgra = bytearray(rgba)
-            bgra[0::4], bgra[2::4] = bgra[2::4], bgra[0::4]
             payload_out = os.path.join(out_dir, "icon.bin")
             with open(payload_out, "wb") as fh:
-                fh.write(zlib.compress(bytes(bgra), 9))
+                fh.write(zlib.compress(to_bgra4444(rgba, w, h), 9))
             wz_png.write_png(pathlib.Path(os.path.join(out_dir, "icon.png")), rgba, w, h)
             tsv = os.path.join(out_dir, "icon.tsv")
             with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write("# %s: info/icon copied from info/iconRaw (the modern image has no icon node; this client's lists read icon), fitted to %d\n" % (it["name"], ICON_FIT))
-                fh.write("info/icon\tnewcanvas\t%d,%d,2,%s,%d,%d\n" % (w, h, payload_out, ICON_ORIGIN_X, h))
+                fh.write("info/icon\tnewcanvas\t%d,%d,1,%s,%d,%d\n" % (w, h, payload_out, ICON_ORIGIN_X, h))
             add(tree_rel, "patch\t%s\t%s" % (dest, tsv))
             patched.append(it["id"])
             print("  cover icon %-8d %s: info/icon from iconRaw (%dx%d -> %dx%d)" % (it["id"], it["name"], e["width"], e["height"], w, h))
@@ -518,18 +535,16 @@ def look_icons(build_dir, source, manifest, add):
                 skipped += 1
                 continue
             rgba, w, h = got
-            bgra = bytearray(rgba)
-            bgra[0::4], bgra[2::4] = bgra[2::4], bgra[0::4]
             payload = os.path.join(out_dir, "icon.bin")
             with open(payload, "wb") as fh:
-                fh.write(zlib.compress(bytes(bgra), 9))
+                fh.write(zlib.compress(to_bgra4444(rgba, w, h), 9))
             wz_png.write_png(pathlib.Path(os.path.join(out_dir, "icon.png")), rgba, w, h)
             tsv = os.path.join(out_dir, "icon.tsv")
             with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
-                fh.write("# %s %s: info/icon and info/iconRaw rendered from the part's own default frame (%s); origin (%d, %d) like a cap icon\n"
+                fh.write("# %s %s: info/icon and info/iconRaw rendered from the part's own default frame (%s); BGRA4444 like every classic icon; origin (%d, %d) like a cap icon\n"
                          % (kind, dest, ", ".join(l for l in layers), ICON_ORIGIN_X, h))
                 for node in ("icon", "iconRaw"):
-                    fh.write("info/%s\tnewcanvas\t%d,%d,2,%s,%d,%d\n" % (node, w, h, payload, ICON_ORIGIN_X, h))
+                    fh.write("info/%s\tnewcanvas\t%d,%d,1,%s,%d,%d\n" % (node, w, h, payload, ICON_ORIGIN_X, h))
             add(tree_rel, "patch\t%s\t%s" % (dest, tsv))
             done += 1
         counts[kind] = (done, skipped)

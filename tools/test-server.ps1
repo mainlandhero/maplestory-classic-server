@@ -1595,6 +1595,18 @@
                          every hair/face icon and cover icon is fitted into 32x32.
                          Fern's Staff and Fern Hair cells drawn -> DONE; still blank ->
                          say which, and whether a classic hair (38x22 -> fitted) draws
+                         SECOND MEASUREMENT (19:30 run): the staff drew; Fern Hair's cell
+                         STILL blank; Fern Face drew in the list but its tooltip showed a
+                         garbled image block. All 778 classic equip icon canvases are
+                         format 1 (BGRA4444) and ours were format 2 (8888) - a garbled
+                         block is 8888 read two bytes a pixel - so every synthesised icon
+                         is BGRA4444 now (installed 15:36). Size was never it: classic
+                         icons run to 34x34.
+                         Fern Hair cell drawn AND the Fern Face tooltip image clean ->
+                         DONE; tooltip clean but the hair still blank -> the list keys a
+                         hair icon off something else; say whether Tester2's CLASSIC hair
+                         (30032) draws when the owner views Tester2 - that splits "hair" from
+                         "backported hair"
                          hair/face cells BLANK, equips fine -> the icons are not installed,
                          or the widget wants another node; say which
                          the client DIES on opening -> a look id in an equip slot is fatal;
@@ -4588,8 +4600,10 @@ function Show-TestPlan {
         Write-Host '           up on Tester2: "raised", FAME 1 in the window, Tester2 sees it; again ->' -ForegroundColor Green
         Write-Host '           "not anymore for today" -> DONE' -ForegroundColor Green
         Write-Host '           Item List: hair, face, hat/coat/weapon/cover, all with icons -> DONE' -ForegroundColor Green
-        Write-Host '           (Fern''s Staff + Fern Hair were blank: covers had no info/icon, the hair' -ForegroundColor Yellow
-        Write-Host '           icon was 46x56; both fixed in the install. Still blank -> say which)' -ForegroundColor Yellow
+        Write-Host '           19:30 run: staff drew; Fern Hair still blank, Fern Face tooltip garbled ->' -ForegroundColor Yellow
+        Write-Host '           icons were format 2, every classic icon is format 1: now BGRA4444.' -ForegroundColor Yellow
+        Write-Host '           hair cell drawn + face tooltip clean -> DONE; hair still blank -> say' -ForegroundColor Yellow
+        Write-Host '           whether Tester2''s CLASSIC hair draws when the owner views Tester2' -ForegroundColor Yellow
         Write-Host '           the cell under the PET: its Top Hat -> CONFIRMED' -ForegroundColor DarkGray
         Write-Host '           hair/face blank, equips fine -> icons not installed; a DEATH on open ->' -ForegroundColor Yellow
         Write-Host '           relaunch -NoLookItems, paste client-exit.log; blank everywhere -> 0x00A2 line' -ForegroundColor Yellow
