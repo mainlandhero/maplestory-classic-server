@@ -38,6 +38,7 @@ pub mod keymap;
 pub mod kick;
 pub mod migration;
 pub mod error;
+pub mod fame;
 pub mod password;
 /// Which process owns the far end of a local TCP connection - the per-launch discriminator
 /// `claims` resolves by. A socket concern in a database crate, deliberately: `crates/login`
@@ -73,6 +74,7 @@ pub use dailyperks::{
     today, utc_date, utc_day, utc_day_start, DailyClaimOutcome, SCOPE_ACCOUNT, SCOPE_CHARACTER,
     SECONDS_PER_DAY,
 };
+pub use fame::{fame_windows, FameOutcome, FameWindows};
 pub use inventory::{
     plan_consolidation, plan_sort, Bag, Equipped, EquippedItem, InvItem, InventoryType, Item,
     ItemKind, ItemRules, MoveOutcome, Stack, StackChange,

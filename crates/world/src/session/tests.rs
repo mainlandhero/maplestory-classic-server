@@ -10106,6 +10106,68 @@ fn a_stack_dropped_on_its_own_kind_fills_it_first_then_swaps_when_full() {
     assert_eq!((qty(1), qty(5)), (Some(11), Some(4)));
 }
 
+/// **The fame arrows: the giver gets mode 0 with the new number, the target gets mode 5 and
+/// their own stat, a second gift the same day gets mode 3, and the window shows the fame.**
+/// The owner, 2026-09-18. The week rule and the calendar are the store's tests (`store::fame`);
+/// this is the wire. **And the ITEM tab lists what they wear**: Tester2 puts on a hat and the
+/// window's item count is 1 with one whole equip slot behind it.
+#[test]
+fn fame_reaches_both_players_once_a_day_and_the_window_lists_what_they_wear() {
+    let (store, config, fields, account) = shared_channel(0, 30);
+    let (mut me, my_id) = join_channel(&store, &config, &fields, account, "Wisp");
+    me.on_field_entered();
+    let (mut them, their_id) = join_channel(&store, &config, &fields, account, "Tester2");
+    them.on_field_entered();
+    me.collect_mail();
+    them.collect_mail();
+
+    let mut packet = net::fame::CLIENT_GIVE_FAME.to_le_bytes().to_vec();
+    packet.extend_from_slice(&net::fame::give_fame_request(their_id, true));
+    let out = me.handle(&packet);
+    assert_eq!(out.len(), 1, "{out:?}");
+    assert_eq!(out[0].opcode, net::fame::GIVE_FAME_RESULT);
+    assert_eq!(out[0].body, net::fame::fame_given("Tester2", true, 1), "mode 0, Tester2, up, fame 1");
+    assert_eq!(store.fame(their_id).unwrap(), Some(1));
+
+    let mail = them.tick(1_000);
+    let received: Vec<&Reply> = mail.iter().filter(|r| r.opcode == net::fame::GIVE_FAME_RESULT).collect();
+    assert_eq!(received.len(), 1, "{mail:?}");
+    assert_eq!(received[0].body, net::fame::fame_received("Wisp", true), "mode 5: 'the owner' has raised your fame");
+    let stat: Vec<&Reply> = mail.iter().filter(|r| r.opcode == net::combat::STAT_CHANGED && r.what.contains("fame = 1")).collect();
+    assert_eq!(stat.len(), 1, "the target's own fame stat moves: {mail:?}");
+
+    // The same day, anyone: refused with the client's "not anymore for today" message.
+    let mut again = net::fame::CLIENT_GIVE_FAME.to_le_bytes().to_vec();
+    again.extend_from_slice(&net::fame::give_fame_request(their_id, false));
+    let out = me.handle(&again);
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].body, net::fame::fame_refused(net::fame::result::ALREADY_TODAY));
+    assert_eq!(store.fame(their_id).unwrap(), Some(1), "a refusal moves nothing");
+    // Yourself: the client refuses before sending; the server refuses too.
+    let mut selfie = net::fame::CLIENT_GIVE_FAME.to_le_bytes().to_vec();
+    selfie.extend_from_slice(&net::fame::give_fame_request(my_id, true));
+    assert_eq!(me.handle(&selfie)[0].body, net::fame::fame_refused(net::fame::result::NO_SUCH_USER));
+    // The other way is a different giver: Tester2 may fame the owner today.
+    let mut back = net::fame::CLIENT_GIVE_FAME.to_le_bytes().to_vec();
+    back.extend_from_slice(&net::fame::give_fame_request(my_id, false));
+    assert_eq!(them.handle(&back)[0].body, net::fame::fame_given("Wisp", false, -1), "a defame goes below zero");
+
+    // The window: fame 1, and once Tester2 wears a hat, one item in the ITEM tab.
+    store.set_inventory_slot(their_id, store::InventoryType::Equip, 1, &store::Item::equip(1_002_357)).unwrap();
+    store.equip_from_bag(their_id, 1, 1).unwrap();
+    let out: Vec<Reply> = me.handle(&character_info_request(their_id, false)).into_iter().filter(|r| r.opcode == net::charinfo::CHARACTER_INFO).collect();
+    assert_eq!(out.len(), 1);
+    let b = &out[0].body;
+    assert_eq!(u32::from_le_bytes(b[25..29].try_into().unwrap()), 1, "fame 1 in the window");
+    let hat = net::opcode::equipped_item(1_002_357, &net::opcode::EquipStats::default());
+    let base = net::charinfo::CHARACTER_INFO_BASE_LEN + "Tester2".len();
+    assert_eq!(b.len(), base + hat.len(), "one whole equip slot behind the count");
+    // The count sits where the record count used to start: 60 + 7 - 9 (count, record count, flag).
+    let count_at = base - 9;
+    assert_eq!(u32::from_le_bytes(b[count_at..count_at + 4].try_into().unwrap()), 1, "item count 1");
+    assert_eq!(&b[count_at + 4..count_at + 4 + hat.len()], &hat[..], "the hat, type byte first");
+}
+
 /// **A negative amount must not credit the player.**
 ///
 /// `0x0143`'s amount is a signed `i32` and the client's own check (`cmp rdi, rax / jle`)
