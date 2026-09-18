@@ -1602,11 +1602,31 @@
                          block is 8888 read two bytes a pixel - so every synthesised icon
                          is BGRA4444 now (installed 15:36). Size was never it: classic
                          icons run to 34x34.
-                         Fern Hair cell drawn AND the Fern Face tooltip image clean ->
-                         DONE; tooltip clean but the hair still blank -> the list keys a
-                         hair icon off something else; say whether Tester2's CLASSIC hair
-                         (30032) draws when the owner views Tester2 - that splits "hair" from
-                         "backported hair"
+                         THIRD MEASUREMENT (the owner, three screenshots): classic hair and
+                         face draw in the list; a classic face's tooltip image sits at the
+                         BOTTOM-LEFT of the preview frame, half outside; Fern Face's
+                         tooltip shows only a grey smear; Fern Hair blank everywhere. Two
+                         causes, both read off the client, both fixed, neither a guess:
+                         (1) CItemInfo's node getter (FUN_14039e630) takes the equip path
+                             only for ids 1xxxxxx or id/10000 <= 3 - classic faces 2xxxx,
+                             hairs 3xxxx. A backported hair is 4xxxx, so every icon and
+                             tooltip lookup went to the Item trees and found nothing; the
+                             avatar and the name take other paths. The owner: "can we just make
+                             changes to the display logic instead?" - so the hook now
+                             patches that one byte, 3 -> 6 (the path builder itself maps
+                             id/10000 of 3, 4, 6 to Character/Hair). grap-stub lookgate.rs,
+                             "LOOKGATE: patched" in maplecw-hook.log; lookgate=off undoes it.
+                         (2) the tooltip anchors the image on the canvas ORIGIN and expects
+                             a cap-shaped icon (~30 tall, origin at its bottom row); a
+                             16-tall face with origin 16 landed 16 px too low. Every
+                             synthesised icon is a full 32x32 canvas now, art centred,
+                             origin (-2, 32) - a cap's shape. Installed, read back, --check.
+                         Fern Hair's cell drawn, its tooltip image inside the frame, the
+                         face tooltips inside the frame -> DONE
+                         Fern Hair still blank + no "LOOKGATE: patched" line -> the hook
+                         did not arm; paste the LOOKGATE lines from maplecw-hook.log
+                         images inside the frame but a grey smear beside them -> say so;
+                         that is the tooltip's own shadow of the icon, or it is not
                          hair/face cells BLANK, equips fine -> the icons are not installed,
                          or the widget wants another node; say which
                          the client DIES on opening -> a look id in an equip slot is fatal;
@@ -4600,10 +4620,11 @@ function Show-TestPlan {
         Write-Host '           up on Tester2: "raised", FAME 1 in the window, Tester2 sees it; again ->' -ForegroundColor Green
         Write-Host '           "not anymore for today" -> DONE' -ForegroundColor Green
         Write-Host '           Item List: hair, face, hat/coat/weapon/cover, all with icons -> DONE' -ForegroundColor Green
-        Write-Host '           19:30 run: staff drew; Fern Hair still blank, Fern Face tooltip garbled ->' -ForegroundColor Yellow
-        Write-Host '           icons were format 2, every classic icon is format 1: now BGRA4444.' -ForegroundColor Yellow
-        Write-Host '           hair cell drawn + face tooltip clean -> DONE; hair still blank -> say' -ForegroundColor Yellow
-        Write-Host '           whether Tester2''s CLASSIC hair draws when the owner views Tester2' -ForegroundColor Yellow
+        Write-Host '           3rd look: Fern Hair blank everywhere = the client''s id gate (<= 3xxxx);' -ForegroundColor Yellow
+        Write-Host '           the hook patches it now (LOOKGATE in maplecw-hook.log). Tooltip images' -ForegroundColor Yellow
+        Write-Host '           sat too low = origin; every icon is a 32x32 cap-shaped canvas now.' -ForegroundColor Yellow
+        Write-Host '           Fern Hair cell + tooltip image inside the frame -> DONE; still blank' -ForegroundColor Green
+        Write-Host '           -> paste the LOOKGATE lines from maplecw-hook.log' -ForegroundColor Yellow
         Write-Host '           the cell under the PET: its Top Hat -> CONFIRMED' -ForegroundColor DarkGray
         Write-Host '           hair/face blank, equips fine -> icons not installed; a DEATH on open ->' -ForegroundColor Yellow
         Write-Host '           relaunch -NoLookItems, paste client-exit.log; blank everywhere -> 0x00A2 line' -ForegroundColor Yellow

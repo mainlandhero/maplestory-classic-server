@@ -28,6 +28,7 @@ pub mod beautytext;
 pub mod fametext;
 pub mod hitnumber;
 pub mod hook;
+pub mod lookgate;
 pub mod identity;
 pub mod instance;
 pub mod minidump;
