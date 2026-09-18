@@ -346,6 +346,14 @@ pub struct Session {
     /// works, because it lands on a pet the client has FINISHED building. session/pet.rs
     /// `pet_settle_replies`.
     pet_settle_pending: bool,
+    /// **This connection is ending because the character is moving to another channel**, so
+    /// its drop is a handover, not a departure: the party keeps the seat. Set by
+    /// `on_change_channel` once the migration is minted. `session/party.rs`
+    /// `leave_party_on_disconnect`.
+    handing_over: bool,
+    /// The party has already been told this connection went away (log out does it before
+    /// the socket closes; `Drop` does it for a crash), so `Drop` does not say it twice.
+    party_told_of_disconnect: bool,
 
     /// Session milliseconds of the last thing the player did: moved, attacked, or was hit.
     ///
@@ -485,6 +493,12 @@ struct Conversation {
 /// socket - still announces exactly one departure. `crate::broadcast::Bus::part`.
 impl Drop for Session {
     fn drop(&mut self) {
+        // **The party, before anything else is torn down**: a dropped socket, a crash, a kill.
+        // A channel change is a handover and says nothing here (`handing_over`); a log out
+        // already said it. `session/party.rs` `leave_party_on_disconnect`.
+        if !self.handing_over {
+            self.leave_party_on_disconnect();
+        }
         // The hub's directory: this character no longer plays on this channel. Before
         // `part`, which is the local equivalent. `session/worldlink.rs`.
         self.announce_offline_to_link();
@@ -600,6 +614,8 @@ impl Session {
             pet_hunger_due_ms: None,
             pet_overfeeds: 0,
             pet_settle_pending: false,
+            handing_over: false,
+            party_told_of_disconnect: false,
             banner_shown: None,
             last_activity_ms: 0,
             next_regen_ms: None,
