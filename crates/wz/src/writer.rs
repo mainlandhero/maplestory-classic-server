@@ -391,6 +391,38 @@ impl Owned {
         kids.len() != before
     }
 
+    /// **Replace the pixels of the canvas at `path`**, keeping its children (`origin`, `z`,
+    /// `_outlink`...). `None` when there is no canvas there - a node that is not a canvas is
+    /// not silently turned into one, because a leaf the client reads as an int becoming a
+    /// canvas is exactly the kind of quiet corruption the reader cannot flag.
+    ///
+    /// For the Petite pets' badge (2026-09-17): the modern client paints a "P" over a Petite
+    /// pet's icon at draw time and the classic client has no such code, so the badge is
+    /// composited into the icon pixels themselves and written back here.
+    pub fn replace_canvas_pixels(&mut self, path: &str, width: i32, height: i32, format: i32, payload: Vec<u8>) -> bool {
+        let mut cur = self;
+        for part in path.split('/').filter(|p| !p.is_empty()) {
+            let Some(next) = cur
+                .children_mut()
+                .and_then(|k| k.iter_mut().find(|(n, _)| n == part))
+                .map(|(_, v)| v)
+            else {
+                return false;
+            };
+            cur = next;
+        }
+        match cur {
+            Owned::Canvas { width: w, height: h, format: f, payload: p, .. } => {
+                *w = width;
+                *h = height;
+                *f = format;
+                *p = payload;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// **Pull every `_outlink`ed canvas into this tree**, replacing each 1x1 stub with the
     /// pixels the link names and dropping the `_outlink` leaf. `resolve` is handed the link
     /// text (`Character/PetEquip/_Canvas/01802653.img/5002828/stand0/0`) and returns the
@@ -717,6 +749,33 @@ mod tests {
         let mut dangling = Owned::Object(Vec::new());
         dangling.set_path("x/0", stub("Character/PetEquip/_Canvas/nowhere.img/x/0"));
         assert!(dangling.inline_outlinks(&mut |_: &str| Ok(None)).is_err());
+    }
+
+    /// `replace_canvas_pixels` swaps the pixels and keeps the children; a non-canvas or a
+    /// missing path is refused, not converted.
+    #[test]
+    fn canvas_pixels_are_replaced_in_place_and_nothing_else_becomes_a_canvas() {
+        let mut img = Owned::Object(Vec::new());
+        img.set_path(
+            "info/icon",
+            Owned::Canvas {
+                width: 1,
+                height: 1,
+                format: 1,
+                payload: vec![0; 10],
+                children: vec![("origin".to_string(), Owned::Vector(-1, 30))],
+            },
+        );
+        img.set_path("info/cash", Owned::Int(1));
+        assert!(img.replace_canvas_pixels("info/icon", 33, 33, 2, vec![9; 44]));
+        let Some(Owned::Canvas { width, format, payload, children, .. }) = img.get_path("info/icon") else { panic!() };
+        assert_eq!((*width, *format, payload.len()), (33, 2, 44));
+        assert!(matches!(children.as_slice(), [(n, Owned::Vector(-1, 30))] if n == "origin"), "the children stay");
+        assert!(!img.replace_canvas_pixels("info/cash", 1, 1, 1, vec![]), "an int is not turned into a canvas");
+        assert!(matches!(img.get_path("info/cash"), Some(Owned::Int(1))));
+        assert!(!img.replace_canvas_pixels("info/nothing", 1, 1, 1, vec![]));
+        let back = Owned::parse(&img.serialize_image()).unwrap();
+        assert_eq!(back.canvases(), vec![("/info/icon".to_string(), 33, 33, 2, 44)]);
     }
 
     /// `remove_path` takes a leaf away and says so; a path that is not there is `false`, and

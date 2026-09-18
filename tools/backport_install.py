@@ -37,6 +37,9 @@ to patch (`CLAUDE.md`); the untouched original is `C:\Nexon\Library\maplestorycw
   changes, so neither needs to.
 """
 import argparse
+import importlib.util
+import zlib
+import pathlib
 import json
 import os
 import shutil
@@ -71,6 +74,106 @@ CLASSIC_PET_EQUIPS = [
     (1802007, "Red Top Hat"), (1802008, "Rudolph's Hat"), (1802009, "Tree Hat"),
 ]
 SHIPPED_PET_EQUIP_ROWS = {1802002, 1802005, 1802006}
+
+# The Petite pet badge. The owner, 2026-09-17: *"Special petite luna pets should have an icon on
+# the pet. Is there a way we can achieve the same thing in both the Cash Shop item and the
+# inventory icon to label them with this P (stands for Petite Pet)?"* - and, on a first draft
+# that drew its own disc: *"Please use assets from the modern client if possible."*
+#
+# The modern client PAINTS the label over a Petite pet's icon at draw time - the extracted
+# `info/icon` of Lil Frieren is the bare portrait. The badges are the client's own
+# `UI/CashShop.img/CashItem_label/<n>` canvases (12x12, one per pet label: 7 = Sweet,
+# 8 = Dream, **9 = Petite**, read off a contact sheet of all nineteen, 2026-09-18) [L];
+# the classic client has neither the node nor the draw code, so the badge is composited
+# into the icon PIXELS: `info/icon`, `iconRaw`, `iconD`, `iconRawD` of each collab pet's
+# `Item/Pet/_Canvas/<id>.img` are decoded (tools/wz_png.py), the label alpha-blended at the
+# bottom-right the way the modern shop draws it, and written back as BGRA8888 (format 2,
+# which the classic client's own data already uses) through `wz-dump build`'s `canvas`
+# patch kind. The Cash Shop and the bag both draw `info/icon`, so one edit reaches both.
+PETITE_LABEL_NODE = 9
+LABEL_INSET = 1  # the label's bottom-right corner sits this far inside the icon's
+
+
+def _wz_png():
+    spec = importlib.util.spec_from_file_location("wz_png", os.path.join(REPO, "tools", "wz_png.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def petite_label(source, build_dir):
+    """Nexon's Petite badge as `(rgba, w, h)`, exported from the modern UI canvas archive."""
+    wz_png = _wz_png()
+    part = modern_part(source, "UI/_Canvas", "CashShop.img")
+    out = os.path.join(build_dir, "cash-item-labels")
+    os.makedirs(out, exist_ok=True)
+    r = subprocess.run([WZ_DUMP, "canvas", part, "CashShop.img", out, "CashItem_label"],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if r.returncode != 0:
+        raise SystemExit("wz-dump canvas CashShop.img failed: %s" % r.stderr.strip())
+    entries = json.load(open(os.path.join(out, "manifest.json"), encoding="utf-8"))
+    want = "/CashItem_label/%d" % PETITE_LABEL_NODE
+    meta = next((e for e in entries if e["node"] == want), None)
+    if meta is None:
+        raise SystemExit("the modern UI has no %s - the Petite badge moved" % want)
+    w, h, fmt = int(meta["width"]), int(meta["height"]), int(meta["format"])
+    payload = open(os.path.join(out, "CashItem_label.%d.bin" % PETITE_LABEL_NODE), "rb").read()
+    return wz_png.to_rgba(wz_png.inflate(payload), w, h, fmt), w, h
+
+
+def composite(rgba, width, height, label, lw, lh, x0, y0):
+    """`label` alpha-blended onto `rgba` with its top-left at (x0, y0). Returns new bytes."""
+    px = bytearray(rgba)
+    for y in range(lh):
+        for x in range(lw):
+            tx, ty = x0 + x, y0 + y
+            if not (0 <= tx < width and 0 <= ty < height):
+                continue
+            s = label[(y * lw + x) * 4:(y * lw + x) * 4 + 4]
+            a = s[3]
+            if a == 0:
+                continue
+            i = (ty * width + tx) * 4
+            d = px[i:i + 4]
+            da = d[3]
+            oa = a + da * (255 - a) // 255
+            if oa == 0:
+                continue
+            for c in range(3):
+                px[i + c] = (s[c] * a + d[c] * da * (255 - a) // 255) // oa
+            px[i + 3] = oa
+    return bytes(px)
+
+
+def badge_pet_icons(extract, build_dir, pet_id, pet_name, label):
+    """Decode the four icon canvases of one pet from the extract, composite Nexon's Petite
+    label onto each, and write BGRA8888 payloads. Returns `(canvas rows, png dir)`: the patch
+    rows for the `_Canvas` image, and a folder of PNG renders for a look."""
+    wz_png = _wz_png()
+    label, lw, lh = label
+    cdir = os.path.join(extract, "canvas", "Item", "Pet", "%d" % pet_id)
+    tree = json.load(open(os.path.join(cdir, "canvas.json"), encoding="utf-8"))
+    out_dir = os.path.join(build_dir, "petite-%d" % pet_id)
+    os.makedirs(out_dir, exist_ok=True)
+    rows = []
+    for node in ["icon", "iconRaw", "iconD", "iconRawD"]:
+        meta = tree["info"][node]
+        w, h, fmt = int(meta["width"]), int(meta["height"]), int(meta["format"])
+        payload = open(os.path.join(cdir, "info.%s.bin" % node), "rb").read()
+        rgba = wz_png.to_rgba(wz_png.inflate(payload), w, h, fmt)
+        badged = composite(rgba, w, h, label, lw, lh, w - lw - LABEL_INSET, h - lh - LABEL_INSET)
+        bgra = bytearray(badged)
+        bgra[0::4], bgra[2::4] = bgra[2::4], bgra[0::4]
+        payload_out = os.path.join(out_dir, "info.%s.bin" % node)
+        with open(payload_out, "wb") as fh:
+            fh.write(zlib.compress(bytes(bgra), 9))
+        wz_png.write_png(pathlib.Path(os.path.join(out_dir, "info.%s.png" % node)), badged, w, h)
+        rows.append("info/%s\tcanvas\t%d,%d,2,%s" % (node, w, h, payload_out))
+    tsv = os.path.join(out_dir, "badge.tsv")
+    with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("# %s: UI/CashShop.img/CashItem_label/%d (Nexon's Petite badge) composited into the four icons (BGRA8888)\n" % (pet_name, PETITE_LABEL_NODE))
+        fh.write("\n".join(rows) + "\n")
+    return tsv, out_dir
 CLASSIC = os.path.join(REPO, "client-patched", "Data")
 CLASSIC_VERSION = "779"
 # The Signature Style Collection box: Nexon's id, and the id it wears in the classic client
@@ -479,9 +582,15 @@ def main():
     #     `what`, `roll`, `sit` are new; `rise`, `prone`, `nap`, `tedious`, `hand` are absent)
     #     - the interact table only names nodes the image has, and the plan step is the test.
     collab_pets = [(it["id"], it["name"]) for it in manifest.get("pets", [])]
+    label = petite_label(source, args.build_dir) if manifest.get("pets") else None
     for it in manifest.get("pets", []):
         src = os.path.join(source, it["prop_archive"])
         add("Item/Pet", "copy\t%d.img\t%s\t%d.img" % (it["id"], src, it["id"]))
+        # The Petite badge, onto the canvas image step 2 copies (this row runs after it:
+        # specs are appended in order and the canvas copy was added in step 2 above).
+        badge_tsv, badge_dir = badge_pet_icons(EXTRACT, args.build_dir, it["id"], it["name"], label)
+        add("Item/Pet/_Canvas", "patch\t%d.img\t%s" % (it["id"], badge_tsv))
+        print("  badge    %8d  %s -> %s" % (it["id"], it["name"], os.path.relpath(badge_dir, REPO)))
         tsv = os.path.join(args.build_dir, "pet-%07d-strip.tsv" % it["id"])
         with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
             fh.write("# %s: modern-only leaves the classic client would look up and not find\n" % it["name"])

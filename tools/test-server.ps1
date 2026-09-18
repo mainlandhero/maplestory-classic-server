@@ -2076,7 +2076,12 @@
           four weapons at 100 LP (was three hats). NEVER ON A SCREEN. Two things are [I]:
           the classic client drawing a modern pet (its animation set differs) and the
           weapon's inlined pixels.
-            1. Pets tab: the four at 1000, icons drawn; Pet Equip: 14 rows at 100 -> fixed
+            1. Pets tab: the four at 1000, icons drawn WITH the purple "P" badge at the
+               bottom-right (Nexon's own CashItem_label/9, baked into the icon pixels,
+               2026-09-18); the same badge on the Cash-tab icon once bought -> fixed. No
+               badge -> the format-2 canvas did not draw; paste "wz-dump cat
+               ...Item\Pet\_Canvas\_Canvas_000.wz 5002828.img" info lines.
+               Pet Equip: 14 rows at 100 -> fixed
             2. buy Lil Frieren, summon: it draws, walks, name tag, no crash -> DONE. Its
                tooltip ends "Commands: sit, slap, iloveyou, sleep, talk, roll, angry". Type
                "roll", then "angry": it rolls / looks angry (the two animations Nexon's
@@ -5161,7 +5166,8 @@ function Show-TestPlan {
         Write-Host '            lists (Learned) and changes the pet WALKING to drops; say what moves' -ForegroundColor Green
         Write-Host '       COLLAB PETS + EVERY PET EQUIP (2026-09-17, installed; rebuild the client'
         Write-Host '         package). Pets tab: Lil Frieren/Fern/Stark/Ubel at 1000; Pet Equip:' -ForegroundColor Yellow
-        Write-Host '         all 10 hats + 4 weapons at 100 -> fixed. Buy + summon Lil Frieren: it' -ForegroundColor Yellow
+        Write-Host '         all 10 hats + 4 weapons at 100; the pets'' icons carry the purple P' -ForegroundColor Yellow
+        Write-Host '         badge in the shop AND the bag -> fixed. Buy + summon Lil Frieren: it' -ForegroundColor Yellow
         Write-Host '         draws, tooltip lists 7 commands, answers "roll"/"angry"/"sleep"/"talk"' -ForegroundColor Yellow
         Write-Host '         with the right animation -> DONE; dies/invisible -> paste the item line.' -ForegroundColor Yellow
         Write-Host '         Equip its Staff (Deco tab) on it: draws on the pet -> the inline worked.' -ForegroundColor Yellow
