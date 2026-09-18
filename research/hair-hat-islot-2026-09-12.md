@@ -71,3 +71,56 @@ What the static side gave before it stopped paying:
 
 So the next launch measures: watches on `1417dd7e0`, `140397db0` and `142cc5b00`. Which of the
 three fire, in that order, names the gate's neighbourhood; plan step TO(i) has the readings.
+
+
+## 6. The gate: the id's fourth digit is the gender, and 6 is female - 2026-09-18
+
+Sections 2-5 were looking in the wrong function. `FUN_1417dd7e0` is the **drag from a worn
+slot** path - its one caller `FUN_142382330` refuses unless the source slot is negative. The
+**double-click** on a bag item is `FUN_141784fa0`, which asks `FUN_142d44b20(user, item, 0)`
+for the item's body part and calls the equip function `FUN_1417da2a0(tab, slot, part)` **only
+when that is non-zero**. Zero is silent: no call, no packet, no box. **[L]**
+
+`FUN_142d44b20` fills a list of candidate parts through `FUN_140253f90` -> `FUN_1402543e0`, a
+switch on `id / 10000` (100 -> part 1, a cap). Before the switch:
+
+```c
+if (FUN_1402531f0(id) == 0 && FUN_140416760(id) == 0 && FUN_140416820(id) == 0
+    && (g = FUN_140253130(id), charGender != 2 && g != 2) && g != charGender)
+    return;                                   // empty list -> part 0 -> nothing happens
+```
+
+`FUN_140253130` is the gender-from-id rule, and this build's table is longer than the one
+everybody remembers:
+
+```c
+d = (id / 1000) % 10;
+if (d == 0) return 0;          // male
+if (d != 1) {
+    if (d == 5) return 0;      // male
+    if (d != 6) return 2;      // unisex
+}
+return 1;                      // 1 and 6: female
+```
+
+The three hats are 100**6**910..912. Every test character is male (`characters.gender = 0`,
+all five rows). The cape (110**3**918) and the coats (105**4**56x) are unisex by the same rule,
+which is why they equipped all along. The three predicates in front of the digit are
+hard-coded id ranges (1340000.., 1350000.., 1090000 shields, 1669008..1679007 -> part 0x1c),
+not WZ keys - there is nothing in the data that makes a 1006xxx cap unisex in this build.
+
+**Fix, per the owner** (*"Nexon has made these items unisex ... fix it in the WZ data instead of
+patching the client"*): the property image is copied under **1007910..1007912** (digit 7 is
+unisex; 316 classic equips carry it; the numbers are free), the `Eqp.img` string moves with
+it, the `islot Cp` patch targets the new image, and the `_Canvas` image keeps its old name
+because the property image reaches its frames by explicit outlink path
+(`Character/Cap/_Canvas/01006910.img/...`) - the same reason the Collection box's canvas
+stayed at 0522. `world::signaturestyle::HAIR_HAT_IDS` and the sets say the new numbers;
+`store::ITEM_ID_RENAMES` renumbers hats already in a bag, worn, in the locker or in storage on
+the first start. `every_set_equip_is_unisex_under_the_clients_digit_rule` pins the rule so no
+set ships a gendered id again.
+
+Installed 2026-09-18 01:53 and read back: `01007910..12.img` present with `islot Cp`, the old
+names gone, canvases under the old names, `items.txt` naming all three. Unverified on screen;
+the plan's step (i) has the readings. What the `vslot` modern tokens do to the wearer's own
+hair is still the open variant from section 3.
