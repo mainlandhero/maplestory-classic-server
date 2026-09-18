@@ -219,6 +219,12 @@ impl Session {
             self.conversation = None;
             return out;
         }
+        // **The bag was full and the quest did not move.** `record_quest_start` /
+        // `record_quest_complete` parked the NPC's bag-full box; the closing line below
+        // would say "well done, here you are" over a quest that is still in progress.
+        if self.conversation.as_ref().is_some_and(|c| c.path == crate::questroom::REFUSAL_PATH) {
+            return out;
+        }
         // An accept whose quest has no `yes` branch: the record went out, the client's own
         // quest window has closed, and there is no line to put in a box - not the opening
         // again, and not the NPC's d0 greeting that `say_line` falls back to without a quest.
@@ -267,6 +273,52 @@ impl Session {
     pub(super) fn record_quest_complete(&mut self, finished: u32, chained_to: u32) -> Vec<Reply> {
         let Some(chr) = self.claimed_character() else { return Vec::new() };
         let mut out = Vec::new();
+        // **Room first, before the row moves.** Mint, 2026-09-17: *"quest continues to
+        // complete despite this happening"* - quest 1008 wrote its completion, paid its
+        // experience, took the letter back, and the store refused the hat into a full Equip
+        // tab. The reward rows are drawn NOW (a `prop` pool is one roll), checked against the
+        // bag as it is, and handed over below exactly as drawn. A shortfall is the NPC's
+        // bag-full box and nothing else: no record, no experience, no take. `crate::questroom`.
+        let chosen = self
+            .config
+            .quests
+            .get(&finished)
+            .map(|q| {
+                let roll = self.rng.next();
+                let chosen = crate::config::choose_rewards(&q.complete_rewards, chr.gender, roll);
+                if chosen.len() != q.complete_rewards.len() {
+                    crate::server::log(&format!(
+                        "   quest {finished}: {} of {} reward rows handed over - {} prop-marked item(s) form a pool and ONE was drawn ({:?}); gender {} filtered the rest",
+                        chosen.len(),
+                        q.complete_rewards.len(),
+                        q.complete_rewards.iter().filter(|r| r.prop > 0).count(),
+                        chosen.iter().filter(|r| r.prop > 0).map(|r| r.id).collect::<Vec<_>>(),
+                        chr.gender
+                    ));
+                }
+                chosen
+            })
+            .unwrap_or_default();
+        // Only an in-progress quest can be short of room: a repeat click on a finished quest
+        // hands nothing over and must stay the silent no-op it is below.
+        let in_progress = self
+            .store
+            .quest_row(chr.id, finished)
+            .ok()
+            .flatten()
+            .is_some_and(|r| r.state == store::QuestState::InProgress);
+        if in_progress {
+            let short = self.quest_room_shortfall(&chr, &chosen);
+            if !short.is_empty() {
+                let speaker = self
+                    .config
+                    .quests
+                    .get(&finished)
+                    .and_then(|q| q.end_npc.or(q.start_npc))
+                    .unwrap_or(0);
+                return self.bag_full_refusal(finished, speaker, &short, "completed");
+            }
+        }
         // Only a completion that was actually recorded earns a fanfare. Playing one for a
         // quest the character never started would be a sound with nothing behind it.
         let mut recorded = false;
@@ -328,7 +380,7 @@ impl Session {
         if !recorded {
             return out;
         }
-        out.extend(self.apply_quest_completion_rewards(finished));
+        out.extend(self.apply_quest_completion_rewards(finished, chosen));
         // **The turn-in fanfare.** The owner, 2026-08-21: *"Quest finish still does not trigger
         // the SFX for quest finish."* It did not, because nothing sent one.
         //
@@ -427,29 +479,16 @@ impl Session {
     /// direction went in. Taking what the player does not have is not an error: the quest is
     /// already being completed and refusing here would leave it half finished, so a missing
     /// item is reported and the completion stands.
-    fn apply_quest_completion_rewards(&mut self, quest_id: u32) -> Vec<Reply> {
+    /// `chosen` is what `record_quest_complete` drew and checked room for - **one** of the
+    /// `prop`-marked items (the owner, 2026-09-13: *"Maria gave me one of every single Headband
+    /// item when it's suppose to be choose 1 randomly from the pool"*; `choose_rewards`), and
+    /// the same rows the bag was measured against, so the hand-out cannot differ from the
+    /// check.
+    fn apply_quest_completion_rewards(&mut self, quest_id: u32, chosen: Vec<crate::config::RewardItem>) -> Vec<Reply> {
         let Some(quest) = self.config.quests.get(&quest_id) else { return Vec::new() };
-        let rewards = quest.complete_rewards.clone();
         let exp = quest.complete_exp;
         let Some(chr) = self.claimed_character() else { return Vec::new() };
         let mut out = Vec::new();
-
-        // **One of the `prop`-marked items, not all of them.** The owner, 2026-09-13: *"Maria gave
-        // me one of every single Headband item when it's suppose to be choose 1 randomly from
-        // the pool."* `crate::config::choose_rewards` applies the rule; the roll is the
-        // session's, so a test can seed it.
-        let roll = self.rng.next();
-        let chosen = crate::config::choose_rewards(&rewards, chr.gender, roll);
-        if chosen.len() != rewards.len() {
-            crate::server::log(&format!(
-                "   quest {quest_id}: {} of {} reward rows handed over - {} prop-marked item(s) form a pool and ONE was drawn ({:?}); gender {} filtered the rest",
-                chosen.len(),
-                rewards.len(),
-                rewards.iter().filter(|r| r.prop > 0).count(),
-                chosen.iter().filter(|r| r.prop > 0).map(|r| r.id).collect::<Vec<_>>(),
-                chr.gender
-            ));
-        }
         for crate::config::RewardItem { id: item_id, count, .. } in chosen {
             let Some(inv) = store::InventoryType::for_item(item_id) else { continue };
             if count > 0 {
@@ -590,6 +629,26 @@ impl Session {
         if before == Some(store::QuestState::Complete) {
             return Vec::new();
         }
+        // The same rule at the other end: a quest that hands something over on accept
+        // (Sera's mirror, Roger's apple) is not accepted into a bag that cannot take it.
+        if before.is_none() {
+            let gives: Vec<crate::config::RewardItem> = self
+                .config
+                .quests
+                .get(&quest_id)
+                .map(|q| {
+                    q.start_items
+                        .iter()
+                        .filter(|(_, c)| *c > 0)
+                        .map(|&(id, count)| crate::config::RewardItem { id, count, prop: 0, gender: None })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let short = self.quest_room_shortfall(&chr, &gives);
+            if !short.is_empty() {
+                return self.bag_full_refusal(quest_id, npc_template, &short, "accepted");
+            }
+        }
         let what = match self.store.start_quest(chr.id, quest_id) {
             Ok(true) => format!(
                 "quest {quest_id} accepted from NPC {npc_template} by character {} ({}) and stored",
@@ -667,6 +726,69 @@ impl Session {
     /// 1001's `Act.1.item.0.count` is `-1` - and taking an item on completion is not wired,
     /// so finishing that quest leaves the mirror in the bag. Recorded rather than silently
     /// half-done: `Act.<state>.item` is read for state 0 only.
+    /// The tabs `rows` would overflow, against the bag as it is now. Gives and takes are the
+    /// rows' signs; the tab is the config's (`tab_for`, so a cash equip counts against Deco).
+    fn quest_room_shortfall(
+        &self,
+        chr: &net::opcode::Character,
+        rows: &[crate::config::RewardItem],
+    ) -> Vec<crate::questroom::Shortfall> {
+        let Ok(bag) = self.store.bag(chr.id) else { return Vec::new() };
+        let mut gives = Vec::new();
+        let mut takes = Vec::new();
+        for r in rows {
+            let Some(tab) = self.config.tab_for(r.id).or_else(|| store::InventoryType::for_item(r.id)) else { continue };
+            let n = r.count.unsigned_abs().min(u16::MAX as u32) as u16;
+            if r.count > 0 {
+                gives.push((r.id, n, tab));
+            } else if r.count < 0 {
+                takes.push((r.id, n, tab));
+            }
+        }
+        crate::questroom::shortfall(&bag, &gives, &takes, |id| self.config.shops.max_stack(id))
+    }
+
+    /// **The NPC says the bag is full, and the quest stays where it was.** The owner,
+    /// 2026-09-17: *"the server should use the NPC dialogue and display an appropriate
+    /// message to say that their bag is full, please make <x> amount of spaces in <y> tab."*
+    ///
+    /// A plain `Say` from `speaker` (no Next), parked under `questroom::REFUSAL_PATH` so the
+    /// OK that closes it is answered silently and the `0x0151` handler skips its closing
+    /// line. A quest with no NPC on record (a `complete_on_consume` one) gets the same words
+    /// as a chat line - there is no box to put them in.
+    fn bag_full_refusal(
+        &mut self,
+        quest_id: u32,
+        speaker: u32,
+        short: &[crate::questroom::Shortfall],
+        at: &str,
+    ) -> Vec<Reply> {
+        let text = crate::questroom::refusal_text(short);
+        crate::server::log(&format!(
+            "   quest {quest_id}: NOT {at} - the bag has no room for what it hands over: {:?}. Nothing written, nothing paid.",
+            short.iter().map(|s| format!("{:?} short {}", s.tab, s.slots)).collect::<Vec<_>>()
+        ));
+        if speaker == 0 {
+            return self.notice(text);
+        }
+        self.conversation = Some(Conversation {
+            npc_template: speaker,
+            quest_id: None,
+            path: crate::questroom::REFUSAL_PATH.to_string(),
+            sent: 0,
+            awaiting_yes_no: false,
+            sent_with_next: false,
+        });
+        vec![Reply {
+            opcode: net::script::SCRIPT_MESSAGE,
+            body: net::script::npc_say(speaker, &text, false, false),
+            what: format!(
+                "ScriptMessage Say from NPC template {speaker}: quest {quest_id} not {at}, the bag is full - {}",
+                short.iter().map(|s| format!("{} short {}", net::bag::BAG_TAB_NAMES[s.tab.index()], s.slots)).collect::<Vec<_>>().join(", ")
+            ),
+        }]
+    }
+
     fn grant_quest_start_items(&mut self, quest_id: u32) -> Vec<Reply> {
         let Some(quest) = self.config.quests.get(&quest_id) else { return Vec::new() };
         let items = quest.start_items.clone();

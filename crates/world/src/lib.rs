@@ -60,6 +60,7 @@ pub mod party;
 pub mod petcommands;
 pub mod petlevel;
 pub mod questitems;
+pub mod questroom;
 pub mod remoteattack;
 pub mod returnscroll;
 pub mod scrollnpc;

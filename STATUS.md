@@ -236,6 +236,23 @@ is Auto Move (`5190002`) THEN Expanded Auto Move (`5190003`); the box then rides
 wonderGrade 6 as before. `research/pet-vacuum-wondergrade-2026-09-16.md` §7. 2132 tests. Plan
 step 8 LOOT has the order.
 
+**2026-09-17: a quest into a full bag is refused at the NPC, before anything moves.** Mint
+(Discord): *"quest continues to complete despite this happening"* under `Quest 1008 could not
+give you item 1002005: inventory 1 is full (30 slots)`. The owner: *"the server should use the NPC
+dialogue and display an appropriate message to say that their bag is full, please make <x>
+amount of spaces in <y> tab. The quest should not complete if the user has a full inventory."*
+The completion was recorded, the EXP paid, the letter taken back, and the store's refusal of
+the hat became a yellow line - the Heena-quest shape (every effect must hang off one decision)
+at the other end. `crate::questroom::shortfall` counts the room per tab the way
+`place_into_bag` fills it (stacks topped up, `ceil(rest/slotMax)` fresh slots, a take frees the
+slot it empties); `record_quest_complete` draws the reward roll FIRST, checks, and only then
+writes the row, pays and hands over exactly what it drew. A shortfall is a plain `Say` from the
+quest's NPC parked under `questroom::REFUSAL_PATH` ("Your bag is full ... Please make N space(s)
+in your <Tab> tab. Then come and talk to me again."), and the `0x0151` handler skips its closing
+line on that path. Accepting has the same rule for start items. Tests: Mint's case end to end
+(refused, then completes after one slot is freed, closing line only the second time), a stack
+topped up is not a refusal, an accept into a full Etc tab. 2145 tests. Plan step 11.
+
 **2026-09-17: the in-range vacuum (Petite Luna) is FREE; only the pet's WALKING is paid.** The owner:
 *"vacuuming loot within a certain range of the pet (Petite Luna) should be free. Auto move ...
 should be a skill ... Expanded auto move (longRange) ... should also remain a skill"* and *"The
