@@ -809,6 +809,10 @@ pub struct Character {
     /// portal named by the source portal's `tn`, so the character arrives at the matching
     /// door rather than back at the spawn.
     pub portal: u8,
+    /// **Fame**, stat row 22 of the record, `characters.fame`. Signed: a defame can take it
+    /// below zero. The two arrows on another player's Character Info window move it -
+    /// `store::fame` has the rules. Added 2026-09-18; a literal 0 on the wire before that.
+    pub fame: i32,
     /// `(slot, itemId)` pairs for the avatar's visible equipment.
     pub equips: Vec<(u8, u32)>,
     /// What is in the **Equip tab of the bag** - owned, not worn.
@@ -871,6 +875,7 @@ impl Default for Character {
             exp: 0,
             map_id: START_MAP_ID,
             portal: 0, // the map's spawn point
+            fame: 0,
             equips: Vec::new(),
             equip_bag: Vec::new(),
             inventory_slots: default_inventory_slots(),
@@ -1254,7 +1259,9 @@ pub fn character_stat_block(chr: &Character, world_id: u32) -> Vec<u8> {
     // have been the "built is not wired" failure exactly: the database would fill up and the
     // bar would sit at zero, which on screen is indistinguishable from nothing working.
     out.extend_from_slice(&chr.exp.to_le_bytes()); // exp
-    out.extend_from_slice(&0u32.to_le_bytes()); // fame
+    // A literal 0 until 2026-09-18: `characters.fame` did not exist, so every Character Info
+    // window said 0. Signed - a defame can take it below zero - and the row is read as u32.
+    out.extend_from_slice(&(chr.fame as u32).to_le_bytes()); // fame
     debug_assert_eq!(out.len(), stat_block_map_id_at(chr.job), "the map id moved");
     out.extend_from_slice(&chr.map_id.to_le_bytes()); // <- the field id
     out.push(chr.portal); // which portal on the map the character arrives at

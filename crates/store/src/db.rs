@@ -323,6 +323,9 @@ impl Store {
         // same belt-and-braces reason `claims.rs` and `codes.rs` do; this line is what makes
         // the module WIRED rather than merely working.
         crate::dailyperks::create_tables(&conn)?;
+        // Fame: `characters.fame` (ALTERed on, PRAGMA-guarded) and the `fame_log` the two
+        // once-per-window rules are checked against. `fame.rs`.
+        crate::fame::create_tables(&conn)?;
         // The migration credential columns. These are ALTERed onto `migrations`, which is
         // NOT a new table, so the call carries its own PRAGMA guard - see that module.
         // Every claim entry point already calls this; doing it here too makes the module
@@ -573,6 +576,12 @@ impl Store {
     /// still a usable connection - so the lock is recovered rather than panicking.
     pub(crate) fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The wall clock as a unix second, for callers outside this crate that gate on a UTC
+    /// window (`Store::give_fame`); the one `SystemTime` read the store crate makes.
+    pub fn unix_now() -> i64 {
+        Self::now()
     }
 
     pub(crate) fn now() -> i64 {

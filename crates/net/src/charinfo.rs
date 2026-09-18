@@ -84,7 +84,17 @@ pub struct CharacterInfo {
     pub pet: Option<PetPanel>,
     /// The request's `petInfo`, echoed: the pet panel opens with the window.
     pub show_pet_panel: bool,
+    /// **The ITEM tab**: whole `GW_ItemSlot`s (type byte included), at most
+    /// [`CHARACTER_INFO_MAX_ITEMS`] - the decoder returns early past that and the fields
+    /// after the list go unread. What the character is wearing: every worn equip, regular and
+    /// cash (the owner, 2026-09-18: *"This item list should include the hair, face, equipment and
+    /// cash shop cover items that the player is wearing."* - hair and face are not items in
+    /// this client's data, so they have no slot to send; see `session/charinfo.rs`).
+    pub items: Vec<Vec<u8>>,
 }
+
+/// Row 16 of the reply: an item count above this makes the decoder give up mid-body.
+pub const CHARACTER_INFO_MAX_ITEMS: usize = 32;
 
 /// Length of a [`character_info`] body with no pet, empty guild and a name of `n` bytes.
 pub const CHARACTER_INFO_BASE_LEN: usize = 60;
@@ -125,7 +135,11 @@ pub fn character_info(info: &CharacterInfo) -> Vec<u8> {
             w.u8(0); // hasPetItem
         }
     }
-    w.u32(0); // item count (ITEM tab), 0..32
+    let items = &info.items[..info.items.len().min(CHARACTER_INFO_MAX_ITEMS)];
+    w.u32(items.len() as u32); // item count (ITEM tab), 0..32
+    for item in items {
+        w.bytes(item);
+    }
     w.u32(0); // record count (CITIZENSHIP tab), 0..2
     w.u8(u8::from(info.show_pet_panel && info.pet.is_some()));
     w.into_vec()
@@ -163,6 +177,7 @@ mod tests {
             level: 8,
             job: 0,
             fame: 0,
+            items: Vec::new(),
             guild: String::new(),
             pet: None,
             show_pet_panel: false,
@@ -195,6 +210,7 @@ mod tests {
             level: 12,
             job: 200,
             fame: 0,
+            items: Vec::new(),
             guild: String::new(),
             pet: Some(PetPanel { item_id: 5_000_006, name: "Husky".into(), level: 3, closeness: 250, fullness: 90, item: item.clone() }),
             show_pet_panel: true,

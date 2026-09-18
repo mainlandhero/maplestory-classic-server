@@ -537,6 +537,7 @@ mod chair;
 mod beautycoupon;
 mod cashitem;
 mod charinfo;
+mod fame;
 mod cashshop;
 mod combat;
 mod consume;
@@ -1104,6 +1105,8 @@ impl Session {
             net::charinfo::CLIENT_CHARACTER_INFO_REQUEST => {
                 return self.on_character_info_request(body.get(2..).unwrap_or(&[]));
             }
+            // The fame arrows on that window. session/fame.rs.
+            net::fame::CLIENT_GIVE_FAME => return self.on_give_fame(body.get(2..).unwrap_or(&[])),
             // Anything else whose CLIENT-SIDE builder sets that same exclusive-request latch.
             // Not implemented, but silence here freezes the UI, so it gets the nine-byte
             // unlock and nothing else - an empty mask says nothing about any subsystem.

@@ -126,6 +126,9 @@ impl Store {
             // Named rather than `..`-ignored so this stays a decision someone made.
             equip_bag: _,
             inventory_slots,
+            // A new character has no fame and the column defaults to 0; the only writer is
+            // `Store::give_fame`, so a value on a `Character` handed in here is not honoured.
+            fame: _,
         } = chr;
 
         match self.check_character_name(name)? {
@@ -213,7 +216,7 @@ impl Store {
         let mut stmt = conn.prepare(&format!(
             "SELECT id, name, gender, skin, face, hair, level, job,
                     strength, dexterity, intelligence, luck,
-                    hp, max_hp, mp, max_mp, ap, map_id, exp, {}
+                    hp, max_hp, mp, max_mp, ap, map_id, exp, {}, fame
                FROM characters
               WHERE account_id = ?1 AND world_id = ?2
               ORDER BY created_at, id",
@@ -259,6 +262,8 @@ impl Store {
                     row.get(23)?,
                     row.get(24)?,
                 ],
+                // After the six slot columns, so their positional indices above do not move.
+                fame: row.get(25)?,
             })
         })?;
         let mut characters: Vec<Character> = rows.collect::<rusqlite::Result<_>>()?;

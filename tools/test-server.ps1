@@ -1556,6 +1556,27 @@
                          line and whatever follows it
               the window opens but a later inventory move is refused -> the reply did not
                          clear the latch; paste the 0x00A2 line
+            FAME, AND THE ITEM LIST (2026-09-18 evening, the owner: "attempted to fame them";
+            "once per day (reset at midnight UTC) ... not the same character twice in a
+            week, resets on Monday midnight UTC"; "the full Item List of everything they
+            are wearing"). The click sends 0x0144 (u32 target, u8 up) and got nothing. The
+            reply is 0x0087 - the one handler that references every fame message string -
+            mode 0 (name, up/down, new fame) to the giver, mode 5 (giver's name, up/down)
+            plus a fame StatChanged to the target; mode 3 = "not anymore for today", mode 4
+            = "not that character this month" (the client's word; the rule is a WEEK). The
+            fame is a real column now (it was a literal 0). The ITEM tab lists every worn
+            equip and cash cover as whole item slots; hair and face are NOT in it yet - the
+            classic data has no icon node for them, so a slot with a hair id would ask the
+            widget for an icon that does not exist. Icons are being synthesised into the
+            hybrid WZ; until that installs, the list is equips only.
+              up arrow on Tester2: "raised Tester2's fame", FAME reads 1 in the window;
+                         Tester2's screen: "'the owner' has raised your fame" -> DONE
+              the arrow again (either way, anyone): "can't ... anymore for today" -> DONE
+              Tester2 fames the owner back: allowed (per giver) -> DONE
+              Item List panel: Tester2's hat, coat, weapon, cash cover with icons -> DONE;
+                         blank cells or the client dies -> the widget rejected an equip
+                         body; paste the 0x00A2 line and client-exit.log
+              nothing at all on the click -> the 0x0144 arm not reached; paste the line
             THE OTHER CLIENTS: LEAVE + ENTER IS THE DEFAULT AGAIN (2026-09-18 14:07 run).
             The in-place 0x0138 was tried with the hook's avatarmod patch opening the
             client's apply, and MEASURED INERT: the patch applied (hook log 14:07:10.801),
@@ -4558,6 +4579,14 @@ function Show-TestPlan {
         Write-Host '           window opens with Tester2''s numbers (+ pet panel) -> DONE; avatar drawn?' -ForegroundColor Green
         Write-Host '           nothing opens, log HAS 0x00A2 -> a pre-open gate; paste both lines' -ForegroundColor Yellow
         Write-Host '           nothing opens, NO 0x00A2 -> arm not reached; paste the 0x01FC line' -ForegroundColor Yellow
+        Write-Host '         FAME (evening): the up/down arrows answer now (0x0144 -> 0x0087). Once a day' -ForegroundColor Magenta
+        Write-Host '         per giver (00:00 UTC), same target once a week (Mon 00:00 UTC); the'
+        Write-Host '         client says "month" for the week rule. ITEM LIST: every worn equip and'
+        Write-Host '         cash cover; hair/face wait on synthesised icons (not in this build).'
+        Write-Host '           up on Tester2: "raised", FAME 1 in the window, Tester2 sees "the owner has' -ForegroundColor Green
+        Write-Host '           raised your fame"; again -> "not anymore for today" -> DONE' -ForegroundColor Green
+        Write-Host '           Item List shows the hat/coat/weapon/cover icons -> DONE; blank or' -ForegroundColor Green
+        Write-Host '           a death -> paste the 0x00A2 line and client-exit.log' -ForegroundColor Yellow
         Write-Host '         OTHER CLIENTS: LEAVE+ENTER IS THE DEFAULT AGAIN (14:07 run). The in-place' -ForegroundColor Yellow
         Write-Host '         0x0138 reached the observer, its handler ran, nothing drew - inert.' -ForegroundColor Yellow
         Write-Host '         Every worn/hair change publishes, with the blink + pet respawn (open item).' -ForegroundColor Yellow
