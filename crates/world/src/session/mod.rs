@@ -536,6 +536,7 @@ mod buff;
 mod chair;
 mod beautycoupon;
 mod cashitem;
+mod charinfo;
 mod cashshop;
 mod combat;
 mod consume;
@@ -1097,6 +1098,11 @@ impl Session {
             // opcode on 2026-09-12 and nothing answered it.
             net::beautycoupon::CLIENT_BEAUTY_COUPON_CONFIRM => {
                 return self.on_beauty_coupon_confirm(body.get(2..).unwrap_or(&[]));
+            }
+            // A double-click on another player: their Character Info. Both client-side
+            // builders set the same latch, so this is answered on every path. session/charinfo.rs.
+            net::charinfo::CLIENT_CHARACTER_INFO_REQUEST => {
+                return self.on_character_info_request(body.get(2..).unwrap_or(&[]));
             }
             // Anything else whose CLIENT-SIDE builder sets that same exclusive-request latch.
             // Not implemented, but silence here freezes the UI, so it gets the nine-byte

@@ -1516,6 +1516,30 @@
                          -> CONFIRMED 2026-09-18 14:51 (!hair 42540, two clients side by side)
               the hair changes but the character flickers / a CLIENT FAULT -> paste
                          client-exit.log; the pair ran on an avatar mid-animation
+            ANOTHER PLAYER'S CHARACTER INFO (2026-09-18, the owner: "When double clicking another
+            player, a similar Character Info window should show ... I just tried double
+            clicking on Tester2"). The click sent 0x01FC (u32 tick, u32 id, str "", u8
+            petInfo) and nothing answered - and BOTH its builders set the shared request
+            latch, so an unanswered click also froze ~35 other request senders until the
+            next map change. The reply is 0x00A2 (found from the double-click handler's own
+            window singleton back to the dispatcher case that clears the latch; the opcode
+            table had it wrong in both columns): result, id, name, level, job, fame 0,
+            guild "", the pet out (item id, name, level, closeness, fullness, the pet item)
+            or zeros, no ITEM/CITIZENSHIP rows, and petInfo echoed. Every request is
+            answered; an unknown character gets the 4-byte refusal.
+            research/character-info-2026-09-18.md. NEVER ON A SCREEN. Two clients:
+              double-click Tester2 as the owner: the Character Info window opens with Tester2's
+                         name, level, job, FAME 0, GUILD -, and (if a pet is out) the pet
+                         panel's TYPE/LEVEL/CLOSENESS/FULLNESS matching Tester2's own
+                         -> DONE; say whether Tester2's avatar is drawn in it
+              the window opens but the avatar box is blank -> the pool lookup by id missed;
+                         say so, that is a separate variant
+              nothing opens, and the log has the 0x00A2 line -> one of the two pre-open
+                         gates (research 2.1) refused; paste the 0x01FC and 0x00A2 lines
+              nothing opens and NO 0x00A2 line -> the arm is not reached; paste the 0x01FC
+                         line and whatever follows it
+              the window opens but a later inventory move is refused -> the reply did not
+                         clear the latch; paste the 0x00A2 line
             THE OTHER CLIENTS - IN PLACE, BY 0x0138 (2026-09-18 evening). The leave + enter
             of the afternoon WORKED and was measured: "a weird super brief character blink
             as it disappears and reappears ... The regular maplestory does not have this
@@ -4518,6 +4542,12 @@ function Show-TestPlan {
         Write-Host '         !hair 42540 is the cheap form (no reload now either).'
         Write-Host '           own screen: changes the MOMENT you Confirm -> CONFIRMED 14:51' -ForegroundColor Green
         Write-Host '           flicker / CLIENT FAULT -> paste client-exit.log' -ForegroundColor Yellow
+        Write-Host '         ANOTHER PLAYER''S CHARACTER INFO (2026-09-18): double-click Tester2 as the owner.' -ForegroundColor Magenta
+        Write-Host '         0x01FC was unanswered (and it LATCHES); now one 0x00A2 with name, level,' -ForegroundColor Magenta
+        Write-Host '         job, fame 0, guild -, and the pet out with its numbers.' -ForegroundColor Magenta
+        Write-Host '           window opens with Tester2''s numbers (+ pet panel) -> DONE; avatar drawn?' -ForegroundColor Green
+        Write-Host '           nothing opens, log HAS 0x00A2 -> a pre-open gate; paste both lines' -ForegroundColor Yellow
+        Write-Host '           nothing opens, NO 0x00A2 -> arm not reached; paste the 0x01FC line' -ForegroundColor Yellow
         Write-Host '         OTHER CLIENTS, IN PLACE (evening): the leave+enter worked but BLINKED and' -ForegroundColor Magenta
         Write-Host '         respawned the pet. Now the hook nops the je that gates 0x0138''s apply' -ForegroundColor Magenta
         Write-Host '         (avatarmod, on by default) and the server sends ONE 0x0138 per look' -ForegroundColor Magenta

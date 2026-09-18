@@ -8880,6 +8880,89 @@ fn a_worn_change_is_re_announced_to_the_map() {
     assert!(them.collect_mail().is_empty(), "a bag shuffle is nobody else's business");
 }
 
+/// The captured double-click on Tester2, retargeted: `u32 tick, u32 id, str "", u8 petInfo`.
+fn character_info_request(id: u32, pet_info: bool) -> Vec<u8> {
+    let mut b = net::charinfo::CLIENT_CHARACTER_INFO_REQUEST.to_le_bytes().to_vec();
+    b.extend_from_slice(&0x2c10b8u32.to_le_bytes());
+    b.extend_from_slice(&id.to_le_bytes());
+    b.extend_from_slice(&[0, 0]);
+    b.push(u8::from(pet_info));
+    b
+}
+
+/// **Double-clicking another player opens their Character Info.** The owner, 2026-09-18: *"When
+/// double clicking another player, a similar Character Info window should show for as well for
+/// players that are not yourself. I just tried double clicking on Tester2."* The click is
+/// `0x01FC` naming the character; the answer is one `0x00A2` with their name, level, job, and
+/// - when they have a pet out - the pet's name and vitals plus the pet item, with the panel
+/// flag echoed. A character that does not exist gets the four-byte refusal, because both
+/// client-side builders latch and an unanswered request freezes ~35 other senders.
+#[test]
+fn double_clicking_another_player_answers_with_their_character_info() {
+    let (store, config, fields, account) = shared_channel(0, 30);
+    let mut item_names = std::collections::HashMap::new();
+    item_names.insert(5_000_006u32, "Husky".to_string());
+    let config = Arc::new(Config { item_names, ..(*config).clone() });
+    let (mut me, _my_id) = join_channel(&store, &config, &fields, account, "Wisp");
+    me.on_field_entered();
+    let (mut them, their_id) = join_channel(&store, &config, &fields, account, "Tester2");
+    them.on_field_entered();
+    me.collect_mail(); // Tester2's arrival, so the click's answer is the only reply below
+    let mut chr8 = them.claimed_character().unwrap();
+    chr8.level = 8;
+    store.save_character_progress(&chr8).unwrap();
+
+    // No pet: the 60-byte body plus the name, level 8, job 0, pet item id 0, panel closed.
+    let out = me.handle(&character_info_request(their_id, false));
+    assert_eq!(out.len(), 1, "{out:?}");
+    assert_eq!(out[0].opcode, net::charinfo::CHARACTER_INFO);
+    let b = &out[0].body;
+    assert_eq!(b.len(), net::charinfo::CHARACTER_INFO_BASE_LEN + "Tester2".len());
+    assert_eq!(&b[..4], &[0, 0, 0, 0], "result 0: show it");
+    assert_eq!(u32::from_le_bytes(b[4..8].try_into().unwrap()), their_id);
+    assert_eq!(&b[10..17], b"Tester2");
+    assert_eq!(u32::from_le_bytes(b[17..21].try_into().unwrap()), 8, "level");
+    assert_eq!(u32::from_le_bytes(b[31..35].try_into().unwrap()), 0, "no pet");
+
+    // Tester2 summons a Husky; the same click now carries the pet, and petInfo opens the panel.
+    store.add_item(their_id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+    them.last_position = Some((0, 0));
+    them.on_pet_activate(&hex("509a18140100"));
+    let pet_id = store.active_pet(their_id).unwrap().expect("the Husky is out").pet_id;
+    store.set_pet_vitals(pet_id, 3, 250, 90).unwrap();
+    me.collect_mail(); // the summon, broadcast to the map
+    let out = me.handle(&character_info_request(their_id, true));
+    let out: Vec<Reply> = out.into_iter().filter(|r| r.opcode == net::charinfo::CHARACTER_INFO).collect();
+    assert_eq!(out.len(), 1, "{out:?}");
+    let b = &out[0].body;
+    let at = 31;
+    assert_eq!(u32::from_le_bytes(b[at..at + 4].try_into().unwrap()), 5_000_006, "the pet item id");
+    assert_eq!(&b[at + 6..at + 11], b"Husky", "the pet's name beside TYPE");
+    let nums: Vec<u32> = (0..3).map(|i| u32::from_le_bytes(b[at + 11 + i * 4..at + 15 + i * 4].try_into().unwrap())).collect();
+    assert_eq!(nums, vec![3, 250, 90], "level, closeness, fullness - what the panel prints");
+    let flag = at + 11 + 20;
+    assert_eq!(b[flag], 1, "hasPetItem");
+    assert_eq!(b[flag + 1], net::bag::PET_ITEM_TYPE, "the whole pet item, type byte first");
+    assert_eq!(*b.last().unwrap(), 1, "the panel opens with the window, as asked");
+    assert!(out[0].what.contains("Husky lv 3 closeness 250 fullness 90"), "{}", out[0].what);
+
+    // A character that does not exist: the refusal, four bytes, still an answer.
+    let out = me.handle(&character_info_request(999_999, false));
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].opcode, net::charinfo::CHARACTER_INFO);
+    assert_eq!(out[0].body, vec![1, 0, 0, 0]);
+
+    // By name (id 0), which the other builder sends.
+    let mut by_name = net::charinfo::CLIENT_CHARACTER_INFO_REQUEST.to_le_bytes().to_vec();
+    by_name.extend_from_slice(&0u32.to_le_bytes());
+    by_name.extend_from_slice(&0u32.to_le_bytes());
+    by_name.extend_from_slice(&7u16.to_le_bytes());
+    by_name.extend_from_slice(b"Tester2");
+    by_name.push(0);
+    let out = me.handle(&by_name);
+    assert_eq!(u32::from_le_bytes(out[0].body[4..8].try_into().unwrap()), their_id, "resolved by name");
+}
+
 /// **A late joiner is told where people ARE, not where they were when they arrived.**
 ///
 /// The owner, 2026-09-03: *"the positioning is off if someone joins the map later since they don't
