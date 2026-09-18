@@ -287,6 +287,39 @@ LOOK_LAYERS = {
     "Face": ("default/face",),
 }
 ICON_ORIGIN_X = -2  # what every classic cap icon carries
+# The Character Info ITEM tab draws nothing for an icon larger than its cell: Fern Hair's
+# 46x56 render came up blank on 2026-09-18 while Fern Face's 27x17 and every cap (27..30 on a
+# side) drew. Every classic equip icon fits in this box; a hair or face is scaled to it.
+ICON_FIT = 32
+
+
+def fit_icon(rgba, w, h, box):
+    """`rgba` scaled down to fit `box` x `box` (aspect kept; never scaled up), by area
+    averaging in premultiplied alpha so a soft edge stays a soft edge. `(rgba, w, h)`."""
+    if w <= box and h <= box:
+        return rgba, w, h
+    scale = max(w, h) / float(box)
+    nw, nh = max(1, int(round(w / scale))), max(1, int(round(h / scale)))
+    out = bytearray(nw * nh * 4)
+    for y in range(nh):
+        y0, y1 = int(y * h / nh), max(int(y * h / nh) + 1, int((y + 1) * h / nh))
+        for x in range(nw):
+            x0, x1 = int(x * w / nw), max(int(x * w / nw) + 1, int((x + 1) * w / nw))
+            r = g = b = a = 0
+            n = 0
+            for sy in range(y0, min(y1, h)):
+                for sx in range(x0, min(x1, w)):
+                    i = (sy * w + sx) * 4
+                    pa = rgba[i + 3]
+                    r += rgba[i] * pa
+                    g += rgba[i + 1] * pa
+                    b += rgba[i + 2] * pa
+                    a += pa
+                    n += 1
+            o = (y * nw + x) * 4
+            if a:
+                out[o], out[o + 1], out[o + 2], out[o + 3] = r // a, g // a, b // a, a // n
+    return bytes(out), nw, nh
 
 
 def _image_names(archive):
@@ -375,7 +408,76 @@ def render_look_icon(wz_png, prop_archive, canvas_archive, image, canvas_image, 
     canvas = bytes(w * h * 4)
     for (px, py, pw, ph, rgba) in parts:  # in LOOK_LAYERS order: below, hair, over
         canvas = composite(canvas, w, h, rgba, pw, ph, px - x0, py - y0)
-    return canvas, w, h
+    return fit_icon(canvas, w, h, ICON_FIT)
+
+
+def _info_canvas(prop_archive, image, node):
+    """`(w, h, (ox, oy), outlink)` of `info/<node>` in a property image, or None."""
+    out = subprocess.run([WZ_DUMP, "cat", prop_archive, image], capture_output=True, text=True,
+                         encoding="utf-8", errors="replace")
+    if out.returncode != 0:
+        raise SystemExit("wz-dump cat %s %s failed: %s" % (prop_archive, image, out.stderr.strip()))
+    v = (json.loads(out.stdout).get("info") or {}).get(node)
+    if not isinstance(v, dict) or not v.get("_canvas"):
+        return None
+    o = v.get("origin") or {"x": 0, "y": 0}
+    return v.get("width"), v.get("height"), (int(o["x"]), int(o["y"])), v.get("_outlink")
+
+
+def cover_icons(build_dir, source, manifest, add):
+    """`info/icon` for every backported equip whose modern image has only `info/iconRaw`.
+
+    The owner, 2026-09-18, with Fern's Staff blank in another player's ITEM tab while its tooltip
+    drew: the six modern weapon covers (1703722..1703727) carry `iconRaw` and no `icon` - the
+    modern client's lists read `iconRaw`, this client's read `icon` (the tooltip reads
+    `iconRaw`, which is why it drew). A copy of the `iconRaw` pixels under `info/icon`, with
+    its origin, as a `newcanvas` row on the property image. Returns the ids patched."""
+    wz_png = _wz_png()
+    patched = []
+    for items in manifest["sets"].values():
+        for it in items:
+            if it["type"] in ("Hair", "Face"):
+                continue
+            image = "%08d.img" % it["id"]
+            dest = "%08d.img" % HAIR_HAT_RENAMES.get(it["id"], it["id"])
+            prop = os.path.join(source, it["prop_archive"])
+            if _info_canvas(prop, image, "icon") is not None:
+                continue
+            raw = _info_canvas(prop, image, "iconRaw")
+            if raw is None or not raw[3]:
+                print("  cover icon %-8d %s: neither info/icon nor an outlinked info/iconRaw - left alone" % (it["id"], it["name"]))
+                continue
+            cimg, node = raw[3].split("/_Canvas/", 1)[1].split("/", 1)
+            tree_rel = "Character/" + it["type"]
+            out_dir = os.path.join(build_dir, "cover-icons", dest[:-4])
+            os.makedirs(out_dir, exist_ok=True)
+            r = subprocess.run([WZ_DUMP, "canvas", modern_part(source, tree_rel + "/_Canvas", cimg), cimg, out_dir, node],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if r.returncode != 0:
+                raise SystemExit("wz-dump canvas for %s failed: %s" % (it["id"], r.stderr.strip()))
+            entries = {e["node"].strip("/"): e for e in json.load(open(os.path.join(out_dir, "manifest.json"), encoding="utf-8"))}
+            e = entries.get(node)
+            if e is None:
+                raise SystemExit("%s: %s names %s, which the canvas image does not hold" % (it["id"], image, raw[3]))
+            payload = open(os.path.join(out_dir, e["file"]), "rb").read()
+            rgba = wz_png.to_rgba(wz_png.inflate(payload), e["width"], e["height"], e["format"])
+            # Into the cell's box like a hair icon (Ubel's Staff is 34x33); the origin keeps
+            # the cap convention, (-2, height).
+            rgba, w, h = fit_icon(rgba, e["width"], e["height"], ICON_FIT)
+            bgra = bytearray(rgba)
+            bgra[0::4], bgra[2::4] = bgra[2::4], bgra[0::4]
+            payload_out = os.path.join(out_dir, "icon.bin")
+            with open(payload_out, "wb") as fh:
+                fh.write(zlib.compress(bytes(bgra), 9))
+            wz_png.write_png(pathlib.Path(os.path.join(out_dir, "icon.png")), rgba, w, h)
+            tsv = os.path.join(out_dir, "icon.tsv")
+            with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write("# %s: info/icon copied from info/iconRaw (the modern image has no icon node; this client's lists read icon), fitted to %d\n" % (it["name"], ICON_FIT))
+                fh.write("info/icon\tnewcanvas\t%d,%d,2,%s,%d,%d\n" % (w, h, payload_out, ICON_ORIGIN_X, h))
+            add(tree_rel, "patch\t%s\t%s" % (dest, tsv))
+            patched.append(it["id"])
+            print("  cover icon %-8d %s: info/icon from iconRaw (%dx%d -> %dx%d)" % (it["id"], it["name"], e["width"], e["height"], w, h))
+    return patched
 
 
 def look_icons(build_dir, source, manifest, add):
@@ -994,6 +1096,9 @@ def main():
     # 4c. Hair and face icons, so the Character Info ITEM tab can list them (2026-09-18).
     #     Every classic hair and face image and every backported one. See `look_icons`.
     look_icons(args.build_dir, source, manifest, add)
+    # 4d. info/icon for the backported equips whose modern image has only iconRaw (the six
+    #     weapon covers): this client's lists read `icon`. See `cover_icons`.
+    cover_icons(args.build_dir, source, manifest, add)
 
     # 5. Build every archive against its classic base.
     built = []

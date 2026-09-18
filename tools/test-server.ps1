@@ -1600,6 +1600,16 @@
               Item List panel: Tester2's HAIR, FACE, then hat, coat, weapon, cash cover,
                          each with an icon -> DONE. Hover the hair: a tooltip with its
                          name -> the String.wz lookup works for a look id too
+                         MEASURED 2026-09-18 evening: the list draws, fame 1 draws, the
+                         tooltips work - and Fern's Staff and Fern Hair were BLANK cells.
+                         Two causes, both installed since: the six modern weapon covers
+                         ship iconRaw and no info/icon (the list reads icon, the tooltip
+                         iconRaw - which is why the tooltip drew), so the installer now
+                         copies iconRaw to icon; and the cell draws nothing for an icon
+                         over its box (Fern Hair 46x56 blank, Fern Face 27x17 fine), so
+                         every hair/face icon and cover icon is fitted into 32x32.
+                         Fern's Staff and Fern Hair cells drawn -> DONE; still blank ->
+                         say which, and whether a classic hair (38x22 -> fitted) draws
                          hair/face cells BLANK, equips fine -> the icons are not installed,
                          or the widget wants another node; say which
                          the client DIES on opening -> a look id in an equip slot is fatal;
@@ -4629,6 +4639,8 @@ function Show-TestPlan {
         Write-Host '           up on Tester2: "raised", FAME 1 in the window, Tester2 sees it; again ->' -ForegroundColor Green
         Write-Host '           "not anymore for today" -> DONE' -ForegroundColor Green
         Write-Host '           Item List: hair, face, hat/coat/weapon/cover, all with icons -> DONE' -ForegroundColor Green
+        Write-Host '           (Fern''s Staff + Fern Hair were blank: covers had no info/icon, the hair' -ForegroundColor Yellow
+        Write-Host '           icon was 46x56; both fixed in the install. Still blank -> say which)' -ForegroundColor Yellow
         Write-Host '           the cell under the PET: its Top Hat with icon (scrolled stats on hover)' -ForegroundColor Green
         Write-Host '           -> DONE; blank with a hat on -> paste the 0x00A2 line' -ForegroundColor Yellow
         Write-Host '           hair/face blank, equips fine -> icons not installed; a DEATH on open ->' -ForegroundColor Yellow
