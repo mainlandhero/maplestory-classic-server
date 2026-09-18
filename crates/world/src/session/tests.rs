@@ -8777,12 +8777,18 @@ fn a_hair_change_is_broadcast_to_the_other_clients_without_a_reload() {
     assert!(!out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "no reload for the changer");
 
     let seen = them.collect_mail();
-    let enters: Vec<&Reply> =
-        seen.iter().filter(|r| r.opcode == net::userpool::USER_ENTER_FIELD).collect();
-    assert_eq!(enters.len(), 1, "the other client re-adds the changed character: {seen:?}");
+    // The owner, 2026-09-18, two clients side by side: a bare re-sent 0x0224 drew nothing on the
+    // other client - the pool ignores an id it already has (research/user-enter-field.md).
+    // So the observer gets a LEAVE for this one character, then the ENTER with the new look.
+    let ops: Vec<u16> = seen.iter().map(|r| r.opcode).collect();
+    let leave = ops.iter().position(|&o| o == net::userpool::USER_LEAVE_FIELD).expect("a 0x0225 first: {seen:?}");
+    let enter = ops.iter().position(|&o| o == net::userpool::USER_ENTER_FIELD).expect("then the 0x0224: {seen:?}");
+    assert!(leave < enter, "leave before enter, or the enter is a no-op: {ops:x?}");
+    assert_eq!(ops.iter().filter(|&&o| o == net::userpool::USER_ENTER_FIELD).count(), 1);
+    assert_eq!(u32::from_le_bytes(seen[leave].body[..4].try_into().unwrap()), my_id, "the leave names the changer, nobody else");
     // The new hair is somewhere in that body - the avatar look carries it.
     assert!(
-        enters[0].body.windows(4).any(|w| u32::from_le_bytes(w.try_into().unwrap()) == 42_600),
+        seen[enter].body.windows(4).any(|w| u32::from_le_bytes(w.try_into().unwrap()) == 42_600),
         "the broadcast carries the new hair id"
     );
 }

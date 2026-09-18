@@ -1472,13 +1472,23 @@
             client's 0x007C handler runs the same two avatar calls the equip handler does
             (FUN_142ce51b0 x2 then FUN_142ce5e60, at 142d560d5 / 142d56122 [L]), which is
             the redraw every equip on screen goes through. !hair 42540 is the cheap form.
-              hair/face changes THE MOMENT you press Confirm, no reload, coupon gone -> DONE
-              still only after a map change -> the handler's branch does not reach the
-                         renderer for the local user; paste the 0x007C line after 0x0165,
-                         and the next variant is a same-map SetField (a visible reload)
+              hair/face changes THE MOMENT you press Confirm, no reload, coupon gone
+                         -> CONFIRMED 2026-09-18 14:51 (!hair 42540, two clients side by side)
               the hair changes but the character flickers / a CLIENT FAULT -> paste
                          client-exit.log; the pair ran on an avatar mid-animation
-              a 2nd client on the map sees it in ~0.1 s -> the broadcast is fine as before
+            THE OTHER CLIENT (2026-09-18, same run): it got the 0x0224 and drew nothing -
+            research/user-enter-field.md had it: a 0x0224 for an id already in the pool
+            is a silent no-op. So the observers now get 0x0225 (leave) then 0x0224 (enter,
+            new look) then the pets, for that ONE character - what a portal walk sends.
+              the 2nd client sees the new hair within ~0.1 s, the character stays where
+                         it was, its pet still there -> DONE
+              the 2nd client sees the new hair but the changer's PET vanished on its
+                         screen -> the pet spawn after the re-enter did not take; paste
+                         the three lines after "look change for" in world-chN.log
+              the changer's copy jumps to another spot / blinks for a moment -> say
+                         which; a jump means the remote position is stale, not the look
+              still the old hair on the 2nd client -> paste the 0x0225 / 0x0224 lines;
+                         next variant is the OBSERVER re-entering (its own SetField)
 
      TH. THE FACE COUPON opens no dialog and has no tooltip preview. The face's images are
          installed and structurally identical to a classic face (checked node by node); the
@@ -4418,11 +4428,15 @@ function Show-TestPlan {
         Write-Host '         change" = the dialog only previews. Confirm now gets ONE 0x007C with' -ForegroundColor Yellow
         Write-Host '         the HAIR/FACE bit + id; the client runs the equip redraw pair on it.' -ForegroundColor Yellow
         Write-Host '         !hair 42540 is the cheap form (no reload now either).'
-        Write-Host '           changes the MOMENT you press Confirm, no reload -> DONE' -ForegroundColor Green
-        Write-Host '           still only after a map change -> paste the 0x007C after 0x0165;' -ForegroundColor Yellow
-        Write-Host '             next variant is a same-map SetField (a visible reload)' -ForegroundColor Yellow
+        Write-Host '           own screen: changes the MOMENT you Confirm -> CONFIRMED 14:51' -ForegroundColor Green
         Write-Host '           flicker / CLIENT FAULT -> paste client-exit.log' -ForegroundColor Yellow
-        Write-Host '           a 2nd client on the map sees it in ~0.1s -> broadcast OK'
+        Write-Host '         THE OTHER CLIENT drew nothing: a 0x0224 for an id it already has is' -ForegroundColor Yellow
+        Write-Host '         a no-op. Observers now get 0x0225 + 0x0224 + pets for that character.' -ForegroundColor Yellow
+        Write-Host '           2nd client: new hair in ~0.1s, same spot, pet still there -> DONE' -ForegroundColor Green
+        Write-Host '           new hair but the changer''s pet vanished -> paste the 3 lines' -ForegroundColor Yellow
+        Write-Host '             after "look change for" in world-chN.log' -ForegroundColor Yellow
+        Write-Host '           copy jumps / blinks -> say which (jump = stale position)' -ForegroundColor Yellow
+        Write-Host '           still old hair -> paste the 0x0225/0x0224 lines'
         Write-Host '  TH. FACE COUPON: no dialog, no preview. Images are fine; the'
         Write-Host '      ID is the one difference (22039; classic faces end at 21825).'
         Write-Host '      One chat line settles it: !face 22039' -ForegroundColor Yellow

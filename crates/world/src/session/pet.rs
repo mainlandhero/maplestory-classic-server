@@ -757,30 +757,15 @@ impl Session {
     /// The hat travels in the character's own look, not the pet's packet: the Deco move put
     /// it at worn slot `-114`, `look_layout` pairs cash slot 114 with body slot 14, and the
     /// remote client dresses the pet from that entry - which is why a fresh `0x0224` on
-    /// re-entry showed it. So: re-announce the look (`broadcast_look_change`, a second
-    /// `0x0224`; **[I]** on whether the remote redraws in place), and re-summon the pet on the
-    /// map so its `CPet::Init` runs against the new look. The owner's own screen already has
+    /// re-entry showed it. `broadcast_look_change` is that fresh sighting now: since
+    /// 2026-09-18 it sends the observers `0x0225`, the `0x0224` with the new look, and the
+    /// pet as a companion right behind it - a bare second `0x0224` was a no-op in the pool,
+    /// which is what this function's own put-away-and-summon used to work around. The
+    /// re-created remote `CUser` gets its pet from the companion, so `CPet::Init` runs
+    /// against the new look with nothing further sent. The owner's own screen already has
     /// both. `PET_EQUIP_WORN_SLOT`.
     pub(super) fn republish_pet_look(&mut self, chr: &net::opcode::Character) {
         self.broadcast_look_change(chr);
-        let Some(active) = self.active_pet else { return };
-        if !self.config.broadcast_pets {
-            return;
-        }
-        let pet = self.field_pet(chr, active);
-        let gone = Reply {
-            opcode: net::pet::PET_ACTIVATED,
-            body: net::pet::pet_deactivated(chr.id),
-            what: format!("PetActivated: {} put away on the map so it can be redrawn with the new look", pet.name),
-        };
-        let up = Reply {
-            opcode: net::pet::PET_ACTIVATED,
-            body: net::pet::pet_activated(chr.id, &pet),
-            what: format!("PetActivated: {} back beside {} on the map, dressed from the re-announced look", pet.name, chr.name),
-        };
-        self.bus().publish(self.subscriber, chr.map_id, gone, None);
-        self.bus().publish(self.subscriber, chr.map_id, up.clone(), None);
-        self.bus().set_companions(self.subscriber, vec![up]);
     }
 
     /// The pet as `0x0277` describes it: its name, the pairing serial, and the spot under the

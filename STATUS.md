@@ -245,7 +245,10 @@ runs the equip handler's own redraw pair (`FUN_142ce51b0` x2, `FUN_142ce5e60`) -
 every on-screen equip change uses **[L]** - so Confirm is answered with ONE `0x007C`: unlock
 byte, the look bit, the id. `!hair` / `!face` send the same and no longer warp to the spawn
 point. `beautycoupon::look_stat_changed`; `research/beauty-2026-09-09.md` §8; plan TO(c).
-Unverified on screen - the [I] is that the pair redraws the local avatar from this branch.
+**Confirmed 14:51 on the changer's own screen.** The OTHER client drew nothing: it received
+the `0x0224` (`world-ch0.log`), and a `0x0224` for an id already in the pool is a no-op the
+research had recorded. `broadcast_look_change` now sends `0x0225` then `0x0224` then the pets
+for that one character, the sequence a fresh sighting gets (§8.1). Unverified on the observer.
 
 **2026-09-18: the collaboration pets declare Item Pouch alone, like the classic eleven.** The owner,
 off Lil Fern's shop tooltip (*"Skill: Meso Magnet, Item Pouch, Auto Move, Auto Buff"*): *"have
