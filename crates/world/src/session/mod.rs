@@ -340,6 +340,12 @@ pub struct Session {
     pet_hunger_due_ms: Option<u64>,
     /// Feeds on an already-full pet this session; the first is free. `crate::petlevel::feed`.
     pet_overfeeds: u32,
+    /// **A field entry summoned the pet, and the client has not yet shown it is live.** Set by
+    /// `pet_entry_replies`, cleared by the first move packet after it, which sends the pet a
+    /// put-away + summon + item write - the sequence a re-summon and a feed both use and that
+    /// works, because it lands on a pet the client has FINISHED building. session/pet.rs
+    /// `pet_settle_replies`.
+    pet_settle_pending: bool,
 
     /// Session milliseconds of the last thing the player did: moved, attacked, or was hit.
     ///
@@ -593,6 +599,7 @@ impl Session {
             active_pet: None,
             pet_hunger_due_ms: None,
             pet_overfeeds: 0,
+            pet_settle_pending: false,
             banner_shown: None,
             last_activity_ms: 0,
             next_regen_ms: None,
@@ -965,7 +972,8 @@ impl Session {
                     // The broadcast goes to everyone *else*.
                     self.publish_user_move(&m, payload);
                 }
-                return Vec::new();
+                // **The pet's settle, on the first move after a field entry.** session/pet.rs.
+                return self.pet_settle_replies();
             }
             // **Party requests are answered, even though there is no party system.** One
             // archived `0x0182` exists - the owner pressing Create - and the log line beside it
