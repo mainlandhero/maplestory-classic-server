@@ -905,6 +905,10 @@ impl Session {
             net::inventory::CLIENT_GATHER_ITEMS => {
                 return self.on_gather_items(body.get(2..).unwrap_or(&[]))
             }
+            // Sort Items: the consolidate, then biggest stack first, then name. Same file.
+            net::inventory::CLIENT_SORT_ITEMS => {
+                return self.on_sort_items(body.get(2..).unwrap_or(&[]))
+            }
             net::mobmove::MOB_MOVE_REQUEST => return self.on_mob_move(body.get(2..).unwrap_or(&[])),
             // CONFIRM in the KEY BINDINGS dialog. Stored, answered with nothing - see
             // session/keymap.rs for why silence is safe here and how that was measured.

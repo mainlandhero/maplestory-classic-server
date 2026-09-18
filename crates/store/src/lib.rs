@@ -74,8 +74,8 @@ pub use dailyperks::{
     SECONDS_PER_DAY,
 };
 pub use inventory::{
-    plan_consolidation, Bag, Equipped, EquippedItem, InvItem, InventoryType, Item, ItemKind,
-    ItemRules, MoveOutcome, Stack, StackChange,
+    plan_consolidation, plan_sort, Bag, Equipped, EquippedItem, InvItem, InventoryType, Item,
+    ItemKind, ItemRules, MoveOutcome, Stack, StackChange,
 };
 pub use quest::{QuestRow, QuestState};
 pub use skillpoints::{
