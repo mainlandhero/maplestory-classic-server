@@ -542,6 +542,9 @@ pub unsafe fn install() {
     // The Beauty Coupon dialog's white-on-white item name: six bytes in the encrypted string
     // table. ON by default; `beautytext=off` leaves it. crates/grap-stub/src/beautytext.rs.
     crate::beautytext::install();
+    // The four fame messages, without the client's doubled apostrophes. ON by default;
+    // `fametext=off` leaves them. crates/grap-stub/src/fametext.rs.
+    crate::fametext::install();
     // (2026-09-18: an `avatarmod` patch lived here for one run. It opened the 0x0138 apply,
     // which turned out to walk the user's SUMMONED map and never the player, so it could not
     // redraw anything on screen. Retired; another player's look change is `0x02AE`, a

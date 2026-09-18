@@ -25,6 +25,7 @@ pub mod freeguard;
 pub mod guardpage;
 pub mod heapfix;
 pub mod beautytext;
+pub mod fametext;
 pub mod hitnumber;
 pub mod hook;
 pub mod identity;

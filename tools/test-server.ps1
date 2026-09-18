@@ -1575,8 +1575,18 @@
             "python C:\MapleCW\tools\backport_install.py --install"
             with the client closed (the other session does this with the rebuild), or launch
             with -NoLookItems for equips only.
-              up arrow on Tester2: "raised Tester2's fame", FAME reads 1 in the window;
-                         Tester2's screen: "'the owner' has raised your fame" -> DONE
+            THE APOSTROPHES (the owner, 2026-09-18, screenshot "'the owner' has raised 'Tester2''s
+            level of fame." / "You have raised 'the owner''s level of fame.": "Too many
+            apostrophes"). The quotes and the doubled possessive are the client's own
+            templates - string ids 0x00FA/0x00FB/0x0103/0x0104 in the encrypted table -
+            so the hook rewrites the four in place (fametext.rs, like the Beauty dialog's
+            colour; same length, trailing spaces). Off switch: -NoFameTextPatch.
+              up arrow on Tester2: chat says "You have raised Tester2's level of fame."
+                         (no quotes, one apostrophe), FAME reads 1 in the window;
+                         Tester2's screen: "the owner raised Tester2's level of fame." -> DONE
+              still 'the owner''s -> the table was decrypted before the hook ran; paste the
+                         FAMETEXT lines from maplecw-hook.log
+              garbled text or a cut-off line -> a byte did not take; paste the same lines
               the arrow again (either way, anyone): "can't ... anymore for today" -> DONE
               Tester2 fames the owner back: allowed (per giver) -> DONE
               Item List panel: Tester2's HAIR, FACE, then hat, coat, weapon, cash cover,
@@ -3004,6 +3014,9 @@ param(
     # it 0xffffffff, invisible on this client's white panel). The hook patches six bytes of
     # that encrypted string to black by default; this is the off switch. beautytext.rs.
     [switch]$NoBeautyTextPatch,
+    # Leave the fame messages as the client wrote them ("'%s''s level of fame"). The hook
+    # rewrites the four templates in place by default; this is the off switch. fametext.rs.
+    [switch]$NoFameTextPatch,
     # Redress another player's copy of a changed character with a leave + enter (+ pet) -
     # the sequence that blinks and respawns the pet - instead of the default in-place 0x02AE.
     # The fallback if 0x02AE is refuted on screen. --look-reenter.
@@ -4601,8 +4614,12 @@ function Show-TestPlan {
         Write-Host '         worn equip and cash cover. Hair/face icons are RENDERED into the hybrid'
         Write-Host '         WZ by backport_install.py --install (client closed) - needed first, or'
         Write-Host '         launch with -NoLookItems for equips only.'
-        Write-Host '           up on Tester2: "raised", FAME 1 in the window, Tester2 sees "the owner has' -ForegroundColor Green
-        Write-Host '           raised your fame"; again -> "not anymore for today" -> DONE' -ForegroundColor Green
+        Write-Host '         APOSTROPHES: the hook rewrites the four fame templates in place (fametext;' -ForegroundColor Yellow
+        Write-Host '         -NoFameTextPatch off). "You have raised Tester2''s level of fame." and' -ForegroundColor Yellow
+        Write-Host '         "the owner raised Tester2''s level of fame." - no quotes, one apostrophe -> DONE' -ForegroundColor Green
+        Write-Host '           still ''the owner''''s or garbled -> paste the FAMETEXT lines from maplecw-hook.log' -ForegroundColor Yellow
+        Write-Host '           up on Tester2: "raised", FAME 1 in the window, Tester2 sees it; again ->' -ForegroundColor Green
+        Write-Host '           "not anymore for today" -> DONE' -ForegroundColor Green
         Write-Host '           Item List: hair, face, hat/coat/weapon/cover, all with icons -> DONE' -ForegroundColor Green
         Write-Host '           hair/face blank, equips fine -> icons not installed; a DEATH on open ->' -ForegroundColor Yellow
         Write-Host '           relaunch -NoLookItems, paste client-exit.log; blank everywhere -> 0x00A2 line' -ForegroundColor Yellow
@@ -5662,6 +5679,7 @@ if ($PoolSentry) {
 if ($HeapFix) { $Session = "$Session,heapfix=on" }
 if ($ClientHitNumberPatch) { $Session = "$Session,hitnumber=off" }
 if ($NoBeautyTextPatch) { $Session = "$Session,beautytext=off" }
+if ($NoFameTextPatch) { $Session = "$Session,fametext=off" }
 if ($FreeGuard) { $Session = "$Session,freeguard=on" }
 elseif ($FreeGuardObserve) { $Session = "$Session,freeguard=observe" }
 if ($GuardPage) {
