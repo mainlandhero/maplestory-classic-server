@@ -2148,6 +2148,17 @@
                the old archive (the same install that carries roll/angry). "Auto Buff"
                alone -> the strip missed autoBuff; paste "wz-dump cat
                ...Item\Pet\Pet_000.wz 5002829.img" info lines.
+            0a. NO "NEW" MARK ON THE PET (2026-09-18). The owner: "Whenever I join the map for the
+               first time, I get a new item notification in my cash tab of my current
+               summoned pet." The pet item is re-sent on every field entry so CPet re-reads
+               it, and it was the one 0x0070 sent as mode 0 (an ADD, which the client marks
+               NEW); it is mode 5 now like the rest of the restored bag.
+                 log in / change map with a pet out: no highlighted cell in the Cash tab,
+                   and the pet still walks, eats and vacuums -> DONE
+                 no highlight but the pet is sad/inert until re-summoned -> mode 5 did not
+                   give CPet the active byte; say so, mode 0 comes back with the mark
+                 still highlighted -> the mark comes from somewhere else; paste the 0x0070
+                   lines for the Cash tab after the SetField
             0. THE VACUUM AT LOGIN / MAP CHANGE (2026-09-18). The owner: "the vacuum
                functionality does not work until the pet is re-summoned or fed at least
                once." A re-summon and a feed both land on a pet the client has FINISHED
@@ -5254,6 +5265,11 @@ function Show-TestPlan {
         Write-Host '            no suck-up -> paste PetPickupRange + item bytes 61..63' -ForegroundColor Yellow
         Write-Host '         b. buy Auto Move (5190002) then Expanded (5190003) - a chain; each' -ForegroundColor Green
         Write-Host '            lists (Learned) and changes the pet WALKING to drops; say what moves' -ForegroundColor Green
+        Write-Host '       NO "NEW" MARK ON THE PET (2026-09-18): the pet item re-sent on field' -ForegroundColor Yellow
+        Write-Host '         entry is mode 5 now, like the rest of the bag (mode 0 = the mark).' -ForegroundColor Yellow
+        Write-Host '           no highlighted Cash cell, pet still works -> DONE' -ForegroundColor Green
+        Write-Host '           pet sad/inert until re-summoned -> mode 5 lost the active byte' -ForegroundColor Yellow
+        Write-Host '           still highlighted -> paste the Cash-tab 0x0070 lines after SetField' -ForegroundColor Yellow
         Write-Host '       PET VACUUM AT LOGIN/MAP CHANGE (2026-09-18): on your FIRST MOVE after' -ForegroundColor Magenta
         Write-Host '         any field entry the pet blinks out and back once (the re-summon that'
         Write-Host '         works, sent when the client is provably live). Then a drop a screen'
