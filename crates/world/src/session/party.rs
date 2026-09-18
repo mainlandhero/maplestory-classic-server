@@ -116,9 +116,10 @@ impl super::Session {
         self.party_outcome_replies(actor, &described, outcome)
     }
 
-    /// **This connection is going away for good.** The character keeps their seat; if they
-    /// led, the crown goes to the highest-level member who is still online, and if there is
-    /// no such member the party is disbanded.
+    /// **This connection is going away for good.** The character keeps their seat while
+    /// another member is online; if they led, the crown goes to the highest-level member who
+    /// is still online. The LAST member online to go - leader or not - ends the party: the owner,
+    /// 2026-09-18, *"If everyone is offline, the party shouldn't exist?"*
     ///
     /// The owner, 2026-09-18: *"when a party leader disconnects from the game, the party leader
     /// needs to be handed over to the next highest level player automatically"*, then *"Only
@@ -130,8 +131,8 @@ impl super::Session {
     /// The successor is chosen HERE because the registry knows neither levels nor presence and
     /// the hub keeps no database: among the other members, those online on this channel
     /// (`Bus::character_online`) or on another (the hub directory, `link.everyone()`), the
-    /// highest level from the store, ties to the earliest joined. `None` when nobody
-    /// qualifies, which the registry reads as "disband". It rides as
+    /// highest level from the store, ties to the earliest joined. `last_online` says no
+    /// other member was found online at all, which the registry reads as "disband". It rides as
     /// [`crate::party::Request::Disconnect`] through `run_party_request`, so with a hub every
     /// channel applies the same request in the same order and answers from the echo, and
     /// without one it is applied here - exactly as a Leave would be.
@@ -147,37 +148,40 @@ impl super::Session {
         let Some(me) = self.claimed_character().map(|c| c.id) else { return };
         let Some(party) = self.fields.parties().party_of(me).cloned() else { return };
         self.party_told_of_disconnect = true;
-        if party.leader != me {
-            crate::server::log(&format!(
-                "   party: character {me} is leaving the game and keeps their seat in party {}; the leader is {}",
-                party.id, party.leader
-            ));
-            return;
-        }
+        // Who else is in the game: this channel's bus, or the hub's directory for every channel.
         let hub_online: std::collections::HashSet<u32> = crate::link::current()
             .map(|l| l.everyone().into_iter().map(|(id, _)| id).collect())
             .unwrap_or_default();
-        let mut best: Option<(u32, u32)> = None; // (level, id); the first maximum wins a tie
-        for &id in party.members.iter().filter(|&&c| c != me) {
-            let online = self.bus().character_online(id) || hub_online.contains(&id);
-            if !online {
-                continue;
-            }
-            let level = self.store.character_brief(id).ok().flatten().map(|b| b.level).unwrap_or(0);
-            if best.map_or(true, |(l, _)| level > l) {
-                best = Some((level, id));
+        let others_online: Vec<u32> = party
+            .members
+            .iter()
+            .copied()
+            .filter(|&c| c != me && (self.bus().character_online(c) || hub_online.contains(&c)))
+            .collect();
+        let last_online = others_online.is_empty();
+        let leads = party.leader == me;
+        // The heir, when one is needed: the highest level among those online; the first
+        // maximum in join order wins a tie.
+        let mut best: Option<(u32, u32)> = None; // (level, id)
+        if leads {
+            for &id in &others_online {
+                let level = self.store.character_brief(id).ok().flatten().map(|b| b.level).unwrap_or(0);
+                if best.map_or(true, |(l, _)| level > l) {
+                    best = Some((level, id));
+                }
             }
         }
         let successor = best.map(|(_, id)| id);
         crate::server::log(&format!(
-            "   party: character {me}, leader of party {}, is leaving the game - {}",
-            party.id,
-            match successor {
-                Some(s) => format!("leadership goes to {s}, its highest-level member online; {me} keeps a seat"),
-                None => "no other member is online, so the party is disbanded".to_string(),
+            "   party: character {me}{} is leaving the game - {}",
+            if leads { format!(", leader of party {}", party.id) } else { format!(" of party {}", party.id) },
+            match (last_online, successor) {
+                (true, _) => "no other member is online, so the party is disbanded".to_string(),
+                (false, Some(s)) => format!("leadership goes to {s}, its highest-level member online; {me} keeps a seat"),
+                (false, None) => format!("{} still online, so {me} keeps a seat and the leader stays {}", others_online.len(), party.leader),
             }
         ));
-        let _ = self.run_party_request(me, crate::party::Request::Disconnect { successor });
+        let _ = self.run_party_request(me, crate::party::Request::Disconnect { successor, last_online });
     }
 
     /// **A member who logs back in gets their party window.** A seat persists across a

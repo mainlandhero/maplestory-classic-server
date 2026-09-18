@@ -749,12 +749,14 @@
      TW. A PARTY LEADER WHO LEAVES THE GAME HANDS THE PARTY TO ITS HIGHEST-LEVEL MEMBER
          (2026-09-18). The owner: "the party leader needs to be handed over to the next
          highest level player automatically", then: "Only the party leader should be
-         handed off. The disconnected client should remain in the party. The party should
-         persist even if all members have disconnected. If the leader position cannot be
-         handed off to an online player, then the entire party should be disbanded."
-         So: a log out, a crash or a dropped socket keeps the character's SEAT; if they
-         led, the crown goes to the highest-level member who is ONLINE (ties: earliest
-         joined); nobody online -> the party is disbanded. A CHANNEL CHANGE changes
+         handed off. The disconnected client should remain in the party. [...] If the
+         leader position cannot be handed off to an online player, then the entire party
+         should be disbanded." and, told a party could outlive everyone's connection:
+         "If everyone is offline, the party shouldn't exist?"
+         So: a log out, a crash or a dropped socket keeps the character's SEAT while
+         somebody else in the party is online; if they led, the crown goes to the
+         highest-level member who is ONLINE (ties: earliest joined). The LAST member
+         online to leave - leader or not - disbands the party. A CHANNEL CHANGE changes
          nothing. A member who logs back in gets the party window rebuilt at the login
          field entry (0x0D - the first time this packet lands at login; watch it).
          Through the hub, so every channel agrees. Three clients to see the level rule:
@@ -767,8 +769,10 @@
               listed -> fixed. No window -> the 0x0D at login did not draw; paste it.
               Client dies at login -> the 0x0D in the entry batch; paste client-exit.log
            4. Tester3 changes channel: still leader after, all three still listed
-           5. Tester2 and the owner log out, then Tester3 (the leader) logs out: nobody online
-              to hand to -> the party is gone; log back in: no window -> as designed
+           5. Tester3 (the leader) and the owner log out, then Tester2 - a plain member, the
+              last one online - logs out: the party is gone; anyone logs back in: no
+              window -> fixed. A window -> a party outlived everyone; paste the
+              "party: character N of party" line from world-ch0.log
 
      TQ. ACROSS CHANNELS: THE WORLD HUB ON 8483. The owner, 2026-09-14: party chat "should be
          broadcasted to all party members across channels", "do not use the database as
@@ -4088,9 +4092,11 @@ function Show-TestPlan {
         Write-Host '  TW. A LEADER WHO LEAVES THE GAME HANDS THE PARTY TO ITS HIGHEST-LEVEL MEMBER.' -ForegroundColor Magenta
         Write-Host '      Log out or close the client as leader: the highest-level ONLINE member'
         Write-Host '      leads and you STAY in the list; log back in: your window is rebuilt at'
-        Write-Host '      login (0x0D, first time at login - watch it) -> fixed. Leader logs out'
-        Write-Host '      with nobody online -> the party is gone. A channel change: nothing.'
-        Write-Host '        join order won / no window on relogin -> paste the lines' -ForegroundColor Yellow
+        Write-Host '      login (0x0D, first time at login - watch it) -> fixed. The LAST member'
+        Write-Host '      online to log out, leader or not, ends the party: nobody who logs back'
+        Write-Host '      in has a window. A channel change: nothing.'
+        Write-Host '        join order won / no window on relogin / a window after everyone' -ForegroundColor Yellow
+        Write-Host '        was offline -> paste the "party: character N" lines' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  TQ. ACROSS CHANNELS: THE WORLD HUB (maplecw-chat, 8483, chat-hub.log).' -ForegroundColor Magenta
         Write-Host '      Every channel dials it. Party requests are echoed to every'
