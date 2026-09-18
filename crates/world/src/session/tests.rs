@@ -133,6 +133,157 @@ fn the_field_entry_setfield_carries_the_quest_journal() {
     assert!(sf.what.contains("1 started / 0 completed"), "{}", sf.what);
 }
 
+/// Every slot of every tab emptied, so a test can fill exactly what it means to.
+fn empty_bag(store: &Store, id: u32) {
+    for tab in store::InventoryType::ALL {
+        for row in store.bag_items(id, tab).unwrap() {
+            store.remove_item(id, tab, row.slot, None).unwrap();
+        }
+    }
+}
+
+/// A one-reward quest whose turn-in has a line of its own, so the closing line is what
+/// would be said if the refusal did not stop it.
+fn hat_quest(end_npc: u32) -> crate::config::Quest {
+    let mut say = std::collections::HashMap::new();
+    say.insert("1".to_string(), vec!["Here is your hat.".to_string()]);
+    crate::config::Quest {
+        name: "Lucas' Reply".to_string(),
+        start_npc: Some(2001),
+        end_npc: Some(end_npc),
+        complete_rewards: vec![
+            crate::config::RewardItem { id: 1_002_005, count: 1, prop: 0, gender: None },
+            crate::config::RewardItem { id: 4_031_002, count: -1, prop: 0, gender: None },
+        ],
+        complete_items: vec![(1_002_005, 1), (4_031_002, -1)],
+        complete_exp: 10,
+        say,
+        ..Default::default()
+    }
+}
+
+/// **Mint's report, 2026-09-17: "quest continues to complete despite this happening."**
+/// Quest 1008 into a full Equip tab wrote the completion, paid the EXP, took the letter and
+/// said "could not give you item 1002005" in yellow. Now nothing moves: the NPC's own box
+/// says which tab and how many, the row stays in progress, the letter stays, the EXP is
+/// unpaid, and the closing line is NOT spoken over it. Free a slot and the same click
+/// completes it.
+#[test]
+fn a_turn_in_into_a_full_tab_is_refused_at_the_npc_and_the_quest_stays_in_progress() {
+    let (mut s, store, id) = claimed_session();
+    let mut quests = std::collections::HashMap::new();
+    quests.insert(1008u32, hat_quest(2000));
+    s.config = Arc::new(Config { quests, ..(*s.config).clone() });
+    let exp_now = |store: &Arc<Store>| store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().exp;
+    empty_bag(&store, id);
+    for i in 0..30u32 {
+        store.add_item(id, store::InventoryType::Equip, &store::Item::equip(1_302_000 + i % 3), 1).unwrap();
+    }
+    store.add_item(id, store::InventoryType::Etc, &store::Item::bundle(4_031_002, 1), 1).unwrap();
+    store.start_quest(id, 1008).unwrap();
+    let exp_before = exp_now(&store);
+
+    let out = s.handle(&quest_request(2, 1008, 2000));
+    assert!(!out.iter().any(|r| r.opcode == net::quest::MESSAGE), "no completion record: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert_eq!(store.quest_row(id, 1008).unwrap().unwrap().state, store::QuestState::InProgress, "still in progress");
+    assert_eq!(exp_now(&store), exp_before, "no EXP paid");
+    let bag = store.bag(id).unwrap();
+    assert_eq!(bag.items_in(store::InventoryType::Etc).filter(|i| i.item.item_id == 4_031_002).count(), 1, "the letter was not taken");
+    assert_eq!(bag.items_in(store::InventoryType::Equip).count(), 30, "nothing was placed");
+    let boxes: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::script::SCRIPT_MESSAGE).collect();
+    assert_eq!(boxes.len(), 1, "exactly one box, the refusal - not the quest's closing line: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    let text = String::from_utf8_lossy(&boxes[0].body).into_owned();
+    assert!(text.contains("Your bag is full"), "{text}");
+    assert!(text.contains("Please make 1 space in your Equip tab."), "{text}");
+    assert!(boxes[0].what.contains("NPC template 2000"), "{}", boxes[0].what);
+    assert!(!out.iter().any(|r| r.what.contains("Here is your hat")), "the closing line is not said over a refusal");
+    assert_eq!(s.conversation.as_ref().map(|c| c.path.as_str()), Some(crate::questroom::REFUSAL_PATH), "parked under its own path");
+
+    // OK on the box: silence, conversation cleared, still nothing moved.
+    let closed = s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_YES));
+    assert!(closed.is_empty(), "{:?}", closed.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(s.conversation.is_none());
+    assert_eq!(store.quest_row(id, 1008).unwrap().unwrap().state, store::QuestState::InProgress);
+
+    // One slot freed: the same click completes it, hat in, letter out, EXP paid, line said.
+    store.remove_item(id, store::InventoryType::Equip, 30, None).unwrap();
+    let out = s.handle(&quest_request(2, 1008, 2000));
+    assert!(out.iter().any(|r| r.opcode == net::quest::MESSAGE), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert_eq!(store.quest_row(id, 1008).unwrap().unwrap().state, store::QuestState::Complete);
+    let bag = store.bag(id).unwrap();
+    assert_eq!(bag.items_in(store::InventoryType::Equip).filter(|i| i.item.item_id == 1_002_005).count(), 1, "the hat");
+    assert_eq!(bag.items_in(store::InventoryType::Etc).filter(|i| i.item.item_id == 4_031_002).count(), 0, "the letter went back");
+    assert_eq!(exp_now(&store) - exp_before, 10);
+    assert!(out.iter().any(|r| r.what.contains("on path \"1\"")), "and the closing line is said this time: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+}
+
+/// **A stack that still has room is room.** The hat quest's twin with a potion reward: a
+/// full Use tab whose last stack is 96 of 100 takes a gift of 4 and refuses a gift of 5 -
+/// counted the way the store places it, not by free rows.
+#[test]
+fn a_turn_in_that_tops_up_a_stack_is_not_refused_for_a_full_tab() {
+    let (mut s, store, id) = claimed_session();
+    let potion_quest = |s: &mut Session, count: i32| {
+        let mut q = hat_quest(2000);
+        q.complete_rewards = vec![crate::config::RewardItem { id: 2_000_000, count, prop: 0, gender: None }];
+        q.complete_items = vec![(2_000_000, count)];
+        let mut quests = std::collections::HashMap::new();
+        quests.insert(1009u32, q);
+        s.config = Arc::new(Config { quests, ..(*s.config).clone() });
+    };
+    empty_bag(&store, id);
+    for _ in 0..29 {
+        store.add_item(id, store::InventoryType::Use, &store::Item::bundle(2_000_001, 100), 100).unwrap();
+    }
+    store.add_item(id, store::InventoryType::Use, &store::Item::bundle(2_000_000, 96), 100).unwrap();
+    let max = s.config.shops.max_stack(2_000_000);
+    assert!(max >= 100, "the test config's Red Potion stacks to {max}");
+
+    potion_quest(&mut s, 5);
+    store.start_quest(id, 1009).unwrap();
+    let out = s.record_quest_complete(1009, 1009);
+    assert!(!out.iter().any(|r| r.opcode == net::quest::MESSAGE), "96 + 5 needs a 31st slot: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(out.iter().any(|r| r.what.contains("Use short 1")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+
+    potion_quest(&mut s, 4);
+    s.conversation = None;
+    let out = s.record_quest_complete(1009, 1009);
+    assert!(out.iter().any(|r| r.opcode == net::quest::MESSAGE), "96 + 4 tops the stack up: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    let stack = store.bag(id).unwrap().items_in(store::InventoryType::Use).find(|i| i.item.item_id == 2_000_000).unwrap().item.kind.quantity();
+    assert_eq!(stack, 100);
+}
+
+/// **Accepting has the same rule.** Sera hands over their mirror on accept (quest 1001, Etc);
+/// with the Etc tab full the quest is not started and Sera says so.
+#[test]
+fn accepting_a_quest_whose_start_item_has_no_room_is_refused_and_not_started() {
+    let (mut s, store, id) = claimed_session();
+    let mut quests = std::collections::HashMap::new();
+    quests.insert(
+        1001u32,
+        crate::config::Quest {
+            name: "Sera".to_string(),
+            start_npc: Some(2),
+            start_items: vec![(4_031_000, 1)],
+            start_rewards: vec![crate::config::RewardItem { id: 4_031_000, count: 1, prop: 0, gender: None }],
+            ..Default::default()
+        },
+    );
+    s.config = Arc::new(Config { quests, ..(*s.config).clone() });
+    empty_bag(&store, id);
+    for i in 0..30u32 {
+        store.add_item(id, store::InventoryType::Etc, &store::Item::bundle(4_000_000 + i, 1), 1).unwrap();
+    }
+    let out = s.record_quest_start(1001, 2);
+    assert!(store.quest_row(id, 1001).unwrap().is_none(), "not started");
+    assert!(!out.iter().any(|r| r.opcode == net::quest::MESSAGE));
+    let say = out.iter().find(|r| r.opcode == net::script::SCRIPT_MESSAGE).expect("Sera's box");
+    let text = String::from_utf8_lossy(&say.body).into_owned();
+    assert!(text.contains("Please make 1 space in your Etc tab."), "{text}");
+    assert!(say.what.contains("NPC template 2"), "{}", say.what);
+    assert_eq!(store.bag(id).unwrap().items_in(store::InventoryType::Etc).count(), 30, "nothing given");
+}
+
 /// A character with no quests still sends both blocks. They are three bytes each and the
 /// record has no length prefix, so "send nothing when there is nothing" desynchronises
 /// everything after it.
@@ -12290,13 +12441,17 @@ fn no_quest_answers_its_accept_or_turn_in_with_its_own_opening_lines() {
     ids.sort_unstable();
     // One session for the lot: an account costs an argon2id hash, and 316 of them took three
     // minutes. Each quest is its own row, so one character can accept them all in turn.
-    let (mut s, _store, id2) = claimed_session();
+    let (mut s, store, id2) = claimed_session();
     s.config = config.clone();
     for qid in ids {
         let q = &quests[&qid];
         if q.say.is_empty() {
             continue;
         }
+        // The audit is about what is SAID, not about room: 316 quests' rewards on one
+        // character fill a tab, and since 2026-09-17 a full tab is a refusal box instead of
+        // the quest's line. Each quest starts with an empty bag.
+        empty_bag(&store, id2);
         audited += 1;
         let npc = q.start_npc.unwrap_or(1);
 

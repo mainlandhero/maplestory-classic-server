@@ -2239,7 +2239,24 @@
              the stat window drops the number. A coupon that outlives its icon or an icon
              that outlives its multiplier is a bug either way - say which.
 
-    11. THE CRASH - a question, not a test.
+    11. A QUEST INTO A FULL BAG - 2026-09-17. Mint: "quest continues to complete despite this
+        happening" under "Quest 1008 could not give you item 1002005: inventory 1 is full".
+        The completion was written, the EXP paid, the letter taken, and the hat never came.
+        Now the room is counted BEFORE anything moves (crate::questroom - stacks are topped
+        up the way the store places them, a take frees the slot it empties), and a shortfall
+        is the NPC's own box: "Your bag is full ... Please make N space(s) in your <Tab> tab.
+        Then come and talk to me again." Nothing written, nothing paid. Same rule on accept
+        (Sera's mirror into a full Etc tab). As any character with a full Equip tab, holding
+        Lucas's letter (quest 1008 in progress): talk to Lucas.
+          Lucas's box says "Please make 1 space in your Equip tab", the quest is still in
+                       the journal, the letter still in Etc, EXP unchanged      -> DONE
+          then free one Equip slot and click them again: hat in, letter gone, EXP up,
+                       their own closing line                                      -> DONE
+          the box shows AND their closing line follows it -> the refusal path was not seen
+                       by the 0x0151 handler; paste both ScriptMessage lines
+          a yellow "could not give you item" line -> the old path; the server is stale
+
+    12. THE CRASH - a question, not a test.
         A 1.36 GB dump was written at 00:08 from a fault at 0x14090a6f0, an address that
         appears NOWHERE else in the archive. It is an std::map node walk hitting a bad
         pointer, with 38 C++ throws before it. You said you were "just in the map with
@@ -5215,7 +5232,15 @@ function Show-TestPlan {
         Write-Host '        triple EXP still? report both halves separately' -ForegroundColor Yellow
         Write-Host '     c. wait one out / right-click it: icon AND stat go together' -ForegroundColor Green
         Write-Host ''
-        Write-Host '  11. THE CRASH - a question, not a test.' -ForegroundColor White
+        Write-Host '  11. A QUEST INTO A FULL BAG (2026-09-17). Mint: quest 1008 completed and the' -ForegroundColor White
+        Write-Host '     hat never came. Now the room is counted BEFORE anything moves. Full Equip'
+        Write-Host '     tab, Lucas'' letter in Etc, quest 1008 in progress: talk to Lucas.'
+        Write-Host '       their box: "Please make 1 space in your Equip tab"; journal, letter,' -ForegroundColor Green
+        Write-Host '       EXP all unchanged -> DONE. Free a slot, click again: hat, EXP -> DONE' -ForegroundColor Green
+        Write-Host '       box AND their closing line -> paste both ScriptMessage lines' -ForegroundColor Yellow
+        Write-Host '       yellow "could not give you item" -> the server is stale' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  12. THE CRASH - a question, not a test.' -ForegroundColor White
         Write-Host '     A 1.36 GB dump at 00:08, fault 0x14090a6f0 - an address that'
         Write-Host '     appears NOWHERE else in the archive. It is an std::map node walk'
         Write-Host '     hitting a bad pointer, 38 C++ throws before it. You were "just in'
