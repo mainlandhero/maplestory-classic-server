@@ -4,13 +4,54 @@
 //! press arrived twice as `0x0165` and nothing answered it - `net::beautycoupon` has the
 //! capture. The dialog and its preview are the client's; the decision is the server's.
 //!
-//! **No field re-entry** (the owner, 2026-09-12: *"switch immediately... without a reload"*). The
-//! client's own dialog previews the look and commits it on Confirm, so the player's own
-//! screen is already right; the server persists it, spends the coupon, and tells the OTHER
-//! clients through `Session::broadcast_look_change`. `0x0138` applies nothing in this client
-//! (`research/naked-character.md`), which is why the remote update rides the user-pool packet.
+//! **No field re-entry** (the owner, 2026-09-12: *"switch immediately... without a reload"*), and
+//! **no assumption that the client applies it either** (the owner, 2026-09-18: *"the player needs
+//! to enter a different map to see the hair or face updated"* - the dialog previews, it does
+//! not commit). The player's own screen is redrawn by a `0x007C StatChanged` carrying the
+//! FACE or HAIR bit - [`look_stat_changed`] - and the OTHER clients are told through
+//! `Session::broadcast_look_change`. `0x0138` applies nothing in this client
+//! (`research/naked-character.md`), which is why neither half rides it.
 
 use super::{Reply, Session};
+use crate::cosmetics::Kind;
+
+/// The `0x007C` that redraws the player's own avatar with a new hair or face.
+///
+/// The owner, 2026-09-18: *"the player needs to enter a different map to see the hair or face
+/// updated on their character."* The earlier reading - that the Beauty dialog commits the
+/// look on Confirm - was an assumption, and that report is its measurement. `0x0138` applies
+/// nothing in this client, but the `StatChanged` handler `FUN_142d54780` does: at
+/// `142d560d5` it tests the mask's FACE bit and at `142d56122` the HAIR bit, and for each it
+/// calls `FUN_142ce51b0(user, id, 1)` for the new id and the old, then `FUN_142ce5e60(user)`,
+/// then `FUN_141e755d0` once for any of the three look bits - the same pair of calls the
+/// `0x0070` equip handler makes after a worn-slot change, which is the redraw every equip
+/// on screen goes through (`research/equip-crash.md`, `research/beauty-2026-09-09.md` §8).
+/// **[L]** for the chain; that it draws is plan step TO(c)'s reading.
+///
+/// **One packet.** The exclusive-request byte clears the `0x0165` latch and the mask carries
+/// the change, so nothing is left latched and the client is not answered twice.
+pub(super) fn look_stat_changed(kind: Kind, id: u32, excl: bool, why: &str) -> Reply {
+    let change = net::stats::StatChange {
+        excl_request_sent: excl,
+        hair: (kind == Kind::Hair).then_some(id),
+        face: (kind == Kind::Face).then_some(id),
+        ..Default::default()
+    };
+    let what = match kind {
+        Kind::Hair => "HAIR",
+        Kind::Face => "FACE",
+    };
+    Reply {
+        opcode: net::stats::STAT_CHANGED,
+        body: change.build(),
+        what: format!(
+            "StatChanged: {what} bit -> {id}{}. {why}. The client's handler runs the equip \
+             redraw pair (FUN_142ce51b0 x2, FUN_142ce5e60) for this bit, so the player's own \
+             avatar is rebuilt in place - no SetField, no re-entry.",
+            if excl { ", exclusive-request latch cleared" } else { "" }
+        ),
+    }
+}
 
 impl Session {
     pub(super) fn on_beauty_coupon_confirm(&mut self, body: &[u8]) -> Vec<Reply> {
@@ -77,16 +118,20 @@ impl Session {
             crate::cosmetics::Kind::Face => "face",
         };
         crate::server::log(&format!(
-            "   beauty coupon: character {} used {} - {what} is now {cosmetic}; broadcasting to the field, no reload",
+            "   beauty coupon: character {} used {} - {what} is now {cosmetic}; redrawn by 0x007C, broadcast to the field, no reload",
             chr.id, req.item_id
         ));
-        // **No field re-entry.** The owner, 2026-09-12: *"The hair should just switch immediately
-        // on screen without a reload."* The client's own Beauty dialog previewed the look and
-        // committed it on Confirm, so the player's screen is already right; a `SetField` here
-        // was a visible reload for nothing. The OTHER clients are told through
-        // `broadcast_look_change`, and the coupon is answered with its inventory op plus the
-        // exclusive-request unlock, so nothing is left latched.
-        let mut out = crate::mesodrop::unlock_unhandled_latching_request(opcode);
+        // **No field re-entry** (the owner, 2026-09-12: *"switch immediately on screen without a
+        // reload"*) **and no reliance on the dialog** (the owner, 2026-09-18: it previews, it does
+        // not commit - the look only showed after a map change). The `0x007C` with the look
+        // bit redraws the player and clears the `0x0165` latch in one packet; the OTHER
+        // clients are told through `broadcast_look_change`; the coupon's inventory op follows.
+        let mut out = vec![look_stat_changed(
+            kind,
+            cosmetic,
+            true,
+            &format!("Beauty coupon {} confirmed from Use slot {}", req.item_id, req.slot),
+        )];
         out.extend(self.stack_change_replies(store::InventoryType::Use, req.slot, 0));
         self.broadcast_look_change(&chr);
         out

@@ -10360,19 +10360,29 @@ fn hair_and_face_commands_persist_and_re_enter_the_map() {
 
     let out = s.handle(&gm_chat("!hair 42540"));
     assert!(notice_text(&out[0]).contains("hair is now 42540 (Frieren Hair)"), "{}", notice_text(&out[0]));
-    assert!(out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "the re-entry SetField: {out:?}");
+    // Since 2026-09-18: a 0x007C with the HAIR bit and the id, not a re-entry (the same-map
+    // SetField was a visible reload onto the spawn point).
+    assert!(!out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "no re-entry: {out:?}");
+    let sc = out.iter().find(|r| r.opcode == net::stats::STAT_CHANGED).expect("the look StatChanged");
+    assert_eq!(stat_changed_mask(&sc.body), net::stats::bits::HAIR, "{:?}", sc.body);
+    assert_eq!(stat_changed_first_u32(&sc.body), 42540);
+    assert_eq!(sc.body[0], 0, "a GM command is not an exclusive request; nothing to unlock");
     let out = s.handle(&gm_chat("!face 22035"));
     assert!(notice_text(&out[0]).contains("face is now 22035"), "{}", notice_text(&out[0]));
+    let sc = out.iter().find(|r| r.opcode == net::stats::STAT_CHANGED).expect("the look StatChanged");
+    assert_eq!(stat_changed_mask(&sc.body), net::stats::bits::FACE);
+    assert_eq!(stat_changed_first_u32(&sc.body), 22035);
     let after = store.characters_for(account, 0).unwrap();
     let me = after.iter().find(|c| c.id == id).unwrap();
     assert_eq!((me.hair, me.face), (42540, 22035), "persisted");
-    assert_eq!(me.map_id, before.map_id, "re-entry is the SAME map");
+    assert_eq!(me.map_id, before.map_id, "still on the same map, never moved");
 
     // Controls: outside the id space, an id with no name, and a face id given to !hair.
     for (cmd, why) in [("!hair 1302000", "outside the hair id space"), ("!face 42540", "outside the face id space"), ("!hair 42541", "no name")] {
         let out = s.handle(&gm_chat(cmd));
         assert!(notice_text(&out[0]).contains("REFUSED"), "{cmd} should refuse ({why}): {}", notice_text(&out[0]));
         assert!(!out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "{cmd}: a refusal must not warp");
+        assert!(!out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED), "{cmd}: a refusal redraws nothing");
     }
     let me = store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
     assert_eq!((me.hair, me.face), (42540, 22035), "the refusals changed nothing");
@@ -10765,8 +10775,22 @@ fn a_cash_equip_moves_between_the_deco_tab_and_its_worn_slot() {
     assert_eq!(back, vec![(slot, 1054562)]);
 }
 
-/// **The Beauty Coupon's Confirm applies the cosmetic, spends the coupon and re-enters the
-/// map**; a slot that does not hold the coupon changes nothing and is still answered.
+/// The `u32` mask of a `0x007C` body: `u8 excl, u8 secondary, u8 context, u32 mask, ...`.
+fn stat_changed_mask(body: &[u8]) -> u32 {
+    u32::from_le_bytes(body[3..7].try_into().unwrap())
+}
+
+/// The first value after the mask, for a body whose mask names exactly one `u32` field.
+fn stat_changed_first_u32(body: &[u8]) -> u32 {
+    u32::from_le_bytes(body[7..11].try_into().unwrap())
+}
+
+/// **The Beauty Coupon's Confirm applies the cosmetic, spends the coupon and redraws the
+/// player where they stand** - a `0x007C` carrying the HAIR (or FACE) bit and the id, with
+/// the exclusive-request byte set so the `0x0165` latch clears in the same packet. The owner,
+/// 2026-09-18: *"the player needs to enter a different map to see the hair or face updated"*
+/// - the dialog only previews, so the empty unlock this used to send drew nothing. A slot
+/// that does not hold the coupon changes nothing and is still answered with the empty unlock.
 #[test]
 fn a_beauty_coupon_confirm_changes_the_hair_and_spends_the_coupon() {
     let (mut s, store, id) = gm_session();
@@ -10784,22 +10808,31 @@ fn a_beauty_coupon_confirm_changes_the_hair_and_spends_the_coupon() {
         "no reload: the client applied the look itself; {:?}",
         out.iter().map(|r| r.opcode).collect::<Vec<_>>()
     );
-    assert!(out.iter().any(|r| r.opcode == net::combat::STAT_CHANGED), "the exclusive-request unlock");
+    let scs: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::combat::STAT_CHANGED).collect();
+    assert_eq!(scs.len(), 1, "ONE StatChanged - the redraw and the unlock are the same packet: {out:?}");
+    assert_eq!(scs[0].body[0], 1, "exclusive-request byte set, so the 0x0165 latch clears");
+    assert_eq!(stat_changed_mask(&scs[0].body), net::stats::bits::HAIR, "{:?}", scs[0].body);
+    assert_eq!(stat_changed_first_u32(&scs[0].body), 42_600, "the new hair rides the packet");
     assert_eq!(s.claimed_character().unwrap().hair, 42_600, "Übel Hair");
     assert!(store.bag(id).unwrap().items_in(use_tab).all(|i| i.item.item_id != 2_543_143), "the coupon is spent");
 
     // The control: the same confirm again - the slot is empty now - is refused with the
-    // unlock alone, and the hair stays.
+    // unlock alone (empty mask, nothing redrawn), and the hair stays.
     let out = s.on_beauty_coupon_confirm(&body);
     assert_eq!(out.len(), 1, "{out:?}");
     assert_eq!(out[0].opcode, net::combat::STAT_CHANGED);
+    assert_eq!(stat_changed_mask(&out[0].body), 0, "a refusal redraws nothing");
+    assert_eq!(out[0].body[0], 1, "but still unlocks");
     assert_eq!(s.claimed_character().unwrap().hair, 42_600);
 
-    // And a face coupon writes the face.
+    // And a face coupon writes the face, with the FACE bit.
     let fslot = store.add_item(id, use_tab, &store::Item::bundle(2_890_911, 1), 1).unwrap()[0].slot;
     let mut body = fslot.to_le_bytes().to_vec();
     body.extend_from_slice(&2_890_911u32.to_le_bytes());
-    s.on_beauty_coupon_confirm(&body);
+    let out = s.on_beauty_coupon_confirm(&body);
+    let sc = out.iter().find(|r| r.opcode == net::combat::STAT_CHANGED).unwrap();
+    assert_eq!(stat_changed_mask(&sc.body), net::stats::bits::FACE);
+    assert_eq!(stat_changed_first_u32(&sc.body), 22_039);
     assert_eq!(s.claimed_character().unwrap().face, 22_039, "Übel Face");
 }
 

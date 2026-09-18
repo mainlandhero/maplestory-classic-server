@@ -236,6 +236,17 @@ is Auto Move (`5190002`) THEN Expanded Auto Move (`5190003`); the box then rides
 wonderGrade 6 as before. `research/pet-vacuum-wondergrade-2026-09-16.md` §7. 2132 tests. Plan
 step 8 LOOT has the order.
 
+**2026-09-18: a hair or face coupon redraws the player where they stand - `0x007C`, not a
+reload.** The owner: *"the player needs to enter a different map to see the hair or face updated on
+their character."* The 2026-09-12 handler had dropped the re-entry on the reading that the
+Beauty dialog commits the look on Confirm; it only previews, and this report measured that.
+The client's `StatChanged` handler has a FACE/HAIR branch (`142d560d5` / `142d56122`) that
+runs the equip handler's own redraw pair (`FUN_142ce51b0` x2, `FUN_142ce5e60`) - the path
+every on-screen equip change uses **[L]** - so Confirm is answered with ONE `0x007C`: unlock
+byte, the look bit, the id. `!hair` / `!face` send the same and no longer warp to the spawn
+point. `beautycoupon::look_stat_changed`; `research/beauty-2026-09-09.md` §8; plan TO(c).
+Unverified on screen - the [I] is that the pair redraws the local avatar from this branch.
+
 **2026-09-18: the collaboration pets declare Item Pouch alone, like the classic eleven.** The owner,
 off Lil Fern's shop tooltip (*"Skill: Meso Magnet, Item Pouch, Auto Move, Auto Buff"*): *"have
 them match existing pets and should only have Meso Magnet and Item Pouch at default purchase
