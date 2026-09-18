@@ -781,6 +781,22 @@
               fixed. Smallest first / wrong order -> say what you see, the comparator
               is one line. Two items in one slot or a blank slot -> the client did NOT
               swap on an occupied mode-2; paste the "sort" lines from world-ch0.log
+         A DRAG ONTO THE SAME ITEM FILLS IT FIRST (same day). The owner: "it should try to fill
+         the stack first (any remaining after the full stack will remain at the original
+         position), if the resulting stack is already full, then it will carry out the
+         swap slots procedure." The rows already did that; the REPLY was one mode-2, which
+         the client draws as a plain exchange - so the screen swapped while the rows had
+         merged, and the next drag on either slot moved the wrong stack. A merge is now
+         two mode-1 counts (or a count + a mode-3 when the source is poured out); a full
+         destination is still the one mode-2 swap; N of a stack into an EMPTY slot is a
+         count + a mode-0 ADD. And the stack limit for a drag is now the same one pick-ups
+         use, so two 100-stacks of a slotMax-less Etc item merge instead of swapping.
+           5. drag 40 red potions onto 70: 100 and 10, in those slots -> fixed
+              drag the 10 onto the 100: they SWAP (destination full) -> fixed
+              split 4 off a stack into an empty slot (the count dialog): 4 there, the
+              rest stay, no New mark needed either way -> fixed
+              two stacks shown where one should be, or a stack that "comes back" on the
+              next drag -> the client did not draw a count; paste the MERGE/SPLIT lines
 
      TW. A PARTY LEADER WHO LEAVES THE GAME HANDS THE PARTY TO ITS HIGHEST-LEVEL MEMBER
          (2026-09-18). The owner: "the party leader needs to be handed over to the next
@@ -1540,31 +1556,21 @@
                          line and whatever follows it
               the window opens but a later inventory move is refused -> the reply did not
                          clear the latch; paste the 0x00A2 line
-            THE OTHER CLIENTS - IN PLACE, BY 0x0138 (2026-09-18 evening). The leave + enter
-            of the afternoon WORKED and was measured: "a weird super brief character blink
-            as it disappears and reappears ... The regular maplestory does not have this
-            behavior", and with a pet out "the pet completely respawns and appear
-            sad/hungry until moments later" - the remote CUser and its pet are destroyed
-            and rebuilt, which is what that sequence is. The client's own in-place update
-            is 0x0138 UserAvatarModified, whose apply sits behind a je that is always
-            taken (research/beauty-2026-09-09.md 4.2). The HOOK now turns that je
-            (142797ded) into two nops - avatarmod.rs, on by default, -NoAvatarModPatch
-            off - and the server sends ONE 0x0138 per look change (equip on/off, regular
-            or cash, hair, face, pet hat) instead of the leave + enter. -LookReenter is
-            the old sequence, the fallback. NEVER ON A SCREEN. [I]: the list the apply
-            walks (user+0x1200) holds the drawn avatar. Two clients side by side, change
-            gear / hair on one, watch the OTHER:
-              new gear / hair appears with NO blink, the pet stays put and stays happy
-                         -> DONE, and the hook log has "AVATARMOD: patched"
-              nothing changes on the 2nd client (and it does after a map change) -> the
-                         packet is a no-op even patched: the +0x1200 list is empty for a
-                         remote user. Paste maplecw-hook.log's AVATARMOD line; relaunch
-                         with -LookReenter meanwhile (blink, but visible)
-              the OBSERVING client dies (CLIENT FAULT in its client-exit.log) -> the apply
-                         ran on the wrong object; -NoAvatarModPatch -LookReenter, and paste
-                         the fault line
-              still blinks -> the server is on -LookReenter or the log says "leave +
-                         enter"; paste the "look change for" line
+            THE OTHER CLIENTS: LEAVE + ENTER IS THE DEFAULT AGAIN (2026-09-18 14:07 run).
+            The in-place 0x0138 was tried with the hook's avatarmod patch opening the
+            client's apply, and MEASURED INERT: the patch applied (hook log 14:07:10.801),
+            the observer received the 0x0138 (world-ch0.log 18:07:33), its handler ran and
+            returned in 56 us (hook log 14:07:33.141), and the copy did not change - the owner:
+            "Changing equipment once again no longer publishes to other clients". So the
+            server sends the leave + enter (+ pet) for that one character by default: it
+            publishes every worn change, hair and face, with the brief blink and the pet
+            respawn that were reported. -LookInPlace opts back into the 0x0138 for the
+            next attempt (research/beauty-2026-09-09.md 8.3 - what the client's apply walks
+            for a remote user is the open question; no run needed until that is read).
+              change gear / hair on one client: the other shows it within ~0.1 s, with the
+                         blink -> as expected; the blink is the open item, not a regression
+              still nothing on the other client -> paste the "look change for" line and
+                         the 0x0225 / 0x0224 lines after it
             The bag-to-bag control: shuffling a potion sends the field nothing.
 
      TH. THE FACE COUPON opens no dialog and has no tooltip preview. The face's images are
@@ -2960,15 +2966,15 @@ param(
     # it 0xffffffff, invisible on this client's white panel). The hook patches six bytes of
     # that encrypted string to black by default; this is the off switch. beautytext.rs.
     [switch]$NoBeautyTextPatch,
-    # Leave 0x0138 UserAvatarModified a no-op. By default the hook turns the always-taken je
-    # at 142797ded into two nops so another player's equip/hair change redraws their copy in
-    # place (no blink, pet untouched). This is the off switch; pair it with -LookReenter or
-    # nobody sees anybody's look change until a map change. avatarmod.rs.
+    # Leave the hook's avatarmod patch off (it opens the client's 0x0138 apply). Measured
+    # 2026-09-18: with the patch on, a 0x0138 reached the observer, its handler ran, and
+    # nothing was redrawn - so the patch is inert unless -LookInPlace is also given, and
+    # harmless either way. avatarmod.rs.
     [switch]$NoAvatarModPatch,
-    # Redress another player's copy of a changed character with a leave + enter (+ pet) -
-    # the sequence that blinks and respawns the pet - instead of one 0x0138. The server-side
-    # fallback for clients launched with -NoAvatarModPatch. --look-reenter.
-    [switch]$LookReenter,
+    # Redress another player's copy of a changed character with one 0x0138 instead of the
+    # default leave + enter (+ pet). The opt-in for the next attempt at a blink-free update;
+    # measured inert 2026-09-18. --look-in-place.
+    [switch]$LookInPlace,
     # Monsters are ON by default since 2026-08-19. -NoMobs turns them off.
     #
     # -Mobs used to be the opt-in, and it cost a launch: the owner stood on map 40, which has
@@ -4086,7 +4092,7 @@ foreach ($ch in 0..($Channels - 1)) {
     $chArgs += @('--link', "127.0.0.1:$ChatPort")
     # The channel answers by default now; only the deliberate silence needs a flag.
     if ($SilentChannel) { $chArgs += '--silent-channel' }
-    if ($LookReenter) { $chArgs += '--look-reenter' }
+    if ($LookInPlace) { $chArgs += '--look-in-place' }
     # The channel writes and ROLLS its own log now (50 MB, five kept). Stdout gets nothing
     # after the file opens; it is redirected to a .out stub so nothing is lost if it does.
     $chArgs += @('--log-file', "`"$chLog`"")
@@ -4182,6 +4188,10 @@ function Show-TestPlan {
         Write-Host '           Your Use tab: 350 arrows, 325, blue 100, red 54, orange 21, orange 7,'
         Write-Host '           scroll 6, apple 3 -> fixed. Wrong direction -> say so (one comparator).'
         Write-Host '           Two items in one slot or a blank -> the swap did not draw; paste "sort"' -ForegroundColor Yellow
+        Write-Host '        5. DRAG ONTO THE SAME ITEM: 40 red onto 70 -> 100 and 10 (fills first);' -ForegroundColor Magenta
+        Write-Host '           the 10 onto the 100 -> they swap (full); split 4 off into an empty'
+        Write-Host '           slot -> 4 there, rest stay -> fixed. Was: the screen swapped while'
+        Write-Host '           the rows merged. A stack that "comes back" -> paste MERGE/SPLIT lines' -ForegroundColor Yellow
         Write-Host '        frozen tab -> paste the "consolidate"/"sort" lines; client dies -> client-exit.log' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  TW. A LEADER WHO LEAVES THE GAME HANDS THE PARTY TO ITS HIGHEST-LEVEL MEMBER.' -ForegroundColor Magenta
@@ -4548,15 +4558,12 @@ function Show-TestPlan {
         Write-Host '           window opens with Tester2''s numbers (+ pet panel) -> DONE; avatar drawn?' -ForegroundColor Green
         Write-Host '           nothing opens, log HAS 0x00A2 -> a pre-open gate; paste both lines' -ForegroundColor Yellow
         Write-Host '           nothing opens, NO 0x00A2 -> arm not reached; paste the 0x01FC line' -ForegroundColor Yellow
-        Write-Host '         OTHER CLIENTS, IN PLACE (evening): the leave+enter worked but BLINKED and' -ForegroundColor Magenta
-        Write-Host '         respawned the pet. Now the hook nops the je that gates 0x0138''s apply' -ForegroundColor Magenta
-        Write-Host '         (avatarmod, on by default) and the server sends ONE 0x0138 per look' -ForegroundColor Magenta
-        Write-Host '         change - equip on/off, cash, hair, face, pet hat. Watch the OTHER client:' -ForegroundColor Magenta
-        Write-Host '           new gear/hair, NO blink, pet stays put and happy -> DONE' -ForegroundColor Green
-        Write-Host '           nothing changes until a map change -> +0x1200 list empty; paste the' -ForegroundColor Yellow
-        Write-Host '             AVATARMOD hook line; run -LookReenter meanwhile' -ForegroundColor Yellow
-        Write-Host '           the OBSERVER dies -> -NoAvatarModPatch -LookReenter; paste the fault' -ForegroundColor Red
-        Write-Host '           still blinks -> server on -LookReenter; paste "look change for"'
+        Write-Host '         OTHER CLIENTS: LEAVE+ENTER IS THE DEFAULT AGAIN (14:07 run). The in-place' -ForegroundColor Yellow
+        Write-Host '         0x0138 reached the observer, its handler ran, nothing drew - inert.' -ForegroundColor Yellow
+        Write-Host '         Every worn/hair change publishes, with the blink + pet respawn (open item).' -ForegroundColor Yellow
+        Write-Host '           other client shows it in ~0.1s, blink -> expected' -ForegroundColor Green
+        Write-Host '           still nothing on the other client -> paste "look change for" + 0x0225/0x0224' -ForegroundColor Yellow
+        Write-Host '         -LookInPlace = the 0x0138 opt-in, for after the next read; no run needed.'
         Write-Host '  TH. FACE COUPON: no dialog, no preview. Images are fine; the'
         Write-Host '      ID is the one difference (22039; classic faces end at 21825).'
         Write-Host '      One chat line settles it: !face 22039' -ForegroundColor Yellow

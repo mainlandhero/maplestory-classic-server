@@ -8790,26 +8790,23 @@ fn a_hair_change_is_broadcast_to_the_other_clients_without_a_reload() {
 
     let seen = them.collect_mail();
     // The owner, 2026-09-18, two clients side by side: a bare re-sent 0x0224 drew nothing on the
-    // other client - the pool ignores an id it already has (research/user-enter-field.md) -
-    // and the leave+enter that followed drew it WITH a blink. So the default is now the
-    // client's own in-place update: one 0x0138 naming the changer, carrying the new look.
+    // other client - the pool ignores an id it already has (research/user-enter-field.md).
+    // So the observer gets a LEAVE for this one character, then the ENTER with the new look.
+    // (The 0x0138 in-place packet was tried the same evening and measured inert; it is the
+    // opt-in below.)
     let ops: Vec<u16> = seen.iter().map(|r| r.opcode).collect();
-    assert_eq!(ops, vec![net::opcode::USER_AVATAR_MODIFIED], "one 0x0138 and nothing else: {ops:x?}");
-    assert_eq!(u32::from_le_bytes(seen[0].body[..4].try_into().unwrap()), my_id, "it names the changer");
-    assert_eq!(&seen[0].body[4..], &net::opcode::avatar_look(&me.claimed_character().unwrap())[..], "then the compact look, byte for byte");
-    assert!(
-        seen[0].body[4..].windows(4).any(|w| u32::from_le_bytes(w.try_into().unwrap()) == 42_600),
-        "the look carries the new hair id"
-    );
+    assert_eq!(ops, vec![net::userpool::USER_LEAVE_FIELD, net::userpool::USER_ENTER_FIELD], "leave then enter: {ops:x?}");
+    assert_eq!(u32::from_le_bytes(seen[0].body[..4].try_into().unwrap()), my_id, "the leave names the changer, nobody else");
+    assert!(seen[1].body.windows(4).any(|w| u32::from_le_bytes(w.try_into().unwrap()) == 42_600), "the enter carries the new hair");
 }
 
-/// **`--look-reenter` is the fallback**: the leave, the enter with the new look, then the
-/// pet, for that one character - what a fresh sighting gets. It works on a client whose
-/// avatarmod patch is off, at the price of the blink and the pet respawn the owner measured.
+/// **`--look-in-place` is the opt-in**: one 0x0138 naming the changer, carrying the new look
+/// byte for byte. Measured inert on 2026-09-18 even with the launcher's avatarmod patch;
+/// kept for the next attempt, so this pins what it sends, not that it draws.
 #[test]
-fn with_look_reenter_a_hair_change_is_a_leave_then_an_enter_for_the_other_clients() {
+fn with_look_in_place_a_hair_change_is_one_avatar_modified_for_the_other_clients() {
     let (store, config, fields, account) = shared_channel(0, 30);
-    let config = Arc::new(Config { look_change_reenter: true, ..(*config).clone() });
+    let config = Arc::new(Config { look_change_reenter: false, ..(*config).clone() });
     let (mut me, my_id) = join_channel(&store, &config, &fields, account, "Stylist");
     me.on_field_entered();
     let (mut them, _) = join_channel(&store, &config, &fields, account, "Bystander");
@@ -8823,17 +8820,17 @@ fn with_look_reenter_a_hair_change_is_a_leave_then_an_enter_for_the_other_client
 
     let seen = them.collect_mail();
     let ops: Vec<u16> = seen.iter().map(|r| r.opcode).collect();
-    assert_eq!(ops, vec![net::userpool::USER_LEAVE_FIELD, net::userpool::USER_ENTER_FIELD], "leave then enter, no 0x0138: {ops:x?}");
-    assert_eq!(u32::from_le_bytes(seen[0].body[..4].try_into().unwrap()), my_id, "the leave names the changer, nobody else");
-    assert!(seen[1].body.windows(4).any(|w| u32::from_le_bytes(w.try_into().unwrap()) == 42_600), "the enter carries the new hair");
+    assert_eq!(ops, vec![net::opcode::USER_AVATAR_MODIFIED], "one 0x0138 and nothing else: {ops:x?}");
+    assert_eq!(u32::from_le_bytes(seen[0].body[..4].try_into().unwrap()), my_id, "it names the changer");
+    assert_eq!(&seen[0].body[4..], &net::opcode::avatar_look(&me.claimed_character().unwrap())[..], "then the compact look, byte for byte");
 }
 
 /// **Putting on or taking off any equip reaches the other client at once.** The owner,
 /// 2026-09-18: *"Whenever a client is changing their equipment, either a cash equipment or a
 /// regular equipment, it is not being immediately reflected on other clients."* Only the
-/// pet-hat slot was watched. Now any change to the worn set sends the observers one
-/// `0x0138` with the new look and nothing else; a move that leaves the worn set as it was
-/// (bag to bag) sends them nothing.
+/// pet-hat slot was watched. Now any change to the worn set sends the observers the leave
+/// and the enter with the new look and nothing else; a move that leaves the worn set as it
+/// was (bag to bag) sends them nothing.
 #[test]
 fn a_worn_change_is_re_announced_to_the_map() {
     let (store, config, fields, account) = shared_channel(0, 30);
@@ -8850,9 +8847,9 @@ fn a_worn_change_is_re_announced_to_the_map() {
     let announced = |them: &mut Session, what: &str| {
         let seen = them.collect_mail();
         let ops: Vec<u16> = seen.iter().map(|r| r.opcode).collect();
-        assert_eq!(ops, vec![net::opcode::USER_AVATAR_MODIFIED], "{what}: one in-place 0x0138 and nothing else: {ops:x?}");
-        assert_eq!(u32::from_le_bytes(seen[0].body[..4].try_into().unwrap()), my_id, "{what}: it names the changer");
-        seen.into_iter().next().unwrap().body
+        assert_eq!(ops, vec![net::userpool::USER_LEAVE_FIELD, net::userpool::USER_ENTER_FIELD], "{what}: leave then enter and nothing else: {ops:x?}");
+        assert_eq!(u32::from_le_bytes(seen[0].body[..4].try_into().unwrap()), my_id, "{what}: the leave names the changer");
+        seen.into_iter().nth(1).unwrap().body
     };
     let wears = |body: &[u8], slot: u8, id: u32| body.windows(5).any(|w| w[0] == slot && w[1..5] == id.to_le_bytes());
 
@@ -10042,6 +10039,71 @@ fn sort_items_consolidates_then_swaps_the_tab_into_order_and_answers_with_0x0070
     assert_eq!(again.len(), 1, "{again:?}");
     assert_eq!(again[0].body.len(), net::inventory::INVENTORY_REJECTED_LEN);
     assert_eq!(again[0].body[0], 1);
+}
+
+/// **A stack dragged onto a stack of the same item fills it first, and is drawn that way;
+/// a full destination swaps; part of a stack into an empty slot is an ADD.** The owner,
+/// 2026-09-18: *"it should try to fill the stack first (any remaining after the full stack
+/// will remain at the original position), if the resulting stack is already full, then it
+/// will carry out the swap slots procedure."*
+///
+/// The store already merged; the reply was one mode-2, which the client draws as an
+/// unconditional exchange - so the screen swapped while the rows merged. Now: 40 onto 70 at
+/// cap 100 answers two mode-1s (70 -> 100, 40 -> 10); the same drag again, destination full,
+/// answers one mode-2 (the swap); 5 onto 5 answers a mode-1 and a mode-3; and 4 of 10 into an
+/// empty slot answers a mode-1 (6 stay) and a mode-0 ADD of the 4. The rows agree with each
+/// reply, and every reply leads with the latch byte.
+#[test]
+fn a_stack_dropped_on_its_own_kind_fills_it_first_then_swaps_when_full() {
+    let (mut s, store, id) = claimed_session();
+    let usable = store::InventoryType::Use;
+    let qty = |slot: u16| store.inventory_slot(id, usable, slot).unwrap().map(|i| i.kind.quantity());
+    let entries = |out: &[Reply]| -> Vec<(u8, i16, i16, usize)> {
+        out.iter()
+            .map(|r| {
+                assert_eq!(r.opcode, net::inventory::INVENTORY_OPERATION, "{r:?}");
+                assert_eq!(r.body[0], 1, "bExclRequestSent");
+                let tail = if r.body.len() >= 13 { i16::from_le_bytes([r.body[11], r.body[12]]) } else { -1 };
+                (r.body[7], i16::from_le_bytes([r.body[9], r.body[10]]), tail, r.body.len())
+            })
+            .collect()
+    };
+    store.set_inventory_slot(id, usable, 1, &store::Item::bundle(2_000_000, 40)).unwrap();
+    store.set_inventory_slot(id, usable, 2, &store::Item::bundle(2_000_000, 70)).unwrap();
+
+    // 1. Fill first: 40 onto 70 -> 100 in slot 2, 10 left in slot 1.
+    let out = s.on_inventory_move(&inventory_move(2, 1, 2, -1));
+    assert_eq!(
+        entries(&out),
+        vec![(net::inventory::MODE_QUANTITY, 2, 100, 13), (net::inventory::MODE_QUANTITY, 1, 10, 13)],
+        "{:?}",
+        out.iter().map(|r| &r.what).collect::<Vec<_>>()
+    );
+    assert_eq!((qty(1), qty(2)), (Some(10), Some(100)));
+
+    // 2. The destination is full now: the same drag swaps, one mode-2, both slots still held.
+    let out = s.on_inventory_move(&inventory_move(2, 1, 2, -1));
+    assert_eq!(entries(&out), vec![(net::inventory::MODE_MOVE, 1, 2, 13)]);
+    assert_eq!((qty(1), qty(2)), (Some(100), Some(10)));
+
+    // 3. A source poured out entirely: 10 onto a stack with room -> mode 1 + mode 3.
+    let out = s.on_inventory_move(&inventory_move(2, 2, 1, -1));
+    assert_eq!(entries(&out), vec![(net::inventory::MODE_MOVE, 2, 1, 13)], "100 is full, so this one swaps back first");
+    store.set_inventory_slot(id, usable, 3, &store::Item::bundle(2_000_000, 5)).unwrap();
+    let out = s.on_inventory_move(&inventory_move(2, 3, 1, -1)); // 5 onto the 10 in slot 1
+    let e = entries(&out);
+    assert_eq!(e[0], (net::inventory::MODE_QUANTITY, 1, 15, 13));
+    assert_eq!((e[1].0, e[1].1, e[1].3), (net::inventory::MODE_REMOVE, 3, net::inventory::INVENTORY_REMOVE_LEN));
+    assert_eq!((qty(1), qty(3)), (Some(15), None));
+
+    // 4. Part of a stack into an EMPTY slot: 4 of the 15 -> slot 5. The source's new count,
+    //    then an ADD of the new stack (the client has nothing in slot 5 to re-count).
+    let out = s.on_inventory_move(&inventory_move(2, 1, 5, 4));
+    assert_eq!(out.len(), 2, "{out:?}");
+    assert_eq!(&entries(&out[..1])[0], &(net::inventory::MODE_QUANTITY, 1, 11, 13));
+    assert_eq!(out[1].body[7], net::inventory::MODE_ADD, "{}", out[1].what);
+    assert_eq!(i16::from_le_bytes([out[1].body[9], out[1].body[10]]), 5, "into slot 5");
+    assert_eq!((qty(1), qty(5)), (Some(11), Some(4)));
 }
 
 /// **A negative amount must not credit the player.**
