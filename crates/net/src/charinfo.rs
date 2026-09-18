@@ -55,9 +55,15 @@ pub fn parse_character_info_request(body: &[u8]) -> Option<CharacterInfoRequest>
 }
 
 /// The summoned pet's panel: what the window prints beside TYPE / LEVEL / CLOSENESS /
-/// FULLNESS, and the whole pet item so the panel can build its item widget. The three
-/// numbers the panel PRINTS are these fields, not the item's - the client never reads them
-/// out of the item - so a caller keeps them equal.
+/// FULLNESS, and the pet's worn equip - the hat - for the cell under the pet.
+///
+/// **The cell is the pet's EQUIP, not the pet.** The owner, 2026-09-18, with the window open on
+/// themself: *"The pet window for the owner's pet Lucy should have a top hat showing, but in
+/// Character Info that slot is blank"* - the first version sent the pet item itself behind
+/// the flag, and the widget drew an empty cell with `ReqLv 0`. The research's row 14
+/// (`dwPetWearItemID` in the reference) is the equip's id and row 15a the equip's whole item
+/// slot; with no hat both are absent and the cell stays empty. The three numbers the panel
+/// PRINTS are these fields, not anything in an item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PetPanel {
     pub item_id: u32,
@@ -66,8 +72,9 @@ pub struct PetPanel {
     pub level: u32,
     pub closeness: u32,
     pub fullness: u32,
-    /// `crate::bag::pet_item_with_state(..)`, type byte included.
-    pub item: Vec<u8>,
+    /// The hat in the pet-equip slot: its id and its whole equip slot
+    /// (`crate::opcode::equipped_item`, type byte included). `None` when the pet wears nothing.
+    pub wear: Option<(u32, Vec<u8>)>,
 }
 
 /// What the window draws for a character who is not the viewer.
@@ -120,9 +127,17 @@ pub fn character_info(info: &CharacterInfo) -> Vec<u8> {
             w.u32(p.closeness);
             w.u32(p.fullness);
             w.u32(0); // the frame loader's 4th argument; 0 is what CPet itself passes
-            w.u32(0); // look override: draw the pet the item id names
-            w.u8(1); // hasPetItem
-            w.bytes(&p.item);
+            match &p.wear {
+                Some((hat_id, hat)) => {
+                    w.u32(*hat_id); // the pet's wear item id
+                    w.u8(1); // an equip slot follows: the hat, for the cell under the pet
+                    w.bytes(hat);
+                }
+                None => {
+                    w.u32(0); // nothing worn
+                    w.u8(0);
+                }
+            }
         }
         None => {
             w.u32(0); // pet item id 0 = no pet
@@ -198,12 +213,11 @@ mod tests {
     }
 
     /// With a pet: the item id gates the button, the three numbers are what the panel
-    /// prints, the whole pet item follows its flag byte, and the panel flag is echoed only
-    /// when there is a pet to show.
+    /// prints, the hat's id and whole equip slot follow when the pet wears one (nothing and
+    /// a clear flag when it does not), and the panel flag is echoed only when there is a pet.
     #[test]
-    fn a_summoned_pet_rides_as_its_numbers_and_its_whole_item() {
-        let vitals = crate::bag::PetVitals { level: 3, closeness: 250, fullness: 90, skills: 1 };
-        let item = crate::bag::pet_item_with_state(5_000_006, "Husky", None, 1, &vitals);
+    fn a_summoned_pet_rides_as_its_numbers_and_its_hat() {
+        let hat = crate::opcode::equipped_item(1_802_006, &crate::opcode::EquipStats::default());
         let info = CharacterInfo {
             character_id: 215,
             name: "Wisp".into(),
@@ -212,7 +226,7 @@ mod tests {
             fame: 0,
             items: Vec::new(),
             guild: String::new(),
-            pet: Some(PetPanel { item_id: 5_000_006, name: "Husky".into(), level: 3, closeness: 250, fullness: 90, item: item.clone() }),
+            pet: Some(PetPanel { item_id: 5_000_006, name: "Husky".into(), level: 3, closeness: 250, fullness: 90, wear: Some((1_802_006, hat.clone())) }),
             show_pet_panel: true,
         };
         let b = character_info(&info);
@@ -220,11 +234,14 @@ mod tests {
         assert_eq!(u32::from_le_bytes(b[at..at + 4].try_into().unwrap()), 5_000_006);
         let after_name = at + 4 + 2 + 5;
         let nums: Vec<u32> = (0..5).map(|i| u32::from_le_bytes(b[after_name + i * 4..after_name + i * 4 + 4].try_into().unwrap())).collect();
-        assert_eq!(nums, vec![3, 250, 90, 0, 0], "level, closeness, fullness, loader arg, look override");
+        assert_eq!(nums, vec![3, 250, 90, 0, 1_802_006], "level, closeness, fullness, loader arg, the hat's id");
         let flag = after_name + 20;
-        assert_eq!(b[flag], 1, "hasPetItem");
-        assert_eq!(&b[flag + 1..flag + 1 + item.len()], &item[..], "the whole pet item, type byte first");
-        assert_eq!(b[flag + 1 + item.len()..], [0, 0, 0, 0, 0, 0, 0, 0, 1], "no items, no records, panel open");
+        assert_eq!(b[flag], 1, "an equip slot follows");
+        assert_eq!(&b[flag + 1..flag + 1 + hat.len()], &hat[..], "the hat's whole equip slot, type byte first");
+        assert_eq!(b[flag + 1 + hat.len()..], [0, 0, 0, 0, 0, 0, 0, 0, 1], "no items, no records, panel open");
+
+        let bare = character_info(&CharacterInfo { pet: Some(PetPanel { wear: None, ..info.pet.clone().unwrap() }), ..info.clone() });
+        assert_eq!(&bare[after_name + 16..after_name + 21], &[0, 0, 0, 0, 0], "no hat: id 0, no slot");
 
         let closed = character_info(&CharacterInfo { show_pet_panel: true, pet: None, ..info });
         assert_eq!(*closed.last().unwrap(), 0, "no pet: the panel flag is not echoed, the client would refuse it anyway");

@@ -60,27 +60,30 @@ impl Session {
         let Ok(Some(brief)) = self.store.character_brief(id) else {
             return refuse(format!("no character {id}"));
         };
+        let worn = self.store.equipped_items(id).unwrap_or_default();
         // The pet the character has out, from the store - the other player's session owns the
         // live copy, but `active` is written on every summon and put-away, so the row is it.
+        // The cell under the pet is the pet's EQUIP (the hat in worn slot 114), not the pet
+        // item: the owner, 2026-09-18, "that slot is blank" with the pet item sent there. The hat's
+        // body comes from its worn row, so a scrolled hat arrives scrolled (the owner, the same
+        // day: "make sure that the Character Info shows all scrolled information").
         let pet = self.store.active_pet(id).ok().flatten().map(|row| {
             let state = self.store.pet_state(row.pet_id).unwrap_or_else(|_| store::PetState::fresh());
             let name = state
                 .name
                 .clone()
                 .unwrap_or_else(|| self.config.item_names.get(&row.item_id).cloned().unwrap_or_default());
-            let vitals = net::bag::PetVitals {
-                level: state.level,
-                closeness: u16::try_from(state.closeness).unwrap_or(u16::MAX),
-                fullness: state.fullness,
-                skills: state.skills,
-            };
+            let wear = worn.iter().find(|e| e.slot == super::pet::PET_EQUIP_WORN_SLOT).map(|e| {
+                let stats = e.stats.unwrap_or_else(|| self.template_stats(e.item_id));
+                (e.item_id, net::opcode::equipped_item(e.item_id, &stats))
+            });
             net::charinfo::PetPanel {
                 item_id: row.item_id,
-                name: name.clone(),
+                name,
                 level: u32::from(state.level),
                 closeness: state.closeness,
                 fullness: u32::from(state.fullness),
-                item: net::bag::pet_item_with_state(row.item_id, &name, Some(net::pet::pet_serial(id, row.pet_id)), 1, &vitals),
+                wear,
             }
         });
         let fame = self.store.fame(id).ok().flatten().unwrap_or(0);
@@ -127,7 +130,16 @@ impl Session {
                 brief.level,
                 brief.job,
                 info.items.len(),
-                pet.as_ref().map(|p| format!("{} lv {} closeness {} fullness {}", p.name, p.level, p.closeness, p.fullness)).unwrap_or_else(|| "none".into()),
+                pet.as_ref()
+                    .map(|p| format!(
+                        "{} lv {} closeness {} fullness {}, wearing {}",
+                        p.name,
+                        p.level,
+                        p.closeness,
+                        p.fullness,
+                        p.wear.as_ref().map(|(hat, _)| hat.to_string()).unwrap_or_else(|| "nothing".into())
+                    ))
+                    .unwrap_or_else(|| "none".into()),
                 if req.pet_info && pet.is_some() { ", pet panel open" } else { "" }
             ),
         }]

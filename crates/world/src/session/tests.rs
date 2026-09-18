@@ -8943,10 +8943,39 @@ fn double_clicking_another_player_answers_with_their_character_info() {
     let nums: Vec<u32> = (0..3).map(|i| u32::from_le_bytes(b[at + 11 + i * 4..at + 15 + i * 4].try_into().unwrap())).collect();
     assert_eq!(nums, vec![3, 250, 90], "level, closeness, fullness - what the panel prints");
     let flag = at + 11 + 20;
-    assert_eq!(b[flag], 1, "hasPetItem");
-    assert_eq!(b[flag + 1], net::bag::PET_ITEM_TYPE, "the whole pet item, type byte first");
+    assert_eq!(&b[flag - 4..flag + 1], &[0, 0, 0, 0, 0], "no hat: wear id 0 and no equip slot");
     assert_eq!(*b.last().unwrap(), 1, "the panel opens with the window, as asked");
-    assert!(out[0].what.contains("Husky lv 3 closeness 250 fullness 90"), "{}", out[0].what);
+    assert!(out[0].what.contains("Husky lv 3 closeness 250 fullness 90, wearing nothing"), "{}", out[0].what);
+
+    // The Blue Top Hat on the pet (Deco slot -> worn 114): the cell under the pet is the hat.
+    // The owner, 2026-09-18: "that slot is blank" while the pet item was sent there.
+    let hat_slot = store.add_item(their_id, store::InventoryType::Deco, &store::Item::equip(1_802_006), 1).unwrap()[0].slot;
+    them.on_inventory_move(&inventory_move(net::inventory::INV_DECO, hat_slot as i16, -114, -1));
+    me.collect_mail();
+    let out = me.handle(&character_info_request(their_id, true));
+    let out: Vec<Reply> = out.into_iter().filter(|r| r.opcode == net::charinfo::CHARACTER_INFO).collect();
+    let b = &out[0].body;
+    assert_eq!(u32::from_le_bytes(b[flag - 4..flag].try_into().unwrap()), 1_802_006, "the wear item id");
+    assert_eq!(b[flag], 1, "an equip slot follows");
+    assert_eq!(b[flag + 1], 1, "an equip body, type byte 1");
+    assert_eq!(u32::from_le_bytes(b[flag + 2..flag + 6].try_into().unwrap()), 1_802_006, "the hat");
+    assert!(out[0].what.contains("wearing 1802006"), "{}", out[0].what);
+
+    // The owner, 2026-09-18: "The pet equip can be scrolled, make sure that the Character Info shows
+    // all scrolled information to other clients as well instead of just the base item." The
+    // worn row keeps its own stats once a scroll writes them, and the cell is built from the
+    // row, so a +5 STR hat with one enhancement left arrives as exactly that.
+    let mut scrolled = net::opcode::EquipStats::default();
+    scrolled.stats.inc_str = 5;
+    scrolled.options.remaining_enhancements = 1;
+    assert!(store.set_worn_equip(their_id, 114, &scrolled, 1).unwrap(), "the hat row took the scroll");
+    let out = me.handle(&character_info_request(their_id, true));
+    let out: Vec<Reply> = out.into_iter().filter(|r| r.opcode == net::charinfo::CHARACTER_INFO).collect();
+    let b = &out[0].body;
+    let expect = net::opcode::equipped_item(1_802_006, &scrolled);
+    assert_eq!(&b[flag + 1..flag + 1 + expect.len()], &expect[..], "the hat's slot carries the scrolled stats, byte for byte");
+    let base = net::opcode::equipped_item(1_802_006, &net::opcode::EquipStats::default());
+    assert_ne!(expect, base, "and that is not the base item");
 
     // A character that does not exist: the refusal, four bytes, still an answer.
     let out = me.handle(&character_info_request(999_999, false));
