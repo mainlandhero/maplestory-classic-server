@@ -1589,6 +1589,14 @@
               garbled text or a cut-off line -> a byte did not take; paste the same lines
               the arrow again (either way, anyone): "can't ... anymore for today" -> DONE
               Tester2 fames the owner back: allowed (per giver) -> DONE
+              THE PET'S CELL (the owner, 2026-09-18: "the pet window for the owner's pet Lucy should
+              have a top hat showing, but in Character Info that slot is blank" - the pet
+              ITEM was sent there; it is the pet's EQUIP, worn slot 114, and its id in the
+              field before it). With a hat on the pet: the cell under the pet shows the
+              Top Hat with its icon, ReqLv as the hat's -> DONE; hover it: a SCROLLED hat
+              shows its scrolled stats (the row's own, the owner: "make sure ... all scrolled
+              information"); no hat -> the cell empty, no ReqLv line; still blank with a
+              hat on -> paste the 0x00A2 line
               Item List panel: Tester2's HAIR, FACE, then hat, coat, weapon, cash cover,
                          each with an icon -> DONE. Hover the hair: a tooltip with its
                          name -> the String.wz lookup works for a look id too
@@ -4621,6 +4629,8 @@ function Show-TestPlan {
         Write-Host '           up on Tester2: "raised", FAME 1 in the window, Tester2 sees it; again ->' -ForegroundColor Green
         Write-Host '           "not anymore for today" -> DONE' -ForegroundColor Green
         Write-Host '           Item List: hair, face, hat/coat/weapon/cover, all with icons -> DONE' -ForegroundColor Green
+        Write-Host '           the cell under the PET: its Top Hat with icon (scrolled stats on hover)' -ForegroundColor Green
+        Write-Host '           -> DONE; blank with a hat on -> paste the 0x00A2 line' -ForegroundColor Yellow
         Write-Host '           hair/face blank, equips fine -> icons not installed; a DEATH on open ->' -ForegroundColor Yellow
         Write-Host '           relaunch -NoLookItems, paste client-exit.log; blank everywhere -> 0x00A2 line' -ForegroundColor Yellow
         Write-Host '         OTHER CLIENTS: IN PLACE BY 0x02AE (third attempt). 0x0138 walks the SUMMONED' -ForegroundColor Magenta
