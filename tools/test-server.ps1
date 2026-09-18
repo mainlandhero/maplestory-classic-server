@@ -1440,10 +1440,21 @@
               no menu, the items arrive as before -> the coupon id differs; paste the
                          world-ch0.log line for 0x0114
               rows show no icons / wrong names -> say which
-         c) The Übel Hair Coupon: Confirm sends 0x0165, which nothing answered. Handled:
-            hair applied, coupon spent, the map re-entered to redraw (as !hair does).
-              hair changes on re-entry, coupon gone -> done
-              nothing -> grep world-ch0.log for 0x0165 and paste the line after it
+         c) HAIR / FACE COUPON: REDRAWN IN PLACE BY 0x007C (2026-09-18). The owner: "the player
+            needs to enter a different map to see the hair or face updated" - so the dialog
+            only previews; the "client self-applies" reading of 2026-09-12 came back false,
+            as this step's last line said it could. The Confirm is now answered with ONE
+            StatChanged carrying the HAIR or FACE bit and the id (and the unlock byte); the
+            client's 0x007C handler runs the same two avatar calls the equip handler does
+            (FUN_142ce51b0 x2 then FUN_142ce5e60, at 142d560d5 / 142d56122 [L]), which is
+            the redraw every equip on screen goes through. !hair 42540 is the cheap form.
+              hair/face changes THE MOMENT you press Confirm, no reload, coupon gone -> DONE
+              still only after a map change -> the handler's branch does not reach the
+                         renderer for the local user; paste the 0x007C line after 0x0165,
+                         and the next variant is a same-map SetField (a visible reload)
+              the hair changes but the character flickers / a CLIENT FAULT -> paste
+                         client-exit.log; the pair ran on an avatar mid-animation
+              a 2nd client on the map sees it in ~0.1 s -> the broadcast is fine as before
 
      TH. THE FACE COUPON opens no dialog and has no tooltip preview. The face's images are
          installed and structurally identical to a classic face (checked node by node); the
@@ -4372,12 +4383,15 @@ function Show-TestPlan {
         Write-Host '           menu, pick, those items + receipt -> done'
         Write-Host '           End Chat spends the coupon -> tell me; it must not' -ForegroundColor Yellow
         Write-Host '           no menu, items arrive as before -> paste the 0x0114 line'
-        Write-Host '      c) Hair/face coupon: 0x0165 handled - coupon spent, change'
-        Write-Host '         broadcast to others, NO reload (client self-applies).'
-        Write-Host '           your hair changes, no reload, coupon gone -> done'
+        Write-Host '      c) HAIR/FACE COUPON REDRAWN IN PLACE (2026-09-18): "only after a map' -ForegroundColor Yellow
+        Write-Host '         change" = the dialog only previews. Confirm now gets ONE 0x007C with' -ForegroundColor Yellow
+        Write-Host '         the HAIR/FACE bit + id; the client runs the equip redraw pair on it.' -ForegroundColor Yellow
+        Write-Host '         !hair 42540 is the cheap form (no reload now either).'
+        Write-Host '           changes the MOMENT you press Confirm, no reload -> DONE' -ForegroundColor Green
+        Write-Host '           still only after a map change -> paste the 0x007C after 0x0165;' -ForegroundColor Yellow
+        Write-Host '             next variant is a same-map SetField (a visible reload)' -ForegroundColor Yellow
+        Write-Host '           flicker / CLIENT FAULT -> paste client-exit.log' -ForegroundColor Yellow
         Write-Host '           a 2nd client on the map sees it in ~0.1s -> broadcast OK'
-        Write-Host '           others do NOT see it -> re-enter ignored; leave+enter next'
-        Write-Host '           yours did NOT change sans reload -> client not self-applying'
         Write-Host '  TH. FACE COUPON: no dialog, no preview. Images are fine; the'
         Write-Host '      ID is the one difference (22039; classic faces end at 21825).'
         Write-Host '      One chat line settles it: !face 22039' -ForegroundColor Yellow

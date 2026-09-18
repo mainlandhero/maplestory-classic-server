@@ -404,10 +404,13 @@ impl Session {
     /// to put either id on a character at all. The set coupons will use the same path once
     /// their request packet is captured (`backport/signature-style/README.md`).
     ///
-    /// **Re-entry, not an avatar packet.** `0x0138 UserAvatarModified` applies nothing in
-    /// this client - its apply sits behind a guard that always fails (`docs/opcodes.md`) - so
-    /// the only way a new look reaches the screen is the record inside a `SetField`. The
-    /// character lands on the map's spawn point, which a test can live with.
+    /// **A `0x007C` with the look bit, not a re-entry and not `0x0138`.** `0x0138
+    /// UserAvatarModified` applies nothing in this client - its apply sits behind a guard
+    /// that always fails (`docs/opcodes.md`). Until 2026-09-18 this re-sent the `SetField`
+    /// for the same map, a visible reload that put the character on the spawn point; the
+    /// `StatChanged` handler's FACE/HAIR branch rebuilds the avatar in place
+    /// (`beautycoupon::look_stat_changed`), and this command is the cheapest way to watch it
+    /// do so: `!hair 42540` on a field, no reload, the hair changes where you stand.
     ///
     /// **The gate is the name table, and it says so.** The client draws an id straight from
     /// `Character/Hair/%08d.img`; an id with no image draws nothing and there is no packet
@@ -445,12 +448,13 @@ impl Session {
         } else {
             chr.face = id;
         }
-        let map = chr.map_id;
+        let k = if kind == "hair" { crate::cosmetics::Kind::Hair } else { crate::cosmetics::Kind::Face };
         let mut out = self.gm_ack(format!(
-            "{}'s {kind} is now {id} ({name}). Re-entering map {map} so the client draws it -              0x0138 applies nothing in this client.",
+            "{}'s {kind} is now {id} ({name}). Redrawn in place by 0x007C - no reload; if it only shows after a map change, say so.",
             chr.name
         ));
-        out.extend(self.go_to_map(&mut chr, map, 0, format!("GM !{kind} {id}: re-entry so the look is rebuilt")));
+        out.push(super::beautycoupon::look_stat_changed(k, id, false, &format!("GM !{kind} {id}")));
+        self.broadcast_look_change(&chr);
         out
     }
 
