@@ -236,6 +236,18 @@ is Auto Move (`5190002`) THEN Expanded Auto Move (`5190003`); the box then rides
 wonderGrade 6 as before. `research/pet-vacuum-wondergrade-2026-09-16.md` §7. 2132 tests. Plan
 step 8 LOOT has the order.
 
+**2026-09-18: the collaboration pets declare Item Pouch alone, like the classic eleven.** The owner,
+off Lil Fern's shop tooltip (*"Skill: Meso Magnet, Item Pouch, Auto Move, Auto Buff"*): *"have
+them match existing pets and should only have Meso Magnet and Item Pouch at default purchase
+time."* Nexon's modern image declares `sweepForDrop` and `autoBuff`; the tooltip lists a skill
+the image declares OR the item body has learned (`FUN_1414b89b0`), so both keys are stripped by
+the installer's step 4d (983e79f, with 4d's patch rows moved out from under the badge lookup -
+before that only the last pet got them at all). The server side was already uniform: every pet
+row starts with `PET_SKILLS_AT_START = 0b0001`, and the Petite Luna vacuum is the item's
+`wonderGrade 6`, not a key. Installed 02:10 with the client closed and read back: all four
+declare `pickupItem` alone, the c22/c23 commands are in, `--check` passes, 2605 tests. Plan step
+8's collab block has the reading. Unverified on screen.
+
 **2026-09-18: the three hair-hats were female-only by ID; they wear 1007910..1007912 now.** The owner:
 *"the Linie, Lugner and Aura package hair equipments still is being refused to be equipped by
 the client."* Read this time rather than instrumented: the double-click is `FUN_141784fa0`, which
