@@ -2088,6 +2088,18 @@
             2. nothing happens and the coupon stays -> paste the "<- 0x...." line the click
                produced from world-chN.log: that is the opcode it really sends. If NO line
                at all, the click never left the client (say so - no server fix reaches it)
+          LEAF POINT EXCHANGE COUPONS (2026-09-17). The owner: "when you use one of these items,
+          it gives the player who used them the appropriate amount of Leaf Points in their
+          account." 2430004..2430008 = 1,000 / 5,000 / 10,000 / 50,000 / 100,000. They are
+          scripted consumables in the USE tab; the client's double-click dispatcher sends
+          them on 0x0114 (read off the listing, NEVER YET ON A WIRE), the same 10-byte body
+          the Cash-tab coupons use. The points go on the ACCOUNT's cash wallet.
+            1. !item 2430004, double-click it in the Use tab: yellow "You received 1,000
+               Leaf Points. You now have N Leaf Points.", the coupon gone -> fixed. Open the
+               Cash Shop: the Leaf Point balance is N -> fixed
+            2. nothing happens and the coupon stays -> paste the "<- 0x...." line the click
+               produced from world-chN.log: that is the opcode it really sends. If NO line
+               at all, the click never left the client (say so - no server fix reaches it)
           NPC SHOP DUPLICATES (2026-09-16). The owner: "duplicate items in the NPC shop, one
           being regular price, another being 10 times cheaper ... across multiple if not
           all NPC shops." The cheap twin was our Sell row (the WZ sell price); the
@@ -5119,6 +5131,10 @@ function Show-TestPlan {
         Write-Host '            no suck-up -> paste PetPickupRange + item bytes 61..63' -ForegroundColor Yellow
         Write-Host '         b. buy Auto Move (5190002) then Expanded (5190003) - a chain; each' -ForegroundColor Green
         Write-Host '            lists (Learned) and changes the pet WALKING to drops; say what moves' -ForegroundColor Green
+        Write-Host '       LEAF POINT COUPONS (2026-09-17): !item 2430004, double-click it in the'
+        Write-Host '         Use tab: "You received 1,000 Leaf Points", coupon gone, Cash Shop' -ForegroundColor Yellow
+        Write-Host '         balance up -> fixed. Nothing happens -> paste the "<- 0x" line the' -ForegroundColor Yellow
+        Write-Host '         click sent (the opcode is read off the listing, never on a wire).' -ForegroundColor Yellow
         Write-Host '       LEAF POINT COUPONS (2026-09-17): !item 2430004, double-click it in the'
         Write-Host '         Use tab: "You received 1,000 Leaf Points", coupon gone, Cash Shop' -ForegroundColor Yellow
         Write-Host '         balance up -> fixed. Nothing happens -> paste the "<- 0x" line the' -ForegroundColor Yellow
