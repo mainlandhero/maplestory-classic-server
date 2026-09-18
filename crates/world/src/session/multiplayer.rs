@@ -379,27 +379,41 @@ impl Session {
         here
     }
 
-    /// **Tell the field this character's hair or face just changed.** No field re-entry.
+    /// **Tell the field this character's hair or face just changed.** No field re-entry for
+    /// anyone: the other clients get a leave-then-enter for this ONE character.
     ///
-    /// The owner, 2026-09-12: *"The hair should just switch immediately on screen without a
-    /// reload... The moment any hair or face change happens, it should also show up on other
-    /// clients."* The player's own client already applied the look - the Beauty dialog
-    /// previews it and commits it on Confirm - so the server owes only the OTHER clients an
-    /// update. `0x0138` (the incremental avatar-modify) applies nothing in this client
-    /// (`research/naked-character.md`), so the update rides the user-pool enter packet the
-    /// field already uses: everyone here re-adds this character with its new look, and the
-    /// stored spawn is refreshed so a later joiner gets it too.
+    /// The owner, 2026-09-12: *"The moment any hair or face change happens, it should also show
+    /// up on other clients."* And 2026-09-18, with two clients side by side: *"the hair
+    /// instantly changed for the same client, but did not change for multiplayer clients"* -
+    /// `world-ch0.log` shows the bystander received the `0x0224` and drew nothing. That is
+    /// what `research/user-enter-field.md` §0 already said **[L]**: *re-sending `0x0224` for
+    /// an id already in the pool is a silent no-op - the handler returns before it reads a
+    /// byte of the body.* The 2026-09-12 version of this function sent the enter alone and
+    /// filed that as its [I]; the run settled it.
     ///
-    /// **[I] on the remote side**: whether a second `USER_ENTER_FIELD` for a character
-    /// already in the pool redraws it or is ignored is not measured. It is the only live
-    /// avatar mechanism this client has; the plan's step names the falsifier.
+    /// So the update is the pair the field already uses for a portal walk: `0x0225
+    /// UserLeaveField` (the client destroys its copy of this character), then `0x0224` with
+    /// the new look, then the pet companions again - the remote copy's pets belong to the
+    /// `CUser` the leave just destroyed, and a fresh sighting sends them after the spawn
+    /// (`broadcast::enter_field`), so this does exactly what a fresh sighting does. `0x0138`
+    /// applies nothing in this client (`research/naked-character.md`). The stored spawn is
+    /// refreshed so a later joiner gets the new look too.
+    ///
+    /// **[I]**: that the observer's copy re-created this way draws at the same spot with no
+    /// visible blink beyond one frame. Plan step TO(c) has the readings.
     pub(super) fn broadcast_look_change(&mut self, chr: &net::opcode::Character) {
         let Some(map) = self.bus().map_of(self.subscriber) else { return };
-        let spawn = self.presence(chr).spawn;
-        self.bus().refresh_spawn(self.subscriber, spawn.clone());
-        self.bus().publish(self.subscriber, map, spawn, None);
+        let presence = self.presence(chr);
+        self.bus().refresh_spawn(self.subscriber, presence.spawn.clone());
+        self.bus().publish(self.subscriber, map, presence.farewell, None);
+        self.bus().publish(self.subscriber, map, presence.spawn, None);
+        let pets = presence.companions.len();
+        for c in presence.companions {
+            self.bus().publish(self.subscriber, map, c, None);
+        }
         crate::server::log(&format!(
-            "   look change for character {} (hair {}, face {}) broadcast to field {map}",
+            "   look change for character {} (hair {}, face {}): leave + enter + {pets} pet(s) \
+             broadcast to field {map} - a bare 0x0224 for an id already in the pool is a no-op",
             chr.id, chr.hair, chr.face
         ));
     }
@@ -1368,14 +1382,12 @@ mod tests {
         assert_eq!(fields.parties().party(party).unwrap().pickup_rights, crate::party::PICKUP_ALL);
     }
 
-    /// **A leader who leaves the game hands the party to its highest-level member; a channel
-    /// change hands nothing over; a member who drops is simply gone.** The owner, 2026-09-18:
-    /// *"when a party leader disconnects from the game, the party leader needs to be handed
-    /// over to the next highest level player automatically."* Three members, levels 10 / 20 /
-    /// 15 in join order: the level-20 one leads after the leader logs out, not the first to
-    /// join. Every remaining member gets the withdraw and the refreshed window.
+    /// **A leader who leaves the game hands the crown to the highest-level member still online
+    /// and keeps their seat; a party persists with everyone offline; a leader with nobody
+    /// online to hand to disbands it; a channel change hands nothing over.** The owner,
+    /// 2026-09-18, both messages. Three members, levels 10 / 15 / 20 in join order.
     #[test]
-    fn a_leader_who_leaves_the_game_hands_the_party_to_the_highest_level_member() {
+    fn a_leader_who_leaves_the_game_hands_the_crown_to_the_highest_level_member_online() {
         let store = Arc::new(Store::open_in_memory().unwrap());
         // Two channels, so a Change Channel can be minted rather than refused.
         let config = Arc::new(Config {
@@ -1384,20 +1396,24 @@ mod tests {
         });
         let fields = Arc::new(Fields::new());
         let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let join = |id: u32| {
+            store.create_migration(account, id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(id);
+            let entry = s.on_field_entered();
+            let windows = entry.iter().filter(|r| r.opcode == net::party::PARTY_RESULT && r.body[0] == net::party::result::PARTY_STATE).count();
+            (s, windows)
+        };
         let make = |name: &str, level: u32| {
             let chr = net::opcode::Character { name: name.to_string(), map_id: 104_040_000, ..Default::default() };
             let mut made = store.create_character(account, 0, &chr).unwrap();
             made.level = level;
             store.save_character_progress(&made).unwrap();
-            store.create_migration(account, made.id, 0, 0).unwrap();
-            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
-            s.claim_for_character(made.id);
-            s.on_field_entered();
-            (s, made.id)
+            made.id
         };
-        let (mut leader, leader_id) = make("Cobalt", 10);
-        let (mut mid, mid_id) = make("Tester2", 15);
-        let (mut high, high_id) = make("Tester3", 20);
+        let (leader_id, mid_id, high_id) = (make("Cobalt", 10), make("Tester2", 15), make("Tester3", 20));
+        let ((mut leader, w0), (mut mid, w1), (mut high, w2)) = (join(leader_id), join(mid_id), join(high_id));
+        assert_eq!((w0, w1, w2), (0, 0, 0), "no party yet, no window on login");
         let created = leader.run_party_request(leader_id, crate::party::Request::Create { name: "the owner's Party".into() });
         let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
         for (s, id) in [(&mut mid, mid_id), (&mut high, high_id)] {
@@ -1406,40 +1422,52 @@ mod tests {
             let _ = s.run_party_request(id, crate::party::Request::Accept { party });
             let _ = leader.tick(2_000);
         }
-        assert_eq!(fields.parties().party(party).unwrap().members, vec![leader_id, mid_id, high_id], "join order");
-        assert_eq!(fields.parties().party(party).unwrap().leader, leader_id);
+        let members = |fields: &Arc<Fields>| fields.parties().party(party).map(|p| (p.leader, p.members.clone()));
+        assert_eq!(members(&fields), Some((leader_id, vec![leader_id, mid_id, high_id])), "join order");
         let _ = mid.tick(3_000);
         let _ = high.tick(3_000);
 
-        // The leader logs out: the level-20 member leads, not the level-15 one who joined first.
+        // 1. The level-20 member logs out first: a member, so nothing moves.
+        let _ = high.on_log_out();
+        drop(high);
+        assert_eq!(members(&fields), Some((leader_id, vec![leader_id, mid_id, high_id])), "a member's disconnect changes nothing");
+
+        // 2. The leader logs out: the highest-level member ONLINE is the level-15 one - the
+        //    level-20 one is offline and must not be crowned. The leader keeps their seat.
         let out = leader.on_log_out();
         assert!(out.iter().any(|r| r.opcode == net::notice::LOG_OUT_RESULT), "the log out is still answered");
-        let p = fields.parties().party(party).cloned().expect("the party outlives its leader");
-        assert_eq!(p.leader, high_id, "the highest-level member leads");
-        assert_eq!(p.members, vec![mid_id, high_id], "the leader is out of the party");
-        for (s, id) in [(&mut mid, mid_id), (&mut high, high_id)] {
-            let mail = s.tick(4_000);
-            let codes: Vec<u8> = mail.iter().filter(|r| r.opcode == net::party::PARTY_RESULT).map(|r| r.body[0]).collect();
-            assert!(codes.contains(&net::party::result::WITHDRAW), "member {id} is told the leader left: {codes:?}");
-            assert!(codes.contains(&net::party::result::PARTY_STATE), "member {id} gets the refreshed window: {codes:?}");
-        }
-        // Said once: dropping the logged-out session says nothing more.
+        assert_eq!(members(&fields), Some((mid_id, vec![leader_id, mid_id, high_id])), "the crown moves to the online member; every seat stays");
+        let mail = mid.tick(4_000);
+        let codes: Vec<u8> = mail.iter().filter(|r| r.opcode == net::party::PARTY_RESULT).map(|r| r.body[0]).collect();
+        assert!(codes.contains(&net::party::result::PARTY_STATE), "the new leader gets the refreshed window: {codes:?}");
+        assert!(!codes.contains(&net::party::result::WITHDRAW), "and no one is said to have left: {codes:?}");
         drop(leader);
-        assert_eq!(fields.parties().party(party).unwrap().members, vec![mid_id, high_id]);
+        assert_eq!(members(&fields), Some((mid_id, vec![leader_id, mid_id, high_id])), "said once; the drop after a log out says nothing more");
 
-        // The new leader changes channel: a handover, the seat is kept.
-        // `ChangeChannelRequest::parse` peeks four bytes for the preamble before the target.
+        // 3. The offline members log back in: still members, and the window is rebuilt at
+        //    the login field entry (0x0D).
+        let (back, windows) = join(leader_id);
+        assert_eq!(windows, 1, "the returning member's window is rebuilt at the login field entry (0x0D)");
+        assert_eq!(members(&fields), Some((mid_id, vec![leader_id, mid_id, high_id])));
+
+        // 4. The new leader changes channel: a handover, the crown stays.
         let req = vec![1u8, 0, 0, 0];
-        let cc = high.on_change_channel(&req);
-        let handing_over = high.handing_over;
-        drop(high);
-        assert!(handing_over, "the change marked the session as handing over: {:?}", cc.iter().map(|r| &r.what).collect::<Vec<_>>());
-        assert_eq!(fields.parties().party(party).unwrap().leader, high_id, "a channel change keeps the leader");
-        assert_eq!(fields.parties().party(party).unwrap().members, vec![mid_id, high_id]);
-
-        // The last member's socket drops without a log out (a crash): the party ends.
+        let cc = mid.on_change_channel(&req);
+        let handing_over = mid.handing_over;
         drop(mid);
-        assert!(fields.parties().party(party).is_none() || fields.parties().party(party).unwrap().members == vec![high_id], "the crashed member is gone");
+        assert!(handing_over, "the change marked the session as handing over: {:?}", cc.iter().map(|r| &r.what).collect::<Vec<_>>());
+        assert_eq!(members(&fields), Some((mid_id, vec![leader_id, mid_id, high_id])), "a channel change keeps the leader and the seats");
+
+        // 5. Everyone else offline; the returning old leader is a member, so their crash
+        //    changes nothing - the party persists with nobody online.
+        drop(back);
+        assert_eq!(members(&fields), Some((mid_id, vec![leader_id, mid_id, high_id])), "a party persists with every member offline");
+
+        // 6. The leader comes back alone and crashes: nobody online to hand to -> disbanded.
+        let (alone, windows) = join(mid_id);
+        assert_eq!(windows, 1, "the window on login");
+        drop(alone);
+        assert!(members(&fields).is_none(), "no online member to hand the crown to: the party is disbanded");
     }
 
     /// The `0x00E7` body the client sends for a typed line: u32 tick, the text, u8 tab.
@@ -1648,9 +1676,11 @@ mod tests {
     /// **A hat put on the pet reaches the other player without a map change.** The owner,
     /// 2026-09-15: *"Wearing the Blue Top Hat on the pet does not show for different clients
     /// when first worn (upon loading into Cash Shop and then return it does show)."* The hat is
-    /// in the character's look (cash slot 114 = body slot 14), so the observer gets the look
-    /// again (`0x0224`) and the pet put away and back so its init runs against it. **[I]** on
-    /// the remote redraw; the wire is what this pins.
+    /// in the character's look (cash slot 114 = body slot 14), so the observer gets this one
+    /// character again the way a fresh sighting arrives - `0x0225`, the `0x0224` with the hat
+    /// in the look, and the pet right behind it (2026-09-18: a bare second `0x0224` was a
+    /// no-op in the pool, measured; the put-away-and-summon this used to add on top is gone
+    /// with it). **[I]** on the remote redraw; the wire is what this pins.
     #[test]
     fn a_hat_put_on_the_pet_is_re_announced_to_the_map() {
         let (store, config, fields) = channel();
@@ -1685,9 +1715,14 @@ mod tests {
         assert!(worn.iter().any(|e| e.slot == crate::session::pet::PET_EQUIP_WORN_SLOT && e.item_id == 1_802_006), "{worn:?}");
 
         let heard: Vec<u16> = watcher.tick(2_000).into_iter().map(|r| r.opcode).collect();
-        let look = heard.iter().filter(|&&o| o == net::userpool::USER_ENTER_FIELD).count();
-        let pets = heard.iter().filter(|&&o| o == net::pet::PET_ACTIVATED).count();
-        assert_eq!((look, pets), (1, 2), "the look again, then the pet away and back: {heard:?}");
+        let leave = heard.iter().position(|&o| o == net::userpool::USER_LEAVE_FIELD);
+        let look = heard.iter().position(|&o| o == net::userpool::USER_ENTER_FIELD);
+        let pet = heard.iter().position(|&o| o == net::pet::PET_ACTIVATED);
+        assert!(
+            matches!((leave, look, pet), (Some(l), Some(e), Some(p)) if l < e && e < p),
+            "leave, then the look with the hat, then the pet behind it: {heard:x?}"
+        );
+        assert_eq!(heard.iter().filter(|&&o| o == net::pet::PET_ACTIVATED).count(), 1, "the pet once, as a companion: {heard:x?}");
         // And the announced look now carries the hat at body slot 14.
         let chr = owner.claimed_character().unwrap();
         let look_bytes = net::opcode::avatar_look(&chr);
