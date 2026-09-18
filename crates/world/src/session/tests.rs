@@ -8793,6 +8793,60 @@ fn a_hair_change_is_broadcast_to_the_other_clients_without_a_reload() {
     );
 }
 
+/// **Putting on or taking off any equip reaches the other client at once.** The owner,
+/// 2026-09-18: *"Whenever a client is changing their equipment, either a cash equipment or a
+/// regular equipment, it is not being immediately reflected on other clients."* Only the
+/// pet-hat slot was watched. Now any change to the worn set sends the observers the leave,
+/// the enter with the new look, and nothing else; a move that leaves the worn set as it was
+/// (bag to bag) sends them nothing.
+#[test]
+fn a_worn_change_is_re_announced_to_the_map() {
+    let (store, config, fields, account) = shared_channel(0, 30);
+    let (mut me, my_id) = join_channel(&store, &config, &fields, account, "Dresser");
+    me.on_field_entered();
+    let (mut them, _) = join_channel(&store, &config, &fields, account, "Bystander");
+    them.on_field_entered();
+    me.collect_mail();
+
+    let sword = store.add_item(my_id, store::InventoryType::Equip, &store::Item::equip(1_302_000), 1).unwrap()[0].slot;
+    let coat = store.add_item(my_id, store::InventoryType::Deco, &store::Item::equip(1_054_562), 1).unwrap()[0].slot;
+    let potion = store.add_item(my_id, store::InventoryType::Use, &store::Item::bundle(2_000_000, 3), 3).unwrap()[0].slot;
+
+    let announced = |them: &mut Session, what: &str| {
+        let seen = them.collect_mail();
+        let ops: Vec<u16> = seen.iter().map(|r| r.opcode).collect();
+        let leave = ops.iter().position(|&o| o == net::userpool::USER_LEAVE_FIELD);
+        let enter = ops.iter().position(|&o| o == net::userpool::USER_ENTER_FIELD);
+        assert!(matches!((leave, enter), (Some(l), Some(e)) if l < e), "{what}: leave then enter: {ops:x?}");
+        assert_eq!(ops.len(), 2, "{what}: and nothing else: {ops:x?}");
+        seen.into_iter().find(|r| r.opcode == net::userpool::USER_ENTER_FIELD).unwrap().body
+    };
+    let wears = |body: &[u8], slot: u8, id: u32| body.windows(5).any(|w| w[0] == slot && w[1..5] == id.to_le_bytes());
+
+    // A regular equip on: worn slot 11, the weapon.
+    let out = me.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, sword as i16, -11, -1));
+    assert!(!out[0].what.contains("REFUSING"), "{}", out[0].what);
+    let body = announced(&mut them, "sword on");
+    assert!(wears(&body, 11, 1_302_000), "the look carries the sword");
+
+    // A cash equip on: worn slot 105, the cash overall - it is what is DRAWN, in slot 5.
+    let out = me.on_inventory_move(&inventory_move(net::inventory::INV_DECO, coat as i16, -105, -1));
+    assert!(!out[0].what.contains("REFUSING"), "{}", out[0].what);
+    let body = announced(&mut them, "coat on");
+    assert!(wears(&body, 5, 1_054_562), "the look carries the coat");
+
+    // Off again: the sword back to its bag slot.
+    let out = me.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, -11, sword as i16, -1));
+    assert!(!out[0].what.contains("REFUSING"), "{}", out[0].what);
+    let body = announced(&mut them, "sword off");
+    assert!(!wears(&body, 11, 1_302_000), "the look no longer carries the sword");
+
+    // The control: a bag-to-bag move changes what is worn not at all, so the field hears nothing.
+    let out = me.on_inventory_move(&inventory_move(store::InventoryType::Use as i8, potion as i16, potion as i16 + 1, -1));
+    assert!(!out[0].what.contains("REFUSING"), "{}", out[0].what);
+    assert!(them.collect_mail().is_empty(), "a bag shuffle is nobody else's business");
+}
+
 /// **A late joiner is told where people ARE, not where they were when they arrived.**
 ///
 /// The owner, 2026-09-03: *"the positioning is off if someone joins the map later since they don't

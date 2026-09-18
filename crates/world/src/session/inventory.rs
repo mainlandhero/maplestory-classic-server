@@ -211,23 +211,27 @@ impl Session {
     /// the old code refused to touch the database at all. Per-item stats travel with it, so
     /// a scrolled item does not come back flattened.
     pub(super) fn on_inventory_move(&mut self, payload: &[u8]) -> Vec<Reply> {
-        // **What the pet is wearing, before and after.** A move that changes the pet-equip
-        // slot has to reach the other players' copy of this character's look, and the
-        // cheapest true test of "changed" is the store itself rather than the reply's shape.
-        // `Session::republish_pet_look`; the owner, 2026-09-15, the Blue Top Hat.
-        let pet_hat = |s: &Self| {
-            s.claimed.as_ref().and_then(|c| {
-                s.store
-                    .equipped_items(c.character_id)
-                    .ok()
-                    .and_then(|worn| worn.into_iter().find(|e| e.slot == super::pet::PET_EQUIP_WORN_SLOT).map(|e| e.item_id))
-            })
+        // **What the character is wearing, before and after.** Any move that changes the
+        // worn set - a regular equip, a cash equip, the pet's hat - has to reach the other
+        // players' copy of this character, and the cheapest true test of "changed" is the
+        // store itself rather than the reply's shape. The owner, 2026-09-18: *"Whenever a client
+        // is changing their equipment, either a cash equipment or a regular equipment, it is
+        // not being immediately reflected on other clients."* Until then only the pet-equip
+        // slot was watched (2026-09-15, the Blue Top Hat); the observers saw everything else
+        // at the changer's next field entry, when a fresh `0x0224` carried the new look.
+        // `Session::broadcast_look_change` is that fresh sighting on demand.
+        let worn = |s: &Self| -> Vec<(u8, u32)> {
+            s.claimed
+                .as_ref()
+                .and_then(|c| s.store.equipped_items(c.character_id).ok())
+                .map(|w| w.into_iter().map(|e| (e.slot, e.item_id)).collect())
+                .unwrap_or_default()
         };
-        let before = pet_hat(self);
+        let before = worn(self);
         let out = self.on_inventory_move_inner(payload);
-        if pet_hat(self) != before {
+        if worn(self) != before {
             if let Some(chr) = self.claimed_character() {
-                self.republish_pet_look(&chr);
+                self.broadcast_look_change(&chr);
             }
         }
         out

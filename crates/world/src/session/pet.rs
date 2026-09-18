@@ -40,7 +40,8 @@
 //! * The four skill items and the Pet Name Tag, which ride `0x0116` with the pet's serial -
 //!   [`Session::use_pet_skill_item`], [`Session::use_pet_name_tag`]; the state lives in
 //!   `store::pets` and rides back in the pet's Cash item (`petSkill` mask, name).
-//! * A hat in the pet-equip slot is re-announced to the map ([`Session::republish_pet_look`]).
+//! * A hat in the pet-equip slot is re-announced to the map like any other worn change
+//!   (`Session::on_inventory_move` -> `Session::broadcast_look_change`).
 //! * The pet that was out at log-out is out at the next login ([`Session::restore_active_pet`]).
 //!
 //! # Not built, and said so
@@ -748,24 +749,6 @@ impl Session {
                 what: format!("PetActivated: {} back beside {} with its item as it is now", pet.name, chr.name),
             },
         ]
-    }
-
-    /// **The character's look changed in a way the PET wears** - a hat into the pet-equip slot.
-    /// The owner, 2026-09-15: *"Wearing the Blue Top Hat on the pet does not show for different
-    /// clients when first worn (upon loading into Cash Shop and then return it does show)."*
-    ///
-    /// The hat travels in the character's own look, not the pet's packet: the Deco move put
-    /// it at worn slot `-114`, `look_layout` pairs cash slot 114 with body slot 14, and the
-    /// remote client dresses the pet from that entry - which is why a fresh `0x0224` on
-    /// re-entry showed it. `broadcast_look_change` is that fresh sighting now: since
-    /// 2026-09-18 it sends the observers `0x0225`, the `0x0224` with the new look, and the
-    /// pet as a companion right behind it - a bare second `0x0224` was a no-op in the pool,
-    /// which is what this function's own put-away-and-summon used to work around. The
-    /// re-created remote `CUser` gets its pet from the companion, so `CPet::Init` runs
-    /// against the new look with nothing further sent. The owner's own screen already has
-    /// both. `PET_EQUIP_WORN_SLOT`.
-    pub(super) fn republish_pet_look(&mut self, chr: &net::opcode::Character) {
-        self.broadcast_look_change(chr);
     }
 
     /// The pet as `0x0277` describes it: its name, the pairing serial, and the spot under the
