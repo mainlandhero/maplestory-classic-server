@@ -388,12 +388,15 @@ pub const PET_SKILL_AUTO_MP: u16 = 0x40;
 /// activate. If we already send that for free, we need to tie it to the pet skill instead of
 /// having that for free."* So the four shop items (`5190000..3`) each teach a bit no pet is
 /// born with, and the long-range pickup follows the Expanded Auto Move bit through
-/// [`pet_wonder_grade`]. The installer still declares all the keys on every pet (step 4c):
-/// a key is what lets the tooltip say *(Learned)* once the bit arrives, not the grant.
+/// [`pet_wonder_grade`]. The owner, 2026-09-17: *"The only default skills it should have is Meso
+/// Magnet and Item Pouch."* The installer (step 4c) declares only `pickupItem` now, so a fresh
+/// pet's tooltip lists only those two; a purchased skill still lists as *(Learned)* off the
+/// mask, without its WZ key, so the declaration is not what lets it be bought.
 pub const PET_SKILLS_LEARNED_AT_START: u16 = PET_SKILL_ITEM_POUCH;
 
 /// The `wonderGrade` that turns the client's pet pickup box from "what it walks over" into a
-/// long-range sweep: **6**. `research/pet-vacuum-wondergrade-2026-09-16.md`.
+/// long-range sweep, and the grade the client labels **"Petite Luna"**: **6**.
+/// `research/pet-vacuum-wondergrade-2026-09-16.md`.
 ///
 /// `FUN_14179e990` - the drop pool's "does this pet reach a drop" scan, the only caller of the
 /// `0x0205` builder - starts from the constant box `(-25,-50,25,10)` around the pet and swaps
@@ -401,21 +404,15 @@ pub const PET_SKILLS_LEARNED_AT_START: u16 = PET_SKILL_ITEM_POUCH;
 /// wonder grade as `== 6` (`FUN_140374c80` is literally `cmp ecx,6`). The grade comes first
 /// from the pet ITEM's own `u16` at `+0xba` (`0x140304730`, the field after `giantRate`) and
 /// only when that is 0 from the pet image's `info/wonderGrade`. **[L]**, every step read.
-/// `sweepForDrop` and `longRange` are stored by the loader `FUN_1403e54e0` as bits 4 and 2 of a
-/// *declared* mask and never reach the box - which is why the WZ trio alone changed nothing
-/// on screen.
+///
+/// **This is FREE on every pet.** The owner, 2026-09-17: *"vacuuming loot within a certain range of
+/// the pet (Petite Luna) should be free. Auto move (the pet automatically moving towards the
+/// loot to pick up items) should be a skill that players have to purchase. Expanded auto move
+/// (longRange) ... should also remain a skill."* So the in-range suck-up (this box) and the
+/// Petite Luna designation are unconditional, and every pet's item carries grade 6. The two
+/// movement skills are the `sweepForDrop`/`longRange` bits, bought as `5190002`/`5190003`; the
+/// client acts on them for the pet's *walking* toward drops, which is separate from this box.
 pub const PET_WONDER_GRADE_VACUUM: u16 = 6;
-
-/// The `wonderGrade` a pet item goes out with: [`PET_WONDER_GRADE_VACUUM`] once the pet has
-/// learned Expanded Auto Move, `0` before. This is what ties the long-range pickup to the
-/// bought skill: the client never looks at the skill bit for the box, only at this.
-pub fn pet_wonder_grade(skills: u16) -> u16 {
-    if skills & PET_SKILL_EXPANDED_AUTO_MOVE != 0 {
-        PET_WONDER_GRADE_VACUUM
-    } else {
-        0
-    }
-}
 
 /// The Pet Name Tag, `Item/Cash/0517.img`. Arrives on `0x0116` with the pet's serial and the
 /// new name - `crate::cashitem::UseCashItem::text`.
@@ -463,7 +460,8 @@ pub fn pet_skill_bit_for_item(item_id: u32) -> Option<u16> {
 /// u8       active          14030469b   0
 /// u32      petHue          1403046da   PET_HUE_UNDYED - 0 is "dyed with colour 0"
 /// u16      giantRate       140304713   0
-/// u16                      140304730   0
+/// u16      wonderGrade     140304730   PET_WONDER_GRADE_VACUUM - 6 on every pet, the free
+///                                      Petite Luna in-range vacuum (the owner 2026-09-17)
 /// u32                      14030474d   0
 /// ```
 ///
@@ -539,7 +537,7 @@ pub fn pet_item_with_state(
     b.push(active); //                                          14030469b  u8   active
     b.extend_from_slice(&PET_HUE_UNDYED.to_le_bytes()); //      1403046da  u32  petHue
     b.extend_from_slice(&0u16.to_le_bytes()); //                140304713  u16  giantRate
-    b.extend_from_slice(&pet_wonder_grade(vitals.skills).to_le_bytes()); // 140304730 u16 wonderGrade -> item+0xba, read by FUN_14038a5b0; 6 = the wide pickup box
+    b.extend_from_slice(&PET_WONDER_GRADE_VACUUM.to_le_bytes()); // 140304730 u16 wonderGrade -> item+0xba, read by FUN_14038a5b0; 6 = the wide pickup box AND the free Petite Luna designation (the owner 2026-09-17: the in-range vacuum is free)
     b.extend_from_slice(&0u32.to_le_bytes()); //                14030474d  u32
     debug_assert_eq!(b.len(), PET_ITEM_LEN + if cash_sn.is_some() { 8 } else { 0 });
     b
@@ -861,30 +859,30 @@ mod pet_tests {
         assert_eq!(PET_SKILLS_LEARNED_AT_START, PET_SKILL_ITEM_POUCH);
     }
 
-    /// **Expanded Auto Move, bought, is what makes the pet a vacuum** - not the WZ keys and
-    /// not a free bit. The item's `wonderGrade` (`u16` after `giantRate`, `0x140304730`, item
-    /// `+0xba`) reads 6 with the bit and 0 without, and `FUN_14038a5b0 == 6` is the client's
-    /// whole test for the wide pickup box.
+    /// **Every pet's item carries `wonderGrade 6` - the free in-range vacuum and the Petite
+    /// Luna designation.** The owner, 2026-09-17: *"vacuuming loot within a certain range of the pet
+    /// (Petite Luna) should be free."* So the grade does not follow any skill bit; a fresh pet
+    /// and one that bought every skill both read 6 at `0x140304730` (item `+0xba`), and
+    /// `FUN_14038a5b0 == 6` is the client's whole test for the wide pickup box.
     #[test]
-    fn the_wonder_grade_follows_the_expanded_auto_move_bit_and_nothing_else() {
-        assert_eq!(pet_wonder_grade(PET_SKILLS_LEARNED_AT_START), 0);
-        assert_eq!(pet_wonder_grade(PET_SKILL_AUTO_MOVE | PET_SKILL_AUTO_HP | PET_SKILL_AUTO_MP), 0, "Auto Move alone is not the long-range skill");
-        assert_eq!(pet_wonder_grade(PET_SKILL_EXPANDED_AUTO_MOVE), PET_WONDER_GRADE_VACUUM);
-        assert_eq!(pet_wonder_grade(0xFFFF), 6);
-
+    fn every_pet_carries_the_vacuum_grade_regardless_of_skills() {
+        assert_eq!(PET_WONDER_GRADE_VACUUM, 6);
         let plain = pet_item_with_state(5000006, "Husky", None, 0, &PetVitals::default());
-        let learned = pet_item_with_state(
+        let skilled = pet_item_with_state(
             5000006,
             "Husky",
             None,
             0,
-            &PetVitals { skills: PET_SKILLS_LEARNED_AT_START | PET_SKILL_EXPANDED_AUTO_MOVE, ..PetVitals::default() },
+            &PetVitals {
+                skills: PET_SKILLS_LEARNED_AT_START | PET_SKILL_AUTO_MOVE | PET_SKILL_EXPANDED_AUTO_MOVE,
+                ..PetVitals::default()
+            },
         );
-        assert_eq!(&plain[61..63], &0u16.to_le_bytes(), "wonderGrade 0: the (-25,-50,25,10) box");
-        assert_eq!(&learned[61..63], &6u16.to_le_bytes(), "wonderGrade 6: the 0x0198 box");
-        assert_eq!(&learned[46..48], &(PET_SKILLS_LEARNED_AT_START | PET_SKILL_EXPANDED_AUTO_MOVE).to_le_bytes());
-        assert_eq!(plain.len(), learned.len());
-        assert_eq!(&plain[..61], &learned[..46].iter().chain(&plain[46..61]).copied().collect::<Vec<u8>>()[..], "only the two fields differ");
+        assert_eq!(&plain[61..63], &6u16.to_le_bytes(), "a fresh pet is a vacuum pet: grade 6");
+        assert_eq!(&skilled[61..63], &6u16.to_le_bytes(), "and a fully-skilled one is no different");
+        // Only the petSkill mask (46..48) differs; the grade does not move with it.
+        assert_eq!(&plain[46..48], &PET_SKILLS_LEARNED_AT_START.to_le_bytes());
+        assert_eq!(&skilled[61..63], &plain[61..63]);
     }
 
     /// The pet body is the bundle's base followed by the fourteen reads of FUN_140304550, in
@@ -930,7 +928,9 @@ mod pet_tests {
         assert_eq!(&b[52..54], &0u16.to_le_bytes(), "attribute");
         assert_eq!(b[54], 0, "active");
         assert_eq!(&b[55..59], &PET_HUE_UNDYED.to_le_bytes(), "petHue: undyed, not colour 0");
-        assert!(b[59..].iter().all(|&x| x == 0), "giantRate, wonderGrade and the tail: zero - no skill bought yet");
+        assert_eq!(&b[59..61], &0u16.to_le_bytes(), "giantRate: 0");
+        assert_eq!(&b[61..63], &PET_WONDER_GRADE_VACUUM.to_le_bytes(), "wonderGrade 6: the free Petite Luna vacuum, on every pet");
+        assert!(b[63..].iter().all(|&x| x == 0), "the tail: zero");
 
         // With a serial: eight more bytes after the flag, everything else in place.
         let sn = std::num::NonZeroU64::new(0x1122_3344_5566_7788).unwrap();

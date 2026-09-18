@@ -47,6 +47,13 @@ impl Session {
         };
         let Some(chr) = self.claimed_character() else { return unlock() };
 
+        // **A Leaf Point Exchange Coupon lives in the USE tab**, and the client sends it on
+        // this opcode all the same (`crate::leafcoupons` has the dispatcher read). Before the
+        // Cash-tab slot check, which would find the wrong tab's slot.
+        if let Some(points) = crate::leafcoupons::leaf_points_for(req.item_id) {
+            return self.use_leaf_coupon(req.item_id, req.slot, points);
+        }
+
         // **The slot must hold what the packet names.** Same rule as the summoning sack: the
         // client sends both, and trusting the id alone would let a crafted packet spend a
         // coupon out of a slot holding something else.
@@ -155,6 +162,51 @@ impl Session {
                 unlock()
             }
         }
+    }
+
+    /// **A Leaf Point Exchange Coupon.** The owner, 2026-09-17: *"when you use one of these items,
+    /// it gives the player who used them the appropriate amount of Leaf Points in their
+    /// account."* The points are the account's cash wallet (`Store::add_maple_points`); the
+    /// coupon leaves the Use tab only after the wallet write succeeded, so a failed write
+    /// costs nothing, and a coupon that is not in the named slot is refused with nothing
+    /// consumed. The player reads the amount and the new balance on a notice line; the Cash
+    /// Shop shows the balance the next time it opens (it reads the wallet on entry).
+    fn use_leaf_coupon(&mut self, item_id: u32, slot: u16, points: u32) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let Some(account) = self.claimed().map(|c| c.account_id) else { return Vec::new() };
+        let inv = store::InventoryType::Use;
+        let holding = self
+            .store
+            .bag_items(chr.id, inv)
+            .ok()
+            .into_iter()
+            .flatten()
+            .find(|r| r.slot == slot)
+            .map(|r| r.item.item_id);
+        if holding != Some(item_id) {
+            crate::server::log(&format!(
+                "   leaf coupon: character {} asked to use {item_id} from Use slot {slot}, which holds \
+                 {holding:?}. Refused; nothing was consumed.",
+                chr.id
+            ));
+            return self.cash_item_notice("That coupon is not where the client says it is. Nothing was used up.".to_string());
+        }
+        let balance = match self.store.add_maple_points(account, i64::from(points)) {
+            Ok(b) => b,
+            Err(e) => {
+                crate::server::log(&format!("   leaf coupon: crediting {points} to account {account} failed: {e}; the coupon is kept"));
+                return self.cash_item_notice("That could not be applied just now. Nothing was used up.".to_string());
+            }
+        };
+        // Only now does the coupon leave the bag.
+        let _ = self.store.remove_item(chr.id, inv, slot, Some(1));
+        crate::server::log(&format!(
+            "   leaf coupon: character {} used {item_id} from Use slot {slot} - account {account} +{points} Leaf Points, now {balance}",
+            chr.id
+        ));
+        let mut out = self.cash_item_notice(crate::leafcoupons::received_line(points, balance));
+        out.extend(self.stack_change_replies(inv, slot, 0));
+        out
     }
 
     /// One of the five 5-slot coupons.

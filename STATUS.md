@@ -236,6 +236,20 @@ is Auto Move (`5190002`) THEN Expanded Auto Move (`5190003`); the box then rides
 wonderGrade 6 as before. `research/pet-vacuum-wondergrade-2026-09-16.md` §7. 2132 tests. Plan
 step 8 LOOT has the order.
 
+**2026-09-17: the in-range vacuum (Petite Luna) is FREE; only the pet's WALKING is paid.** The owner:
+*"vacuuming loot within a certain range of the pet (Petite Luna) should be free. Auto move ...
+should be a skill ... Expanded auto move (longRange) ... should also remain a skill"* and *"The
+only default skills it should have is Meso Magnet and Item Pouch."* So the earlier tie (vacuum
+keyed on the bought Expanded Auto Move) is undone: `net::bag::pet_item_with_state` now writes
+`wonderGrade 6` on every pet unconditionally (`pet_wonder_grade` removed), which is the wide
+`0x0198` pickup box AND the client's "Petite Luna" label - both free. `sweepForDrop`/`longRange`
+(items `5190002`/`5190003`) stay paid, for the pet's walking toward drops. The installer (step
+4c) declares only `pickupItem`, so a fresh tooltip is Meso Magnet + Item Pouch; a purchased
+skill still lists *(Learned)* off the mask without its WZ key. **Needs `backport_install.py
+--install`** to regenerate `Pet_000.wz` on the client. Also: on field entry the pet now gets the
+post-summon item write (`pet_item_refresh`), without which it spawned sad and inert until
+re-summoned or fed. `research/pet-vacuum-wondergrade-2026-09-16.md` §8. 2136 tests. Plan step 8.
+
 **2026-09-16 evening: the vacuum is the client's, keyed on `wonderGrade == 6`, and it is now
 tied to the bought Expanded Auto Move.** The owner: *"longRange belongs to a Pet Skill that the
 clients have to purchase and activate ... Decompile the pet functions first to figure out if
