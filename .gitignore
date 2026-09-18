@@ -60,6 +60,11 @@ world-ch*.log
 chat-hub.log
 chat-hub.log.err
 world-ch*.log.err
+# The channels' stdout stubs (the log itself is --log-file; stdout is redirected so nothing
+# is lost if a line lands there), and the hub's log under its 2026-09-14 name.
+world-ch*.log.out
+chat.log
+chat.log.err
 world.log.err
 
 # Name tables extracted from String.wz by tools/dump_names.py. Game data, not project
