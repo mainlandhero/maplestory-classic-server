@@ -2058,8 +2058,11 @@
             a. a FRESH Husky, no skills bought: tooltip shows only Meso Magnet + Item Pouch
                and "Petite Luna". Kill a snail ~200 px away: the drop flies to the pet, no
                walk, lands in the bag -> DONE; say the farthest distance that still works
-               (the box is 600 x 590). Tooltip lists Expanded Auto Move / Auto Move / Ignore
-               Item -> the WZ still declares them: rebuild the client (backport --install).
+               (the box is 600 x 590). Tooltip lists Expanded Auto Move / Auto Move as
+               "unregistered" -> the WZ still declares them: rebuild the client (backport
+               --install). "Ignore Item (Learned)" -> an old-numbering row the store did not
+               remap; it cannot happen after the first start of this build (pets.rs remaps
+               every row once), so paste the pet's "skills" from the log if it does.
                No suck-up at range -> paste the PetPickupRange line and the item bytes 61..63.
             b. buy Auto Move (5190002), then Expanded Auto Move (5190003) - a chain, Expanded
                is refused until Auto Move is learned. Each then lists as (Learned). What they
@@ -5113,7 +5116,8 @@ function Show-TestPlan {
         Write-Host '       Default tooltip = Meso Magnet + Item Pouch (NEEDS backport --install).'
         Write-Host '         a. fresh Husky: tooltip 2 skills + Petite Luna; a drop ~200px away' -ForegroundColor Green
         Write-Host '            FLIES to it, no walk -> DONE; say how far (box is 600x590)' -ForegroundColor Green
-        Write-Host '            still lists Expanded/Auto Move/Ignore Item -> rebuild the client' -ForegroundColor Yellow
+        Write-Host '            still lists Expanded/Auto Move "unregistered" -> rebuild the client' -ForegroundColor Yellow
+        Write-Host '            "Ignore Item (Learned)" -> an old row the remap missed; paste skills' -ForegroundColor Yellow
         Write-Host '            no suck-up -> paste PetPickupRange + item bytes 61..63' -ForegroundColor Yellow
         Write-Host '         b. buy Auto Move (5190002) then Expanded (5190003) - a chain; each' -ForegroundColor Green
         Write-Host '            lists (Learned) and changes the pet WALKING to drops; say what moves' -ForegroundColor Green
