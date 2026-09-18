@@ -838,25 +838,35 @@ pub struct DropTable {
     outbox: Vec<Addressed>,
 }
 
-/// **A finished packet with a name on it.**
+/// **A finished packet with an address on it.**
 ///
-/// A drop is private to its owner (`crate::mobshare`), so a packet about one has exactly one
-/// legitimate recipient - and the connection that produces it is often not that recipient.
-/// The clearest case is expiry: every session on a map ticks, whichever ticks first removes
-/// the drop from the shared table, and the fade is owed to whoever was sent the `0x046E`.
+/// The connection that produces a packet about a drop is often not who it is owed to. The
+/// clearest case is expiry: every session on a map ticks, whichever ticks first removes the
+/// drop from the shared table, and the fade is owed to **everyone who was sent the `0x046E`**
+/// - the owner, their party, or the whole field for a public ground drop. The owner, 2026-09-18:
+/// *"When a party loot expires for the client that killed the monster, other clients in the
+/// party who share the visual for that drop do not see the expired drop disappear ... If
+/// anyone drops items publicly and that item disappears, it should disappear for everyone
+/// who can see it."* Until then the fade went to the owner alone, so a party member - or a
+/// bystander looking at a public drop - kept drawing an item that no longer existed, and a
+/// click on it was refused as unknown.
 ///
 /// This module holds no bus and no session, deliberately - that is what makes every branch in
 /// it a unit test. So it names the recipient and `crate::fields::Fields::with_drops` posts it,
 /// which is the only place that holds both the table and the bus.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Addressed {
-    /// The character who should receive this. Not a connection: the table has no idea which
-    /// connection is playing whom, and `Bus::publish_to_character` is addressed the same way.
-    pub character: u32,
-    /// The map the packet is about. **Not optional**, and `Bus::publish_to_character` matches
-    /// on it: a `0x046E`/`0x046F` names a position in a field's own drop pool, so delivering
-    /// one to a character who has walked away would put a phantom item on a map it was never
-    /// dropped on.
+    /// The map the packet is about, and **everyone on it** is the recipient
+    /// (`Bus::publish_to_map`). Not optional: a `0x046E`/`0x046F` names a position in a
+    /// field's own drop pool, so delivering one to a character who has walked away would put
+    /// a phantom item on a map it was never dropped on.
+    ///
+    /// The audience of a drop is not recorded per drop - it is the owner, then the party as
+    /// it stood when the drop landed, then anyone who walked in while it was public - and it
+    /// does not need to be: a client whose pool never held the object id ignores a leave for
+    /// it, exactly as it ignores a movement packet for a mob it was never shown. The pick-up
+    /// leave in `session/ground.rs::take_leaves_to_field` goes to the whole field for the
+    /// same reason.
     pub map_id: u32,
     pub reply: Reply,
 }
@@ -1289,9 +1299,12 @@ impl DropTable {
     /// visible from one screen, which is why it survived.
     ///
     /// So every fade is now an [`Addressed`], and `crate::fields::Fields::with_drops` posts
-    /// it to the owner through `Bus::publish_to_character` - which matches the map too, so a
-    /// fade cannot land on a field the drop was never on. The owner reads it out of its own
-    /// mailbox on its next `collect_mail`, which is at most one 100 ms tick later.
+    /// it to **everyone on the drop's map** through `Bus::publish_to_map` - so a fade cannot
+    /// land on a field the drop was never on, and it reaches every screen the drop was on:
+    /// the owner, the party members who were shown a party drop, and every bystander who was
+    /// shown a public ground drop (the owner, 2026-09-18 - see [`Addressed`]). Each reads it out
+    /// of its own mailbox on its next `collect_mail`, at most one 100 ms tick later; a client
+    /// that never held the object id ignores it.
     ///
     /// **The signature keeps its `Vec<Reply>` so that `session/mod.rs::tick` still
     /// compiles** - that file belongs to the coordinator. The tidier form is
@@ -1312,7 +1325,6 @@ impl DropTable {
         for drop in expired {
             self.live.remove(&drop.object_id);
             self.outbox.push(Addressed {
-                character: drop.owner_id,
                 map_id: drop.map_id,
                 reply: fade_reply(&drop, "it reached the end of its lifetime"),
             });
@@ -1757,12 +1769,14 @@ mod tests {
     // Expiry
     // ------------------------------------------------------------------------------
 
-    /// **The fade is addressed to the OWNER, not handed to whoever ticked.**
+    /// **The fade is addressed to the drop's whole FIELD, not handed to whoever ticked.**
     ///
     /// Every session on the channel sweeps this table, so before this the first one to tick
-    /// took the `0x046F` and the owner went on drawing an item that no longer existed. The
-    /// two halves are asserted together, because a version that simply stopped emitting a
-    /// fade at all would pass the first half on its own.
+    /// took the `0x046F` and the owner went on drawing an item that no longer existed. Then
+    /// it went to the owner alone, and a party member or a bystander who had been shown the
+    /// drop kept drawing it (the owner, 2026-09-18). The two halves are asserted together, because
+    /// a version that simply stopped emitting a fade at all would pass the first half on its
+    /// own.
     #[test]
     fn a_drop_expires_and_the_sweep_says_so_exactly_once() {
         let mut t = DropTable::with_lifetime(10_000, 1_000);
@@ -1775,12 +1789,11 @@ mod tests {
 
         assert!(
             t.sweep(MAP, 11_000).is_empty(),
-            "the caller is never handed somebody else's fade - it goes to the owner"
+            "the caller is never handed somebody else's fade - it goes to the field"
         );
         let out = t.take_addressed();
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].character, WISP, "the owner, whoever happened to tick");
-        assert_eq!(out[0].map_id, MAP, "and the map, so it cannot land on another field");
+        assert_eq!(out[0].map_id, MAP, "the map - everyone who was shown it, whoever happened to tick - so it cannot land on another field");
         assert_eq!(out[0].reply.opcode, net::drops::DROP_LEAVE_FIELD);
         let b = &out[0].reply.body;
         assert_eq!(b.len(), net::drops::DROP_LEAVE_FIELD_LEN);
@@ -1793,11 +1806,11 @@ mod tests {
     }
 
     /// A field nobody is standing on: the drop still goes, and the fade is still addressed to
-    /// its owner. `Bus::publish_to_character` matches the map, so a recipient who is not
-    /// there is simply not a recipient - which is the same rule the old `watching_map_id`
-    /// filter was reaching for, enforced one layer up instead of guessed at here.
+    /// its map. `Bus::publish_to_map` posts to whoever is there, so a field with nobody on it
+    /// simply has no recipients - which is the same rule the old `watching_map_id` filter was
+    /// reaching for, enforced one layer up instead of guessed at here.
     #[test]
-    fn expiring_on_another_map_is_still_addressed_to_the_owner_and_still_removed() {
+    fn expiring_on_another_map_is_still_addressed_to_that_map_and_still_removed() {
         let mut t = DropTable::with_lifetime(10_000, 1_000);
         t.drop_item(DropFromBag { map_id: 40, ..dropping(Item::equip(SWORD), 0) });
         assert_eq!(t.len(), 1);
@@ -1805,7 +1818,6 @@ mod tests {
         let out = t.take_addressed();
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].map_id, 40, "map 40's pool, not the ticking session's map");
-        assert_eq!(out[0].character, WISP);
         assert!(t.is_empty(), "and the server must not keep believing in it");
     }
 

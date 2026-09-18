@@ -729,19 +729,20 @@ impl Fields {
     ///
     /// # It also delivers, and that is not decoration
     ///
-    /// A drop is **private to its owner** now (`crate::mobshare`), so a packet about one has
-    /// exactly one legitimate recipient and it is very often not the connection that called
-    /// this. [`crate::drops::DropTable::sweep`] is the case that forced it: every session on
-    /// a map ticks, the first one to tick removes the expired drop from the shared table, and
-    /// before this the `0x046F` went back to *that* session - so the owner kept drawing an
-    /// item that no longer existed and a bystander was told about an object its pool never
-    /// held.
+    /// A packet about a drop is owed to whoever was shown the drop, and that is very often
+    /// not the connection that called this. [`crate::drops::DropTable::sweep`] is the case
+    /// that forced it: every session on a map ticks, the first one to tick removes the
+    /// expired drop from the shared table, and before this the `0x046F` went back to *that*
+    /// session - so the owner kept drawing an item that no longer existed and a bystander was
+    /// told about an object its pool never held. Then it went to the owner alone, and the
+    /// party members and bystanders who had been shown the drop kept drawing it (the owner,
+    /// 2026-09-18); a fade now goes to everyone on the drop's map.
     ///
     /// `DropTable` cannot deliver: it holds no bus, and it must not, because it is the file
     /// with no session and no socket in it. `Fields` holds both, so the outbox is drained
-    /// here. [`crate::drops::Addressed`] is the whole channel and
-    /// `crate::broadcast::Bus::publish_to_character` matches the map as well as the
-    /// character, so a fade cannot land on a field the drop was never on.
+    /// here. [`crate::drops::Addressed`] is the whole channel, and
+    /// `crate::broadcast::Bus::publish_to_map` posts only to connections standing on that
+    /// map, so a fade cannot land on a field the drop was never on.
     ///
     /// **The map lock is released before anything is posted.** The bus lock is a leaf, so
     /// nesting them would not deadlock today - it would merely make a cycle possible for the
@@ -755,9 +756,10 @@ impl Fields {
         };
         for a in mail {
             // The miss is ordinary: the owner logged out, or walked through a portal, and
-            // their pool was rebuilt empty either way. Nothing to retry and nothing to log
-            // as an error - the same contract `Bus::send_to_character` documents.
-            let _ = self.bus.publish_to_character(a.character, a.map_id, a.reply);
+            // their pool was rebuilt empty either way - or nobody is on the map at all.
+            // Nothing to retry and nothing to log as an error - the same contract
+            // `Bus::send_to_character` documents.
+            let _ = self.bus.publish_to_map(a.map_id, a.reply);
         }
         out
     }
@@ -1081,29 +1083,31 @@ mod tests {
         assert_eq!(f.mob_site(999, id), None);
     }
 
-    /// **`with_drops` delivers what the table addressed to an owner.**
+    /// **`with_drops` delivers what the table addressed to a map - to everyone on it.**
     ///
     /// The sweep is the case: any connection on the channel may be the one that ticks, and the
-    /// `0x046F` is owed to whoever was sent the `0x046E`. `DropTable` holds no bus, so this is
-    /// the only place that can post it - and if this ever stopped draining the outbox, every
-    /// expiry would go silent with no error anywhere.
+    /// `0x046F` is owed to whoever was sent the `0x046E` - the owner, a party member, a
+    /// bystander looking at a public drop (the owner, 2026-09-18). `DropTable` holds no bus, so
+    /// this is the only place that can post it - and if this ever stopped draining the outbox,
+    /// every expiry would go silent with no error anywhere.
     #[test]
-    fn a_fade_addressed_to_an_owner_is_posted_to_that_owners_mailbox() {
+    fn a_fade_addressed_to_a_map_is_posted_to_every_mailbox_on_it() {
         use crate::broadcast::Presence;
         let f = Fields::new();
         let owner = f.bus().join();
         let bystander = f.bus().join();
+        let elsewhere = f.bus().join();
         let reply = |what: &str| crate::Reply {
             opcode: 0,
             body: Vec::new(),
             what: what.to_string(),
         };
-        for (id, chr) in [(owner, 200u32), (bystander, 201)] {
+        for (id, chr, map) in [(owner, 200u32, 7u32), (bystander, 201, 7), (elsewhere, 202, 8)] {
             f.bus().enter_field(
                 id,
                 Presence {
                     character: chr,
-                    map: 7,
+                    map,
                     spawn: reply("spawn"),
                     farewell: reply("farewell"),
                     companions: Vec::new(),
@@ -1112,6 +1116,7 @@ mod tests {
         }
         let _ = f.bus().drain(owner);
         let _ = f.bus().drain(bystander);
+        let _ = f.bus().drain(elsewhere);
 
         f.with_drops(7, |d| {
             d.drop_from_mob(crate::drops::DropFromMob {
@@ -1136,7 +1141,8 @@ mod tests {
         assert_eq!(f.with_drops(7, |d| d.len()), 0, "and the drop really is gone");
 
         assert_eq!(f.bus().drain(owner).len(), 1, "the owner is told their item faded");
-        assert!(f.bus().drain(bystander).is_empty(), "and nobody else is");
+        assert_eq!(f.bus().drain(bystander).len(), 1, "and so is everyone else on the map - a client that never held the id ignores it");
+        assert!(f.bus().drain(elsewhere).is_empty(), "but nobody on another map");
     }
 
     /// The two registries `Fields` now carries reach every session through the one `Arc`, and

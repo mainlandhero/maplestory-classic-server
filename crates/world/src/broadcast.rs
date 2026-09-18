@@ -486,6 +486,28 @@ impl Bus {
         true
     }
 
+    /// **A finished packet to everyone standing on a map**, excluding nobody. Returns how
+    /// many mailboxes took it; zero is ordinary (an empty field).
+    ///
+    /// The map-wide form of [`Bus::publish_to_character`], and unlike [`Bus::publish`] it
+    /// has no publisher to leave out: it exists for a packet that no session produced on its
+    /// own behalf - a drop's expiry fade, swept from the shared table by whichever session
+    /// ticked first and owed to every screen the drop was on (`crate::drops::Addressed`).
+    /// Same path as `publish`, so it cannot get out of order with a map broadcast in a
+    /// mailbox. Not supersedable, for the same reason `publish_to_character` is not.
+    pub fn publish_to_map(&self, map: u32, reply: Reply) -> usize {
+        let mut inner = self.lock();
+        let ids: Vec<SubscriberId> = inner
+            .boxes
+            .iter()
+            .filter_map(|(id, m)| (m.presence.as_ref()?.map == map).then_some(*id))
+            .collect();
+        for id in &ids {
+            inner.post_to(*id, reply.clone());
+        }
+        ids.len()
+    }
+
     /// **A finished packet to one character, wherever on this channel they are.** Returns
     /// whether anybody got it.
     ///

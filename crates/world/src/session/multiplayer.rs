@@ -2868,4 +2868,96 @@ fn logging_out_leaves_the_field_and_the_later_drop_says_nothing_more() {
             "the drop is gone from the shared field"
         );
     }
+
+    /// **An expired drop fades on EVERY screen it was on, whoever's tick swept it.** The owner,
+    /// 2026-09-18: *"When a party loot expires for the client that killed the monster, other
+    /// clients in the party who share the visual for that drop do not see the expired drop
+    /// disappear ... If anyone drops items publicly and that item disappears, it should
+    /// disappear for everyone who can see it."*
+    ///
+    /// Before this the sweep addressed the fade to the drop's owner alone. Here the NON-owner
+    /// is the session that ticks past the lifetime, so its own sweep removes both drops - a
+    /// party drop owned by the other player and that player's public meso drop - and both
+    /// fades must still reach both mailboxes. One tick, two `0x046F`s each, leave type FADE.
+    #[test]
+    fn an_expired_drop_fades_for_everyone_on_the_map_not_only_its_owner() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut ids = Vec::new();
+        for name in ["Cobalt", "Tester2"] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: 104_040_000, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.create_migration(account, id, 0, 0).unwrap();
+            ids.push(id);
+        }
+        let mut owner = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut watcher = Session::joining(store, config, fields.clone());
+        owner.claim_for_character(ids[0]);
+        watcher.claim_for_character(ids[1]);
+        owner.on_field_entered();
+        watcher.on_field_entered();
+        let _ = owner.tick(1_000);
+        let _ = watcher.tick(1_000);
+
+        let (party_drop, _) = fields.with_drops(104_040_000, |d| {
+            d.drop_from_mob(crate::drops::DropFromMob {
+                from_mob: true,
+                map_id: 104_040_000,
+                owner_id: ids[0],
+                item: store::Item::bundle(4_000_000, 1),
+                inv_type: store::InventoryType::Etc,
+                meso: 0,
+                x: 0,
+                y: 0,
+                source_x: 0,
+                source_y: 0,
+                now_ms: 1_000,
+                party_id: 7,
+            })
+        });
+        let public_drop = fields
+            .with_drops(104_040_000, |d| {
+                d.drop_money(crate::drops::DropMoneyOnGround {
+                    map_id: 104_040_000,
+                    character_id: ids[0],
+                    meso: 50,
+                    x: 0,
+                    y: 0,
+                    from_x: 0,
+                    from_y: 0,
+                    now_ms: 1_000,
+                })
+            })
+            .object_id;
+        assert_eq!(fields.with_drops(104_040_000, |d| d.len()), 2);
+
+        // Only the watcher ticks past the lifetime: its sweep is the one that removes them.
+        // `tick` collects mail BEFORE it sweeps, so the fades it posted to its own mailbox come
+        // out on the tick after.
+        let late = 1_000 + crate::drops::DROP_LIFETIME_MS + 1;
+        let _ = watcher.tick(late);
+        assert_eq!(fields.with_drops(104_040_000, |d| d.len()), 0, "the watcher's sweep removed both");
+        let mail = watcher.tick(late + 50);
+        let fades = |mail: &[Reply]| -> Vec<u32> {
+            mail.iter()
+                .filter(|r| r.opcode == net::drops::DROP_LEAVE_FIELD && r.body[4] == net::drops::leave_type::FADE)
+                .map(|r| u32::from_le_bytes([r.body[0], r.body[1], r.body[2], r.body[3]]))
+                .collect()
+        };
+        let mut seen = fades(&mail);
+        seen.sort_unstable();
+        let mut expected = vec![party_drop, public_drop];
+        expected.sort_unstable();
+        assert_eq!(seen, expected, "the non-owner who swept sees both fade: {mail:?}");
+
+        // The owner, who did nothing, reads the same two fades out of its mailbox.
+        let mail = owner.tick(late + 100);
+        let mut seen = fades(&mail);
+        seen.sort_unstable();
+        assert_eq!(seen, expected, "the owner sees both fade too: {mail:?}");
+
+        // And nobody is told twice.
+        assert!(fades(&watcher.tick(late + 200)).is_empty());
+        assert!(fades(&owner.tick(late + 200)).is_empty());
+    }
 }

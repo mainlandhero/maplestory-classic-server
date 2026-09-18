@@ -54,7 +54,8 @@
 //! * `DropTable::sweep` removed an expired drop from the shared table and returned the
 //!   `0x046F` to the **calling** session only, so a second player kept drawing an item that no
 //!   longer existed. **[L]** from `drops.rs`. Fixed by `drops::Addressed`: the fade names its
-//!   owner and `Fields::with_drops` posts it.
+//!   map and `Fields::with_drops` posts it to everyone there (it named the owner alone until
+//!   2026-09-18, when the owner saw party members and bystanders keep drawing an expired drop).
 //! * And a fourth, found while wiring: `DropTable::field_entry` re-sent the **whole floor** to
 //!   whoever walked in, which is a leak the moment drops are owner-scoped. Fixed by
 //!   [`may_see_drop`] inside `field_entry`.
@@ -789,7 +790,7 @@ pub fn own_type_for(party: &Party) -> u8 {
 //
 // 2. **`DropTable` cannot deliver a fade, and the plan put the fix in `session/mod.rs::tick`,
 //    which is the coordinator's file.** So the routing went one layer up instead:
-//    [`crate::drops::Addressed`] names the recipient and `Fields::with_drops` posts it,
+//    [`crate::drops::Addressed`] names the map and `Fields::with_drops` posts it,
 //    because that is the only function holding both the table and the bus. The consequence is
 //    that `DropTable::sweep` now returns an **always-empty** `Vec<Reply>` - the signature is
 //    kept only so the existing `out.extend(...)` call site still compiles. The tidier form is

@@ -146,7 +146,13 @@
     DROPS: a party mob's drops show to all members on the field and any of them may take them;
     a member who then LEAVES loses access while the killer keeps it. GROUND DROP: an item a
     player drops from their bag is broadcast to the whole map and anyone may pick it up
-    (untradeable excepted). PARTY HP (built 2026-09-06): the packet is 0x02B2, found by
+    (untradeable excepted). EXPIRY (2026-09-18): a drop that reaches its 120 s lifetime now
+    fades on EVERY screen that was shown it - the party members and, for a ground drop, every
+    bystander - not only the owner's. The owner saw the others keep drawing an expired party drop.
+    Kill one mob in a party and drop one item from the bag, then leave both alone for two
+    minutes: both vanish from BOTH screens at the same moment -> fixed; still drawn on the
+    other screen -> paste that client's world-ch0.log lines for DropLeaveField at that time.
+    PARTY HP (built 2026-09-06): the packet is 0x02B2, found by
     walking back from the HUD gauge to the field it reads, to that field's one writer, to the
     handler, to a compacted third switch in the remote-user router; every link [L]. The other
     member's bar in the top-right HUD should fill within a second of the party forming and
@@ -4676,6 +4682,9 @@ function Show-TestPlan {
         Write-Host '       must NOT be able to take those drops (the killer still can).'
         Write-Host '       GROUND DROP: drop an item from your bag - anyone on the map should'
         Write-Host '       see it and be able to pick it up.'
+        Write-Host '       EXPIRY (2026-09-18): a party drop and a bag drop left alone for two' -ForegroundColor Magenta
+        Write-Host '       minutes vanish from BOTH screens at the same moment -> fixed. Still' -ForegroundColor Magenta
+        Write-Host '       drawn on the other screen -> paste its DropLeaveField log lines.' -ForegroundColor Yellow
         Write-Host '       PARTY HP (built 2026-09-06, walked back from the gauge): the other'
         Write-Host '       member''s bar in the top-right HUD should FILL within a second of the'
         Write-Host '       party forming, and follow their HP when a mob hits them or they'
