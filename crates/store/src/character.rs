@@ -701,7 +701,7 @@ impl Store {
         Ok(self
             .conn()
             .query_row(
-                "SELECT name, job, level FROM characters WHERE id = ?1",
+                "SELECT name, job, level, hair, face, skin FROM characters WHERE id = ?1",
                 rusqlite::params![character_id],
                 |row| {
                     Ok(CharacterBrief {
@@ -709,6 +709,9 @@ impl Store {
                         name: row.get(0)?,
                         job: row.get(1)?,
                         level: row.get(2)?,
+                        hair: row.get(3)?,
+                        face: row.get(4)?,
+                        skin: row.get(5)?,
                     })
                 },
             )
@@ -723,6 +726,11 @@ pub struct CharacterBrief {
     pub name: String,
     pub job: u32,
     pub level: u32,
+    /// The look, for another player's Character Info ITEM tab (2026-09-18): hair and face
+    /// are listed there as equip slots under their own ids.
+    pub hair: u32,
+    pub face: u32,
+    pub skin: u8,
 }
 
 #[cfg(test)]

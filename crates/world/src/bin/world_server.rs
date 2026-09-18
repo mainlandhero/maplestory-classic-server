@@ -49,6 +49,9 @@ maplecw-world - one channel of the MapleCW game world
   --look-reenter       redress another player's copy of a changed character with a
                        leave + enter (a blink, and its pet respawns) instead of the
                        default in-place 0x02AE. The fallback if 0x02AE is refuted.
+  --no-look-items      leave the hair and face OUT of another player's Character Info
+                       ITEM tab (equips and cash covers only). For a client whose
+                       Hair/Face archives lack the rendered icons the installer adds.
                    Pets are broadcast by default (summon and movement); this is the
                    owner-local fallback. research/pet-remote-crash-2026-09-15.md
   --inventory-slots N  give every inventory N slots instead of the character's own,
@@ -231,6 +234,12 @@ fn main() -> ExitCode {
             // leave + enter fallback. Config::look_change_reenter.
             "--look-reenter" => {
                 config.look_change_reenter = true;
+                Ok(())
+            }
+            // The Character Info ITEM tab lists the hair and face by default; this is the
+            // equips-only form for a client without the rendered icons. Config::charinfo_look_items.
+            "--no-look-items" => {
+                config.charinfo_look_items = false;
                 Ok(())
             }
             "--portals" => value().map(|v| portals_path = PathBuf::from(v)),

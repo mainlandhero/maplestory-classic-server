@@ -1564,18 +1564,30 @@
             mode 0 (name, up/down, new fame) to the giver, mode 5 (giver's name, up/down)
             plus a fame StatChanged to the target; mode 3 = "not anymore for today", mode 4
             = "not that character this month" (the client's word; the rule is a WEEK). The
-            fame is a real column now (it was a literal 0). The ITEM tab lists every worn
-            equip and cash cover as whole item slots; hair and face are NOT in it yet - the
-            classic data has no icon node for them, so a slot with a hair id would ask the
-            widget for an icon that does not exist. Icons are being synthesised into the
-            hybrid WZ; until that installs, the list is equips only.
+            fame is a real column now (it was a literal 0). The ITEM tab lists the HAIR, the
+            FACE, then every worn equip and cash cover, as whole equip slots. A hair or face
+            is an equip to the client's icon lookup (Character/Hair/000300xx.img), but the
+            classic data had no info/icon on those images - so backport_install.py now
+            RENDERS one per hair and face (1312 + 540, from the part's own default frame;
+            build/look-icons/sheet.png shows eight) into the hybrid Hair and Face archives.
+            THAT INSTALL MUST BE ON THE CLIENT before the window is opened, or the two look
+            entries ask the widget for an icon that is not there: run
+            "python C:\MapleCW\tools\backport_install.py --install"
+            with the client closed (the other session does this with the rebuild), or launch
+            with -NoLookItems for equips only.
               up arrow on Tester2: "raised Tester2's fame", FAME reads 1 in the window;
                          Tester2's screen: "'the owner' has raised your fame" -> DONE
               the arrow again (either way, anyone): "can't ... anymore for today" -> DONE
               Tester2 fames the owner back: allowed (per giver) -> DONE
-              Item List panel: Tester2's hat, coat, weapon, cash cover with icons -> DONE;
-                         blank cells or the client dies -> the widget rejected an equip
-                         body; paste the 0x00A2 line and client-exit.log
+              Item List panel: Tester2's HAIR, FACE, then hat, coat, weapon, cash cover,
+                         each with an icon -> DONE. Hover the hair: a tooltip with its
+                         name -> the String.wz lookup works for a look id too
+                         hair/face cells BLANK, equips fine -> the icons are not installed,
+                         or the widget wants another node; say which
+                         the client DIES on opening -> a look id in an equip slot is fatal;
+                         relaunch with -NoLookItems and paste client-exit.log
+                         blank cells everywhere or a death with -NoLookItems -> the widget
+                         rejected an equip body; paste the 0x00A2 line and client-exit.log
               nothing at all on the click -> the 0x0144 arm not reached; paste the line
             THE OTHER CLIENTS: IN PLACE BY 0x02AE (2026-09-18, third attempt). The owner: "The
             leave-and-enter path causes the pets to reload for that client, and it causes a
@@ -2996,6 +3008,9 @@ param(
     # the sequence that blinks and respawns the pet - instead of the default in-place 0x02AE.
     # The fallback if 0x02AE is refuted on screen. --look-reenter.
     [switch]$LookReenter,
+    # Character Info ITEM tab: equips only, no hair/face entries. For a client without the
+    # rendered hair/face icons (backport_install.py --install after 2026-09-18 evening).
+    [switch]$NoLookItems,
     # Monsters are ON by default since 2026-08-19. -NoMobs turns them off.
     #
     # -Mobs used to be the opt-in, and it cost a launch: the owner stood on map 40, which has
@@ -4114,6 +4129,7 @@ foreach ($ch in 0..($Channels - 1)) {
     # The channel answers by default now; only the deliberate silence needs a flag.
     if ($SilentChannel) { $chArgs += '--silent-channel' }
     if ($LookReenter) { $chArgs += '--look-reenter' }
+    if ($NoLookItems) { $chArgs += '--no-look-items' }
     # The channel writes and ROLLS its own log now (50 MB, five kept). Stdout gets nothing
     # after the file opens; it is redirected to a .out stub so nothing is lost if it does.
     $chArgs += @('--log-file', "`"$chLog`"")
@@ -4581,12 +4597,15 @@ function Show-TestPlan {
         Write-Host '           nothing opens, NO 0x00A2 -> arm not reached; paste the 0x01FC line' -ForegroundColor Yellow
         Write-Host '         FAME (evening): the up/down arrows answer now (0x0144 -> 0x0087). Once a day' -ForegroundColor Magenta
         Write-Host '         per giver (00:00 UTC), same target once a week (Mon 00:00 UTC); the'
-        Write-Host '         client says "month" for the week rule. ITEM LIST: every worn equip and'
-        Write-Host '         cash cover; hair/face wait on synthesised icons (not in this build).'
+        Write-Host '         client says "month" for the week rule. ITEM LIST: hair, face, then every'
+        Write-Host '         worn equip and cash cover. Hair/face icons are RENDERED into the hybrid'
+        Write-Host '         WZ by backport_install.py --install (client closed) - needed first, or'
+        Write-Host '         launch with -NoLookItems for equips only.'
         Write-Host '           up on Tester2: "raised", FAME 1 in the window, Tester2 sees "the owner has' -ForegroundColor Green
         Write-Host '           raised your fame"; again -> "not anymore for today" -> DONE' -ForegroundColor Green
-        Write-Host '           Item List shows the hat/coat/weapon/cover icons -> DONE; blank or' -ForegroundColor Green
-        Write-Host '           a death -> paste the 0x00A2 line and client-exit.log' -ForegroundColor Yellow
+        Write-Host '           Item List: hair, face, hat/coat/weapon/cover, all with icons -> DONE' -ForegroundColor Green
+        Write-Host '           hair/face blank, equips fine -> icons not installed; a DEATH on open ->' -ForegroundColor Yellow
+        Write-Host '           relaunch -NoLookItems, paste client-exit.log; blank everywhere -> 0x00A2 line' -ForegroundColor Yellow
         Write-Host '         OTHER CLIENTS: IN PLACE BY 0x02AE (third attempt). 0x0138 walks the SUMMONED' -ForegroundColor Magenta
         Write-Host '         map, never the player (read, not guessed; hook patch retired). 0x02AE rides' -ForegroundColor Magenta
         Write-Host '         the chair relay''s router: look decoded into the pooled user, avatar rebuilt.' -ForegroundColor Magenta

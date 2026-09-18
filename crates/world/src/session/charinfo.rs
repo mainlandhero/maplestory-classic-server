@@ -15,18 +15,24 @@
 //! with its numbers. Fame is `characters.fame` (`store::fame`, since 2026-09-18 - it was a
 //! literal 0 before that). Guild is `""`: there are no guilds.
 //!
-//! **The ITEM tab** (the "Item List" panel) is what the character is wearing: every row of
-//! `equipment` - the regular slots and the cash covers above 100 - as whole item slots, in
-//! slot order. The owner, 2026-09-18: *"Character Info also does not show the full Item List of
-//! the character of everything they are wearing. This item list should include the hair,
-//! face, equipment and cash shop cover items that the player is wearing."* Hair and face are
-//! NOT in it: they are look ids (`3xxxx`, `2xxxx`), not items - there is no `Item` WZ entry,
-//! no icon and no item class for them, and the window builds one item widget per entry from
-//! an item body (`research/character-info-2026-09-18.md` row 16a), so an entry with a hair id
-//! would be an item of a class this client has no decoder for - the same shape as the pet-id
-//! crash in `net::inventory::is_pet`. The face and hair are drawn on the avatar at the left
-//! instead. [I] that the widget draws a cash cover; nothing about the list has been on a
-//! screen yet.
+//! **The ITEM tab** (the "Item List" panel) is what the character is wearing: the hair, the
+//! face, then every row of `equipment` - the regular slots and the cash covers above 100 -
+//! as whole equip slots. The owner, 2026-09-18: *"This item list should include the hair, face,
+//! equipment and cash shop cover items that the player is wearing."* and, shown a modern
+//! client, *"Showing hair and face is absolutely do-able."*
+//!
+//! A hair or face IS an equip to this client's item lookup - `Character/<Type>/<id>.img`
+//! with `id / 10000` = 3 -> Hair, 2 -> Face, the same path a cap takes - so the slot is an
+//! ordinary equip body under the look id. What the classic data lacked was an `info/icon` on
+//! those images (both the classic and the modern Hair/Face images carry only
+//! `info/{islot,vslot,cash}`; the modern window draws those cells in UI code), so
+//! `tools/backport_install.py` now renders one per hair and face from the part's own default
+//! frame and writes it into the hybrid archives (`look_icons`). **Until that install is on
+//! the client, a hair or face entry asks the widget for an icon that is not there** - the
+//! config switch `charinfo_look_items` (default on) is the way to send equips only. [I] that
+//! the widget draws a cash cover, a hair and a face the way it draws a cap; nothing about the
+//! list has been on a screen yet. Skin is not listed: its image is `Character/0000200x.img`
+//! at the tree root, which the installer does not build yet.
 
 use super::{Reply, Session};
 
@@ -78,18 +84,20 @@ impl Session {
             }
         });
         let fame = self.store.fame(id).ok().flatten().unwrap_or(0);
-        // Everything worn, as the record would send it: template stats for a row that never
-        // stored its own. Slot order - hat first - which is what the record uses too.
-        let items: Vec<Vec<u8>> = self
-            .store
-            .equipped_items(id)
-            .unwrap_or_default()
-            .iter()
-            .map(|e| {
-                let stats = e.stats.unwrap_or_else(|| self.template_stats(e.item_id));
-                net::opcode::equipped_item(e.item_id, &stats)
-            })
-            .collect();
+        // The look first - hair, face - then everything worn, as the record would send it:
+        // template stats for a row that never stored its own. Slot order, hat first.
+        let mut items: Vec<Vec<u8>> = Vec::new();
+        if self.config.charinfo_look_items {
+            for look in [brief.hair, brief.face] {
+                if look != 0 {
+                    items.push(net::opcode::equipped_item(look, &net::opcode::EquipStats::default()));
+                }
+            }
+        }
+        items.extend(self.store.equipped_items(id).unwrap_or_default().iter().map(|e| {
+            let stats = e.stats.unwrap_or_else(|| self.template_stats(e.item_id));
+            net::opcode::equipped_item(e.item_id, &stats)
+        }));
         let info = net::charinfo::CharacterInfo {
             character_id: id,
             name: brief.name.clone(),

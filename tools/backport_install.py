@@ -136,12 +136,17 @@ def composite(rgba, width, height, label, lw, lh, x0, y0):
             i = (ty * width + tx) * 4
             d = px[i:i + 4]
             da = d[3]
-            oa = a + da * (255 - a) // 255
-            if oa == 0:
+            # Source-over in exact integer arithmetic: out_alpha * 255 = a*255 + da*(255-a),
+            # with no intermediate floor. The first version floored `da*(255-a)//255` in the
+            # alpha and `d*da*(255-a)//255` in the colour separately, and for a = da = 1 the
+            # two roundings disagreed enough to put 509 in a byte (2026-09-18, the first
+            # hair icon with a soft edge; the badge never hit it - its alpha is 0 or 255).
+            oa255 = a * 255 + da * (255 - a)
+            if oa255 == 0:
                 continue
             for c in range(3):
-                px[i + c] = (s[c] * a + d[c] * da * (255 - a) // 255) // oa
-            px[i + 3] = oa
+                px[i + c] = (s[c] * a * 255 + d[c] * da * (255 - a)) // oa255
+            px[i + 3] = (oa255 + 127) // 255
     return bytes(px)
 
 
@@ -252,6 +257,182 @@ RENAMES = {BOX_MODERN_ID: BOX_ID, **FACE_COUPON_RENAMES}
 # 0522. The server's set contents (world::signaturestyle) and store::ITEM_ID_RENAMES (hats
 # already in a bag) say the new numbers.
 HAIR_HAT_RENAMES = {1006910: 1007910, 1006911: 1007911, 1006912: 1007912}
+
+
+# ---------------------------------------------------------------------------------------
+# Hair and face icons, so the Character Info ITEM tab can list them
+# ---------------------------------------------------------------------------------------
+#
+# The owner, 2026-09-18: *"Character Info also does not show the full Item List of the character of
+# everything they are wearing. This item list should include the hair, face, equipment and
+# cash shop cover items that the player is wearing."* and, shown a modern client: *"Showing
+# hair and face is absolutely do-able."*
+#
+# The ITEM tab builds one icon widget per item body and the client finds an equip's icon at
+# `Character/<Type>/<id>.img/info/icon` - a hair is `Character/Hair/000300xx.img` under the
+# same lookup (id / 10000 = 3 -> Hair, 2 -> Face). Every classic hair and face image carries
+# `info/{islot,vslot,cash}` and NO `info/icon` (and neither do the modern ones: that client
+# draws those cells in UI code). So this step renders one: the part's own `default` frame
+# canvases - `hairBelowBody`, `hair`, `hairOverHead` for a hair, `face` for a face - composited
+# on their shared `brow` anchor at natural size, cropped, and written inline as `info/icon` and
+# `info/iconRaw` (BGRA8888, `newcanvas`) with the origin a cap icon uses: `(-2, height)`.
+# `hairShade` is left out; it is the shadow the hair casts on the skin, not the hair.
+#
+# Every image in the classic Hair and Face archives gets one, and so does every backported
+# hair and face (their canvases live in the modern `_Canvas` parts). **[I]** that the widget
+# draws a synthesised icon for a hair id the way it draws a cap's; plan step "FAME, AND THE
+# ITEM LIST" says what to look at.
+LOOK_LAYERS = {
+    "Hair": ("default/hairBelowBody", "default/hair", "default/hairOverHead"),
+    "Face": ("default/face",),
+}
+ICON_ORIGIN_X = -2  # what every classic cap icon carries
+
+
+def _image_names(archive):
+    out = subprocess.run([WZ_DUMP, "tree", archive, "1"], capture_output=True, text=True,
+                         encoding="utf-8", errors="replace")
+    if out.returncode != 0:
+        raise SystemExit("wz-dump tree %s failed: %s" % (archive, out.stderr.strip()))
+    return [line.split("[IMG]", 1)[1].split()[0] for line in out.stdout.splitlines() if "[IMG]" in line]
+
+
+def _layer_origins(prop_archive, image):
+    """`{node path: (ax, ay, outlink)}` for every real canvas under `default`, from the
+    property image: `(ax, ay)` is the layer's `origin + map/brow` - where its brow anchor sits
+    relative to its top-left, so layers align when each is placed at top-left = -(ax, ay).
+    `outlink` is where the pixels live (`Character/Hair/_Canvas/<image>/<node>`)."""
+    out = subprocess.run([WZ_DUMP, "cat", prop_archive, image], capture_output=True, text=True,
+                         encoding="utf-8", errors="replace")
+    if out.returncode != 0:
+        raise SystemExit("wz-dump cat %s %s failed: %s" % (prop_archive, image, out.stderr.strip()))
+    tree = json.loads(out.stdout)
+    found = {}
+
+    def walk(node, path):
+        if not isinstance(node, dict):
+            return
+        if node.get("_canvas"):
+            o = node.get("origin") or {"x": 0, "y": 0}
+            b = (node.get("map") or {}).get("brow") or {"x": 0, "y": 0}
+            # A 1x1 canvas with no outlink is a placeholder (00030430's whole `default`
+            # is one), not art: it has no pixels anywhere and gets no icon.
+            if not node.get("_outlink") and node.get("width") == 1 and node.get("height") == 1:
+                return
+            found[path] = (int(o["x"]) + int(b["x"]), int(o["y"]) + int(b["y"]), node.get("_outlink"))
+            return
+        for k, v in node.items():
+            walk(v, path + "/" + k if path else k)
+
+    walk(tree.get("default"), "default")
+    return found
+
+
+def render_look_icon(wz_png, prop_archive, canvas_archive, image, canvas_image, layers, out_dir):
+    """Composite `layers` of `image` on their brow anchor; `(rgba, w, h)` or None when the
+    image has none of them (a placeholder hair, or a face with only animation frames).
+    `canvas_image` is where the pixels live: the same name for a classic part, and the base
+    colour's image for a backported hair or face (the colour variants share one)."""
+    origins = _layer_origins(prop_archive, image)
+    want = [l for l in layers if l in origins]
+    if not want:
+        return None
+    # A colour variant's canvases live in the base colour's canvas image (00030430 outlinks
+    # into 00030000.img): follow each layer's own outlink, and export each image once.
+    exported = {}
+
+    def canvases_of(cimg):
+        if cimg not in exported:
+            ex = os.path.join(out_dir, "x-" + cimg[:-4])
+            r = subprocess.run([WZ_DUMP, "canvas", canvas_archive, cimg, ex, "default"],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if r.returncode != 0:
+                raise SystemExit("wz-dump canvas %s %s failed: %s" % (canvas_archive, cimg, r.stderr.strip()))
+            exported[cimg] = (ex, {e["node"].strip("/"): e for e in json.load(open(os.path.join(ex, "manifest.json"), encoding="utf-8"))})
+        return exported[cimg]
+
+    parts = []
+    for l in want:
+        ox, oy, outlink = origins[l]
+        cimg, node = canvas_image, l
+        if outlink:
+            cimg, node = outlink.split("/_Canvas/", 1)[1].split("/", 1)
+        ex, manifest = canvases_of(cimg)
+        e = manifest.get(node)
+        if e is None:
+            continue  # the property image names a canvas the canvas archive does not hold
+        payload = open(os.path.join(ex, e["file"]), "rb").read()
+        rgba = wz_png.to_rgba(wz_png.inflate(payload), e["width"], e["height"], e["format"])
+        # Align every layer on its brow anchor: top-left = -(origin + brow).
+        parts.append((-ox, -oy, e["width"], e["height"], rgba))
+    if not parts:
+        return None
+    x0 = min(p[0] for p in parts)
+    y0 = min(p[1] for p in parts)
+    x1 = max(p[0] + p[2] for p in parts)
+    y1 = max(p[1] + p[3] for p in parts)
+    w, h = x1 - x0, y1 - y0
+    canvas = bytes(w * h * 4)
+    for (px, py, pw, ph, rgba) in parts:  # in LOOK_LAYERS order: below, hair, over
+        canvas = composite(canvas, w, h, rgba, pw, ph, px - x0, py - y0)
+    return canvas, w, h
+
+
+def look_icons(build_dir, source, manifest, add):
+    """One `info/icon` + `info/iconRaw` per hair and face image, classic and backported, as
+    `newcanvas` patch rows on the property archives. Returns `{type: count}`."""
+    wz_png = _wz_png()
+    counts = {}
+    for kind, layers in LOOK_LAYERS.items():
+        tree_rel = "Character/" + kind
+        prop = os.path.join(CLASSIC, "Character", kind, kind + "_000.wz")
+        canv = os.path.join(CLASSIC, "Character", kind, "_Canvas", "_Canvas_000.wz")
+        # The pristine originals, never the last install (see step 5).
+        prop = prop + ".bak" if os.path.exists(prop + ".bak") else prop
+        canv = canv + ".bak" if os.path.exists(canv + ".bak") else canv
+        jobs = [(image, prop, canv, image, image) for image in _image_names(prop)]
+        # The backported ones: property image from its modern part (under the renamed id where
+        # HAIR_HAT_RENAMES applies - the patch row must name the image the build wrote), canvases
+        # from the modern `_Canvas` part that holds them.
+        for items in manifest["sets"].values():
+            for it in items:
+                if it["type"] != kind:
+                    continue
+                image = "%08d.img" % it["id"]
+                dest = "%08d.img" % HAIR_HAT_RENAMES.get(it["id"], it["id"])
+                # The colour variants of one hair share the base colour's canvas image
+                # (42541 outlinks into 00042540.img); the manifest names it.
+                canvas_image = it["canvas_images"][0].rsplit("/", 1)[1]
+                jobs.append((image, os.path.join(source, it["prop_archive"]),
+                             modern_part(source, tree_rel + "/_Canvas", canvas_image), canvas_image, dest))
+        out_root = os.path.join(build_dir, "look-icons", kind)
+        os.makedirs(out_root, exist_ok=True)
+        done = skipped = 0
+        for image, p_arch, c_arch, canvas_image, dest in jobs:
+            out_dir = os.path.join(out_root, dest[:-4])
+            os.makedirs(out_dir, exist_ok=True)
+            got = render_look_icon(wz_png, p_arch, c_arch, image, canvas_image, layers, out_dir)
+            if got is None:
+                skipped += 1
+                continue
+            rgba, w, h = got
+            bgra = bytearray(rgba)
+            bgra[0::4], bgra[2::4] = bgra[2::4], bgra[0::4]
+            payload = os.path.join(out_dir, "icon.bin")
+            with open(payload, "wb") as fh:
+                fh.write(zlib.compress(bytes(bgra), 9))
+            wz_png.write_png(pathlib.Path(os.path.join(out_dir, "icon.png")), rgba, w, h)
+            tsv = os.path.join(out_dir, "icon.tsv")
+            with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write("# %s %s: info/icon and info/iconRaw rendered from the part's own default frame (%s); origin (%d, %d) like a cap icon\n"
+                         % (kind, dest, ", ".join(l for l in layers), ICON_ORIGIN_X, h))
+                for node in ("icon", "iconRaw"):
+                    fh.write("info/%s\tnewcanvas\t%d,%d,2,%s,%d,%d\n" % (node, w, h, payload, ICON_ORIGIN_X, h))
+            add(tree_rel, "patch\t%s\t%s" % (dest, tsv))
+            done += 1
+        counts[kind] = (done, skipped)
+        print("  look icons %-4s %4d rendered, %d without a default frame (left without an icon)" % (kind, done, skipped))
+    return counts
 
 
 def modern_part(source, tree_rel, image):
@@ -809,6 +990,10 @@ def main():
     add("Etc", "patch\tCommodity.img\t%s" % pet_rows_patch)
     add("Etc", "patch\tCashShopCategory.img\t%s" % category_patch)
     del rows
+
+    # 4c. Hair and face icons, so the Character Info ITEM tab can list them (2026-09-18).
+    #     Every classic hair and face image and every backported one. See `look_icons`.
+    look_icons(args.build_dir, source, manifest, add)
 
     # 5. Build every archive against its classic base.
     built = []
