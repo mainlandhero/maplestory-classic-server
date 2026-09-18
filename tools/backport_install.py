@@ -44,6 +44,13 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WZ_DUMP = os.path.join(REPO, "target", "release", "wz-dump" + (".exe" if os.name == "nt" else ""))
 EXTRACT = os.path.join(REPO, "backport", "signature-style")
+
+# The Cash Shop prices of the Signature Style wares, in Leaf Points. The owner's, 2026-09-17:
+# 200 LP per Outfit Set Coupon, 800 LP for the Collection box that holds all eight. These
+# are written into the client's Commodity.img (step 4b) and, through --install's handbook
+# regeneration, into gm-handbook/commodity.txt, which is what the server debits.
+SET_COUPON_PRICE_LP = 200
+COLLECTION_PRICE_LP = 800
 CLASSIC = os.path.join(REPO, "client-patched", "Data")
 CLASSIC_VERSION = "779"
 # The Signature Style Collection box: Nexon's id, and the id it wears in the classic client
@@ -364,18 +371,28 @@ def main():
     #     permanent (49 rows). SN prefix 12 (category 2 = Special under the derived
     #     arithmetic) is unused by every shipped row, so the new serials are 120000000..
     #
-    #     **Prices are the owner's, 2026-09-10**: *"each signature style set coupon should cost
-    #     2000 LP"* and the box *"give[s] them all of the sets for 8000 LP"* - so the box is
-    #     the eight coupons at half price. The modern client sells the box for 7,900 NX as a
-    #     one-at-random gacha and never sells the coupons; both rules are ours.
+    #     **Prices are the owner's.** 2026-09-10: *"each signature style set coupon should cost
+    #     2000 LP"* and the box *"give[s] them all of the sets for 8000 LP"*. 2026-09-17:
+    #     *"change the Frieren collaboration package prices from 2000 LP to 200 LP
+    #     individually, or 800 LP for the signature set of all of them."* So a coupon is 200
+    #     and the box - all eight - is 800, half the eight coupons' 1,600. The modern client
+    #     sells the box for 7,900 NX as a one-at-random gacha and never sells the coupons;
+    #     both rules are ours.
+    #
+    #     **The price lives in the CLIENT's Commodity.img** - the shop draws its price tags
+    #     from the WZ - and the server debits from gm-handbook/commodity.txt, which --install
+    #     regenerates from the installed archive. A price changed here reaches neither until
+    #     `python tools/backport_install.py --install` is run with the client closed and the
+    #     client package is rebuilt; until then the shop shows the old tag and the server
+    #     charges the old amount, consistently.
     #
     #     Seen on screen 2026-09-10 at the first prices (7,900 / 3,900): the tab, the nine
     #     entries, the NEW badges, the icons and the tooltips all drew. The shape is proven;
     #     only the numbers changed after.
     rows = json.load(open(os.path.join(EXTRACT, "manifest.json"), encoding="utf-8"))
     by_name = {it["name"]: it["id"] for it in manifest["cash"]}
-    wares = [("Signature Style Collection", 8000)] + [
-        (n + " Outfit Set Coupon", 2000)
+    wares = [("Signature Style Collection", COLLECTION_PRICE_LP)] + [
+        (n + " Outfit Set Coupon", SET_COUPON_PRICE_LP)
         for n in ["Frieren", "Fern", "Stark", "Übel", "Himmel", "Aura", "Lügner", "Linie"]
     ]
     commodity_patch = os.path.join(args.build_dir, "patch-Commodity.img.tsv")

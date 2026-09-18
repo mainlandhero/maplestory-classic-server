@@ -7,6 +7,8 @@
 //! Collection coupon to be instead of obtaining 1 at random rates, we give them all of the
 //! sets for 8000 LP."* So the box hands out **all eight** set coupons, and each set coupon
 //! hands out its set: the equips, plus a hair coupon per hairstyle and a face coupon.
+//! (The prices are 800 LP for the box and 200 LP per coupon since 2026-09-17; they live in
+//! the client's Commodity.img via `tools/backport_install.py`, not here.)
 //!
 //! # This module is the rule and nothing else
 //!
