@@ -800,6 +800,13 @@ pub const ITEM_ID_RENAMES: &[(u32, u32)] = &[
     (2_897_012, 2_890_912),
     (2_897_013, 2_890_913),
     (2_897_014, 2_890_914),
+    // The three hair-hats, 2026-09-18: the client reads the fourth digit of an equip's id
+    // as its gender and 6 is female, so Aura / Linie / Lügner Hair (Hat) refused every male
+    // character. They wear 1007910..1007912 now (digit 7 is unisex); the installer copies
+    // the property image under the new name. `world::signaturestyle::HAIR_HAT_IDS`.
+    (1_006_910, 1_007_910),
+    (1_006_911, 1_007_911),
+    (1_006_912, 1_007_912),
 ];
 
 /// The tables that carry an item id, all of which [`rename_item_ids`] visits. `equipment`

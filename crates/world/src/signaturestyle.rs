@@ -73,6 +73,22 @@ pub fn receipt_text(given: &[u32]) -> String {
     text
 }
 
+/// **The three hair-hats wear 1007910..1007912, not Nexon's 1006910..1006912.** The owner,
+/// 2026-09-12: *"The Aura, Lugner and Linie hair does not wear when double clicked on."*
+/// The client's gender-from-id rule (`FUN_140253130`, the fourth digit) reads 6 as
+/// **female**, so a 1006xxx cap on a male character resolves to no body part and the
+/// double-click sends nothing - no packet, no box, and `islot` never mattered. The rule has
+/// no WZ override in this build, so the id itself moved to a unisex digit
+/// (`tools/backport_install.py` `HAIR_HAT_RENAMES`; `store::ITEM_ID_RENAMES` for hats
+/// already in a bag). `research/hair-hat-islot-2026-09-12.md` section 6.
+pub const HAIR_HAT_IDS: [(u32, u32); 3] = [(1_006_910, 1_007_910), (1_006_911, 1_007_911), (1_006_912, 1_007_912)];
+
+/// The client's gender-from-id rule, `FUN_140253130`: `(id / 1000) % 10` is 0 or 5 for male,
+/// 1 or 6 for female, anything else for either. **[L]** Here so a set can be checked against it.
+pub fn equip_gender_digit_is_unisex(item_id: u32) -> bool {
+    !matches!((item_id / 1000) % 10, 0 | 1 | 5 | 6)
+}
+
 /// The Frieren Outfit Set Coupon the Cash Shop sells and the Collection hands out. Opening it
 /// does not hand anything out directly: it opens a three-way menu, because Nexon ships this
 /// set in three versions and the classic client has no Selector Coupon UI to pick with.
@@ -213,24 +229,25 @@ pub const SETS: [OutfitSet; 8] = [
         name: "Aura",
         hair_coupons: &[],
         face_coupon: 2_890_912,
-        // Hair (Hat), Clothes, Shoes, Gloves, Scales of Obedience
-        equips: &[1_006_910, 1_054_563, 1_074_239, 1_082_879, 1_703_727],
+        // Hair (Hat), Clothes, Shoes, Gloves, Scales of Obedience. The hat is Nexon's 1006910
+        // renumbered: see HAIR_HAT_IDS.
+        equips: &[1_007_910, 1_054_563, 1_074_239, 1_082_879, 1_703_727],
     },
     OutfitSet {
         coupon: 5_681_552,
         name: "L\u{fc}gner",
         hair_coupons: &[],
         face_coupon: 2_890_914,
-        // Hair (Hat), Clothes, Shoes
-        equips: &[1_006_912, 1_054_565, 1_074_241],
+        // Hair (Hat), Clothes, Shoes. The hat is Nexon's 1006912 renumbered: HAIR_HAT_IDS.
+        equips: &[1_007_912, 1_054_565, 1_074_241],
     },
     OutfitSet {
         coupon: 5_681_551,
         name: "Linie",
         hair_coupons: &[],
         face_coupon: 2_890_913,
-        // Hair (Hat), Clothes, Shoes
-        equips: &[1_006_911, 1_054_564, 1_074_240],
+        // Hair (Hat), Clothes, Shoes. The hat is Nexon's 1006911 renumbered: HAIR_HAT_IDS.
+        equips: &[1_007_911, 1_054_564, 1_074_240],
     },
 ];
 
@@ -270,6 +287,28 @@ pub fn slots_needed(items: &[(u32, store::InventoryType)]) -> [u16; net::opcode:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **Every equip a set hands out is one a male OR female character can wear.** The
+    /// three hair-hats were not (digit 6 = female under `FUN_140253130`), which is why they
+    /// were renumbered; this pins that no set ever ships a gendered id again, and that the
+    /// renumbering table and the sets agree.
+    #[test]
+    fn every_set_equip_is_unisex_under_the_clients_digit_rule() {
+        for set in SETS.iter().chain(FRIEREN_VERSIONS.iter()) {
+            for &id in set.equips {
+                assert!(equip_gender_digit_is_unisex(id), "{} hands out {id}, a gendered id", set.name);
+            }
+        }
+        for (old, new) in HAIR_HAT_IDS {
+            assert!(!equip_gender_digit_is_unisex(old), "{old} is the female-only id the client refused");
+            assert!(equip_gender_digit_is_unisex(new), "{new} must be unisex");
+            assert!(SETS.iter().any(|s| s.equips.contains(&new)), "{new} is in a set");
+            assert!(!SETS.iter().any(|s| s.equips.contains(&old)), "{old} is in no set");
+        }
+        assert!(equip_gender_digit_is_unisex(1_002_005), "a classic cap");
+        assert!(!equip_gender_digit_is_unisex(1_056_000), "a classic female overall");
+        assert!(!equip_gender_digit_is_unisex(1_055_000), "a classic male overall");
+    }
 
     /// The owner's three spelled-out sets, item for item, against their listing.
     #[test]

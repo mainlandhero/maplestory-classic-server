@@ -19,7 +19,7 @@ archive as the base. Every existing image is carried over byte for byte; ours ar
 | `Item/Cash/Cash_000.wz`, `Item/Consume/Consume_000.wz` | `merge`: an item image (`0522.img`) holds every item with that prefix, so only OUR nodes are taken from the modern image and laid onto the classic image of the same name (or an empty one) |
 | `Item/<Cash|Consume>/_Canvas/_Canvas_000.wz` | `merge`, the same keys |
 | `String/String_000.wz` | `strings`: `Eqp.img` (under `ClassicWorld/<Type>/<id>`), `Cash.img` and `Consume.img` (flat `<id>`) gain `name` and `desc` leaves |
-| `Item/Pet/Pet_000.wz` | `patch`: every pet gets `info/permanent` -> 1 and its start skills; **`info/life` is left alone** - zeroing it (the modern permanent pet's shape) is what made a summoned pet invisible, see the note at the patch rows; the eight pets the classic shop never listed get Commodity rows under the Pets tab. **The four collaboration pets** (2026-09-17, Lil Frieren / Fern / Stark / Übel) are `copy`ed in whole - property image here, pixels into `Item/Pet/_Canvas` - then patched like the classic eleven, plus `del` of the leaves that name UI nodes this client lacks (`chatBalloon`, `nameTag`, `setItemID`) |
+| `Item/Pet/Pet_000.wz` | `patch`: every pet gets `info/life` -> 0 (unlimited: no days line in the shop, alive unconditionally - see the note at the patch rows; the 2026-09-14 "life 0 made the pet invisible" was a coincidence, f0c3010 found giantRate), `info/permanent` -> 1 and its start skills; the eight pets the classic shop never listed get Commodity rows under the Pets tab. **The four collaboration pets** (2026-09-17, Lil Frieren / Fern / Stark / Übel) are `copy`ed in whole - property image here, pixels into `Item/Pet/_Canvas` - then patched like the classic eleven, plus `del` of the leaves that name UI nodes this client lacks (`chatBalloon`, `nameTag`, `setItemID`) |
 | `Character/PetEquip/PetEquip_000.wz` | `inline`: the four collaboration pet weapons. The classic client keeps pet-equip pixels INSIDE the property image (its ten hats have no `_Canvas` tree at all), so a plain `copy` of the modern image would leave 1x1 stubs pointing at a tree that is not there; `inline` follows every outlink into the modern `_Canvas` archive and writes the pixels in place |
 | `String/String_000.wz` | ...and `Pet.img` (name, desc, descD), `PetCommand.img` (the words) and `PetDialog.img` (the lines) for the four pets - which is where `tools/dump_pets.py` reads a pet's commands from |
 | `Effect/Effect_000.wz`, `Effect/_Canvas/_Canvas_000.wz` | `merge`: the classic client has no `ItemEff.img` at all, so a NEW one is made from the set items' worn-effect nodes (Himmel's Blessing, 1103918) and a new canvas `ItemEff.img` from the holders their outlinks name (1103930) |
@@ -145,21 +145,50 @@ def composite(rgba, width, height, label, lw, lh, x0, y0):
     return bytes(px)
 
 
-def badge_pet_icons(extract, build_dir, pet_id, pet_name, label):
-    """Decode the four icon canvases of one pet from the extract, composite Nexon's Petite
-    label onto each, and write BGRA8888 payloads. Returns `(canvas rows, png dir)`: the patch
-    rows for the `_Canvas` image, and a folder of PNG renders for a look."""
-    wz_png = _wz_png()
-    label, lw, lh = label
+def extract_pet_icons(extract, pet_id):
+    """A collab pet's four icon canvases as `{node: (w, h, format, payload)}`, from the extract."""
     cdir = os.path.join(extract, "canvas", "Item", "Pet", "%d" % pet_id)
     tree = json.load(open(os.path.join(cdir, "canvas.json"), encoding="utf-8"))
+    out = {}
+    for node in ["icon", "iconRaw", "iconD", "iconRawD"]:
+        meta = tree["info"][node]
+        out[node] = (int(meta["width"]), int(meta["height"]), int(meta["format"]),
+                     open(os.path.join(cdir, "info.%s.bin" % node), "rb").read())
+    return out
+
+
+def classic_pet_icons(base_archive, build_dir, pet_id):
+    """A classic pet's icon canvases, exported from the PRISTINE `_Canvas` archive (the
+    `.bak`, once an install has made one) with `wz-dump canvas`."""
+    out_dir = os.path.join(build_dir, "classic-pet-icons", "%d" % pet_id)
+    os.makedirs(out_dir, exist_ok=True)
+    r = subprocess.run([WZ_DUMP, "canvas", base_archive, "%d.img" % pet_id, out_dir, "info"],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if r.returncode != 0:
+        raise SystemExit("wz-dump canvas %d.img failed: %s" % (pet_id, r.stderr.strip()))
+    entries = json.load(open(os.path.join(out_dir, "manifest.json"), encoding="utf-8"))
+    out = {}
+    for e in entries:
+        node = e["node"].strip("/").split("/")
+        if len(node) == 2 and node[0] == "info" and node[1] in ("icon", "iconRaw", "iconD", "iconRawD"):
+            payload = open(os.path.join(out_dir, "info.%s.bin" % node[1]), "rb").read()
+            out[node[1]] = (int(e["width"]), int(e["height"]), int(e["format"]), payload)
+    if "icon" not in out:
+        raise SystemExit("%d.img has no info/icon canvas in %s" % (pet_id, base_archive))
+    return out
+
+
+def badge_pet_icons(build_dir, pet_id, pet_name, label, canvases):
+    """Composite Nexon's Petite label onto each of one pet's icon canvases and write BGRA8888
+    payloads. Returns `(canvas rows, png dir)`: the patch rows for the `_Canvas` image, and a
+    folder of PNG renders for a look. Every pet gets it - the owner, 2026-09-18: *"Every single
+    pet needs to have these P badges because every pet is now a Petite Luna pet."*"""
+    wz_png = _wz_png()
+    label, lw, lh = label
     out_dir = os.path.join(build_dir, "petite-%d" % pet_id)
     os.makedirs(out_dir, exist_ok=True)
     rows = []
-    for node in ["icon", "iconRaw", "iconD", "iconRawD"]:
-        meta = tree["info"][node]
-        w, h, fmt = int(meta["width"]), int(meta["height"]), int(meta["format"])
-        payload = open(os.path.join(cdir, "info.%s.bin" % node), "rb").read()
+    for node, (w, h, fmt, payload) in sorted(canvases.items()):
         rgba = wz_png.to_rgba(wz_png.inflate(payload), w, h, fmt)
         badged = composite(rgba, w, h, label, lw, lh, w - lw - LABEL_INSET, h - lh - LABEL_INSET)
         bgra = bytearray(badged)
@@ -194,6 +223,26 @@ BOX_ID = 5681599
 FACE_COUPON_RENAMES = {2897000 + n: 2890900 + n for n in range(7, 15)}
 # Every id that changes family or number on the way into the classic client, old -> new.
 RENAMES = {BOX_MODERN_ID: BOX_ID, **FACE_COUPON_RENAMES}
+
+# The three hair-hats, 2026-09-18: Aura / Linie / Lügner Hair (Hat), 1006910..1006912. They
+# would not go on a male character - no 0x0107, no message box, across every run since
+# 2026-09-12 - and `islot Cp` (step 1d) was not the gate. The gate is the item ID. This
+# client's gender-from-id rule (FUN_140253130, the fourth digit `(id / 1000) % 10`):
+# 0 male, 1 female, 5 male, **6 female**, anything else unisex - and the three escape hatches
+# in front of it (FUN_1402531f0, FUN_140416760, FUN_140416820) are hard-coded id ranges,
+# not WZ keys. So a 1006xxx cap is female-only in this build, the body-part resolver
+# (FUN_142d44b20 -> FUN_1402543e0) returns an empty list for a male character, and the
+# double-click handler never calls the equip function. [L, the whole chain decompiled:
+# research/hair-hat-islot-2026-09-12.md section 6.] the owner: "Nexon has made these items
+# unisex. These items need to work on male characters ... fix it in the WZ data instead of
+# patching the client." So they wear 1007910..1007912: digit 7 is unisex under that rule
+# (316 of the classic client's own equips carry it), and the numbers are free. Only the
+# PROPERTY image and its string move; the `_Canvas` image keeps its name, because the
+# property image reaches its frames through explicit outlink paths
+# (`Character/Cap/_Canvas/01006910.img/...`), the same reason the box's canvas stayed at
+# 0522. The server's set contents (world::signaturestyle) and store::ITEM_ID_RENAMES (hats
+# already in a bag) say the new numbers.
+HAIR_HAT_RENAMES = {1006910: 1007910, 1006911: 1007911, 1006912: 1007912}
 
 
 def modern_part(source, tree_rel, image):
@@ -249,14 +298,19 @@ def main():
     def add(tree_rel, line):
         specs.setdefault(tree_rel, []).append(line)
 
-    # 1. Property images, per equip: copy from the modern part that holds it.
+    # 1. Property images, per equip: copy from the modern part that holds it. A renamed one
+    #    (HAIR_HAT_RENAMES) is written under its NEW name; the source image is the old one.
     part_cache = {}
     for set_name, items in manifest["sets"].items():
         for it in items:
             tree_rel = "Character/" + it["type"]
             image = "%08d.img" % it["id"]
+            dest = "%08d.img" % HAIR_HAT_RENAMES.get(it["id"], it["id"])
             src = os.path.join(source, it["prop_archive"])
-            add(tree_rel, "copy\t%s\t%s\t%s" % (image, src, image))
+            add(tree_rel, "copy\t%s\t%s\t%s" % (dest, src, image))
+            if dest != image:
+                print("  rename   %-8s %8d -> %d  (a female-only id under the client's digit rule)" % (
+                    set_name, it["id"], HAIR_HAT_RENAMES[it["id"]]))
 
     # 1b. Weapon covers: one link child per classic weapon TYPE.
     #
@@ -305,15 +359,11 @@ def main():
             add("Character/Weapon", "patch\t%s\t%s" % (image, tsv))
 
     # 1d. The hair-hats' slot type. The owner, 2026-09-12: "The Aura, Lugner and Linie hair does
-    # not wear when double clicked on." world.log has NO 0x0107 for 1006910/11/12 across
-    # every run they were in a bag - the client never sent the move, so it refused locally.
-    # Their `info/islot` is `HrCp`, the modern two-slot type (takes the hair slot and the
-    # cap slot); every classic cap says `Cp`. The client reads islot in two-letter tokens,
-    # and the first token here is `Hr` - hair, which is not an equip a bag can put on - so
-    # the double-click had no destination. [L on the data and the absent packet; the token
-    # reading is I: `MaPn` also has no whole-string match in the image and the overalls
-    # equip fine.] So islot becomes `Cp` for every cap whose type starts with `Hr`. vslot
-    # (which hair parts the hat hides) is left as Nexon wrote it - one variant at a time.
+    # not wear when double clicked on." Their `info/islot` is `HrCp`, the modern two-slot
+    # type; every classic cap says `Cp`, so islot becomes `Cp`. **This was NOT the gate**
+    # (2026-09-12 second launch: still no 0x0107) - the gate was the id's gender digit, see
+    # HAIR_HAT_RENAMES. The `Cp` is kept: it is what every classic cap says, and `Hr` is a
+    # token this client has no slot for. The patch targets the RENAMED image.
     for set_name, items in manifest["sets"].items():
         for it in items:
             if it["type"] != "Cap":
@@ -322,12 +372,13 @@ def main():
             islot = prop.get("info", {}).get("islot", "")
             if not islot.startswith("Hr"):
                 continue
-            tsv = os.path.join(args.build_dir, "islot-%08d.tsv" % it["id"])
+            dest_id = HAIR_HAT_RENAMES.get(it["id"], it["id"])
+            tsv = os.path.join(args.build_dir, "islot-%08d.tsv" % dest_id)
             with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
-                fh.write("# %s: islot %s -> Cp, the classic cap type; the client took Hr for hair\n" % (it["id"], islot))
+                fh.write("# %s: islot %s -> Cp, the classic cap type; the client has no Hr slot\n" % (dest_id, islot))
                 fh.write("info/islot\tstr\tCp\n")
-            add("Character/Cap", "patch\t%08d.img\t%s" % (it["id"], tsv))
-            print("  islot    %-8s %8d  %s -> Cp" % (set_name, it["id"], islot))
+            add("Character/Cap", "patch\t%08d.img\t%s" % (dest_id, tsv))
+            print("  islot    %-8s %8d  %s -> Cp" % (set_name, dest_id, islot))
 
     # 1c. Worn-item effects. The owner, 2026-09-12: "Himmel's cape should actually have an effect,
     # but this effect currently does not appear in our version of the game."
@@ -473,6 +524,11 @@ def main():
             # Renamed ids (RENAMES) carry their strings to the new id.
             root = {("%d" % RENAMES[int(k)]) if k.isdigit() and int(k) in RENAMES else k: v
                     for k, v in root.items()}
+        if image == "Eqp.img":
+            # The same for the hair-hats, one level down: `ClassicWorld/<Type>/<id>/name`.
+            root = {t: {("%d" % HAIR_HAT_RENAMES[int(k)]) if k.isdigit() and int(k) in HAIR_HAT_RENAMES else k: v
+                        for k, v in ids.items()}
+                    for t, ids in root.items()}
         if image == "Cash.img":
             # The modern text says "obtain 1 item according to set probability rates". Ours
             # gives every set (the owner, 2026-09-10), and the tooltip is the one place a player
@@ -582,15 +638,22 @@ def main():
     #     `what`, `roll`, `sit` are new; `rise`, `prone`, `nap`, `tedious`, `hand` are absent)
     #     - the interact table only names nodes the image has, and the plan step is the test.
     collab_pets = [(it["id"], it["name"]) for it in manifest.get("pets", [])]
-    label = petite_label(source, args.build_dir) if manifest.get("pets") else None
+    label = petite_label(source, args.build_dir)
     for it in manifest.get("pets", []):
         src = os.path.join(source, it["prop_archive"])
         add("Item/Pet", "copy\t%d.img\t%s\t%d.img" % (it["id"], src, it["id"]))
         # The Petite badge, onto the canvas image step 2 copies (this row runs after it:
         # specs are appended in order and the canvas copy was added in step 2 above).
-        badge_tsv, badge_dir = badge_pet_icons(EXTRACT, args.build_dir, it["id"], it["name"], label)
+        badge_tsv, badge_dir = badge_pet_icons(args.build_dir, it["id"], it["name"], label,
+                                               extract_pet_icons(EXTRACT, it["id"]))
         add("Item/Pet/_Canvas", "patch\t%d.img\t%s" % (it["id"], badge_tsv))
         print("  badge    %8d  %s -> %s" % (it["id"], it["name"], os.path.relpath(badge_dir, REPO)))
+    # ...and the classic eleven, whose canvas images are already in the base archive: the
+    # icons come out of the PRISTINE `_Canvas` (the .bak, or the archive itself before any
+    # install), get the same label, and go back with a `patch` on the existing image.
+    pet_canvas_base = os.path.join(CLASSIC, "Item", "Pet", "_Canvas", "_Canvas_000.wz")
+    if os.path.exists(pet_canvas_base + ".bak"):
+        pet_canvas_base += ".bak"
         tsv = os.path.join(args.build_dir, "pet-%07d-strip.tsv" % it["id"])
         with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
             fh.write("# %s: modern-only leaves the classic client would look up and not find\n" % it["name"])
@@ -620,33 +683,35 @@ def main():
                         fh.write("%s/%s/0/%d\tstr\t%s_%s%d\n" % (base, kind, i, t["key"], kind[0], i + 1))
         add("Item/Pet", "patch\t%d.img\t%s" % (it["id"], tsv))
         print("  pet      %8d  %s (+%d commands)" % (it["id"], it["name"], len(it.get("extra_commands", []))))
+    for pet_id, pet_name in pets:
+        badge_tsv, badge_dir = badge_pet_icons(args.build_dir, pet_id, pet_name, label,
+                                               classic_pet_icons(pet_canvas_base, args.build_dir, pet_id))
+        add("Item/Pet/_Canvas", "patch\t%d.img\t%s" % (pet_id, badge_tsv))
+        print("  badge    %8d  %s -> %s" % (pet_id, pet_name, os.path.relpath(badge_dir, REPO)))
     for pet_id, pet_name in pets + collab_pets:
         tsv = os.path.join(args.build_dir, "pet-%07d.tsv" % pet_id)
         with open(tsv, "w", encoding="utf-8", newline="\n") as fh:
-            # **`info/life` IS NO LONGER ZEROED, and that is the pet-invisibility fix.**
+            # **`info/life` is 0 on every pet: unlimited.** The owner, 2026-09-18: *"All pets
+            # should be unlimited duration, some item descriptions in Cash Shop still dates
+            # them for 3 days, 7 days or 90 days."*
             #
-            # It used to be set to 0 beside `permanent 1`, because the MODERN client's one
-            # permanent pet (5000060) carries that pair. `CLAUDE.md` rates the modern source
-            # 1-of-8 against a held-out control and says to label every claim from it a
-            # candidate; this one was applied to the classic client anyway, and the comment
-            # above it admitted that whether this client reads `permanent` was [I].
+            # The days the shop prints are the pet's own `life` (research/pets-2026-09-13.md
+            # section 1: the Commodity rows say Period 0). The tooltip builder
+            # (`FUN_1426bc040`, string 0x03CD ' %d day(s)' at 1426bc29b) prints that line only
+            # when the count is non-zero (`1426bc284 test r14d,r14d / je`), and the client
+            # has no "Unlimited" branch there - so 0 means the line is simply absent, which
+            # is as close to "unlimited" as this shop can say. And the dead-check
+            # (`FUN_1402cf680`, research/pet-dead-is-datedead-2026-09-14.md) reads `life == 0`
+            # as ALIVE UNCONDITIONALLY, which is the permanence the owner asked for on the pet
+            # itself. [L] both.
             #
-            # On 2026-09-14 a full diff of the Husky image against `Pet_000.wz.bak` showed
-            # `life: 7 -> 0` and the three added keys were the ONLY differences in 1400 lines -
-            # every animation node, canvas and `_outlink` was byte-identical. A summoned pet
-            # drew its name tag, reported 34 movements and never appeared, and the client's own
-            # show/hide ladder (FUN_141ecde00) was measured deciding SHOW: all eleven gates pass
-            # and both session flags gate 11 reads are untouched. So the client wanted to draw a
-            # pet whose declared lifespan was zero days.
-            #
-            # Permanence does not need this key. It is on the wire already, in the pet body
-            # `net::bag` builds: `dateDead = ITEM_NEVER_EXPIRES` and `remainLife = 0`, which is
-            # what puts "This miraculous pet will never expire!" in the tooltip the owner
-            # screenshotted. `permanent 1` is kept - it is additive and harmless - and the
-            # lifespan is left exactly as Nexon shipped it.
-            fh.write("# %s: permanent via the pet BODY (dateDead/remainLife), not by zeroing\n" % pet_name)
-            fh.write("# info/life. See tools/backport_install.py - a life of 0 days is why a\n")
-            fh.write("# summoned pet had a name tag, walked, and drew nothing.\n")
+            # **This used to be left alone, on the belief that zeroing it made a summoned pet
+            # invisible** - the 2026-09-14 diff found `life 7 -> 0` as the only WZ change and
+            # the pet drew nothing. That was a coincidence written up as a cause: the pet was
+            # blank with life 7 too, through eleven more commits, until f0c3010 found the real
+            # one - `giantRate`, the pet's SIZE in percent, which this server had sent as 0.
+            # The claim was never isolated against a control; CLAUDE.md's oldest rule.
+            fh.write("info/life\tint\t0\n")
             fh.write("info/permanent\tint\t1\n")
             # **A pet declares only the skills it is BORN with: Item Pouch.** The owner,
             # 2026-09-17: "The only default skills it should have is Meso Magnet and Item

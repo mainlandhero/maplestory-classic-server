@@ -236,6 +236,21 @@ is Auto Move (`5190002`) THEN Expanded Auto Move (`5190003`); the box then rides
 wonderGrade 6 as before. `research/pet-vacuum-wondergrade-2026-09-16.md` §7. 2132 tests. Plan
 step 8 LOOT has the order.
 
+**2026-09-18: the three hair-hats were female-only by ID; they wear 1007910..1007912 now.** The owner:
+*"the Linie, Lugner and Aura package hair equipments still is being refused to be equipped by
+the client."* Read this time rather than instrumented: the double-click is `FUN_141784fa0`, which
+calls the equip function only when `FUN_142d44b20` names a body part, and that resolver drops
+the item when the client's gender-from-id rule disagrees with the character. `FUN_140253130`
+reads the FOURTH digit: 0/5 male, **1/6 female**, else unisex - so 100**6**910..912 were female
+caps, every test character is male, and nothing was ever sent (which also retires §5's
+`FUN_1417dd7e0`: that is the drag-from-a-worn-slot path). The three range predicates in front
+of the digit are hard-coded, not WZ keys. The owner: *"Nexon has made these items unisex ... fix it
+in the WZ data instead of patching the client"* - so the installer copies the property image
+under 1007910..1007912 (digit 7, unisex, free), moves the string and the `islot Cp` patch with
+it, keeps the `_Canvas` under the old name (outlinks are explicit paths), the sets say the new
+numbers and `store::ITEM_ID_RENAMES` renumbers hats already held. Installed, read back, `--check`
+passes, 2147 tests. `research/hair-hat-islot-2026-09-12.md` §6; plan step (i).
+
 **2026-09-17: a quest into a full bag is refused at the NPC, before anything moves.** Mint
 (Discord): *"quest continues to complete despite this happening"* under `Quest 1008 could not
 give you item 1002005: inventory 1 is full (30 slots)`. The owner: *"the server should use the NPC

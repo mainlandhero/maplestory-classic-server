@@ -1179,25 +1179,24 @@
             slot 11. Nothing to test here any more.
          h) HIMMEL'S CAPE - DONE (the owner, 2026-09-12: "Himmel's cape now looks fine"): the
             effect draws behind the body at z -2. Nothing to test here.
-         i) THE HAIR-HATS STILL DO NOT GO ON (the owner, 2026-09-12: "equipping the hair caps
-            still does not work") - and world-ch0.log again has NO 0x0107 for them, so the islot
-            change was not the gate. The double-click equip path is FUN_1417dd7e0 (it ends in
-            the 0x0107 builder FUN_142cc5b00) and it has a dozen exits before the send; the
-            slot validator FUN_140253980 is category-only and would pass a cap, so the gate
-            is one of the others (FUN_140397db0 is the level/stat/job check). Static reading
-            is not going to settle which one, so this run MEASURES it - launch with:
-              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,1417dd7e0:hits=12,140397db0:hits=12,142cc5b00:hits=12"
-            then double-click ONE hair-hat in the Deco tab, once, and say when. I read
-            client-patched\maplecw-hook.log:
-              WATCH 1417dd7e0 and 140397db0 fire, 142cc5b00 does not -> the requirement
-                         check refused it; I read that function for what it wants
-              WATCH 1417dd7e0 fires, 140397db0 does not -> an exit before the requirement
-                         check (the worn-slot / conflict path); I read from there
-              no WATCH at all -> the Deco tab's double-click never reaches the equip path
-                         for this item; the gate is in the inventory window itself
-              a message box appears -> say its text; it names the branch
-            (The three diagnostic watches the default probe carries are dropped for this
-            run; the two that keep the client alive are kept.)
+         i) THE HAIR-HATS - RENUMBERED, 2026-09-18. The gate was found by reading, not by
+            the watch run: the client's gender-from-id rule (FUN_140253130, the FOURTH digit)
+            reads 6 as FEMALE, so 1006910..1006912 were female-only caps, the body-part
+            resolver returned nothing for a male character, and the double-click handler
+            never called the equip path at all (which is also why FUN_1417dd7e0 was the wrong
+            function - it is the drag-from-a-worn-slot path; the double-click is
+            FUN_1417da2a0 behind FUN_142d44b20). No WZ key overrides the digit in this
+            build, so per the owner ("fix it in the WZ data instead of patching the client") the
+            three wear 1007910..1007912 now - digit 7, unisex, free. Hats already in a bag
+            are renumbered by the store on start. NEEDS the rebuilt client package (or
+            backport_install.py --install locally, done 2026-09-18 01:53).
+              double-click Aura / Linie / Lugner Hair (Hat) in the Deco tab on a MALE
+              character: it goes on, hair hidden under it                    -> DONE
+              goes on but the character's own hair shows through the hat -> vslot's
+                         modern H-tokens are ignored; say so, that is the next variant
+              still nothing, and no message box -> paste the bag line for the hat from
+                         world-ch0.log: if it still says 1006xxx the package is old
+              Linie only refuses a SECOND Linie hat: as designed (onlyEquip 1 in the WZ)
          j) NEW 2026-09-12 - THE FACE COUPONS OPEN THE DIALOG. "The face coupons from the
             backported collaboration items still does not work." No packet in any run: the
             Beauty Coupon dialog (the 0x0165 CONFIRM) opens only for ids in seven ranges read
@@ -2076,9 +2075,15 @@
           four weapons at 100 LP (was three hats). NEVER ON A SCREEN. Two things are [I]:
           the classic client drawing a modern pet (its animation set differs) and the
           weapon's inlined pixels.
-            1. Pets tab: the four at 1000, icons drawn WITH the purple "P" badge at the
-               bottom-right (Nexon's own CashItem_label/9, baked into the icon pixels,
-               2026-09-18); the same badge on the Cash-tab icon once bought -> fixed. No
+            1. Pets tab: the four at 1000, and EVERY pet's icon - all fifteen - drawn WITH
+               the purple "P" badge at the bottom-right (Nexon's own CashItem_label/9,
+               baked into the icon pixels, 2026-09-18: "every pet is now a Petite Luna
+               pet"); the same badge on the Cash-tab icon once bought -> fixed. And NO
+               "3 / 7 / 90 day(s)" line on any pet's shop tooltip (info/life is 0 on all
+               fifteen; the classic tooltip has no "Unlimited" wording, it just omits the
+               line) -> fixed. A days line -> the old archive. A summoned classic pet
+               that is INVISIBLE -> the 2026-09-14 "life 0" claim was right after all;
+               paste the item line and client-exit.log (f0c3010 says giantRate was it). No
                badge -> the format-2 canvas did not draw; paste "wz-dump cat
                ...Item\Pet\_Canvas\_Canvas_000.wz 5002828.img" info lines.
                Pet Equip: 14 rows at 100 -> fixed
@@ -4219,15 +4224,13 @@ function Show-TestPlan {
         Write-Host '      g) CASH EQUIPS + THE WEAPON COVER SURVIVE A RELOG - CONFIRMED on select' -ForegroundColor DarkGray
         Write-Host '         and in the field (2026-09-12). Nothing to test here.' -ForegroundColor DarkGray
         Write-Host '      h) HIMMEL''S CAPE - DONE (behind the body at z -2). Nothing to test.' -ForegroundColor DarkGray
-        Write-Host '      i) THE HAIR-HATS STILL DO NOT GO ON, and still NO 0x0107 - islot was' -ForegroundColor Yellow
-        Write-Host '         not the gate. The equip path FUN_1417dd7e0 has a dozen exits before'
-        Write-Host '         the 0x0107 builder; this run MEASURES which. Launch with:'
-        Write-Host '           powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,1417dd7e0:hits=12,140397db0:hits=12,142cc5b00:hits=12"' -ForegroundColor White
-        Write-Host '         then double-click ONE hair-hat in the Deco tab, once; say when.'
-        Write-Host '           1417dd7e0 + 140397db0 fire, 142cc5b00 not -> requirement check'
-        Write-Host '           1417dd7e0 fires, 140397db0 not -> an earlier exit; I read it'
-        Write-Host '           no WATCH at all -> the inventory window never reaches the path'
-        Write-Host '           a message box -> say its text; it names the branch'
+        Write-Host '      i) THE HAIR-HATS - RENUMBERED (2026-09-18). The client reads an equip' -ForegroundColor Yellow
+        Write-Host '         id''s 4th digit as gender and 6 = FEMALE, so 1006910..12 refused every'
+        Write-Host '         male character before any packet. They are 1007910..12 now (digit 7,'
+        Write-Host '         unisex); bags are renumbered on start. Needs the rebuilt client.'
+        Write-Host '           male char double-clicks a hair-hat: it goes on -> DONE' -ForegroundColor Green
+        Write-Host '           on, but own hair shows through -> vslot tokens ignored; say so' -ForegroundColor Yellow
+        Write-Host '           still nothing -> paste the hat''s bag line; 1006xxx = old package' -ForegroundColor Yellow
         Write-Host '      j) NEW - FACE COUPONS: no packet ever; the Beauty dialog opens only for' -ForegroundColor Yellow
         Write-Host '         2540xxxx (hair) and 2890xxx (face) + skins/androids, never 2897xxx.'
         Write-Host '         They wear 2890907..914 now (node, string, server, bag rename).'
@@ -5166,8 +5169,10 @@ function Show-TestPlan {
         Write-Host '            lists (Learned) and changes the pet WALKING to drops; say what moves' -ForegroundColor Green
         Write-Host '       COLLAB PETS + EVERY PET EQUIP (2026-09-17, installed; rebuild the client'
         Write-Host '         package). Pets tab: Lil Frieren/Fern/Stark/Ubel at 1000; Pet Equip:' -ForegroundColor Yellow
-        Write-Host '         all 10 hats + 4 weapons at 100; the pets'' icons carry the purple P' -ForegroundColor Yellow
-        Write-Host '         badge in the shop AND the bag -> fixed. Buy + summon Lil Frieren: it' -ForegroundColor Yellow
+        Write-Host '         all 10 hats + 4 weapons at 100; ALL 15 pets'' icons carry the purple P' -ForegroundColor Yellow
+        Write-Host '         badge (shop AND bag) and NO "N day(s)" tooltip line -> fixed.' -ForegroundColor Yellow
+        Write-Host '         A classic pet summoned INVISIBLE -> life 0 was it after all; paste.' -ForegroundColor Yellow
+        Write-Host '         Buy + summon Lil Frieren: it' -ForegroundColor Yellow
         Write-Host '         draws, tooltip lists 7 commands, answers "roll"/"angry"/"sleep"/"talk"' -ForegroundColor Yellow
         Write-Host '         with the right animation -> DONE; dies/invisible -> paste the item line.' -ForegroundColor Yellow
         Write-Host '         Equip its Staff (Deco tab) on it: draws on the pet -> the inline worked.' -ForegroundColor Yellow
