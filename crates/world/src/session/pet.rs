@@ -787,6 +787,17 @@ impl Session {
 
     /// The Cash-tab item re-sent at its slot with its `active` byte as `active` says and the
     /// pairing serial set. An Add at an occupied slot replaces what the client holds there.
+    /// **Mode 5, not mode 0.** Every call here re-sends an item that is already in the slot,
+    /// and a mode-0 add is what the client marks as NEW - the highlighted cell in the Cash
+    /// tab. The owner, 2026-09-18: *"Whenever I join the map for the first time, I get a new item
+    /// notification in my cash tab of my current summoned pet. If the item is not new, please
+    /// do not highlight it."* The rest of the bag is restored on field entry with mode 5 and
+    /// carries no mark; this one packet was the odd one out, sent as mode 0 since 2026-09-15.
+    /// Both modes go through the same reader and the same store
+    /// (`net::inventory::MODE_SET_QUIET` has the listing); mode 0 only adds the quest hook and
+    /// the before/after slot map that the NEW mark and the quick slot come from. **[I]** that
+    /// `CPet` re-reads the item's active byte from a mode-5 store the same as from a mode-0
+    /// one - it reads the bag row, not the packet; plan step 8 has the reading.
     fn pet_item_refresh(&self, chr: &net::opcode::Character, which: ActivePet, active: bool) -> Reply {
         let ActivePet { slot, item_id, pet_id } = which;
         let vitals = self.pet_vitals(Some(pet_id));
@@ -800,9 +811,9 @@ impl Session {
         );
         Reply {
             opcode: net::inventory::INVENTORY_OPERATION,
-            body: net::inventory::inventory_added(store::InventoryType::Cash as i8, slot as i16, &blob),
+            body: net::inventory::inventory_set_quiet(store::InventoryType::Cash as i8, slot as i16, &blob),
             what: format!(
-                "InventoryOperation: Cash slot {slot} re-sent as pet {item_id} #{pet_id} with active={} and its serial",
+                "InventoryOperation mode 5 (quiet, no NEW mark): Cash slot {slot} re-sent as pet {item_id} #{pet_id} with active={} and its serial",
                 u8::from(active)
             ),
         }

@@ -11431,6 +11431,10 @@ fn a_double_click_on_the_husky_summons_it_and_a_second_puts_it_away() {
     // then name 13, level 1, closeness 2, fullness 1, dateDead 8, attr 2, skill 2, life 4, attribute 2 = 35.
     assert_eq!(add.body[at + 27 + 35], 1, "the active byte");
     assert_eq!(&add.body[at + 6..at + 14], &net::pet::pet_serial(id, pet_of(&store, id, 5_000_006)).get().to_le_bytes(), "the pairing serial on the item");
+    // The owner, 2026-09-18: the re-sent pet item was the one cell in the Cash tab marked NEW on
+    // every field entry. It is a re-send of an item already there, so it is mode 5 like the
+    // rest of the restored bag - mode 0 is what earns the mark.
+    assert_eq!(add.body[7], net::inventory::MODE_SET_QUIET, "the pet re-send is quiet: no NEW mark");
     let last = out.last().unwrap();
     assert_eq!((last.opcode, last.body[0]), (net::inventory::INVENTORY_OPERATION, 1), "the request is closed last");
 
@@ -11441,6 +11445,7 @@ fn a_double_click_on_the_husky_summons_it_and_a_second_puts_it_away() {
     assert_eq!(again[0].opcode, net::pet::PET_ACTIVATED);
     assert_eq!(again[1].opcode, net::inventory::INVENTORY_OPERATION, "the item refresh CPet re-reads its state from");
     assert!(again[1].what.contains("active=1"), "and it says the pet is out");
+    assert_eq!(again[1].body[7], net::inventory::MODE_SET_QUIET, "quiet on field entry too - the cell is not new");
     // And the record's own pet body now says active - the bag's row, which carries the pet
     // id the active byte is keyed on since 2026-09-16.
     let blob = s.item_blob(&bag_pet(&store, id, 5_000_006));
