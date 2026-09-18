@@ -236,6 +236,20 @@ is Auto Move (`5190002`) THEN Expanded Auto Move (`5190003`); the box then rides
 wonderGrade 6 as before. `research/pet-vacuum-wondergrade-2026-09-16.md` §7. 2132 tests. Plan
 step 8 LOOT has the order.
 
+**2026-09-18 evening: another player's look change is redrawn IN PLACE - `0x0138`, gate opened
+by the hook.** The leave + enter worked and the owner measured its cost: *"a weird super brief
+character blink ... The regular maplestory does not have this behavior"*, and with a pet out
+*"the pet completely respawns and appear sad/hungry"* - the remote `CUser` and its pet are
+rebuilt, which is what that sequence is. `0x0138 UserAvatarModified` is the client's in-place
+update; its apply is behind a `je` after an always-zero stub (§4.2 of the beauty research,
+still right). `grap_stub::avatarmod` now nops that `je` (`142797ded`, two bytes, the function's
+one caller is the `0x0138` handler; the dress primitive behind it has five callers in the
+user-pool region, so it is the real one - `tools/callers.py`, [L]). The server sends ONE
+`0x0138` per look change - equip on/off, cash, hair, face, pet hat - and `--look-reenter`
+(`-LookReenter`) keeps the leave + enter as the fallback; `-NoAvatarModPatch` is the hook's
+off switch. **Never on a screen**; [I] is that the `user+0x1200` list the apply walks holds the
+drawn avatar. Plan TO(c) has the three readings and the fallback pair. `research/beauty` §8.2.
+
 **2026-09-18: a hair or face coupon redraws the player where they stand - `0x007C`, not a
 reload.** The owner: *"the player needs to enter a different map to see the hair or face updated on
 their character."* The 2026-09-12 handler had dropped the re-entry on the reading that the

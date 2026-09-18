@@ -391,29 +391,59 @@ impl Session {
     /// byte of the body.* The 2026-09-12 version of this function sent the enter alone and
     /// filed that as its [I]; the run settled it.
     ///
-    /// So the update is the pair the field already uses for a portal walk: `0x0225
-    /// UserLeaveField` (the client destroys its copy of this character), then `0x0224` with
-    /// the new look, then the pet companions again - the remote copy's pets belong to the
-    /// `CUser` the leave just destroyed, and a fresh sighting sends them after the spawn
-    /// (`broadcast::enter_field`), so this does exactly what a fresh sighting does. `0x0138`
-    /// applies nothing in this client (`research/naked-character.md`). The stored spawn is
-    /// refreshed so a later joiner gets the new look too.
+    /// The leave-then-enter did work, and it was measured the same evening as **a blink**:
+    /// *"a weird super brief character blink as it disappears and reappears on the map. The
+    /// regular maplestory does not have this behavior"*, and with a pet out, *"the pet
+    /// completely respawns and appear sad/hungry until moments later"* - the remote `CUser`
+    /// and its pet are destroyed and rebuilt, which is what that sequence is.
     ///
-    /// **[I]**: that the observer's copy re-created this way draws at the same spot with no
-    /// visible blink beyond one frame. Plan step TO(c) has the readings.
+    /// **So the default is `0x0138 UserAvatarModified`**, the client's own in-place update:
+    /// the character id and the compact look, which the handler applies to the copy it
+    /// already has. In the shipped image that apply sits behind a `je` that is always taken
+    /// (`research/beauty-2026-09-09.md` §4.2); the launcher's `grap_stub::avatarmod` patch
+    /// turns that jump into two nops, and every client goes through the launcher. On a client
+    /// launched with `avatarmod=off` the packet is a silent no-op, which is the old behaviour:
+    /// the copy updates at the next field entry.
+    ///
+    /// `Config::look_change_reenter` (`--look-reenter`) keeps the leave + enter + pet
+    /// sequence as the fallback. Either way the stored spawn is refreshed so a later joiner
+    /// gets the new look.
+    ///
+    /// **[I]**: that the patched apply lands on the drawn avatar. Plan step TO(c) has the
+    /// readings for both modes.
     pub(super) fn broadcast_look_change(&mut self, chr: &net::opcode::Character) {
         let Some(map) = self.bus().map_of(self.subscriber) else { return };
         let presence = self.presence(chr);
         self.bus().refresh_spawn(self.subscriber, presence.spawn.clone());
-        self.bus().publish(self.subscriber, map, presence.farewell, None);
-        self.bus().publish(self.subscriber, map, presence.spawn, None);
-        let pets = presence.companions.len();
-        for c in presence.companions {
-            self.bus().publish(self.subscriber, map, c, None);
+        if self.config.look_change_reenter {
+            self.bus().publish(self.subscriber, map, presence.farewell, None);
+            self.bus().publish(self.subscriber, map, presence.spawn, None);
+            let pets = presence.companions.len();
+            for c in presence.companions {
+                self.bus().publish(self.subscriber, map, c, None);
+            }
+            crate::server::log(&format!(
+                "   look change for character {} (hair {}, face {}): leave + enter + {pets} pet(s) \
+                 broadcast to field {map} (--look-reenter; the copy blinks and its pet respawns)",
+                chr.id, chr.hair, chr.face
+            ));
+            return;
         }
+        let modified = Reply {
+            opcode: net::opcode::USER_AVATAR_MODIFIED,
+            body: net::opcode::user_avatar_modified(chr),
+            what: format!(
+                "UserAvatarModified: character {} redressed in place - hair {}, face {}, {} worn. \
+                 Applied only by a client whose launcher opened the 0x0138 gate (avatarmod); a no-op elsewhere.",
+                chr.id,
+                chr.hair,
+                chr.face,
+                chr.equips.len()
+            ),
+        };
+        self.bus().publish(self.subscriber, map, modified, None);
         crate::server::log(&format!(
-            "   look change for character {} (hair {}, face {}): leave + enter + {pets} pet(s) \
-             broadcast to field {map} - a bare 0x0224 for an id already in the pool is a no-op",
+            "   look change for character {} (hair {}, face {}): one 0x0138 to field {map}, no leave, no enter, pet untouched",
             chr.id, chr.hair, chr.face
         ));
     }
@@ -1735,14 +1765,9 @@ mod tests {
         assert!(worn.iter().any(|e| e.slot == crate::session::pet::PET_EQUIP_WORN_SLOT && e.item_id == 1_802_006), "{worn:?}");
 
         let heard: Vec<u16> = watcher.tick(2_000).into_iter().map(|r| r.opcode).collect();
-        let leave = heard.iter().position(|&o| o == net::userpool::USER_LEAVE_FIELD);
-        let look = heard.iter().position(|&o| o == net::userpool::USER_ENTER_FIELD);
-        let pet = heard.iter().position(|&o| o == net::pet::PET_ACTIVATED);
-        assert!(
-            matches!((leave, look, pet), (Some(l), Some(e), Some(p)) if l < e && e < p),
-            "leave, then the look with the hat, then the pet behind it: {heard:x?}"
-        );
-        assert_eq!(heard.iter().filter(|&&o| o == net::pet::PET_ACTIVATED).count(), 1, "the pet once, as a companion: {heard:x?}");
+        // 2026-09-18, evening: one 0x0138 in place - no leave, no enter, and the pet is NOT
+        // re-sent, because the observer's copy of the owner (and its pet) is never destroyed.
+        assert_eq!(heard, vec![net::opcode::USER_AVATAR_MODIFIED], "one in-place redress and nothing else: {heard:x?}");
         // And the announced look now carries the hat at body slot 14.
         let chr = owner.claimed_character().unwrap();
         let look_bytes = net::opcode::avatar_look(&chr);

@@ -8790,26 +8790,49 @@ fn a_hair_change_is_broadcast_to_the_other_clients_without_a_reload() {
 
     let seen = them.collect_mail();
     // The owner, 2026-09-18, two clients side by side: a bare re-sent 0x0224 drew nothing on the
-    // other client - the pool ignores an id it already has (research/user-enter-field.md).
-    // So the observer gets a LEAVE for this one character, then the ENTER with the new look.
+    // other client - the pool ignores an id it already has (research/user-enter-field.md) -
+    // and the leave+enter that followed drew it WITH a blink. So the default is now the
+    // client's own in-place update: one 0x0138 naming the changer, carrying the new look.
     let ops: Vec<u16> = seen.iter().map(|r| r.opcode).collect();
-    let leave = ops.iter().position(|&o| o == net::userpool::USER_LEAVE_FIELD).expect("a 0x0225 first: {seen:?}");
-    let enter = ops.iter().position(|&o| o == net::userpool::USER_ENTER_FIELD).expect("then the 0x0224: {seen:?}");
-    assert!(leave < enter, "leave before enter, or the enter is a no-op: {ops:x?}");
-    assert_eq!(ops.iter().filter(|&&o| o == net::userpool::USER_ENTER_FIELD).count(), 1);
-    assert_eq!(u32::from_le_bytes(seen[leave].body[..4].try_into().unwrap()), my_id, "the leave names the changer, nobody else");
-    // The new hair is somewhere in that body - the avatar look carries it.
+    assert_eq!(ops, vec![net::opcode::USER_AVATAR_MODIFIED], "one 0x0138 and nothing else: {ops:x?}");
+    assert_eq!(u32::from_le_bytes(seen[0].body[..4].try_into().unwrap()), my_id, "it names the changer");
+    assert_eq!(&seen[0].body[4..], &net::opcode::avatar_look(&me.claimed_character().unwrap())[..], "then the compact look, byte for byte");
     assert!(
-        seen[enter].body.windows(4).any(|w| u32::from_le_bytes(w.try_into().unwrap()) == 42_600),
-        "the broadcast carries the new hair id"
+        seen[0].body[4..].windows(4).any(|w| u32::from_le_bytes(w.try_into().unwrap()) == 42_600),
+        "the look carries the new hair id"
     );
+}
+
+/// **`--look-reenter` is the fallback**: the leave, the enter with the new look, then the
+/// pet, for that one character - what a fresh sighting gets. It works on a client whose
+/// avatarmod patch is off, at the price of the blink and the pet respawn the owner measured.
+#[test]
+fn with_look_reenter_a_hair_change_is_a_leave_then_an_enter_for_the_other_clients() {
+    let (store, config, fields, account) = shared_channel(0, 30);
+    let config = Arc::new(Config { look_change_reenter: true, ..(*config).clone() });
+    let (mut me, my_id) = join_channel(&store, &config, &fields, account, "Stylist");
+    me.on_field_entered();
+    let (mut them, _) = join_channel(&store, &config, &fields, account, "Bystander");
+    them.on_field_entered();
+    me.collect_mail();
+
+    let slot = store.add_item(my_id, store::InventoryType::Use, &store::Item::bundle(2_543_143, 1), 1).unwrap()[0].slot;
+    let mut body = slot.to_le_bytes().to_vec();
+    body.extend_from_slice(&2_543_143u32.to_le_bytes());
+    me.on_beauty_coupon_confirm(&body);
+
+    let seen = them.collect_mail();
+    let ops: Vec<u16> = seen.iter().map(|r| r.opcode).collect();
+    assert_eq!(ops, vec![net::userpool::USER_LEAVE_FIELD, net::userpool::USER_ENTER_FIELD], "leave then enter, no 0x0138: {ops:x?}");
+    assert_eq!(u32::from_le_bytes(seen[0].body[..4].try_into().unwrap()), my_id, "the leave names the changer, nobody else");
+    assert!(seen[1].body.windows(4).any(|w| u32::from_le_bytes(w.try_into().unwrap()) == 42_600), "the enter carries the new hair");
 }
 
 /// **Putting on or taking off any equip reaches the other client at once.** The owner,
 /// 2026-09-18: *"Whenever a client is changing their equipment, either a cash equipment or a
 /// regular equipment, it is not being immediately reflected on other clients."* Only the
-/// pet-hat slot was watched. Now any change to the worn set sends the observers the leave,
-/// the enter with the new look, and nothing else; a move that leaves the worn set as it was
+/// pet-hat slot was watched. Now any change to the worn set sends the observers one
+/// `0x0138` with the new look and nothing else; a move that leaves the worn set as it was
 /// (bag to bag) sends them nothing.
 #[test]
 fn a_worn_change_is_re_announced_to_the_map() {
@@ -8827,11 +8850,9 @@ fn a_worn_change_is_re_announced_to_the_map() {
     let announced = |them: &mut Session, what: &str| {
         let seen = them.collect_mail();
         let ops: Vec<u16> = seen.iter().map(|r| r.opcode).collect();
-        let leave = ops.iter().position(|&o| o == net::userpool::USER_LEAVE_FIELD);
-        let enter = ops.iter().position(|&o| o == net::userpool::USER_ENTER_FIELD);
-        assert!(matches!((leave, enter), (Some(l), Some(e)) if l < e), "{what}: leave then enter: {ops:x?}");
-        assert_eq!(ops.len(), 2, "{what}: and nothing else: {ops:x?}");
-        seen.into_iter().find(|r| r.opcode == net::userpool::USER_ENTER_FIELD).unwrap().body
+        assert_eq!(ops, vec![net::opcode::USER_AVATAR_MODIFIED], "{what}: one in-place 0x0138 and nothing else: {ops:x?}");
+        assert_eq!(u32::from_le_bytes(seen[0].body[..4].try_into().unwrap()), my_id, "{what}: it names the changer");
+        seen.into_iter().next().unwrap().body
     };
     let wears = |body: &[u8], slot: u8, id: u32| body.windows(5).any(|w| w[0] == slot && w[1..5] == id.to_le_bytes());
 
