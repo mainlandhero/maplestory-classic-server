@@ -487,8 +487,30 @@ def main():
             fh.write("# %s: modern-only leaves the classic client would look up and not find\n" % it["name"])
             for leaf in ["chatBalloon", "nameTag", "setItemID", "sweepForDrop"]:
                 fh.write("info/%s\tdel\n" % leaf)
+            # The commands added for the animations the modern table never plays (`roll`,
+            # `angry`) - the owner, 2026-09-17. An interact entry in the pet's own image, shaped
+            # exactly like Nexon's 21: the action packet carries the entry's index and the
+            # client plays its `act`. The words and lines land in PetCommand.img /
+            # PetDialog.img under the same `cN` key (step 4), which is where dump_pets.py
+            # joins them for the server.
+            # Nexon's acts corrected to their own lines (backport_signature_style.py ACT_FIXES):
+            # "sleep" played the poop animation and "talk" the sleep one.
+            for fix in it.get("act_fixes", []):
+                fh.write("# %s (%s): success %s -> %s, fail -> %s\n" % (fix["key"], fix["word"], fix["was"][0], fix["success"], fix["fail"]))
+                fh.write("interact/%d/success/0/act\tstr\t%s\n" % (fix["index"], fix["success"]))
+                fh.write("interact/%d/fail/0/act\tstr\t%s\n" % (fix["index"], fix["fail"]))
+            for t in it.get("extra_commands", []):
+                base = "interact/%d" % t["index"]
+                fh.write("# %s: %s -> %s\n" % (t["key"], t["words"], t["act"]))
+                fh.write("%s/command\tstr\t%s\n" % (base, t["key"]))
+                for leaf, value in [("inc", t["inc"]), ("prob", t["prob"]), ("l0", 1), ("l1", 30)]:
+                    fh.write("%s/%s\tint\t%d\n" % (base, leaf, value))
+                for kind, act, count in [("success", t["act"], len(t["success"])), ("fail", t["fail_act"], len(t["fail"]))]:
+                    fh.write("%s/%s/0/act\tstr\t%s\n" % (base, kind, act))
+                    for i in range(count):
+                        fh.write("%s/%s/0/%d\tstr\t%s_%s%d\n" % (base, kind, i, t["key"], kind[0], i + 1))
         add("Item/Pet", "patch\t%d.img\t%s" % (it["id"], tsv))
-        print("  pet      %8d  %s" % (it["id"], it["name"]))
+        print("  pet      %8d  %s (+%d commands)" % (it["id"], it["name"], len(it.get("extra_commands", []))))
     for pet_id, pet_name in pets + collab_pets:
         tsv = os.path.join(args.build_dir, "pet-%07d.tsv" % pet_id)
         with open(tsv, "w", encoding="utf-8", newline="\n") as fh:

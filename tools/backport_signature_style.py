@@ -152,6 +152,59 @@ PET_DESC = {
 }
 PET_DESC_TAIL = "\nChanneling the power of moonlight, this pet can collect #citems across a larger area than most other pets#."
 
+# Animations a modern pet has that its own `interact` table never plays. The owner, 2026-09-17:
+# *"If the pets have more animations, make sure our pet chat commands support them and those
+# commands are called out in the pet item description."* Read off the four images: `roll`
+# (3 frames) and `angry` (1..8 frames) are real animations no command reaches; `sit` is a
+# UOL to `rest0` (the "sit" command already plays it); `hang`, `eat`, `fly`, `hungry`,
+# `move`, `jump`, `stand0/1`, `rest0`, `dung` are the client's own (rope, food, flight,
+# hunger, walking) or already commanded. A new command is an `interact` entry in the pet
+# IMAGE - the action packet carries only the entry's index and the client plays that
+# entry's `act` from its own data - so each becomes a `patch` row set in the installer, with
+# its words in `PetCommand.img` and its lines in `PetDialog.img` like the shipped ones. The
+# refusal animation is `what` (every collab pet has it). One level band, 1..30.
+EXTRA_TRICKS = [
+    {"act": "roll", "fail_act": "what", "words": "roll|rollover|spin|tumble", "prob": 70, "inc": 1,
+     "success": ["Here I go!", "Wheee!"], "fail": ["Not right now.", "...Must I?"]},
+    {"act": "angry", "fail_act": "what", "words": "angry|grr|mad|hmph", "prob": 70, "inc": 1,
+     "success": ["Hmph!", "Grr...!"], "fail": ["I'm not angry.", "Why would I be?"]},
+]
+# (`dung` is a UOL alias of `rest0` on these pets - there is no poop animation to command.)
+SYSTEM_ANIMATIONS = {"stand0", "stand1", "rest0", "move", "jump", "hang", "eat", "fly", "hungry"}
+
+# Two things Nexon's modern table gets wrong for these pets, read off `PetDialog.img` [L]:
+#
+# * `slap|no|bad|don't` (c5..c8) and `iloveyou|mylove|likeyou` (c9..c12) have words and an
+#   act (`cry`, `love`) but NO lines - `c5_s1`.. are simply absent - and `tools/dump_pets.py`
+#   drops a command that has nothing to say, so the pet would ignore both words. Lines are
+#   supplied here, keyed by the command's first word.
+# * `sleep|nap|sleepy|gotobed` (c13..c15) says "Yes, sleep. / Good night!" and plays `dung`
+#   (an alias of `rest0` here - the pet just sits, with a real 4-frame `sleep` unused);
+#   `talk|chat|say|bark` (c16..c18) says "What should we talk about?"
+#   and plays `sleep`, refusing with `hungry`. The lines are what the player reads, so the
+#   act is corrected to match them; the refusal becomes `what` like the others. [I] that the
+#   lines, not the acts, carry Nexon's intent - the alternative is a pet that sits when told
+#   to sleep and sleeps when told to talk.
+FALLBACK_LINES = {
+    "slap": {"success": ["...I'm sorry.", "Ouch..."], "fail": ["Hmph.", "I don't want to."]},
+    "iloveyou": {"success": ["I love you too!", "Me too!"], "fail": ["...Not now.", "How embarrassing."]},
+}
+ACT_FIXES = {
+    "sleep": {"success": "sleep", "fail": "what"},
+    "talk": {"success": "chat", "fail": "what"},
+}
+
+
+def command_summary(words_by_key):
+    """`Commands: sit, slap, iloveyou, ...` - the first word of each distinct word set, in the
+    order the pet's `cN` keys give them. This is what goes in the tooltip."""
+    seen = []
+    for key in sorted(words_by_key, key=lambda k: int(k[1:])):
+        first = words_by_key[key].split("|")[0].strip()
+        if first and first not in seen:
+            seen.append(first)
+    return "Commands: " + ", ".join(seen)
+
 CONSUME_NAMES = [
     # the sets
     "Frieren Outfit Set", "Frieren Outfit Set (Ringlets)", "Frieren Outfit Set (Sleep)",
@@ -424,21 +477,65 @@ def main():
         if not words or not lines:
             raise SystemExit("%s (%d): PetDialog has %d command words and %d lines" % (name, pet_id, len(words), len(lines)))
         pet_info = {k: v for k, v in node.get("info", {}).items() if not (isinstance(v, dict) and v.get("_canvas"))}
+        # The animations no interact entry plays, and the extra commands that will.
+        interact = node.get("interact", {})
+        played = {o.get("act") for e in interact.values() if isinstance(e, dict)
+                  for kind in ("success", "fail") for o in e.get(kind, {}).values() if isinstance(o, dict)}
+        animations = {k for k, v in node.items() if isinstance(v, dict) and k not in ("info", "interact", "food", "slang")
+                      and any(kk.isdigit() for kk in v)}
+        # Nexon's own entries: lines for the two commands that have none, and the acts that
+        # contradict their own lines - FALLBACK_LINES / ACT_FIXES above.
+        act_fixes = []
+        for index, e in sorted(interact.items(), key=lambda kv: int(kv[0])):
+            key = e.get("command")
+            first = (words.get(key) or "").split("|")[0]
+            if not first:
+                continue  # c19..c21: no words at all, dead entries Nexon shipped
+            if first in FALLBACK_LINES and not any(k.startswith(key + "_") for k in lines):
+                for kind, kl in (("success", "s"), ("fail", "f")):
+                    for i, line in enumerate(FALLBACK_LINES[first][kind], 1):
+                        lines["%s_%s%d" % (key, kl, i)] = line
+                    # the entry names two line slots per outcome, as Nexon's others do
+            if first in ACT_FIXES:
+                fix = ACT_FIXES[first]
+                if fix["success"] not in node or fix["fail"] not in node:
+                    raise SystemExit("%s (%d): no %s/%s animation for the act fix" % (name, pet_id, fix["success"], fix["fail"]))
+                act_fixes.append({"index": int(index), "key": key, "word": first, "success": fix["success"], "fail": fix["fail"],
+                                  "was": (e.get("success", {}).get("0", {}).get("act"), e.get("fail", {}).get("0", {}).get("act"))})
+                played |= {fix["success"], fix["fail"]}
+        unplayed = sorted(animations - played - SYSTEM_ANIMATIONS)
+        next_index = max(int(k) for k in interact) + 1
+        extra = []
+        for trick in EXTRA_TRICKS:
+            if trick["act"] not in animations or trick["fail_act"] not in animations:
+                raise SystemExit("%s (%d) has no %s/%s animation for the extra command" % (name, pet_id, trick["act"], trick["fail_act"]))
+            index = next_index + len(extra)
+            key = "c%d" % (index + 1)
+            words[key] = trick["words"]
+            for i, line in enumerate(trick["success"], 1):
+                lines["%s_s%d" % (key, i)] = line
+            for i, line in enumerate(trick["fail"], 1):
+                lines["%s_f%d" % (key, i)] = line
+            extra.append({"index": index, "key": key, **trick})
+        still = [a for a in unplayed if a not in {t["act"] for t in EXTRA_TRICKS}]
+        if still:
+            raise SystemExit("%s (%d): animations with no command and no EXTRA_TRICKS entry: %s" % (name, pet_id, still))
         info.update({
             "id": pet_id, "name": name, "heroic_twins": twins, "info": pet_info,
-            "interact": len(node.get("interact", {})), "commands": len(words), "lines": len(lines),
+            "interact": len(interact), "commands": len(words), "lines": len(lines),
+            "animations": sorted(animations), "extra_commands": extra, "act_fixes": act_fixes,
         })
         manifest["pets"].append(info)
         strings["Pet"]["%d" % pet_id] = {
             "name": name,
-            "desc": PET_DESC[name] + PET_DESC_TAIL,
+            "desc": PET_DESC[name] + PET_DESC_TAIL + "\n" + command_summary(words),
             "descD": "Your pet has turned into a doll. You can revive it with the Water of Life.",
         }
         strings["PetCommand"]["%d" % pet_id] = words
         strings["PetDialog"]["%d" % pet_id] = lines
         total += 1
-        print("  %-8s %8d  %-32s interact=%d words=%d lines=%d twins=%s" % (
-            "pet", pet_id, name, info["interact"], len(words), len(lines), twins))
+        print("  %-8s %8d  %-32s interact=%d+%d words=%d lines=%d twins=%s" % (
+            "pet", pet_id, name, info["interact"], len(extra), len(words), len(lines), twins))
 
     # The pet weapons: `Character/PetEquip/<id>.img`, whose canvases outlink into
     # `Character/PetEquip/_Canvas/...` - a tree the CLASSIC client does not have (its own ten
@@ -519,11 +616,12 @@ def write_markdown(manifest, path):
                 it["id"], it["type"], it["name"], it["prop_archive"], it["outlinks"],
                 ", ".join(i.rsplit("/", 1)[1] for i in it["canvas_images"])))
     lines += ["", "## The collaboration pets (%d) and their weapons (%d)" % (len(manifest.get("pets", [])), len(manifest.get("pet_equips", []))), "",
-              "| id | name | property archive | interact entries | words | lines | Heroic twin (not taken) |", "|---|---|---|---|---|---|---|"]
+              "| id | name | property archive | interact entries (and the commands added for animations none reached) | words | lines | Heroic twin (not taken) |", "|---|---|---|---|---|---|---|"]
     for it in manifest.get("pets", []):
-        lines.append("| %d | %s | `%s` | %d | %d | %d | %s |" % (
-            it["id"], it["name"], it["prop_archive"], it["interact"], it["commands"], it["lines"],
-            ", ".join(str(t) for t in it["heroic_twins"]) or "-"))
+        lines.append("| %d | %s | `%s` | %d (+%d added: %s) | %d | %d | %s |" % (
+            it["id"], it["name"], it["prop_archive"], it["interact"], len(it.get("extra_commands", [])),
+            ", ".join("%s -> %s" % (t["words"].split("|")[0], t["act"]) for t in it.get("extra_commands", [])) or "-",
+            it["commands"], it["lines"], ", ".join(str(t) for t in it["heroic_twins"]) or "-"))
     lines += ["", "| id | name | fits pet | property archive | outlinks | pixels (inlined by the installer) |", "|---|---|---|---|---|---|"]
     for it in manifest.get("pet_equips", []):
         lines.append("| %d | %s | %d | `%s` | %d | %s |" % (
