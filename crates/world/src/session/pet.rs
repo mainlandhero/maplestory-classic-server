@@ -56,7 +56,10 @@ use super::*;
 
 /// The worn slot a pet's equip goes to, as the Deco tab numbers it: the Blue Top Hat went
 /// `Deco slot 1 -> -114` (`world-ch0.log` 2026-09-15 02:59:25, `0x0107`), i.e. cash worn slot
-/// 114 = body slot 14 plus the cash base. One pet, one slot. **[L]**
+/// 114 = body slot 14 plus the cash base. One pet, one slot. **[L]** Since 2026-09-18 the
+/// move handler watches the whole worn set rather than this one slot, so only the pet-hat
+/// test names it.
+#[cfg(test)]
 pub(super) const PET_EQUIP_WORN_SLOT: u8 = 114;
 
 /// One of this character's pets, as the session handles it: where its item is, what it is,
