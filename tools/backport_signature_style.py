@@ -134,6 +134,24 @@ CASH_NAMES = [
     "\u00dcbel Outfit Set Coupon", "Himmel Outfit Set Coupon", "Aura Outfit Set Coupon",
     "L\u00fcgner Outfit Set Coupon", "Linie Outfit Set Coupon",
 ]
+# The four collaboration pets and their four pet weapons. The owner, 2026-09-17: *"backport these
+# pets into our build as well as these pet equipment."* Each name resolves to TWO ids in the
+# modern strings - a regular-world pet (5002828..5002831, weapons 1803148..1803151) and a
+# Heroic-world twin (5004047..5004050, weapons 1803247..1803250, `isRebootPetitePetEquip`).
+# The lower id is taken; the weapon is the one whose pet node is keyed by the chosen pet's
+# id, which is what makes it fit that pet and no other. `desc` is rewritten: the modern text
+# advertises a "Lil Frieren: Beyond Journey's End" set skill this client has no mechanism
+# for, and the sentence that stays is the one about the moonlight vacuum, which is true here.
+PET_NAMES = ["Lil Frieren", "Lil Fern", "Lil Stark", "Lil \u00dcbel"]
+PET_EQUIP_NAMES = ["Lil Frieren's Staff", "Lil Fern's Staff", "Lil Stark's Axe", "Lil \u00dcbel's Staff"]
+PET_DESC = {
+    "Lil Frieren": "This #cLil Frieren# looks just like Frieren.",
+    "Lil Fern": "This #cLil Fern# looks just like Fern.",
+    "Lil Stark": "This #cLil Stark# looks just like Stark.",
+    "Lil \u00dcbel": "This #cLil \u00dcbel# looks just like \u00dcbel.",
+}
+PET_DESC_TAIL = "\nChanneling the power of moonlight, this pet can collect #citems across a larger area than most other pets#."
+
 CONSUME_NAMES = [
     # the sets
     "Frieren Outfit Set", "Frieren Outfit Set (Ringlets)", "Frieren Outfit Set (Sleep)",
@@ -379,10 +397,92 @@ def main():
                 total += 1
                 print("  %-8s %8d  %-42s script=%s" % (label, item_id, name, spec.get("script")))
 
+    # The pets: `Item/Pet/<id>.img` (seven digits, no padding - the classic pets are named
+    # the same way), pixels in `Item/Pet/_Canvas/<id>.img` which the classic client has a
+    # tree for, so the installer copies both. The command words and the lines the pet says
+    # live in the modern `String/PetDialog.img/<id>` together (`c1` = words, `c1_s1` = a
+    # line); the classic client keeps the words in `PetCommand.img` and the lines in
+    # `PetDialog.img`, and `tools/dump_pets.py` reads them from there, so they are split.
+    pet_strings = string_names(src, "Pet.img")
+    pet_dialog = json.loads(run("cat", os.path.join(src, "String", "String_000.wz"), "PetDialog.img"))
+    manifest["pets"] = []
+    strings["Pet"], strings["PetCommand"], strings["PetDialog"] = {}, {}, {}
+    pet_tree = tree("Item/Pet")
+    chosen_pets = {}
+    for name in PET_NAMES:
+        ids = ids_named(pet_strings, name, allow_many=True)
+        pet_id, twins = ids[0], ids[1:]
+        chosen_pets[name] = pet_id
+        dest = os.path.join(out, "wz", "Item", "Pet", "%d" % pet_id)
+        node, info, links = dump_prop(pet_tree, "%d.img" % pet_id, dest, name, src)
+        targets |= links
+        dialog = pet_dialog.get("%d" % pet_id)
+        if not isinstance(dialog, dict):
+            raise SystemExit("%s (%d) has no PetDialog.img entry in the modern client" % (name, pet_id))
+        words = {k: v for k, v in dialog.items() if re.fullmatch(r"c\d+", k) and isinstance(v, str)}
+        lines = {k: v for k, v in dialog.items() if k not in words and isinstance(v, str)}
+        if not words or not lines:
+            raise SystemExit("%s (%d): PetDialog has %d command words and %d lines" % (name, pet_id, len(words), len(lines)))
+        pet_info = {k: v for k, v in node.get("info", {}).items() if not (isinstance(v, dict) and v.get("_canvas"))}
+        info.update({
+            "id": pet_id, "name": name, "heroic_twins": twins, "info": pet_info,
+            "interact": len(node.get("interact", {})), "commands": len(words), "lines": len(lines),
+        })
+        manifest["pets"].append(info)
+        strings["Pet"]["%d" % pet_id] = {
+            "name": name,
+            "desc": PET_DESC[name] + PET_DESC_TAIL,
+            "descD": "Your pet has turned into a doll. You can revive it with the Water of Life.",
+        }
+        strings["PetCommand"]["%d" % pet_id] = words
+        strings["PetDialog"]["%d" % pet_id] = lines
+        total += 1
+        print("  %-8s %8d  %-32s interact=%d words=%d lines=%d twins=%s" % (
+            "pet", pet_id, name, info["interact"], len(words), len(lines), twins))
+
+    # The pet weapons: `Character/PetEquip/<id>.img`, whose canvases outlink into
+    # `Character/PetEquip/_Canvas/...` - a tree the CLASSIC client does not have (its own ten
+    # pet hats keep their pixels inline, `01802006.img`). They are dumped and their outlinks
+    # verified like everything else, but they are kept OUT of `canvas_images`: the installer
+    # cannot copy a canvas image into a tree that is not there, and instead pulls the pixels
+    # into the property image (`wz-dump build`'s `inline`). Each weapon's one pet node names
+    # the pet it fits; the one keyed by the chosen (non-Heroic) pet is the one taken.
+    manifest["pet_equips"] = []
+    pe_tree = tree("Character/PetEquip")
+    pe_canvas_part = None
+    for name, pet_name in zip(PET_EQUIP_NAMES, PET_NAMES):
+        want_pet = "%d" % chosen_pets[pet_name]
+        picked = None
+        for item_id in ids_named(eqp, name, allow_many=True):
+            part, prop = pe_tree.cat("%08d.img" % item_id)
+            if prop is not None and want_pet in prop:
+                picked = item_id
+                break
+        if picked is None:
+            raise SystemExit("%s: no PetEquip image is keyed by pet %s" % (name, want_pet))
+        _, _, desc = eqp[picked]
+        dest = os.path.join(out, "wz", "PetEquip", "%08d" % picked)
+        node, info, links = dump_prop(pe_tree, "%08d.img" % picked, dest, name, src)
+        targets |= links
+        canvas_images = sorted({i for (t, i, _) in links})
+        info.update({"id": picked, "type": "PetEquip", "name": name, "desc": desc, "pet": chosen_pets[pet_name],
+                     "info": {k: v for k, v in node.get("info", {}).items() if not (isinstance(v, dict) and v.get("_canvas"))}})
+        manifest["pet_equips"].append(info)
+        strings["ClassicWorld"].setdefault("PetEquip", {})[str(picked)] = {"name": name, **({"desc": desc} if desc else {})}
+        total += 1
+        print("  %-8s %8d  %-32s fits pet %s, pixels in %s" % ("petequip", picked, name, want_pet, ", ".join(canvas_images)))
+
     print("exporting the %d canvas images every outlink resolves to" % len({(t, i) for t, i, _ in targets}))
     by_image, missing = export_canvases(src, out, targets)
+    # `Character/PetEquip` canvases are verified above but not listed for copying - see the
+    # pet weapons. The installer inlines them from the modern archive directly.
     manifest["canvas_images"] = {
         "%s/_Canvas/%s" % (t, i): sorted(paths) for (t, i), paths in sorted(by_image.items())
+        if t != "Character/PetEquip"
+    }
+    manifest["inline_canvas_images"] = {
+        "%s/_Canvas/%s" % (t, i): sorted(paths) for (t, i), paths in sorted(by_image.items())
+        if t == "Character/PetEquip"
     }
     manifest["unresolved_outlinks"] = ["%s -> %s" % m for m in missing]
     with open(os.path.join(out, "manifest.json"), "w", encoding="utf-8") as fh:
@@ -418,6 +518,17 @@ def write_markdown(manifest, path):
             lines.append("| %d | %s | %s | `%s` | %d | %s |" % (
                 it["id"], it["type"], it["name"], it["prop_archive"], it["outlinks"],
                 ", ".join(i.rsplit("/", 1)[1] for i in it["canvas_images"])))
+    lines += ["", "## The collaboration pets (%d) and their weapons (%d)" % (len(manifest.get("pets", [])), len(manifest.get("pet_equips", []))), "",
+              "| id | name | property archive | interact entries | words | lines | Heroic twin (not taken) |", "|---|---|---|---|---|---|---|"]
+    for it in manifest.get("pets", []):
+        lines.append("| %d | %s | `%s` | %d | %d | %d | %s |" % (
+            it["id"], it["name"], it["prop_archive"], it["interact"], it["commands"], it["lines"],
+            ", ".join(str(t) for t in it["heroic_twins"]) or "-"))
+    lines += ["", "| id | name | fits pet | property archive | outlinks | pixels (inlined by the installer) |", "|---|---|---|---|---|---|"]
+    for it in manifest.get("pet_equips", []):
+        lines.append("| %d | %s | %d | `%s` | %d | %s |" % (
+            it["id"], it["name"], it["pet"], it["prop_archive"], it["outlinks"],
+            ", ".join(i.rsplit("/", 1)[1] for i in it["canvas_images"])))
     lines += ["", "## Canvas images exported (%d)" % len(manifest["canvas_images"]), ""]
     for img, paths in manifest["canvas_images"].items():
         lines.append("- `%s` - %d referenced paths" % (img, len(paths)))

@@ -354,24 +354,32 @@ mod tests {
         // 9 more are the Signature Style Collection rows tools/backport_install.py writes
         // into the Special tab (2026-09-10): the box and eight set coupons, SN 120000000..8.
         // ...and 8 more are the pets the classic shop never listed (2026-09-13): SN 160000003..10.
-        assert_eq!(t.len(), 176, "159 classic sale rows + 9 backported Special-tab rows + 8 pet rows");
-        for (sn, pet) in [(160_000_003u32, 5_000_000u32), (160_000_010, 5_000_010)] {
-            let row = t.get(sn).expect("a pet row the installer wrote");
-            assert_eq!((row.item_id, row.price, row.period_days, row.on_sale), (pet, 100, 0, true), "permanent, 100 LP, on sale");
+        // ...and 4 more are the collaboration pets (2026-09-17): SN 160000011..14 at 1000 LP,
+        // and 11 more the pet equips the shipped table left out - seven classic hats and the
+        // four collaboration weapons - SN 160100003..13 at 100 LP.
+        assert_eq!(t.len(), 191, "159 classic + 9 Special-tab + 12 pet + 11 pet-equip rows");
+        for (sn, item, price) in [
+            (160_000_003u32, 5_000_000u32, 100), (160_000_010, 5_000_010, 100),
+            (160_000_011, 5_002_828, 1_000), (160_000_014, 5_002_831, 1_000),
+            (160_100_003, 1_802_000, 100), (160_100_010, 1_803_148, 100), (160_100_013, 1_803_151, 100),
+        ] {
+            let row = t.get(sn).expect("a row the installer wrote");
+            assert_eq!((row.item_id, row.price, row.period_days, row.on_sale), (item, price, 0, true), "SN {sn}: permanent, on sale, the owner's price");
         }
         assert_eq!(t.problems, 0, "every row parses");
         let special = t.get(120_000_000).expect("the Signature Style Collection is on sale");
         // The box wears 5681599 in the classic client (family 568 opens on double-click;
         // 522 does not) - crate::signaturestyle::COLLECTION, and backport_install.py's BOX_ID.
-        assert_eq!((special.item_id, special.price, special.on_sale), (crate::signaturestyle::COLLECTION, 8_000, true));
+        assert_eq!((special.item_id, special.price, special.on_sale), (crate::signaturestyle::COLLECTION, 800, true));
 
         // The price column is NX and the observed set is tiny. If a price ever lands outside
         // it, the column has moved and the whole table is decoding shifted.
         for c in t.rows.values() {
-            // 2000 and 8000 are the two Special-tab prices the owner set on 2026-09-10; still a
-            // closed set, so a shifted column fails here rather than reading as plausible.
+            // 200 and 800 are the two Special-tab prices (the owner, 2026-09-17; 2000/8000 from
+            // 2026-09-10 until then) and 1000 the collaboration pets'; still a closed set, so
+            // a shifted column fails here rather than reading as plausible.
             assert!(
-                matches!(c.price, 0 | 100 | 700 | 1000 | 2000 | 8000),
+                matches!(c.price, 0 | 100 | 200 | 700 | 800 | 1000),
                 "{} ({}) priced {} - the price column has moved",
                 c.sn,
                 c.name,
