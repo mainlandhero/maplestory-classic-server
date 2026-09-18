@@ -57,6 +57,12 @@ impl Session {
         out.extend(self.announce_field_entry());
         // The summoned pet, if any - the pools it lived in were just rebuilt. session/pet.rs.
         out.extend(self.pet_entry_replies(&chr));
+        // The party window, once, for a member who was in a party when they last left: seats
+        // persist across a disconnect. session/party.rs.
+        if !self.party_window_sent {
+            self.party_window_sent = true;
+            out.extend(self.party_window_on_login());
+        }
         let empty: Vec<net::opcode::FieldNpc> = Vec::new();
         out.extend(self.config.npcs.get(&chr.map_id).unwrap_or(&empty)
             .iter()

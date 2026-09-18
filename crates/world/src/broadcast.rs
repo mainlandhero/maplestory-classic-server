@@ -507,6 +507,13 @@ impl Bus {
         true
     }
 
+    /// Whether `character` is playing on this channel right now - has a mailbox with a
+    /// presence. The party's successor choice asks this (and the hub's directory for the
+    /// other channels) so a crown never goes to someone who is offline.
+    pub fn character_online(&self, character: u32) -> bool {
+        self.lock().boxes.values().any(|m| m.presence.as_ref().is_some_and(|p| p.character == character))
+    }
+
     /// **Which of `characters` are playing on `map` right now.** Order preserved, duplicates
     /// in the input preserved, so a caller can keep a party's seat order.
     ///

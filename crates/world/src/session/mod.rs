@@ -354,6 +354,10 @@ pub struct Session {
     /// The party has already been told this connection went away (log out does it before
     /// the socket closes; `Drop` does it for a crash), so `Drop` does not say it twice.
     party_told_of_disconnect: bool,
+    /// The party window has been pushed once this session, at the first field entry: a seat
+    /// persists across a disconnect, so a returning member's window is rebuilt from the
+    /// registry. Once, not per portal. session/party.rs `party_window_on_login`.
+    party_window_sent: bool,
 
     /// Session milliseconds of the last thing the player did: moved, attacked, or was hit.
     ///
@@ -616,6 +620,7 @@ impl Session {
             pet_settle_pending: false,
             handing_over: false,
             party_told_of_disconnect: false,
+            party_window_sent: false,
             banner_shown: None,
             last_activity_ms: 0,
             next_regen_ms: None,

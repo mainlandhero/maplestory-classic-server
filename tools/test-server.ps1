@@ -747,22 +747,28 @@
               still changes and a yellow line says the item could not be placed.
 
      TW. A PARTY LEADER WHO LEAVES THE GAME HANDS THE PARTY TO ITS HIGHEST-LEVEL MEMBER
-         (2026-09-18). The owner: "when a party leader disconnects from the game, the party
-         leader needs to be handed over to the next highest level player automatically."
-         Until now nothing told the party about a disconnect at all: a leader who dropped
-         stayed leader, offline. Now a log out, a crash or a dropped socket takes the
-         character out of the party; if they led, the remaining member with the highest
-         level (ties: earliest joined) leads. A CHANNEL CHANGE is a handover and changes
-         nothing. Through the hub, so every channel agrees. Two clients minimum, three
-         to see the level rule:
+         (2026-09-18). The owner: "the party leader needs to be handed over to the next
+         highest level player automatically", then: "Only the party leader should be
+         handed off. The disconnected client should remain in the party. The party should
+         persist even if all members have disconnected. If the leader position cannot be
+         handed off to an online player, then the entire party should be disbanded."
+         So: a log out, a crash or a dropped socket keeps the character's SEAT; if they
+         led, the crown goes to the highest-level member who is ONLINE (ties: earliest
+         joined); nobody online -> the party is disbanded. A CHANNEL CHANGE changes
+         nothing. A member who logs back in gets the party window rebuilt at the login
+         field entry (0x0D - the first time this packet lands at login; watch it).
+         Through the hub, so every channel agrees. Three clients to see the level rule:
            1. The owner (leader) + Tester2 (lower level) + Tester3 (higher level) in a party;
-              The owner logs out: Tester3 becomes leader (crown moves in both windows), the owner
-              is gone from the list -> fixed. Tester2 leader -> join order won; paste
-              the "party: character N is leaving the game" line (it names the pick)
+              The owner logs out: Tester3 becomes leader (crown moves in the two windows),
+              The owner STAYS in both lists -> fixed. Tester2 leader -> join order won; paste
+              the "party: character N, leader of party" line (it names the pick)
            2. The owner closes the client instead (crash path): the same
-           3. the new leader changes channel: still leader after, still in the party
-              -> as designed. Gone from the party -> the handover flag did not hold;
-              paste the Change Channel lines from world-chN.log
+           3. The owner logs back in: their party window is there, Tester3 leads, all three
+              listed -> fixed. No window -> the 0x0D at login did not draw; paste it.
+              Client dies at login -> the 0x0D in the entry batch; paste client-exit.log
+           4. Tester3 changes channel: still leader after, all three still listed
+           5. Tester2 and the owner log out, then Tester3 (the leader) logs out: nobody online
+              to hand to -> the party is gone; log back in: no window -> as designed
 
      TQ. ACROSS CHANNELS: THE WORLD HUB ON 8483. The owner, 2026-09-14: party chat "should be
          broadcasted to all party members across channels", "do not use the database as
@@ -4059,9 +4065,11 @@ function Show-TestPlan {
         Write-Host '        "gained" line, in the Equip tab -> fixed'
         Write-Host ''
         Write-Host '  TW. A LEADER WHO LEAVES THE GAME HANDS THE PARTY TO ITS HIGHEST-LEVEL MEMBER.' -ForegroundColor Magenta
-        Write-Host '      Log out or close the client as leader: the highest-level member leads,'
-        Write-Host '      you are gone from the list -> fixed. A channel change keeps everything.'
-        Write-Host '        join order won instead -> paste the "leaving the game" line' -ForegroundColor Yellow
+        Write-Host '      Log out or close the client as leader: the highest-level ONLINE member'
+        Write-Host '      leads and you STAY in the list; log back in: your window is rebuilt at'
+        Write-Host '      login (0x0D, first time at login - watch it) -> fixed. Leader logs out'
+        Write-Host '      with nobody online -> the party is gone. A channel change: nothing.'
+        Write-Host '        join order won / no window on relogin -> paste the lines' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  TQ. ACROSS CHANNELS: THE WORLD HUB (maplecw-chat, 8483, chat-hub.log).' -ForegroundColor Magenta
         Write-Host '      Every channel dials it. Party requests are echoed to every'

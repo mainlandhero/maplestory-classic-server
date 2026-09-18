@@ -116,21 +116,25 @@ impl super::Session {
         self.party_outcome_replies(actor, &described, outcome)
     }
 
-    /// **This connection is going away for good: take the character out of its party, and if
-    /// it led, hand the party to the highest-level member left.**
+    /// **This connection is going away for good.** The character keeps their seat; if they
+    /// led, the crown goes to the highest-level member who is still online, and if there is
+    /// no such member the party is disbanded.
     ///
     /// The owner, 2026-09-18: *"when a party leader disconnects from the game, the party leader
-    /// needs to be handed over to the next highest level player automatically."* Until now
-    /// nothing called `Parties::disconnect` at all - a leader who dropped stayed leader,
-    /// offline, and the party could neither invite nor be led.
+    /// needs to be handed over to the next highest level player automatically"*, then *"Only
+    /// the party leader should be handed off. The disconnected client should remain in the
+    /// party. The party should persist even if all members have disconnected. If the leader
+    /// position cannot be handed off to an online player, then the entire party should be
+    /// disbanded."* Until this, nothing told the registry about a disconnect at all.
     ///
-    /// The successor is chosen HERE, from the store, because the registry knows no levels and
-    /// the hub keeps no database: the remaining member with the highest level, ties to the
-    /// earliest joined (the party's own member order). It rides as
+    /// The successor is chosen HERE because the registry knows neither levels nor presence and
+    /// the hub keeps no database: among the other members, those online on this channel
+    /// (`Bus::character_online`) or on another (the hub directory, `link.everyone()`), the
+    /// highest level from the store, ties to the earliest joined. `None` when nobody
+    /// qualifies, which the registry reads as "disband". It rides as
     /// [`crate::party::Request::Disconnect`] through `run_party_request`, so with a hub every
     /// channel applies the same request in the same order and answers from the echo, and
-    /// without one it is applied here - exactly as a Leave would be. The registry re-checks
-    /// the successor is a member; a stale pick falls back to join order rather than failing.
+    /// without one it is applied here - exactly as a Leave would be.
     ///
     /// Called from `on_log_out` and, for a crash or a dropped socket, from `Drop`; the flag
     /// makes the second call a no-op. A channel change never calls it (`handing_over`). The
@@ -143,27 +147,54 @@ impl super::Session {
         let Some(me) = self.claimed_character().map(|c| c.id) else { return };
         let Some(party) = self.fields.parties().party_of(me).cloned() else { return };
         self.party_told_of_disconnect = true;
-        let successor = if party.leader == me {
-            let mut best: Option<(u32, u32)> = None; // (level, id); the first maximum wins a tie
-            for &id in party.members.iter().filter(|&&c| c != me) {
-                let level = self.store.character_brief(id).ok().flatten().map(|b| b.level).unwrap_or(0);
-                if best.map_or(true, |(l, _)| level > l) {
-                    best = Some((level, id));
-                }
+        if party.leader != me {
+            crate::server::log(&format!(
+                "   party: character {me} is leaving the game and keeps their seat in party {}; the leader is {}",
+                party.id, party.leader
+            ));
+            return;
+        }
+        let hub_online: std::collections::HashSet<u32> = crate::link::current()
+            .map(|l| l.everyone().into_iter().map(|(id, _)| id).collect())
+            .unwrap_or_default();
+        let mut best: Option<(u32, u32)> = None; // (level, id); the first maximum wins a tie
+        for &id in party.members.iter().filter(|&&c| c != me) {
+            let online = self.bus().character_online(id) || hub_online.contains(&id);
+            if !online {
+                continue;
             }
-            best.map(|(_, id)| id)
-        } else {
-            None
-        };
+            let level = self.store.character_brief(id).ok().flatten().map(|b| b.level).unwrap_or(0);
+            if best.map_or(true, |(l, _)| level > l) {
+                best = Some((level, id));
+            }
+        }
+        let successor = best.map(|(_, id)| id);
         crate::server::log(&format!(
-            "   party: character {me} is leaving the game{}; party {} is told",
+            "   party: character {me}, leader of party {}, is leaving the game - {}",
+            party.id,
             match successor {
-                Some(s) => format!(" as leader of party {} - leadership goes to {s}, its highest-level member", party.id),
-                None => String::new(),
-            },
-            party.id
+                Some(s) => format!("leadership goes to {s}, its highest-level member online; {me} keeps a seat"),
+                None => "no other member is online, so the party is disbanded".to_string(),
+            }
         ));
         let _ = self.run_party_request(me, crate::party::Request::Disconnect { successor });
+    }
+
+    /// **A member who logs back in gets their party window.** A seat persists across a
+    /// disconnect now, so the window has to be rebuilt from the registry at the login field
+    /// entry - the same `0x0D` push a rights change or a leader change uses. Nothing when
+    /// the character is in no party.
+    pub(super) fn party_window_on_login(&self) -> Vec<Reply> {
+        let Some(me) = self.claimed_character().map(|c| c.id) else { return Vec::new() };
+        let Some(party) = self.fields.parties().party_id_of(me) else { return Vec::new() };
+        let Some(block) = self.party_block(party) else { return Vec::new() };
+        vec![Reply {
+            opcode: net::party::PARTY_RESULT,
+            body: net::party::party_state(Some(&block)),
+            what: format!(
+                "PartyResult PARTY_STATE (0x0D): character {me} logged in still a member of party {party} - the window rebuilt from the registry"
+            ),
+        }]
     }
 
     /// The packets for one applied request - the refusal, or the effects.
