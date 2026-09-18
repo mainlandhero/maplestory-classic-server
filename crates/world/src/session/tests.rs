@@ -8652,14 +8652,20 @@ fn the_drops_go_to_the_top_damager_and_not_to_whoever_landed_the_last_hit() {
     assert_eq!(owners, vec![helper_id], "killer {killer_id} owns nothing here");
 }
 
-/// **An expired drop fades on the OWNER's screen, not on whichever session happened to tick.**
+/// **An expired drop fades on the OWNER's screen whichever session happened to tick - and on
+/// every other screen on the map.**
 ///
 /// The drop table is shared by every connection on the channel and every one of them sweeps,
-/// so before this the first to tick removed the drop and took the `0x046F` - the owner went on
-/// drawing an item that no longer existed, and a bystander was handed a leave packet for an
-/// object its pool never held. Neither is visible from one screen.
+/// so once the first to tick removed the drop and took the `0x046F` for itself: the owner went
+/// on drawing an item that no longer existed. Then the fade went to the owner alone, and a
+/// party member or a bystander who had been shown the drop kept drawing it (the owner, 2026-09-18).
+/// Now the fade goes to the drop's whole map: the owner reads it from their mailbox, and so
+/// does the sweeper on ITS next tick (`collect_mail` runs before the sweep, so never the same
+/// tick). A client that was never shown the id ignores the leave, as it ignores a movement
+/// packet for a mob it never held - the pick-up leave has gone to the whole field on that
+/// reasoning since 2026-09-14.
 #[test]
-fn an_expired_drop_fades_for_its_owner_and_not_for_the_session_that_swept_it() {
+fn an_expired_drop_fades_for_its_owner_and_for_the_session_that_swept_it() {
     let (store, config, fields, account) = shared_channel(1, 30);
     let (mut sweeper, _) = join_channel(&store, &config, &fields, account, "Sweeper");
     let (mut owner, owner_id) = join_channel(&store, &config, &fields, account, "Owner");
@@ -8690,9 +8696,15 @@ fn an_expired_drop_fades_for_its_owner_and_not_for_the_session_that_swept_it() {
     assert_eq!(
         count_of(&swept, net::drops::DROP_LEAVE_FIELD),
         0,
-        "the sweeping session was never shown this drop and must not be told it faded: {swept:?}"
+        "the sweep posts to mailboxes, and this tick's mail was collected before it ran: {swept:?}"
     );
     assert_eq!(fields.with_drops(SHARED_MAP, |d| d.len()), 0, "but it IS gone from the floor");
+    let next = sweeper.tick(crate::drops::DROP_LIFETIME_MS + 1_500);
+    assert_eq!(
+        count_of(&next, net::drops::DROP_LEAVE_FIELD),
+        1,
+        "the sweeper is on the map, so it is told too - its client ignores an id it never held: {next:?}"
+    );
 
     let mail = owner.tick(crate::drops::DROP_LIFETIME_MS + 2_000);
     let fades: Vec<&Reply> =
