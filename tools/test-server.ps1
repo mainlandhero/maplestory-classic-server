@@ -2081,10 +2081,11 @@
                pet"); the same badge on the Cash-tab icon once bought, and NOT on the pet
                walking on the field (the badge was on a canvas two modern pets reuse as a
                frame; only icon/iconRaw carry it now) -> fixed. THIS NEEDS
-               "python toolsackport_install.py --install" WITH THE CLIENT CLOSED - the
+               "python tools\backport_install.py --install" WITH THE CLIENT CLOSED - the
                2026-09-18 evening install was refused because the client was open, and
                the archives on disk are the earlier build (no roll/angry, badge on the
-               field pet). And NO
+               field pet). Installed 2026-09-18 02:10 with the client closed, read back:
+               all four declare pickupItem alone, c22/c23 present. And NO
                "3 / 7 / 90 day(s)" line on any pet's shop tooltip (info/life is 0 on all
                fifteen; the classic tooltip has no "Unlimited" wording, it just omits the
                line) -> fixed. A days line -> the old archive. A summoned classic pet
@@ -2093,6 +2094,15 @@
                badge -> the format-2 canvas did not draw; paste "wz-dump cat
                ...Item\Pet\_Canvas\_Canvas_000.wz 5002828.img" info lines.
                Pet Equip: 14 rows at 100 -> fixed
+            1b. THE COLLAB PETS' SKILL LINE (the owner, 2026-09-18, Lil Fern's shop tooltip read
+               "Skill: Meso Magnet, Item Pouch, Auto Move, Auto Buff"): "have them match
+               existing pets ... only Meso Magnet and Item Pouch at default purchase time."
+               Nexon's image declares sweepForDrop AND autoBuff; the installer now strips
+               both (the classic eleven never had them). Hover Lil Fern in the Pets tab:
+               "Skill: Meso Magnet, Item Pouch" and nothing more -> fixed. Still four ->
+               the old archive (the same install that carries roll/angry). "Auto Buff"
+               alone -> the strip missed autoBuff; paste "wz-dump cat
+               ...Item\Pet\Pet_000.wz 5002829.img" info lines.
             2. buy Lil Frieren, summon: it draws, walks, name tag, no crash -> DONE. Its
                tooltip ends "Commands: sit, slap, iloveyou, sleep, talk, roll, angry". Type
                "roll", then "angry": it rolls / looks angry (the two animations Nexon's
@@ -5177,9 +5187,11 @@ function Show-TestPlan {
         Write-Host '         package). Pets tab: Lil Frieren/Fern/Stark/Ubel at 1000; Pet Equip:' -ForegroundColor Yellow
         Write-Host '         all 10 hats + 4 weapons at 100; ALL 15 pets'' icons carry the purple P' -ForegroundColor Yellow
         Write-Host '         badge (shop AND bag, NOT on the walking pet) and NO "N day(s)" line' -ForegroundColor Yellow
-        Write-Host '         -> fixed. NEEDS backport_install.py --install WITH THE CLIENT CLOSED:' -ForegroundColor Red
-        Write-Host '         the last install was refused (client open); disk has the older build.' -ForegroundColor Red
+        Write-Host '         -> fixed. Installed 2026-09-18 02:10 with the client closed (983e79f).'
         Write-Host '         A classic pet summoned INVISIBLE -> life 0 was it after all; paste.' -ForegroundColor Yellow
+        Write-Host '         Hover Lil Fern in the Pets tab: "Skill: Meso Magnet, Item Pouch" and' -ForegroundColor Yellow
+        Write-Host '         NOTHING more -> fixed (2026-09-18; Nexon declared Auto Move + Auto' -ForegroundColor Yellow
+        Write-Host '         Buff, both stripped). Four skills -> old archive; "Auto Buff" -> paste.' -ForegroundColor Yellow
         Write-Host '         Buy + summon Lil Frieren: it' -ForegroundColor Yellow
         Write-Host '         draws, tooltip lists 7 commands, answers "roll"/"angry"/"sleep"/"talk"' -ForegroundColor Yellow
         Write-Host '         with the right animation -> DONE; dies/invisible -> paste the item line.' -ForegroundColor Yellow
