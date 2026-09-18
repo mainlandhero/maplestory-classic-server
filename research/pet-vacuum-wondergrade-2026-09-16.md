@@ -126,3 +126,27 @@ Two findings:
   then Expanded Auto Move, at which point `pet_wonder_grade` sets 6 and `0x0198` widens the box.
   **[D]** on which bit exactly the gate tests (Auto Move 0x04 by elimination: the pet had Item
   Pouch and was still refused); the run confirms the order works with the corrected bits.
+
+## 8. 2026-09-17: the in-range vacuum is FREE; the movement skills are what is paid
+
+The owner refined the split: *"vacuuming loot within a certain range of the pet (Petite Luna)
+should be free. Auto move (the pet automatically moving towards the loot to pick up items)
+should be a skill that players have to purchase. Expanded auto move (longRange) which
+increases the amount of automatic distance that pets should be able to roam and move towards
+currently dropped loot should also remain a skill."* And: *"The only default skills it should
+have is Meso Magnet and Item Pouch."*
+
+So the wonderGrade box and the two `sweepForDrop`/`longRange` skills are **different features**,
+and the earlier tie (§7: vacuum keyed on the bought Expanded Auto Move) was wrong:
+
+* **`wonderGrade 6` is unconditional.** Every pet item carries it (`net::bag::pet_item_with_state`
+  writes `PET_WONDER_GRADE_VACUUM` outright, no longer `pet_wonder_grade(skills)`, which is
+  removed). That is the in-range suck-up box AND the client's "Petite Luna" label, both free.
+* **The two movement skills stay paid**, as the `sweepForDrop`/`longRange` learned bits
+  (`5190002`/`5190003`). The client acts on them for the pet's *walking* toward drops; that is
+  separate from the box, and whether this build animates it is still the open question a run
+  answers.
+* **The default tooltip is Meso Magnet + Item Pouch only.** The installer (step 4c) declares
+  only `pickupItem`; a learned skill still lists as *(Learned)* without its WZ key, so a
+  purchased Auto Move / Expanded Auto Move shows once bought. Needs `backport_install.py
+  --install` to regenerate `Pet_000.wz`.

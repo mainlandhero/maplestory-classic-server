@@ -10293,6 +10293,80 @@ fn a_sack_summons_a_mob_and_grants_this_client_control_of_it() {
     assert!(s.pending_suspend_resets.is_empty(), "nothing to reset for a plain spawn");
 }
 
+/// **A Leaf Point Exchange Coupon credits the ACCOUNT's Leaf Points and is used up.** The owner,
+/// 2026-09-17. The client sends a Use-tab scripted consumable on `0x0114` (the dispatcher
+/// read in `crate::leafcoupons`), so the coupon is found in the Use tab, not the Cash tab;
+/// the wallet moves before the coupon leaves; the notice names the amount and the balance;
+/// two coupons of different sizes add up; and a coupon the slot does not hold is refused with
+/// nothing consumed and nothing credited.
+#[test]
+fn a_leaf_point_coupon_credits_the_account_and_is_used_up() {
+    let (mut s, store, id) = gm_session();
+    let account = s.claimed().unwrap().account_id;
+    assert_eq!(store.cash_wallet(account).unwrap().maple_points, 0);
+    let slot_1k = store.add_item(id, store::InventoryType::Use, &store::Item::bundle(2_430_004, 1), 1).unwrap()[0].slot;
+    let slot_100k = store.add_item(id, store::InventoryType::Use, &store::Item::bundle(2_430_008, 1), 1).unwrap()[0].slot;
+    let use_tab = |store: &Arc<Store>| -> Vec<u32> {
+        store.bag(id).unwrap().items_in(store::InventoryType::Use).map(|i| i.item.item_id).collect()
+    };
+
+    // The 1,000: credited, gone, said.
+    let out = s.on_use_cash_item(&use_cash_item_body(slot_1k, 2_430_004));
+    assert_eq!(store.cash_wallet(account).unwrap().maple_points, 1_000, "the account's Leaf Points");
+    assert_eq!(use_tab(&store), vec![2_430_008], "the 1,000 coupon is used up; the other stays");
+    let notice = out.iter().find(|r| r.opcode == net::notice::CHAT_NOTICE).expect("the line");
+    assert!(notice.what.contains("1,000 Leaf Points") && notice.what.contains("now have 1,000"), "{}", notice.what);
+    assert!(out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "the slot is cleared on screen");
+
+    // Then the 100,000, on top.
+    s.on_use_cash_item(&use_cash_item_body(slot_100k, 2_430_008));
+    assert_eq!(store.cash_wallet(account).unwrap().maple_points, 101_000);
+    assert!(use_tab(&store).is_empty());
+
+    // A coupon the slot does not hold: refused, answered, nothing moves.
+    let out = s.on_use_cash_item(&use_cash_item_body(slot_1k, 2_430_007));
+    assert!(out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE), "answered: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert_eq!(store.cash_wallet(account).unwrap().maple_points, 101_000, "nothing credited");
+    assert!(!out.iter().any(|r| r.what.contains("received")), "and not said to be");
+}
+
+/// **A Leaf Point Exchange Coupon credits the ACCOUNT's Leaf Points and is used up.** The owner,
+/// 2026-09-17. The client sends a Use-tab scripted consumable on `0x0114` (the dispatcher
+/// read in `crate::leafcoupons`), so the coupon is found in the Use tab, not the Cash tab;
+/// the wallet moves before the coupon leaves; the notice names the amount and the balance;
+/// two coupons of different sizes add up; and a coupon the slot does not hold is refused with
+/// nothing consumed and nothing credited.
+#[test]
+fn a_leaf_point_coupon_credits_the_account_and_is_used_up() {
+    let (mut s, store, id) = gm_session();
+    let account = s.claimed().unwrap().account_id;
+    assert_eq!(store.cash_wallet(account).unwrap().maple_points, 0);
+    let slot_1k = store.add_item(id, store::InventoryType::Use, &store::Item::bundle(2_430_004, 1), 1).unwrap()[0].slot;
+    let slot_100k = store.add_item(id, store::InventoryType::Use, &store::Item::bundle(2_430_008, 1), 1).unwrap()[0].slot;
+    let use_tab = |store: &Arc<Store>| -> Vec<u32> {
+        store.bag(id).unwrap().items_in(store::InventoryType::Use).map(|i| i.item.item_id).collect()
+    };
+
+    // The 1,000: credited, gone, said.
+    let out = s.on_use_cash_item(&use_cash_item_body(slot_1k, 2_430_004));
+    assert_eq!(store.cash_wallet(account).unwrap().maple_points, 1_000, "the account's Leaf Points");
+    assert_eq!(use_tab(&store), vec![2_430_008], "the 1,000 coupon is used up; the other stays");
+    let notice = out.iter().find(|r| r.opcode == net::notice::CHAT_NOTICE).expect("the line");
+    assert!(notice.what.contains("1,000 Leaf Points") && notice.what.contains("now have 1,000"), "{}", notice.what);
+    assert!(out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "the slot is cleared on screen");
+
+    // Then the 100,000, on top.
+    s.on_use_cash_item(&use_cash_item_body(slot_100k, 2_430_008));
+    assert_eq!(store.cash_wallet(account).unwrap().maple_points, 101_000);
+    assert!(use_tab(&store).is_empty());
+
+    // A coupon the slot does not hold: refused, answered, nothing moves.
+    let out = s.on_use_cash_item(&use_cash_item_body(slot_1k, 2_430_007));
+    assert!(out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE), "answered: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert_eq!(store.cash_wallet(account).unwrap().maple_points, 101_000, "nothing credited");
+    assert!(!out.iter().any(|r| r.what.contains("received")), "and not said to be");
+}
+
 /// **The box hands out all eight Outfit Set Coupons, and a set coupon hands out its set.**
 /// The owner, 2026-09-10: *"instead of obtaining 1 at random rates, we give them all of the
 /// sets."* The box is consumed, the eight land in the Cash tab, and opening Frieren's puts
@@ -11529,16 +11603,16 @@ fn a_pet_skill_item_sets_the_bit_and_is_used_up() {
     );
 }
 
-/// **Expanded Auto Move is the vacuum, and it is bought.** The owner, 2026-09-16: *"longRange
-/// belongs to a Pet Skill that the clients have to purchase and activate. If we already send
-/// that for free, we need to tie it to the pet skill."* The client's own test for the wide
-/// pickup box is the pet item's `wonderGrade == 6` (`FUN_14038a5b0`, `FUN_140374c80`), read
-/// from the item body's `u16` after `giantRate`. So: a fresh Husky's item says 0 and sweeps
-/// the walk-over box; the moment the Expanded Auto Move item is used, the re-sent item says
-/// 6 and the pet is put away and back out so `CPet::Init` re-reads it. And the box itself
-/// rides `0x0198` after every SetField, because the client's copy is `(0,0,0,0)` until told.
+/// **The in-range vacuum is free: every pet's item is `wonderGrade 6`, and the `0x0198` box
+/// rides every SetField.** The owner, 2026-09-17: *"vacuuming loot within a certain range of the pet
+/// (Petite Luna) should be free. Auto move ... should be a skill ... Expanded auto move
+/// (longRange) ... should also remain a skill."* So the box is not gated on any purchase: a
+/// fresh Husky reads 6 at the wonderGrade field (byte 69 with the serial riding, 61 + 8), and
+/// buying Expanded Auto Move sets its skill bit for the pet's *movement* without touching the
+/// grade. The box's own bytes ride `0x0198` after every SetField, because the client's copy is
+/// `(0,0,0,0)` until told.
 #[test]
-fn expanded_auto_move_bought_turns_the_pets_wonder_grade_to_six_and_the_box_rides_every_set_field() {
+fn the_vacuum_is_free_and_the_box_rides_every_set_field() {
     let (mut s, store, id) = gm_session();
     store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
     store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_190_003, 1), 2).unwrap();
@@ -11547,12 +11621,13 @@ fn expanded_auto_move_bought_turns_the_pets_wonder_grade_to_six_and_the_box_ride
     let pet_id = pet_of(&store, id, 5_000_006);
     let serial = Some(net::pet::pet_serial(id, pet_id));
 
-    // Before: Item Pouch only, wonderGrade 0 - byte 69 with the serial riding (61 + 8).
+    // A fresh pet: Item Pouch only, but already wonderGrade 6 - the vacuum is free.
     let pet = bag_pet(&store, id, 5_000_006);
     let blob = s.item_blob_with_cash_sn(&pet, serial);
     assert_eq!(&blob[54..56], &net::bag::PET_SKILL_ITEM_POUCH.to_le_bytes(), "born with Item Pouch alone");
-    assert_eq!(&blob[69..71], &0u16.to_le_bytes(), "wonderGrade 0: the walk-over box");
+    assert_eq!(&blob[69..71], &net::bag::PET_WONDER_GRADE_VACUUM.to_le_bytes(), "wonderGrade 6 from the start: the free Petite Luna vacuum");
 
+    // Buying Expanded Auto Move sets the movement bit; the grade is unchanged (still 6).
     let slot = cash_slot_of(&store, id, 5_190_003);
     let out = s.handle(&use_pet_item_body(slot, 5_190_003, id, pet_id, None));
     assert_eq!(
@@ -11561,13 +11636,9 @@ fn expanded_auto_move_bought_turns_the_pets_wonder_grade_to_six_and_the_box_ride
     );
     let pet = bag_pet(&store, id, 5_000_006);
     let blob = s.item_blob_with_cash_sn(&pet, serial);
-    assert_eq!(&blob[69..71], &6u16.to_le_bytes(), "wonderGrade 6: the 0x0198 box");
-    // The re-sent item in the reply carries the same six.
-    let resent = out.iter().find(|r| r.opcode == net::inventory::INVENTORY_OPERATION && r.what.contains("re-sent as pet")).expect("the pet item goes back out");
-    let at = resent.body.windows(2).rposition(|w| w == 6u16.to_le_bytes()).expect("a 6 in the body");
-    assert!(at > 40, "the six sits in the pet tail, not the header: {at}");
+    assert_eq!(&blob[69..71], &net::bag::PET_WONDER_GRADE_VACUUM.to_le_bytes(), "still 6 - the movement skill does not change the vacuum grade");
     let summons: Vec<u8> = out.iter().filter(|r| r.opcode == net::pet::PET_ACTIVATED).map(|r| r.body[8]).collect();
-    assert_eq!(summons, vec![0, 1], "put away and back out, so CPet::Init re-reads the grade");
+    assert_eq!(summons, vec![0, 1], "put away and back out, so CPet::Init re-reads the learned skill");
 
     // The box: after every SetField, 36 bytes, the near box first. A warp is one SetField;
     // the field table has to know the map or !map refuses rather than strand the character.

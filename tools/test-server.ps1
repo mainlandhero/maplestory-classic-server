@@ -2048,28 +2048,46 @@
         Tester2 sees the Husky, no crash). Every item below left a packet in world-ch0.log and
         each is answered now; none has been on a screen. As the owner with the Husky out, Tester2
         watching:
-          LOOT, AND THE VACUUM - REWRITTEN 2026-09-16 EVENING. The afternoon's WZ trio reached
-          the client and did nothing (you saw it: walk-over only). Decompiled: the pickup box
-          is keyed on the pet ITEM's wonderGrade == 6, fed by 0x0198; sweepForDrop/longRange
-          never reach it. You: "longRange belongs to a Pet Skill the clients have to purchase."
-          So: no pet is born with Auto Move / Expanded Auto Move any more (Item Pouch only);
-          the item's wonderGrade is 6 once Expanded Auto Move (5190003) is bought; 0x0198
-          carries the box after every SetField. NO client rebuild needed for this one.
-            a. fresh Husky (or one that only had the free bits): tooltip shows Expanded
-               Auto Move NOT learned, and it takes drops only by walking onto them -> as
-               designed now. Still sweeping from afar -> the grade leaked; paste bytes 61..63
-               of its item ("pet item" line in world-ch0.log)
-            b. FIRST use Auto Move (5190002), THEN Expanded Auto Move (5190003): the client
-               refuses Expanded on its own ("...a pet that has the auto-loot function") - it
-               is a chain, Auto Move must be learned first (2026-09-16 evening, the bits were
-               scrambled and are fixed now). After BOTH: tooltip says Expanded Auto Move
-               (Learned), the pet blinks out and back; kill a snail ~200 px away:
-                 the drop flies to the pet with no walk, lands in the bag -> DONE; say the
-                       farthest distance that still works (the box is 600 x 590 around it)
-                 (Learned) but still walk-over only -> the box did not take: paste the
-                       PetPickupRange line after your SetField and the pet item bytes
-                 "unregistered" in the tooltip -> the WZ keys are missing from THIS client's
-                       package (backport_install.py --install) - a different failure
+          LOOT, AND THE VACUUM - REWRITTEN 2026-09-17. The in-range vacuum (Petite Luna) is
+          FREE on every pet: the pet ITEM carries wonderGrade 6 always, which is the wide
+          pickup box (0x0198, fed after every SetField) AND the "Petite Luna" designation the
+          tooltip shows. Auto Move (5190002) and Expanded Auto Move (5190003) are PAID skills
+          for the pet's WALKING toward drops, not the box. Default declared skills are Meso
+          Magnet + Item Pouch only (installer 4c no longer writes sweepForDrop/longRange) -
+          NEEDS a client rebuild: python toolsackport_install.py --install (client closed).
+            a. a FRESH Husky, no skills bought: tooltip shows only Meso Magnet + Item Pouch
+               and "Petite Luna". Kill a snail ~200 px away: the drop flies to the pet, no
+               walk, lands in the bag -> DONE; say the farthest distance that still works
+               (the box is 600 x 590). Tooltip lists Expanded Auto Move / Auto Move / Ignore
+               Item -> the WZ still declares them: rebuild the client (backport --install).
+               No suck-up at range -> paste the PetPickupRange line and the item bytes 61..63.
+            b. buy Auto Move (5190002), then Expanded Auto Move (5190003) - a chain, Expanded
+               is refused until Auto Move is learned. Each then lists as (Learned). What they
+               change on screen is the pet WALKING to drops; say what you see move.
+          LEAF POINT EXCHANGE COUPONS (2026-09-17). The owner: "when you use one of these items,
+          it gives the player who used them the appropriate amount of Leaf Points in their
+          account." 2430004..2430008 = 1,000 / 5,000 / 10,000 / 50,000 / 100,000. They are
+          scripted consumables in the USE tab; the client's double-click dispatcher sends
+          them on 0x0114 (read off the listing, NEVER YET ON A WIRE), the same 10-byte body
+          the Cash-tab coupons use. The points go on the ACCOUNT's cash wallet.
+            1. !item 2430004, double-click it in the Use tab: yellow "You received 1,000
+               Leaf Points. You now have N Leaf Points.", the coupon gone -> fixed. Open the
+               Cash Shop: the Leaf Point balance is N -> fixed
+            2. nothing happens and the coupon stays -> paste the "<- 0x...." line the click
+               produced from world-chN.log: that is the opcode it really sends. If NO line
+               at all, the click never left the client (say so - no server fix reaches it)
+          LEAF POINT EXCHANGE COUPONS (2026-09-17). The owner: "when you use one of these items,
+          it gives the player who used them the appropriate amount of Leaf Points in their
+          account." 2430004..2430008 = 1,000 / 5,000 / 10,000 / 50,000 / 100,000. They are
+          scripted consumables in the USE tab; the client's double-click dispatcher sends
+          them on 0x0114 (read off the listing, NEVER YET ON A WIRE), the same 10-byte body
+          the Cash-tab coupons use. The points go on the ACCOUNT's cash wallet.
+            1. !item 2430004, double-click it in the Use tab: yellow "You received 1,000
+               Leaf Points. You now have N Leaf Points.", the coupon gone -> fixed. Open the
+               Cash Shop: the Leaf Point balance is N -> fixed
+            2. nothing happens and the coupon stays -> paste the "<- 0x...." line the click
+               produced from world-chN.log: that is the opcode it really sends. If NO line
+               at all, the click never left the client (say so - no server fix reaches it)
           NPC SHOP DUPLICATES (2026-09-16). The owner: "duplicate items in the NPC shop, one
           being regular price, another being 10 times cheaper ... across multiple if not
           all NPC shops." The cheap twin was our Sell row (the WZ sell price); the
@@ -5091,16 +5109,24 @@ function Show-TestPlan {
         Write-Host '  8. THE PET, SIX THINGS - from your two-client run. The walk is' -ForegroundColor White
         Write-Host '     CONFIRMED. Each item below left a packet and is answered now; none'
         Write-Host '     has been on a screen. As the owner, Husky out, Tester2 watching:'
-        Write-Host '       LOOT + VACUUM, REWRITTEN (evening). The box is the CLIENT''s, keyed on'
-        Write-Host '       the pet item''s wonderGrade 6 + a 0x0198 box; the WZ keys never reach it.'
-        Write-Host '       Now tied to the BOUGHT Expanded Auto Move; no free Auto Move bits.'
-        Write-Host '         a. fresh Husky: NOT learned, walk-over only -> as designed' -ForegroundColor Green
-        Write-Host '            still sweeps from afar -> the grade leaked; paste item bytes 61..63' -ForegroundColor Yellow
-        Write-Host '         b. Auto Move (5190002) FIRST, then Expanded (5190003) - it is a chain,'
-        Write-Host '            Expanded alone is refused. After both: (Learned), pet blinks; a'
-        Write-Host '            drop ~200 px away FLIES to it, no walk -> DONE; say how far' -ForegroundColor Green
-        Write-Host '            (Learned) but walk-over only -> paste the PetPickupRange line' -ForegroundColor Yellow
-        Write-Host '            "unregistered" -> WZ keys missing from THIS package (backport)' -ForegroundColor Yellow
+        Write-Host '       LOOT + VACUUM, REWRITTEN (2026-09-17). The in-range vacuum is FREE:'
+        Write-Host '       every pet item is wonderGrade 6 = the wide 0x0198 box AND "Petite Luna".'
+        Write-Host '       Auto Move / Expanded Auto Move are PAID skills for WALKING to drops.'
+        Write-Host '       Default tooltip = Meso Magnet + Item Pouch (NEEDS backport --install).'
+        Write-Host '         a. fresh Husky: tooltip 2 skills + Petite Luna; a drop ~200px away' -ForegroundColor Green
+        Write-Host '            FLIES to it, no walk -> DONE; say how far (box is 600x590)' -ForegroundColor Green
+        Write-Host '            still lists Expanded/Auto Move/Ignore Item -> rebuild the client' -ForegroundColor Yellow
+        Write-Host '            no suck-up -> paste PetPickupRange + item bytes 61..63' -ForegroundColor Yellow
+        Write-Host '         b. buy Auto Move (5190002) then Expanded (5190003) - a chain; each' -ForegroundColor Green
+        Write-Host '            lists (Learned) and changes the pet WALKING to drops; say what moves' -ForegroundColor Green
+        Write-Host '       LEAF POINT COUPONS (2026-09-17): !item 2430004, double-click it in the'
+        Write-Host '         Use tab: "You received 1,000 Leaf Points", coupon gone, Cash Shop' -ForegroundColor Yellow
+        Write-Host '         balance up -> fixed. Nothing happens -> paste the "<- 0x" line the' -ForegroundColor Yellow
+        Write-Host '         click sent (the opcode is read off the listing, never on a wire).' -ForegroundColor Yellow
+        Write-Host '       LEAF POINT COUPONS (2026-09-17): !item 2430004, double-click it in the'
+        Write-Host '         Use tab: "You received 1,000 Leaf Points", coupon gone, Cash Shop' -ForegroundColor Yellow
+        Write-Host '         balance up -> fixed. Nothing happens -> paste the "<- 0x" line the' -ForegroundColor Yellow
+        Write-Host '         click sent (the opcode is read off the listing, never on a wire).' -ForegroundColor Yellow
         Write-Host '       NPC SHOP DUPLICATES (2026-09-16): the 10x-cheaper twin was our Sell row;'
         Write-Host '         gone. Any shop: each item ONCE at its real price -> fixed. Sell a Red' -ForegroundColor Yellow
         Write-Host '         Potion from the right panel: still works. Panel MISSING or sale refused' -ForegroundColor Yellow

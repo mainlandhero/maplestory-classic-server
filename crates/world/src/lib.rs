@@ -49,6 +49,7 @@ pub mod freemarket;
 pub mod itemrecovery;
 pub mod jobguide;
 pub mod jobs;
+pub mod leafcoupons;
 pub mod leveleffect;
 pub mod link;
 pub mod magic;
