@@ -2275,6 +2275,16 @@
             b. buy Auto Move (5190002), then Expanded Auto Move (5190003) - a chain, Expanded
                is refused until Auto Move is learned. Each then lists as (Learned). What they
                change on screen is the pet WALKING to drops; say what you see move.
+            c. A SKILL ITEM RIGHT AFTER LOGIN, before the pet is summoned or fed (2026-09-18,
+               the live server, Cobalt 02:28): "That skill needs a pet to learn it. Nothing
+               was used up." with the Husky in Cash slot 1. The field-entry restore sent the
+               pet with the generic BAG serial (mark, character, tab, slot) and only a summon
+               or feed re-sent it with the PET serial the skill lookup understood; Moth's
+               worked because they had summoned first. The restore sends the pet serial now,
+               and the lookup reads the bag serial too. Log in, open the Cash tab, double-click
+               a skill item on the pet WITHOUT summoning: (Learned) in the tooltip, item gone
+               -> fixed. The old message again -> paste the "pet skill:" line (it prints the
+               serial)
           THE COLLABORATION PETS AND EVERY PET EQUIP (2026-09-17, INSTALLED here - the
           client package must be rebuilt from client-patched\Data). The owner: "backport these
           pets ... as well as these pet equipment. All pets from these collaboration should
@@ -5466,6 +5476,10 @@ function Show-TestPlan {
         Write-Host '            no suck-up -> paste PetPickupRange + item bytes 61..63' -ForegroundColor Yellow
         Write-Host '         b. buy Auto Move (5190002) then Expanded (5190003) - a chain; each' -ForegroundColor Green
         Write-Host '            lists (Learned) and changes the pet WALKING to drops; say what moves' -ForegroundColor Green
+        Write-Host '         c. a skill item RIGHT AFTER LOGIN, pet not summoned or fed: (Learned),' -ForegroundColor Magenta
+        Write-Host '            item gone -> fixed (live server: "needs a pet" - the restore sent the'
+        Write-Host '            bag serial, the lookup knew only the pet serial). Same message again'
+        Write-Host '            -> paste the "pet skill:" line, it prints the serial' -ForegroundColor Yellow
         Write-Host '       NO "NEW" MARK ON THE PET: mode 5 on the re-send. No highlighted Cash cell' -ForegroundColor Yellow
         Write-Host '         on login -> struck; still highlighted -> paste the Cash-tab 0x0070 lines.' -ForegroundColor Yellow
         Write-Host '       PET VACUUM AT LOGIN/MAP CHANGE: CONFIRMED ("Pets now work on initial summon").' -ForegroundColor DarkGray

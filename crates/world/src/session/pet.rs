@@ -617,7 +617,20 @@ impl Session {
     /// - the **pet id** is its low half, the character its high), or the pet that is out when
     /// no serial came. `None` when it is not in the Cash tab. A name tag used on one Husky
     /// names that Husky.
-    fn pet_named_by(&self, chr: &net::opcode::Character, serial: Option<u64>) -> Option<ActivePet> {
+    pub(super) fn pet_named_by(&self, chr: &net::opcode::Character, serial: Option<u64>) -> Option<ActivePet> {
+        // A client may hand back the generic BAG serial (mark, character, tab, slot) for a
+        // pet its field-entry restore sent before 2026-09-18, or the pet serial (character,
+        // pet id) every path sends now. Both name one pet.
+        if let Some((tab, slot)) = serial.and_then(|sn| super::cashshop::bag_serial_slot(sn, chr.id)) {
+            return self
+                .store
+                .bag_items(chr.id, tab)
+                .ok()
+                .into_iter()
+                .flatten()
+                .find(|r| r.slot == slot && net::inventory::is_pet(r.item.item_id))
+                .and_then(|r| r.item.pet_id.map(|pet_id| ActivePet { slot: r.slot, item_id: r.item.item_id, pet_id }));
+        }
         let pet_id = match serial {
             Some(sn) if (sn >> 32) as u32 == chr.id => (sn & 0xFFFF_FFFF) as u32,
             Some(_) => return None,

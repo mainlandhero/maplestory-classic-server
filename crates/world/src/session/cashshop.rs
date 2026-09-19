@@ -85,6 +85,18 @@ fn bag_serial(character_id: u32, tab: store::InventoryType, slot: u16) -> u64 {
     ((BAG_SERIAL_MARK | u64::from(character_id)) << 32) | (u64::from(tab.as_u8()) << 16) | u64::from(slot)
 }
 
+/// The inverse of [`bag_serial`], for a serial a client handed back: `(tab, slot)` when it
+/// is one of this character's bag serials, `None` otherwise. "Does not have to be
+/// decodable" above still holds for the cash shop - this exists for the pet lookups, which
+/// met a bag serial where they expected a pet serial (2026-09-18, the live server).
+pub(super) fn bag_serial_slot(serial: u64, character_id: u32) -> Option<(store::InventoryType, u16)> {
+    if serial >> 32 != (BAG_SERIAL_MARK | u64::from(character_id)) {
+        return None;
+    }
+    let tab = store::InventoryType::from_wire(((serial >> 16) & 0xFFFF) as i16).ok()?;
+    Some((tab, (serial & 0xFFFF) as u16))
+}
+
 /// The locker slot a client-supplied serial names, **only if** it was minted for this account.
 fn locker_slot_of_serial(serial: u64, account_id: i64) -> Option<u16> {
     if (serial >> 32) != account_id as u64 {
@@ -404,6 +416,19 @@ impl Session {
     /// The other tabs are unchanged: a serial lengthens a bundle by eight bytes, and no
     /// list with a fixed shape ever sees one (`item_blob_with_cash_sn`).
     pub(super) fn bag_item_blob(&self, inv: store::InventoryType, slot: u16, item: &store::Item) -> Vec<u8> {
+        // **A numbered pet always carries its PET serial**, whatever tab path built the blob.
+        // Until 2026-09-18 the field-entry restore gave a pet the generic bag serial (mark,
+        // character, tab, slot) while a summon or feed re-sent it with `pet_serial`
+        // (character, pet id), and only the second form was understood by the pet-skill and
+        // name-tag lookups. Cobalt on the live server: `0x0116` with serial
+        // `0x400000D5_00050001` - character 213, Cash, slot 1 - and "That skill needs a pet to
+        // learn it" for a pet that was in that very slot. One serial per pet now, and
+        // `pet_named_by` reads the old form too, for a client that still holds one.
+        if net::inventory::is_pet(item.item_id) {
+            if let (Some(chr), Some(pet_id)) = (self.claimed_character(), item.pet_id) {
+                return self.item_blob_with_cash_sn(item, Some(net::pet::pet_serial(chr.id, pet_id)));
+            }
+        }
         let sn = match inv {
             // The two cash tabs - the ones `FUN_140230CB0` scans by serial.
             store::InventoryType::Cash | store::InventoryType::Deco => {
