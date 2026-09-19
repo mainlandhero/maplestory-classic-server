@@ -444,7 +444,7 @@ pub const CHATTER_SPREAD_MS: u64 = 6000;
 struct Xorshift(u64);
 
 impl Xorshift {
-    fn next(&mut self) -> u64 {
+    pub(super) fn next(&mut self) -> u64 {
         // xorshift64*, and the state must never be zero - it is a fixed point.
         let mut x = self.0 | 1;
         x ^= x >> 12;
@@ -535,6 +535,7 @@ mod ability;
 mod buff;
 mod chair;
 mod beautycoupon;
+mod salon;
 mod cashitem;
 mod charinfo;
 mod fame;

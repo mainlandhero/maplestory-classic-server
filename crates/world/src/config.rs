@@ -1,6 +1,6 @@
 //! What one channel server needs to know before it can listen.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -490,6 +490,13 @@ pub struct Config {
     /// `name -> ids` because `data/shops.txt` is authored with names and has to resolve
     /// them; this one is for printing an id back to a person.
     pub item_names: HashMap<u32, String>,
+
+    /// **Every hair id this client can draw**, from `gm-handbook/beauty.txt`'s `[hair]`
+    /// rows: each base id and its colour range (`0-7` or `0-8`). The salon
+    /// (`crate::salon`) keeps a player's colour digit across a style change only when the
+    /// new base has that colour; an id outside this set draws bald. Empty when the file is
+    /// not there, and `hair_exists` then says no - the fail-safe direction, colour 0.
+    pub hair_ids: HashSet<u32>,
 }
 
 impl Config {
@@ -582,6 +589,39 @@ impl Config {
     ///
     /// The name may itself contain commas, so the split is on the **first** one only. Two
     /// of the map names in this client do.
+    /// Load `gm-handbook/beauty.txt`'s `[hair]` section into every drawable id:
+    /// `baseId, gender, colours, name` rows, `colours` being `0-7` or `0-8`.
+    pub fn load_hair_ids(path: &std::path::Path) -> HashSet<u32> {
+        let mut out = HashSet::new();
+        let Ok(text) = std::fs::read_to_string(path) else { return out };
+        let mut in_hair = false;
+        for line in text.lines() {
+            let line = line.trim();
+            if line.starts_with('[') {
+                in_hair = line.starts_with("[hair]");
+                continue;
+            }
+            if !in_hair || line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let cols: Vec<&str> = line.split(',').map(str::trim).collect();
+            if cols.len() < 3 {
+                continue;
+            }
+            let (Ok(base), Some((lo, hi))) = (cols[0].parse::<u32>(), cols[2].split_once('-')) else { continue };
+            let (Ok(lo), Ok(hi)) = (lo.parse::<u32>(), hi.parse::<u32>()) else { continue };
+            for c in lo..=hi {
+                out.insert(base + c);
+            }
+        }
+        out
+    }
+
+    /// Whether this client draws hair id `id`. `false` on an empty table.
+    pub fn hair_exists(&self, id: u32) -> bool {
+        self.hair_ids.contains(&id)
+    }
+
     pub fn load_id_names(path: &std::path::Path) -> HashMap<u32, String> {
         let mut out = HashMap::new();
         let Ok(text) = std::fs::read_to_string(path) else { return out };
@@ -2422,6 +2462,7 @@ impl Default for Config {
             advertise: std::sync::Arc::new(net::advertise::Advertiser::default()),
             map_names: HashMap::new(),
             item_names: HashMap::new(),
+            hair_ids: HashSet::new(),
             send_mobs: true,
             fields: std::collections::HashSet::new(),
             clocks: std::collections::HashSet::new(),

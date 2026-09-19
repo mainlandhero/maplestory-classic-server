@@ -517,6 +517,78 @@ pub fn npc_menu(speaker_template: u32, text: &str) -> Vec<u8> {
     w.into_vec()
 }
 
+/// Message type `0x0a` - **pick one of these looks**, the box with avatar previews the hair
+/// salons use. Handler `FUN_14127dc60` (`research/msexe-script-askavatar.c`), reached from
+/// the script-message jump table's entry `0x0a` (`0x141f6f626`).
+///
+/// Body after the shared head, in the handler's read order **[L]**
+/// (`14127dc9f`, `dcb2`, `dcdc`, `dced`, then the loop at `dd03`, then `de00`):
+///
+/// ```text
+/// u32  echo         read and carried into the reply (Say's `echo`, the same slot)
+/// str  text         the prompt
+/// u8   (one raw byte, echoed back in the reply - sent as 0)
+/// u8   count
+/// u32  style id     x count - hair or face ids; the box draws the player wearing each
+/// u32  trailing     read and unused (Say has the same tail)
+/// ```
+///
+/// **The box is modal**: the handler builds the UI (`FUN_142a57d30`, 2000 bytes), runs it,
+/// and writes the `0x00F3` itself from the result - `vtable+0x130` returning 1 (OK), 0
+/// (cancel) or 3 (nothing sent). See [`parse_avatar_reply`] for what comes back.
+pub const SCRIPT_TYPE_AVATAR: u8 = 0x0a;
+
+/// A "pick one of these looks" box: the text, then `styles` drawn on the player's avatar.
+/// The reply's `selection` is an index into `styles`.
+pub fn npc_avatar(speaker_template: u32, text: &str, styles: &[u32]) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(0); //                     handle
+    w.u8(0); //                      head field 2
+    w.u32(speaker_template);
+    w.u8(0); //                      hasOverride
+    w.u8(SCRIPT_TYPE_AVATAR); //     message type
+    w.u16(0); //                     flags
+    w.u8(0); //                      head field 8
+    w.u32(0); //                     14127dc9f  echo
+    w.str(text); //                  14127dcb2
+    w.u8(0); //                      14127dcdc  one raw byte, echoed in the reply
+    w.u8(styles.len() as u8); //     14127dced  count
+    for id in styles {
+        w.u32(*id); //               14127dd03  in the loop
+    }
+    w.u32(0); //                     14127de00  trailing, unused
+    w.into_vec()
+}
+
+/// What a [`SCRIPT_TYPE_AVATAR`] box came back with, from its `0x00F3`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AvatarReply {
+    /// `Some(index into the styles sent)` on OK, `None` on cancel.
+    pub selection: Option<u8>,
+}
+
+/// Decode a `0x00F3` that is answering a [`SCRIPT_TYPE_AVATAR`] box. `None` for any other
+/// message type - the caller leaves those to the other parsers.
+///
+/// The handler writes the reply itself (`14127dc60`, decompiled at
+/// `research/msexe-script-askavatar.c`): `u32 0, u8 0x0a`, then on OK `u8 1, u8 <the raw
+/// byte we sent>, u8 0, u32 <echo or 0>, u8 index`, and on cancel `u8 0` alone. **[L]**
+pub fn parse_avatar_reply(body: &[u8]) -> Option<AvatarReply> {
+    let mut r = PacketReader::new(body);
+    let _handle = r.u32().ok()?;
+    if r.u8().ok()? != SCRIPT_TYPE_AVATAR {
+        return None;
+    }
+    if r.u8().ok()? != 1 {
+        return Some(AvatarReply { selection: None });
+    }
+    let _raw = r.u8().ok()?;
+    let _zero = r.u8().ok()?;
+    let _echo = r.u32().ok()?;
+    let index = r.u8().ok()?;
+    Some(AvatarReply { selection: Some(index) })
+}
+
 pub const SCRIPT_TYPE_QUEST_YES_NO: u8 = 0x10;
 
 /// Message type 3: the plain `BtYes` / `BtNo` prompt.
@@ -801,6 +873,46 @@ pub fn parse_quest_request(body: &[u8]) -> Option<QuestRequest> {
     };
 
     Some(QuestRequest { action, quest_id, npc_template_id, pos, selection })
+}
+
+#[cfg(test)]
+mod avatar_tests {
+    use super::*;
+
+    /// The body against the handler's read order: head, echo, text, one byte, count, ids,
+    /// trailing. The 14-byte head + 4 + (2 + 5) + 1 + 1 + 3 * 4 + 4.
+    #[test]
+    fn the_avatar_box_is_laid_out_the_way_the_handler_reads_it() {
+        let b = npc_avatar(213, "Pick!", &[30_050, 31_110, 30_400]);
+        assert_eq!(b[10], SCRIPT_TYPE_AVATAR, "message type at the head's offset 10");
+        let body = &b[SCRIPT_HEAD_LEN..];
+        assert_eq!(&body[..4], &0u32.to_le_bytes(), "echo");
+        assert_eq!(&body[4..6], &5u16.to_le_bytes(), "text length");
+        assert_eq!(&body[6..11], b"Pick!");
+        assert_eq!(body[11], 0, "the raw byte");
+        assert_eq!(body[12], 3, "count");
+        assert_eq!(u32::from_le_bytes(body[13..17].try_into().unwrap()), 30_050);
+        assert_eq!(u32::from_le_bytes(body[21..25].try_into().unwrap()), 30_400);
+        assert_eq!(&body[25..29], &0u32.to_le_bytes(), "trailing");
+        assert_eq!(b.len(), SCRIPT_HEAD_LEN + 4 + 7 + 1 + 1 + 12 + 4);
+    }
+
+    /// OK carries the index after the echoed byte, the zero and the echo; cancel is one byte.
+    #[test]
+    fn the_avatar_reply_parses_ok_and_cancel_and_nothing_else() {
+        let mut ok = 0u32.to_le_bytes().to_vec();
+        ok.extend_from_slice(&[SCRIPT_TYPE_AVATAR, 1, 0, 0]);
+        ok.extend_from_slice(&0u32.to_le_bytes());
+        ok.push(2);
+        assert_eq!(parse_avatar_reply(&ok), Some(AvatarReply { selection: Some(2) }));
+        let mut cancel = 0u32.to_le_bytes().to_vec();
+        cancel.extend_from_slice(&[SCRIPT_TYPE_AVATAR, 0]);
+        assert_eq!(parse_avatar_reply(&cancel), Some(AvatarReply { selection: None }));
+        let mut menu = 0u32.to_le_bytes().to_vec();
+        menu.extend_from_slice(&[SCRIPT_TYPE_MENU, 1]);
+        assert_eq!(parse_avatar_reply(&menu), None, "a menu's reply is not ours");
+        assert_eq!(parse_avatar_reply(&ok[..8]), None, "an OK without its index is not a cancel");
+    }
 }
 
 #[cfg(test)]
