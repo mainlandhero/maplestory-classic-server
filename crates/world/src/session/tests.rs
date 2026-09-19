@@ -12045,12 +12045,16 @@ fn pet_food_restores_thirty_earns_one_closeness_and_overfeeding_costs_after_the_
     assert_eq!(pet_vitals_on_the_wire(&s, id), (2, 1, 80), "the Cash item the client reads says so");
     assert!(out.iter().any(|r| r.what.contains("re-sent as pet 5000006")), "the item goes out again");
     assert!(out.iter().any(|r| r.what.contains("QUANTITY") && r.what.contains("down to 4")), "one food used: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
-    // The eating animation: 0x027E type 2, success, the food's id - and, this feed having taken
-    // the pet from level 1 to 2, the LevelUp flash as UserEffect 9 / subtype 0.
+    // The eating animation: 0x027E type 2, success, food id 0 - and, this feed having taken
+    // the pet from level 1 to 2, the LevelUp flash as UserEffect 9 / subtype 0. The id is 0
+    // because a pet-food id there is the client's switch for the auto-feed balloon "Yum, yum!
+    // <food> x<count-1> left!" (the owner, 2026-09-18: hand feeds must not show it; it was also one
+    // short, since the client assumes the bag has not been decremented yet).
     let ate = out.iter().find(|r| r.opcode == net::pet::PET_ACTION_COMMAND).expect("the pet eats");
     assert_eq!(&ate.body[0..4], &id.to_le_bytes());
     assert_eq!((ate.body[8], ate.body[9]), (net::pet::PET_ACTION_FOOD, 1), "type 2, success");
-    assert_eq!(&ate.body[10..14], &2_120_000u32.to_le_bytes(), "the food the handler range-checks");
+    assert_eq!(&ate.body[10..14], &net::pet::PET_FOOD_NONE.to_le_bytes(), "no food id: the animation, not the auto-feed balloon");
+    assert!(!(2_120_000..2_130_000).contains(&net::pet::PET_FOOD_NONE), "the id must be outside the pet-food range the handler keeps");
     let flash = out.iter().find(|r| r.opcode == net::stats::USER_EFFECT_LOCAL).expect("the level-up flash");
     assert_eq!(flash.body, vec![net::pet::USER_EFFECT_PET, net::pet::PET_EFFECT_LEVEL_UP, 0, 0, 0, 0], "effect 9, subtype 0, petIdx 0");
     // The next feed (80 -> 100, closeness 2, still level 2) eats without a flash.

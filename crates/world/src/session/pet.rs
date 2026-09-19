@@ -468,11 +468,13 @@ impl Session {
         let mut out = unlock();
         out.extend(self.stack_change_replies(store::InventoryType::Use, req.slot, held.saturating_sub(1)));
         out.push(self.pet_item_refresh(&chr, active, true));
-        // The pet eats, on every screen it is on.
+        // The pet eats, on every screen it is on. The food id is 0 on purpose: a real id makes
+        // the client draw the auto-feed balloon "Yum, yum! <food> x<count-1> left!", and this
+        // is a hand feed (the owner, 2026-09-18; net::pet::pet_ate has the listing).
         let ate = Reply {
             opcode: net::pet::PET_ACTION_COMMAND,
-            body: net::pet::pet_ate(chr.id, item_id),
-            what: format!("PetActionCommand: {}'s pet eats {item_id} - type 2, the food's id", chr.name),
+            body: net::pet::pet_ate(chr.id, net::pet::PET_FOOD_NONE),
+            what: format!("PetActionCommand: {}'s pet eats ({item_id}, sent as food id 0: the animation without the auto-feed balloon) - type 2", chr.name),
         };
         if self.config.broadcast_pets {
             self.bus().publish(self.subscriber, chr.map_id, ate.clone(), None);

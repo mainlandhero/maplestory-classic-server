@@ -1826,7 +1826,9 @@ mod tests {
         let ate = heard.iter().find(|r| r.opcode == net::pet::PET_ACTION_COMMAND).expect("the watcher sees it eat");
         assert_eq!(&ate.body[0..4], &ids[0].to_le_bytes(), "the owner's pet");
         assert_eq!((ate.body[8], ate.body[9]), (net::pet::PET_ACTION_FOOD, 1));
-        assert_eq!(&ate.body[10..14], &2_120_000u32.to_le_bytes());
+        // Food id 0 on the map too: a real id draws the auto-feed "Yum, yum!" balloon over the
+        // pet on the watcher's screen as well (2026-09-18; net::pet::pet_ate).
+        assert_eq!(&ate.body[10..14], &net::pet::PET_FOOD_NONE.to_le_bytes());
         let flash = heard.iter().find(|r| r.opcode == net::stats::USER_EFFECT_REMOTE).expect("the watcher sees the level-up");
         assert_eq!(&flash.body[0..4], &ids[0].to_le_bytes());
         assert_eq!(&flash.body[4..], &[net::pet::USER_EFFECT_PET, net::pet::PET_EFFECT_LEVEL_UP, 0, 0, 0, 0]);
