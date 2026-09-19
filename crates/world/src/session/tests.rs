@@ -7848,25 +7848,42 @@ fn phils_job_guide_is_a_selectable_menu_and_the_pick_rides() {
 /// down. This pins the fix at the packet level: the Yes reply carries the Say and **no
 /// SetField**; the dismissal carries the SetField and **no script**. And the waiver is for
 /// Beginners only - the same character as a Swordsman pays and gets no box.
-/// **The hair salon: Denma's pick-a-look box for a Signature coupon, Dr. Feeble's yes/no for
-/// a Mystery one, the Cash Shop pointer without either, and the colour kept.** The owner,
-/// 2026-09-18, four messages. A female character with blue hair (31000 + 3): Denma sends the
-/// six Henesys REG female styles in a type-0x0a box; index 4 is Rose 31230 and they end up in
-/// 31233 - Rose in blue; the coupon is gone, one 0x007C with the HAIR bit redraws them and the
-/// notice names the style. Dr. Feeble with no coupon points at the Cash Shop with the item
-/// link; with a coupon and a Yes, a VIP female style in blue. A male gets the male pools.
+/// **The hair salons: the Signature NPC's pick-a-look box, the Mystery NPC's yes/no, the
+/// Cash Shop pointer without the coupon, the colour kept, and each salon its own lists.**
+/// The owner, 2026-09-18, with the corrected assignment: in Henesys Dr. Feeble is Signature (REG,
+/// the player picks) and Denma the Owner Mystery (VIP, random); in Kerning City Andre is
+/// Signature and Don Giovanni Mystery. A female character with blue hair (31000 + 3): Dr.
+/// Feeble sends the six Henesys REG female styles in a type-0x0a box; index 4 is Rose 31230
+/// and they end up in 31233 - Rose in blue; the coupon is gone, one 0x007C with the HAIR bit
+/// redraws them and the notice names the style. Denma with no coupon points at the Cash Shop
+/// with the item link; with a coupon and a Yes, a Henesys VIP female style in blue. A male
+/// gets the male pools. In Kerning, Andre offers the Kerning REG list and Don Giovanni rolls
+/// from the Kerning VIP list; a Henesys NPC standing in Kerning would not be a salon at all.
 #[test]
 fn the_salon_picks_from_the_players_gender_pool_and_keeps_the_hair_colour() {
     let mut npcs = std::collections::HashMap::new();
     npcs.insert(
         crate::salon::HENESYS_SALON_MAP,
         vec![
-            net::opcode::FieldNpc { object_id: 1000, template_id: crate::salon::DENMA, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 },
-            net::opcode::FieldNpc { object_id: 1001, template_id: crate::salon::DR_FEEBLE, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 },
+            net::opcode::FieldNpc { object_id: 1000, template_id: crate::salon::DR_FEEBLE, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 },
+            net::opcode::FieldNpc { object_id: 1001, template_id: crate::salon::DENMA, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 },
+        ],
+    );
+    npcs.insert(
+        crate::salon::KERNING_SALON_MAP,
+        vec![
+            net::opcode::FieldNpc { object_id: 1000, template_id: crate::salon::ANDRE, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 },
+            net::opcode::FieldNpc { object_id: 1001, template_id: crate::salon::DON_GIOVANNI, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 },
         ],
     );
     let mut hair_ids = std::collections::HashSet::new();
-    for base in crate::salon::HENESYS_REG_FEMALE.iter().chain(crate::salon::HENESYS_VIP_FEMALE).chain(crate::salon::HENESYS_REG_MALE) {
+    for base in crate::salon::HENESYS_REG_FEMALE
+        .iter()
+        .chain(crate::salon::HENESYS_VIP_FEMALE)
+        .chain(crate::salon::HENESYS_REG_MALE)
+        .chain(crate::salon::KERNING_REG_FEMALE)
+        .chain(crate::salon::KERNING_VIP_FEMALE)
+    {
         for c in 0..8 {
             hair_ids.insert(base + c);
         }
@@ -7890,7 +7907,8 @@ fn the_salon_picks_from_the_players_gender_pool_and_keeps_the_hair_colour() {
         (0..b[count_at] as usize).map(|k| u32::from_le_bytes(b[count_at + 1 + k * 4..count_at + 5 + k * 4].try_into().unwrap())).collect()
     };
 
-    // 1. No coupon: a Say that links the coupon and names the Cash Shop; nothing parked.
+    // 1. No coupon (Denma, Mystery): a Say that links the coupon and names the Cash Shop;
+    //    nothing parked.
     let out = s.handle(&npc_click(1001));
     assert_eq!(out.len(), 1, "{:?}", names(&out));
     assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_SAY);
@@ -7899,7 +7917,7 @@ fn the_salon_picks_from_the_players_gender_pool_and_keeps_the_hair_colour() {
     assert!(s.conversation.is_none());
     assert_eq!(hair_now(&store), 31_003);
 
-    // 2. Denma with a Signature coupon: the avatar box carries the six REG female bases.
+    // 2. Dr. Feeble with a Signature coupon: the avatar box carries the six REG female bases.
     store.add_item(made.id, store::InventoryType::Cash, &store::Item::bundle(crate::salon::SIGNATURE_COUPON, 1), 1).unwrap();
     let out = s.handle(&npc_click(1000));
     assert_eq!(out.len(), 1, "{:?}", names(&out));
@@ -7936,7 +7954,7 @@ fn the_salon_picks_from_the_players_gender_pool_and_keeps_the_hair_colour() {
     assert_eq!(hair_now(&store), 31_233);
     assert_eq!(s.held_count(made.id, crate::salon::SIGNATURE_COUPON), 1, "kept");
 
-    // 5. Dr. Feeble with a Mystery coupon: a yes/no; Yes rolls a VIP female style, in blue.
+    // 5. Denma with a Mystery coupon: a yes/no; Yes rolls a Henesys VIP female style, in blue.
     store.add_item(made.id, store::InventoryType::Cash, &store::Item::bundle(crate::salon::MYSTERY_COUPON, 1), 1).unwrap();
     let out = s.handle(&npc_click(1001));
     assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_YES_NO, "{:?}", names(&out));
@@ -7947,7 +7965,7 @@ fn the_salon_picks_from_the_players_gender_pool_and_keeps_the_hair_colour() {
     assert!(out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED && r.what.contains(&format!("HAIR bit -> {hair}"))), "{:?}", names(&out));
     assert_eq!(s.held_count(made.id, crate::salon::MYSTERY_COUPON), 0, "spent");
 
-    // 6. A male at Denma gets the male REG pool.
+    // 6. A male at Dr. Feeble gets the male REG pool.
     let boy = net::opcode::Character { name: "Barber".to_string(), gender: 0, hair: 30_000, ..Default::default() };
     let him = store.create_character(account_id, 0, &boy).unwrap();
     store.set_character_map(him.id, crate::salon::HENESYS_SALON_MAP).unwrap();
@@ -7957,6 +7975,28 @@ fn the_salon_picks_from_the_players_gender_pool_and_keeps_the_hair_colour() {
     t.claim_for_character(him.id);
     let out = t.handle(&npc_click(1000));
     assert_eq!(styles_in(&out[0].body), crate::salon::HENESYS_REG_MALE);
+
+    // 7. Kerning City: Andre offers the Kerning REG list, Don Giovanni rolls from the
+    //    Kerning VIP list - and the Henesys pair are strangers there.
+    store.set_character_map(made.id, crate::salon::KERNING_SALON_MAP).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let mut k = Session::new(store.clone(), s.config.clone());
+    k.claim_for_character(made.id);
+    store.add_item(made.id, store::InventoryType::Cash, &store::Item::bundle(crate::salon::SIGNATURE_COUPON, 1), 1).unwrap();
+    let out = k.handle(&npc_click(1000));
+    assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_AVATAR, "{:?}", names(&out));
+    assert_eq!(styles_in(&out[0].body), crate::salon::KERNING_REG_FEMALE);
+    let mut cancel = net::script::CLIENT_SCRIPT_REPLY.to_le_bytes().to_vec();
+    cancel.extend_from_slice(&0u32.to_le_bytes());
+    cancel.extend_from_slice(&[net::script::SCRIPT_TYPE_AVATAR, 0]);
+    let _ = k.handle(&cancel);
+    store.add_item(made.id, store::InventoryType::Cash, &store::Item::bundle(crate::salon::MYSTERY_COUPON, 1), 1).unwrap();
+    let out = k.handle(&npc_click(1001));
+    assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_YES_NO, "{:?}", names(&out));
+    let _ = k.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_YES));
+    let hair = hair_now(&store);
+    assert!(crate::salon::KERNING_VIP_FEMALE.contains(&(hair - 3)) && hair % 10 == 3, "a Kerning VIP female base in blue, got {hair}");
+    assert_eq!(crate::salon::service_for(crate::salon::DENMA, crate::salon::KERNING_SALON_MAP), None);
 }
 
 #[test]
