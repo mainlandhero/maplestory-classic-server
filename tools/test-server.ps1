@@ -2427,6 +2427,12 @@
                        handler) on YOUR screen and on Tester2's -> DONE
             no eating animation on either screen -> the pet image has no food entry for
                        its level, or the type byte is wrong; say which screen
+            NO "Yum, yum! Pet Food xN left!" balloon over the pet (2026-09-18, the owner: that
+                       is the AUTO-FEED message, and it printed the count one short). The
+                       0x027E carries food id 0 now: the client's balloon is gated on a
+                       pet-food id, the animation is not. Eats, no balloon -> DONE
+            the balloon still shows -> paste the 0x027E line; the animation is gone too
+                       -> the food table needs the id after all; say so
             closeness 0 -> 1 is level 1 -> 2: a LEVEL-UP flash on both screens (UserEffect
                        9, subtype 0 = Effect/PetEff.img/Basic/LevelUp) -> DONE
             the flash on your screen only -> the remote 0x02AF is dropped; say so
@@ -5533,6 +5539,8 @@ function Show-TestPlan {
         Write-Host '         Fullness +30, Closeness +1, Level 2 -> DONE (0x0112, never captured)' -ForegroundColor Green
         Write-Host '         nothing changes -> paste the "pet food:" line, or the 0x0112 line' -ForegroundColor Yellow
         Write-Host '         the Husky EATS on BOTH screens (0x027E) -> DONE; one screen only -> say which' -ForegroundColor Green
+        Write-Host '         and NO "Yum, yum! ... left!" balloon (food id 0; that is the auto-feed' -ForegroundColor Yellow
+        Write-Host '         message, and it counted one short) -> DONE; balloon -> paste the 0x027E line' -ForegroundColor Yellow
         Write-Host '         level 1 -> 2 on the first feed: a LEVEL-UP flash on BOTH screens' -ForegroundColor Green
         Write-Host '         3rd feed at 100 costs a closeness.'
         Write-Host '       HUNGER: -1 Fullness per five minutes out; at 0 it goes home.'

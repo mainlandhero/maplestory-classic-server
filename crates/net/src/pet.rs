@@ -365,6 +365,27 @@ pub const PET_ACTION_FOOD: u8 = 2;
 /// The `0x027E` body for a successful feed: `u32 charId, u32 petIdx, u8 2, u8 1, u32 foodId`.
 /// The owner, 2026-09-16: *"I do want the eating animation to play for the client and other
 /// players."* Sent to the owner and published to the map.
+///
+/// **`food_item_id` is what makes the "Yum, yum!" balloon, and a hand-fed pet sends 0.** The owner,
+/// 2026-09-18, with the balloon over a pet they had just fed by hand: *"The pet food dialogue
+/// shown here should only be shown when it is being automatically fed, but that functionality
+/// does not exist in our server because the pet skill does not exist. It's also off by 1."*
+/// Both are the handler's own arithmetic, read at the listing **[L]**:
+///
+/// ```text
+/// 141ec4b24  u32 itemId; kept only if 2120000 <= id < 2130000, else 0    -> r15d
+/// 141ec4c52  if nType == 2 && r15d > 0:
+/// 141ec4c80    count = the Use tab's count of that item          (FUN_1402e9260)
+/// 141ec4c8a    shown = max(count - 1, 0)                          <- the "off by 1"
+/// 141ec4d46    string 0x1039 "Yum, yum! %s x%d left!" -> the balloon
+/// ```
+///
+/// The eating animation is chosen before that block, from the pet's own food table by its
+/// level (`[pet+0x68]`), and never reads the id. So the balloon is an auto-feed message that
+/// assumes the client's bag has not been decremented yet - this server sends the `0x0070`
+/// first, which is why it read one short - and the id is the only switch for it. A manual feed
+/// sends `0`: the pet eats, no balloon. [`PET_FOOD_NONE`]. Nothing here sends a non-zero id
+/// until an auto-feed skill exists.
 pub fn pet_ate(character_id: u32, food_item_id: u32) -> Vec<u8> {
     let mut w = PacketWriter::new();
     w.u32(character_id);
@@ -374,6 +395,11 @@ pub fn pet_ate(character_id: u32, food_item_id: u32) -> Vec<u8> {
     w.u32(food_item_id);
     w.into_vec()
 }
+
+/// The food id a hand-fed pet's [`pet_ate`] carries: outside the pet-food range, so the
+/// handler plays the eating animation and skips the "Yum, yum! %s x%d left!" balloon that
+/// belongs to an auto-feed.
+pub const PET_FOOD_NONE: u32 = 0;
 
 /// **The pet-effect arm of `UserEffect`.** `FUN_1427863f0`'s second switch, table
 /// `0x142791348`, index **9** -> `0x14278df5b`: reads `u8 subtype`, `u32 petIdx`, finds the
