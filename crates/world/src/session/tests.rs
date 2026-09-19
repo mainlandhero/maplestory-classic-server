@@ -12220,6 +12220,54 @@ fn a_pet_skill_item_sets_the_bit_and_is_used_up() {
     );
 }
 
+/// **The serial the field-entry restore sends for a pet is the one the skill item comes back
+/// with - and the old bag serial still names the pet.** The live server, 2026-09-18 02:28:
+/// Cobalt used Auto HP on the Husky in Cash slot 1 and the `0x0116` carried
+/// `0x400000D5_00050001` - the generic BAG serial (mark, character 213, Cash, slot 1) the
+/// restore had put on the pet item - and the answer was "That skill needs a pet to learn
+/// it". Moth's worked because a summon had re-sent their pet with the PET serial. Now the
+/// restore sends the pet serial too (`bag_item_blob`), and `pet_named_by` reads the bag
+/// serial form as well, for a client that still holds one.
+#[test]
+fn a_pet_restored_at_field_entry_is_named_by_the_serial_it_was_sent_with_and_by_the_old_bag_serial() {
+    let (mut s, store, id) = gm_session();
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_190_000, 1), 2).unwrap();
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_190_001, 1), 2).unwrap();
+    let pet_id = pet_of(&store, id, 5_000_006);
+    let pet_slot = cash_slot_of(&store, id, 5_000_006);
+
+    // 1. What the restore sends: the blob `bag_item_blob` builds for the pet's own slot
+    //    carries the PET serial, not the bag one. Bytes 6..14 of a type-3 body.
+    let pet = bag_pet(&store, id, 5_000_006);
+    let blob = s.bag_item_blob(store::InventoryType::Cash, pet_slot, &pet);
+    let sent = u64::from_le_bytes(blob[6..14].try_into().unwrap());
+    assert_eq!(sent, net::pet::pet_serial(id, pet_id).get(), "the restore's serial is the pet serial");
+
+    // 2. The skill item, with exactly that serial, teaches the pet - no summon in between.
+    let skill_slot = cash_slot_of(&store, id, 5_190_000);
+    let out = s.handle(&use_pet_item_body(skill_slot, 5_190_000, id, pet_id, None));
+    assert!(out.iter().all(|r| !r.what.contains("needs a pet")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert_eq!(store.pet_state(pet_id).unwrap().skills & net::bag::PET_SKILL_AUTO_HP, net::bag::PET_SKILL_AUTO_HP);
+
+    // 3. Cobalt's packet shape: the OLD bag serial for the pet's slot (mark | character in the
+    //    high dword, Cash << 16 | slot in the low) still names the pet.
+    let bag_serial = ((0x4000_0000u64 | u64::from(id)) << 32) | (5u64 << 16) | u64::from(pet_slot);
+    let mut body = hex("f98e4e20");
+    let mp_slot = cash_slot_of(&store, id, 5_190_001);
+    body.extend_from_slice(&mp_slot.to_le_bytes());
+    body.extend_from_slice(&5_190_001u32.to_le_bytes());
+    body.extend_from_slice(&bag_serial.to_le_bytes());
+    let mut packet = 0x0116u16.to_le_bytes().to_vec();
+    packet.extend_from_slice(&body);
+    let out = s.handle(&packet);
+    assert!(out.iter().all(|r| !r.what.contains("needs a pet")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert_eq!(store.pet_state(pet_id).unwrap().skills & net::bag::PET_SKILL_AUTO_MP, net::bag::PET_SKILL_AUTO_MP, "Auto MP learned through the bag serial");
+    // A bag serial for a slot with no pet in it names nobody.
+    let empty = ((0x4000_0000u64 | u64::from(id)) << 32) | (5u64 << 16) | 40;
+    assert!(s.pet_named_by(&s.claimed_character().unwrap(), Some(empty)).is_none());
+}
+
 /// **The in-range vacuum is free: every pet's item is `wonderGrade 6`, and the `0x0198` box
 /// rides every SetField.** The owner, 2026-09-17: *"vacuuming loot within a certain range of the pet
 /// (Petite Luna) should be free. Auto move ... should be a skill ... Expanded auto move
