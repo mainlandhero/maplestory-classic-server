@@ -11557,6 +11557,40 @@ fn a_cash_equip_worn_at_105_is_drawn_and_listed_on_the_next_field_entry() {
     assert_eq!(sf.len() - without.len(), block.len(), "one block with one entry, and nothing else moved");
 }
 
+/// **A scrolled worn item keeps its scroll across a map change.** The owner, 2026-09-18: *"I just
+/// scrolled an item in a map. When I change maps, those scrolled stats disappear ... those
+/// scrolled stats should persist always."* The record's dresser asked the template for every
+/// worn item; it reads the worn row's own stats first now, the way the bag restore and the
+/// Character Info list already did.
+#[test]
+fn a_scrolled_worn_item_keeps_its_scroll_in_the_field_entry_record() {
+    let (mut s, store, id) = gm_session();
+    let slot = store.add_item(id, store::InventoryType::Equip, &store::Item::equip(1_040_002), 1).unwrap()[0].slot;
+    let out = s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, slot as i16, -5, -1));
+    assert!(!out[0].what.contains("REFUSING"), "{}", out[0].what);
+    let template = s.template_stats(1_040_002);
+
+    // The scroll, as store::set_worn_equip records it: +70 HP, one enhancement left.
+    let mut scrolled = template;
+    scrolled.stats.inc_mhp += 70;
+    scrolled.options.remaining_enhancements = 1;
+    assert!(store.set_worn_equip(id, 5, &scrolled, 0).unwrap());
+
+    // The record dresser - what every SetField, cash-shop return and remote look is built from.
+    let chr = s.claimed_character().unwrap();
+    let worn = s.dressed(&chr).into_iter().find(|(slot, _, _)| *slot == 5).expect("the shirt is worn");
+    assert_eq!(worn.1, 1_040_002);
+    assert_eq!(worn.2, scrolled, "the scrolled stats, not the template's");
+    assert_ne!(worn.2, template);
+
+    // And the map change itself carries them: the SetField record holds the scrolled entry.
+    let entry = net::opcode::equipped_item(1_040_002, &scrolled);
+    let sf = s.go_to_map(&mut chr.clone(), chr.map_id, 0, "same map".to_string()).into_iter().find(|r| r.opcode == net::opcode::SET_FIELD).expect("a SetField");
+    assert!(sf.body.windows(entry.len()).any(|w| w == entry.as_slice()), "the record carries the scrolled shirt");
+    let bare = net::opcode::equipped_item(1_040_002, &template);
+    assert!(!sf.body.windows(bare.len()).any(|w| w == bare.as_slice()), "and not the template's copy");
+}
+
 /// **A saved key layout comes back on the next field entry.** The owner, 2026-09-12: *"Saving
 /// keyboard layout still does not work. I tried putting both Power Strike on control and Slash
 /// Blast on shift. It did not survive a re-login."* The rows were in the database; the
