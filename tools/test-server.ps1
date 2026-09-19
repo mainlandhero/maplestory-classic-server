@@ -2532,6 +2532,23 @@
              the stat window drops the number. A coupon that outlives its icon or an icon
              that outlives its multiplier is a bug either way - say which.
 
+    11a. THE QUEST HELPER'S ITEM COUNTS AFTER A MAP CHANGE (2026-09-18). The owner: "when
+        players enter a new map, the progress in quest helper completely zeroes out. But
+        when you pick up an item in that map from killing mobs, it will return back to
+        normal" - 0/5 Bronze Ore, then 49/5 after one pickup. The helper caches its item
+        counts and refreshes them from a hook the loud 0x0070 modes call; the bag is
+        restored with mode 5 on purpose (no collection popup on every map change,
+        2026-08-30) and mode 5 skips that hook too. The 0x0089 quest-record message's
+        handler calls the same refresh and never the popup, so after the bag is back the
+        server re-sends every in-progress quest's own record, unchanged. [L] both chains,
+        [I] that the refresh re-reads the bag. With a collection quest in progress and its
+        items in the bag, change maps:
+          the helper shows the right count at once (49/5 Bronze Ore), no popup -> DONE
+          still 0/N until a pickup -> the refresh uses a cached count; paste the
+                     QuestRecord lines after the restore, and the next variant is one
+                     mode-0 add for a quest item
+          the collection popup ("n / N item") appears on the map change -> say so; that
+                     is what mode 5 exists to prevent and this must not undo it
     11. A QUEST INTO A FULL BAG - 2026-09-17. Mint: "quest continues to complete despite this
         happening" under "Quest 1008 could not give you item 1002005: inventory 1 is full".
         The completion was written, the EXP paid, the letter taken, and the hat never came.
@@ -5616,6 +5633,12 @@ function Show-TestPlan {
         Write-Host '        triple EXP still? report both halves separately' -ForegroundColor Yellow
         Write-Host '     c. wait one out / right-click it: icon AND stat go together' -ForegroundColor Green
         Write-Host ''
+        Write-Host '  11a. QUEST HELPER COUNTS AFTER A MAP CHANGE (2026-09-18): the mode-5 restore' -ForegroundColor White
+        Write-Host '     skips the client''s recount hook, so every in-progress quest''s record is' 
+        Write-Host '     re-sent after the bag. Collection quest + items in bag, change maps:'
+        Write-Host '       right count at once (49/5), no popup -> DONE' -ForegroundColor Green
+        Write-Host '       still 0/N until a pickup -> paste the QuestRecord lines after the restore' -ForegroundColor Yellow
+        Write-Host '       the "n / N" collection popup on the map change -> say so (must not)' -ForegroundColor Red
         Write-Host '  11. A QUEST INTO A FULL BAG (2026-09-17). Mint: quest 1008 completed and the' -ForegroundColor White
         Write-Host '     hat never came. Now the room is counted BEFORE anything moves. Full Equip'
         Write-Host '     tab, Lucas'' letter in Etc, quest 1008 in progress: talk to Lucas.'
