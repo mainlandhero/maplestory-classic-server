@@ -327,6 +327,14 @@ impl Store {
         Ok(n > 0)
     }
 
+    /// Change a character's skin tone. `Ok(false)` when no such character. Same shape as
+    /// [`Self::set_character_look`] and, like it, nothing here checks that the client has
+    /// art for the value - the caller's table does (`world::salon::SKINS`).
+    pub fn set_character_skin(&self, character_id: u32, skin: u8) -> Result<bool> {
+        let n = self.conn().execute("UPDATE characters SET skin = ?2 WHERE id = ?1", (character_id, skin))?;
+        Ok(n > 0)
+    }
+
     /// Write back everything a character can *earn*: level, experience, job, the four base
     /// stats, the four HP/MP numbers and unspent AP.
     ///

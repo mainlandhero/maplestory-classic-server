@@ -2213,6 +2213,35 @@
            6. the other client sees the new hair without a map change -> the look
               broadcast; a stale look there -> paste "look change for" lines
 
+     TP. THE PLASTIC SURGERIES (2026-09-18). Same shape as TS. Henesys Plastic Surgery
+         (10001043): Denma the Owner = faces, Dr. Feeble = skins; Orbis Plastic Surgery
+         (20000031): Franz the Owner = faces, Riza the Assistant = skins. KERNING HAS NO
+         PLASTIC SURGERY IN THIS CLIENT (maps.txt has exactly two). Coupons: 5152200
+         Signature Face (pick from the REG list, same list in both towns), 5152000 Mystery
+         Face (random VIP face); 5153000 Signature Skin Color (pick one of the SEVEN skins
+         this client has art for: Light, Tan, Brown, Pale, Ashen, White, Pink). THERE IS NO
+         MYSTERY SKIN COUPON ITEM in this client, so the assistant's menu has one line. A
+         face change keeps your EYE COLOUR (the hundreds digit).
+           1. Denma with no face coupon: both icons + "Cash Shop" -> fixed
+           2. !item 5152200 1, click Denma, pick the line: a window with your character in
+              each of 7 (male: Dramatic Face .. Look of Wonder) / 6 (female: Babyface Pout,
+              Pucker Up Face, Look of Death, Wisdom Glance, Hypnotized Look, Curious Look)
+              REG faces -> the box classifies by its first id, 2xxxx = face. Pick one: the
+              face changes in place, eye colour kept, coupon gone, line names it -> fixed
+                the face lands at eye colour 0 though yours was not -> face_ids empty:
+                          gm-handbook/beauty.txt missing on the server box
+           3. !item 5152000 1, the Mystery line -> a random VIP face at once
+           4. Dr. Feeble with no 5153000: its icon + Cash Shop (the line says "buy it");
+              !item 5153000 1, pick the line: a window with your character in 7 skin tones
+              -> THE FIRST TEST OF A SKIN BOX: the client reads ids under 24000 as skins
+              (FUN_142a91f30), and 0..6 go on the wire as they are. Pick one: skin changes
+              in place, one 0x007C with the SKIN bit, coupon gone -> fixed
+                the window opens with 7 identical or blank figures -> the ids need +12000;
+                          paste the AVATAR line
+                nothing opens / the client dies -> paste the line and client-exit.log
+           5. Orbis: Franz and Riza do the same -> fixed
+           6. the other client sees the new face/skin without a map change -> fixed
+
      T6. !npcreload. Add a line to data/npc-dialogue.txt while the server is RUNNING, then
          run the command and click that NPC.
           a) does it say the new line without a restart?
@@ -5495,6 +5524,16 @@ function Show-TestPlan {
         Write-Host '         5151100 -> your style in 8 colours, pick one, style kept; 5151000 -> random'
         Write-Host '      5. Kerning: Don Giovanni shows the KERNING lists; Andre = colours, same'
         Write-Host '      6. the other client sees it without a map change -> fixed'
+        Write-Host '  TP. THE PLASTIC SURGERIES. Henesys 10001043: Denma = faces, Dr. Feeble = skins;' -ForegroundColor Magenta
+        Write-Host '      Orbis 20000031: Franz = faces, Riza = skins. (Kerning has none in this client.)' -ForegroundColor Magenta
+        Write-Host '      1. Denma, no coupon: 5152200 + 5152000 icons + Cash Shop -> fixed'
+        Write-Host '      2. !item 5152200 1, pick the line: your gender''s REG faces (7 M / 6 F); pick ->'
+        Write-Host '         face changes in place, EYE COLOUR kept, coupon gone, line names it -> fixed' -ForegroundColor Green
+        Write-Host '      3. !item 5152000 1, the Mystery line -> a random VIP face at once'
+        Write-Host '      4. Dr. Feeble, !item 5153000 1 (no mystery skin item exists): 7 skins in the'
+        Write-Host '         box - FIRST SKIN BOX EVER; blank/identical figures -> ids need +12000,' -ForegroundColor Yellow
+        Write-Host '         paste the AVATAR line. Pick -> skin changes in place, SKIN bit -> fixed' -ForegroundColor Green
+        Write-Host '      5. Orbis: Franz/Riza the same; 6. the other client sees it -> fixed'
         Write-Host '  T6. !npcreload. Add a line to data/npc-dialogue.txt with the' -ForegroundColor White
         Write-Host '      server RUNNING, run the command, click that NPC.'
         Write-Host '        a) new line with no restart?'

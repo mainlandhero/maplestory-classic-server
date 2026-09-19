@@ -497,6 +497,10 @@ pub struct Config {
     /// new base has that colour; an id outside this set draws bald. Empty when the file is
     /// not there, and `hair_exists` then says no - the fail-safe direction, colour 0.
     pub hair_ids: HashSet<u32>,
+    /// Every face id this client draws: `gm-handbook/beauty.txt`'s `[face]` rows, each
+    /// style at all its eye colours (`styleId + 100*c`). Same shape and same reason as
+    /// [`Self::hair_ids`].
+    pub face_ids: HashSet<u32>,
 }
 
 impl Config {
@@ -590,18 +594,29 @@ impl Config {
     /// The name may itself contain commas, so the split is on the **first** one only. Two
     /// of the map names in this client do.
     /// Load `gm-handbook/beauty.txt`'s `[hair]` section into every drawable id:
-    /// `baseId, gender, colours, name` rows, `colours` being `0-7` or `0-8`.
+    /// `baseId, gender, colours, name` rows, `colours` being `0-7` or `0-8`; the colour is
+    /// the id's last digit.
     pub fn load_hair_ids(path: &std::path::Path) -> HashSet<u32> {
+        Self::load_beauty_ids(path, "[hair]", 1)
+    }
+
+    /// The `[face]` section the same way: `styleId, gender, eyeColours, name`, the eye
+    /// colour being the hundreds digit (`20003` at colour 1 is `20103`).
+    pub fn load_face_ids(path: &std::path::Path) -> HashSet<u32> {
+        Self::load_beauty_ids(path, "[face]", 100)
+    }
+
+    fn load_beauty_ids(path: &std::path::Path, section: &str, stride: u32) -> HashSet<u32> {
         let mut out = HashSet::new();
         let Ok(text) = std::fs::read_to_string(path) else { return out };
-        let mut in_hair = false;
+        let mut inside = false;
         for line in text.lines() {
             let line = line.trim();
             if line.starts_with('[') {
-                in_hair = line.starts_with("[hair]");
+                inside = line.starts_with(section);
                 continue;
             }
-            if !in_hair || line.is_empty() || line.starts_with('#') {
+            if !inside || line.is_empty() || line.starts_with('#') {
                 continue;
             }
             let cols: Vec<&str> = line.split(',').map(str::trim).collect();
@@ -611,7 +626,7 @@ impl Config {
             let (Ok(base), Some((lo, hi))) = (cols[0].parse::<u32>(), cols[2].split_once('-')) else { continue };
             let (Ok(lo), Ok(hi)) = (lo.parse::<u32>(), hi.parse::<u32>()) else { continue };
             for c in lo..=hi {
-                out.insert(base + c);
+                out.insert(base + c * stride);
             }
         }
         out
@@ -620,6 +635,11 @@ impl Config {
     /// Whether this client draws hair id `id`. `false` on an empty table.
     pub fn hair_exists(&self, id: u32) -> bool {
         self.hair_ids.contains(&id)
+    }
+
+    /// Whether this client draws face id `id`. `false` on an empty table.
+    pub fn face_exists(&self, id: u32) -> bool {
+        self.face_ids.contains(&id)
     }
 
     pub fn load_id_names(path: &std::path::Path) -> HashMap<u32, String> {
@@ -2463,6 +2483,7 @@ impl Default for Config {
             map_names: HashMap::new(),
             item_names: HashMap::new(),
             hair_ids: HashSet::new(),
+            face_ids: HashSet::new(),
             send_mobs: true,
             fields: std::collections::HashSet::new(),
             clocks: std::collections::HashSet::new(),
