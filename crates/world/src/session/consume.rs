@@ -13,6 +13,16 @@ use super::*;
 
 impl Session {
     /// `0x010E` — the player double-clicked something in the Use tab.
+    /// `0x0123`, the client's own opcode for a Return Scroll (`net::useitem::
+    /// CLIENT_USE_RETURN_SCROLL`). The body is `0x010E`'s and so is the latch, so this is the
+    /// same walk: slot checked against the bag, [`Session::use_return_scroll`] decides, and
+    /// every refusal still answers with the unlock. A non-scroll id arriving here is refused
+    /// the way an unknown item on `0x010E` is.
+    pub(super) fn on_use_return_scroll(&mut self, payload: &[u8]) -> Vec<Reply> {
+        crate::server::log("   return scroll: 0x0123 - the client's opcode for the 0203 range");
+        self.on_use_item(payload)
+    }
+
     pub(super) fn on_use_item(&mut self, payload: &[u8]) -> Vec<Reply> {
         let Some(req) = net::useitem::parse_use_item(payload) else {
             return self.use_refused("the 0x010E body did not parse".to_string());
@@ -585,7 +595,7 @@ mod scroll_tests {
             ]
             .into_iter()
             .collect(),
-            fields: [40, 60, 10_000_000, 10_001_000, 10_001_090, 20_001_000]
+            fields: [40, 60, 10_000_000, 10_001_000, 10_001_090, 20_000_000, 20_001_000]
                 .into_iter()
                 .collect(),
             consumables: crate::consumables::Consumables::parse("2000000, 100, 0, 0, 0\n"),
@@ -683,6 +693,40 @@ mod scroll_tests {
         let text = String::from_utf8_lossy(&notice.body).to_string();
         assert!(text.contains("Ossyria"), "{text}");
         assert!(text.contains("Victoria Island"), "{text}");
+    }
+
+    /// **The wire.** Every test above calls the handler; the client never sends `0x010E` for
+    /// a scroll - it sends `0x0123` (`net::useitem::CLIENT_USE_RETURN_SCROLL`), and for three
+    /// weeks nothing answered it. Through `handle`, with the opcode the client uses: Henesys
+    /// from Victoria Island warps and consumes; El Nath from Victoria Island is refused, kept,
+    /// answered with the unlock and a visible notice; Orbis from Ossyria warps.
+    #[test]
+    fn the_scroll_opcode_the_client_sends_reaches_the_handler() {
+        let packet = |slot: i16, item: u32| {
+            let mut p = net::useitem::CLIENT_USE_RETURN_SCROLL.to_le_bytes().to_vec();
+            p.extend_from_slice(&net::useitem::use_item(0x1234, slot, item, 1));
+            p
+        };
+        let (mut s, acct, id) = session_with_scroll(2_030_004, 2, 10_001_090);
+        let out = s.handle(&packet(1, 2_030_004));
+        assert_eq!(stored_map(&s, acct, id), 10_001_000, "Henesys, through 0x0123");
+        assert!(has(&out, net::opcode::SET_FIELD));
+        assert_eq!(held(&s, id), Some(1), "one of two used");
+
+        let (mut s, acct, id) = session_with_scroll(2_030_009, 1, 10_001_090);
+        let out = s.handle(&packet(1, 2_030_009));
+        assert_eq!(stored_map(&s, acct, id), 10_001_090, "El Nath from Victoria: refused");
+        assert!(!has(&out, net::opcode::SET_FIELD));
+        assert_eq!(held(&s, id), Some(1), "kept");
+        let stat = out.iter().find(|r| r.opcode == net::stats::STAT_CHANGED).expect("0x0123 latches; the refusal unlocks");
+        assert_eq!(stat.body[0], 1);
+        assert!(has(&out, net::notice::CHAT_NOTICE), "and says why on screen");
+
+        let (mut s, acct, id) = session_with_scroll(2_030_008, 1, 20_001_000);
+        let out = s.handle(&packet(1, 2_030_008));
+        assert_eq!(stored_map(&s, acct, id), 20_000_000, "Orbis from El Nath, both Ossyria");
+        assert!(has(&out, net::opcode::SET_FIELD));
+        assert_eq!(held(&s, id), None);
     }
 
     /// The other half of the same rule: on its own continent the same shape of scroll works.

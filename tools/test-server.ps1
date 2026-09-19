@@ -2150,12 +2150,25 @@
          path is dead code" and would be a false negative on the one question T5 exists
          to answer. **A `!` command answered by a chat balloon is the GM gate, not a
          broken command.**
-         !item 2030000 3, then !item 2030009 1. Use each from the bag.
-          Nearest Town should warp you to the map's own return town and take ONE scroll.
-          The El Nath scroll must REFUSE with a chat notice and LEAVE THE SCROLL IN THE BAG.
+         ANSWERED 2026-09-18: the client NEVER sends 0x010E for a 0203 item. Both of its
+         item-use dispatchers route 2030000..2039999 to their own builder, which sends
+         0x0123 (same body: tick, slot, item) and sets the request latch. The live server's
+         logs had fifty 0x010E and not one scroll; the handler had sat on the wrong opcode
+         since 2026-08-29. 0x0123 is wired now (the owner: "get these return scrolls working";
+         2030001..7 Victoria only, 2030008..9 Ossyria only - the continent rule the
+         handler already had). NEVER ON A SCREEN.
+         !item 2030004 2, then !item 2030009 1. Use each from the bag on Victoria Island.
+          Henesys: you land in Henesys, the stack reads 1 -> fixed
+          El Nath: a chat notice naming Ossyria and Victoria Island, the scroll STILL in
+                   the bag, and the NEXT item use still works (the latch cleared) -> fixed
             the scroll vanishes on the refusal -> the transition guard is broken
-            nothing happens at all on either -> the client never sent 0x010E for a 0203
-                       item, and the whole path is dead code. Grep world-ch0.log for 0x010E
+            nothing at all, and world-ch0.log has no 0x0123 -> the client's own field rule
+                       refused it before sending ("cannot use that in this map" on screen)
+            nothing at all, and the log HAS the 0x0123 -> paste that line and the reply
+            the next potion does nothing after a refusal -> the unlock did not clear
+                       0x0123's latch; paste the 0x007C that answered it
+          !map 20001000 (El Nath), !item 2030008 1: Orbis works; !item 2030004 1: Henesys
+                   refused there -> the Ossyria half
      T6. !npcreload. Add a line to data/npc-dialogue.txt while the server is RUNNING, then
          run the command and click that NPC.
           a) does it say the new line without a restart?
@@ -5397,11 +5410,16 @@ function Show-TestPlan {
     Write-Host '      never sent 0x010E, the path is dead code". That would be a'
     Write-Host '      FALSE NEGATIVE on the only question T5 exists to answer.'
     Write-Host '      A ! command answered by a chat balloon is the GM GATE.' -ForegroundColor Yellow
-    Write-Host '      !item 2030000 3 then !item 2030009 1.'
-        Write-Host '        Nearest Town warps to the map return town, taking ONE.'
-        Write-Host '        El Nath must REFUSE and LEAVE THE SCROLL IN THE BAG.'
-        Write-Host '          scroll vanishes on a refusal -> the guard is broken'
-        Write-Host '          nothing at all -> the client never sent 0x010E. Grep it'
+    Write-Host '      ANSWERED 2026-09-18: the client sends 0x0123 for a scroll, never 0x010E;' -ForegroundColor Magenta
+    Write-Host '      the handler sat on 0x010E for three weeks. Wired now. NEVER ON A SCREEN.' -ForegroundColor Magenta
+    Write-Host '      !item 2030004 2 then !item 2030009 1, on Victoria Island:'
+        Write-Host '        Henesys: you land there, stack reads 1 -> fixed' -ForegroundColor Green
+        Write-Host '        El Nath: notice naming Ossyria/Victoria, scroll KEPT, next item use' -ForegroundColor Green
+        Write-Host '          still works -> fixed' -ForegroundColor Green
+        Write-Host '          scroll vanishes on a refusal -> the guard is broken' -ForegroundColor Yellow
+        Write-Host '          nothing at all + no 0x0123 in the log -> the client''s own map rule;' -ForegroundColor Yellow
+        Write-Host '          nothing + the 0x0123 IS there -> paste it and the reply' -ForegroundColor Yellow
+        Write-Host '        !map 20001000, !item 2030008 1: Orbis works; 2030004 refused there' -ForegroundColor Green
         Write-Host '  T6. !npcreload. Add a line to data/npc-dialogue.txt with the' -ForegroundColor White
         Write-Host '      server RUNNING, run the command, click that NPC.'
         Write-Host '        a) new line with no restart?'
