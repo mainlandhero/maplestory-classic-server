@@ -313,6 +313,19 @@ the `0x0224` (`world-ch0.log`), and a `0x0224` for an id already in the pool is 
 research had recorded. `broadcast_look_change` now sends `0x0225` then `0x0224` then the pets
 for that one character, the sequence a fresh sighting gets (§8.1). Unverified on the observer.
 
+**2026-09-19: Gift Drops - `!giftdrop` and `!giftall`, through the Administrator's box.** The owner
+wanted the modern Gift Drop window for compensation. This client has no such window (no UI
+image, none of its strings), its own mailbox window has no way in that any scan found, and the
+Cash Shop locker was refused for non-cash items; so the Administrator's type-6 menu, the way
+`!tool` works. `!giftdrop <player> <item> [n] [msg]` queues for one character; `!giftall <item>
+[n] [msg]` queues one row per account, claimable on any of its characters once; both expire
+after seven days (`store::GIFT_TTL_SECS`, stamped on the row). The box offers Claim (room
+checked first with the quests' own refusal; the row settles BEFORE the item moves), Refuse
+(gone for good) and Cancel (kept, for later or another character). An online target's box opens
+at once (a bus `Event::GiftDrop`); an offline one's on the first move after their next field
+entry, never with the `SetField`. `store::gifts`, `world::giftdrop`, `session/giftdrop.rs`; the
+`gifts` table is in the item-id rename list. Plan 11b. Never on a screen.
+
 **2026-09-18: the collaboration pets declare Item Pouch alone, like the classic eleven.** The owner,
 off Lil Fern's shop tooltip (*"Skill: Meso Magnet, Item Pouch, Auto Move, Auto Buff"*): *"have
 them match existing pets and should only have Meso Magnet and Item Pouch at default purchase

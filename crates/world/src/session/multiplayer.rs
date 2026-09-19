@@ -117,6 +117,17 @@ impl Session {
                 crate::broadcast::Event::PartyBuff { skill_id, level, caster } => {
                     out.extend(self.receive_party_buff(skill_id, level, caster));
                 }
+                crate::broadcast::Event::GiftDrop => {
+                    // Two gifts queued back to back are two events and ONE box: the box lists
+                    // "N more waiting", and the next opens behind the answer. A box already
+                    // open for a gift is left alone rather than replaced under the player.
+                    let already_open = self.conversation.as_ref().is_some_and(|c| crate::giftdrop::gift_id_from_path(&c.path).is_some());
+                    let n = self.claimed.as_ref().and_then(|c| self.store.pending_gifts(c.character_id, c.account_id, store::Store::unix_now()).ok()).map(|g| g.len()).unwrap_or(0);
+                    if n > 0 && !already_open {
+                        out.extend(self.notice(crate::giftdrop::waiting_notice(n)));
+                        out.extend(self.open_gift_drop());
+                    }
+                }
             }
         }
         out

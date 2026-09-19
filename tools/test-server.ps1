@@ -2605,6 +2605,38 @@
              the stat window drops the number. A coupon that outlives its icon or an icon
              that outlives its multiplier is a bug either way - say which.
 
+    11b. GIFT DROPS - !giftdrop and !giftall (2026-09-18/19). The owner wanted the modern Gift
+        Drop window for compensation; this client has no such window (no UI image, none of
+        its strings), its mailbox window has no way in, and the Cash Shop locker was refused
+        ("the Cash Shop should not handle items that are not Cash Items"). So: "via our usual
+        MapleStory Administrator ... via !giftdrop, and our usual show NPC chat dialogue",
+        "all gifts expire in 7 days if unclaimed", "!giftall which gives all accounts (not
+        character) an item ... claim it on any character", "a cancel option". Rows in the
+        store (store::gifts); the box is the Administrator's type-6 menu, like !tool.
+          GM: !giftdrop Tester2 2000000 10 Sorry about the crash
+            Tester2 ON THIS CHANNEL: their box opens at once - "GIFT DROP", the message,
+                       "Reward: [icon] Red Potion x10 (from the owner)", "Expires in 7 days.",
+                       Claim / Refuse / Cancel -> DONE. Claim: 10 potions in the Use tab, a
+                       "Claimed:" box; the chat had "You have a gift waiting" first
+            Tester2 OFFLINE or on the other channel: nothing until they log in; then on
+                       their FIRST MOVE after entry the notice + the box -> DONE. A box that
+                       shows with the SetField -> say so (it must wait for the move)
+            Claim with the Use tab full -> the quests' own "make 1 space in your Use tab"
+                       box, the gift stays; !giftdrop again after freeing a slot claims it
+            Refuse -> "You refused ..." and it is gone for good; Cancel -> "Kept for
+                       later", and !giftdrop shows it again
+            queue two: the box says "1 more waiting"; after Claim the second box opens
+                       by itself -> DONE
+            a non-GM typing !giftdrop with arguments: said out loud as chat, nothing queued
+          GM: !giftall 2000000 5 Thanks for testing
+            every player on this channel gets the box at once, marked "For your account:
+                       claim it on whichever character you like." -> DONE
+            Cancel on Tester2, log in Tester3 (same account): offered on the first move;
+                       Claim there; back on Tester2, !giftdrop -> "nothing to claim" -> DONE
+            the GM's own screen gets one too (the GM's account is an account)
+          the icon does not draw in the box / the name is blank -> the #i / #t token for
+                       that id; say which item. A box that never appears -> paste the
+                       "giftdrop:" line and whatever 0x055B follows it in world-chN.log
     11a. THE QUEST HELPER'S ITEM COUNTS AFTER A MAP CHANGE (2026-09-18). The owner: "when
         players enter a new map, the progress in quest helper completely zeroes out. But
         when you pick up an item in that map from killing mobs, it will return back to
@@ -5730,6 +5762,13 @@ function Show-TestPlan {
         Write-Host '        triple EXP still? report both halves separately' -ForegroundColor Yellow
         Write-Host '     c. wait one out / right-click it: icon AND stat go together' -ForegroundColor Green
         Write-Host ''
+        Write-Host '  11b. GIFT DROPS (2026-09-19): !giftdrop <player> <item> [n] [msg] and !giftall' -ForegroundColor White
+        Write-Host '     <item> [n] [msg] queue gifts; the Administrator''s box offers them (Claim /'
+        Write-Host '     Refuse / Cancel), 7-day expiry, !giftall = one per ACCOUNT, any character.'
+        Write-Host '       online target: box at once; offline: notice + box on the FIRST MOVE after' -ForegroundColor Green
+        Write-Host '       login; Claim -> item + "Claimed:"; full tab -> "make 1 space", kept' -ForegroundColor Green
+        Write-Host '       Cancel keeps it; claim an account gift on the alt, the main sees none' -ForegroundColor Green
+        Write-Host '       box with the SetField / no box / blank icon -> say which; paste "giftdrop:"' -ForegroundColor Yellow
         Write-Host '  11a. QUEST HELPER COUNTS AFTER A MAP CHANGE (2026-09-18): the mode-5 restore' -ForegroundColor White
         Write-Host '     skips the client''s recount hook, so every in-progress quest''s record is' 
         Write-Host '     re-sent after the bag. Collection quest + items in bag, change maps:'

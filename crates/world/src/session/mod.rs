@@ -32,11 +32,11 @@ use crate::config::Config;
 /// Pruned 2026-09-06 on the owner's instruction: the per-kind rate setters, `!migsweep`,
 /// `!npcfx`, `!buff`, `!unbuff`, `!buy`, `!locker` and `!kit` are gone.
 const GM_COMMANDS: &str =
-    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !setrates <exp> <meso> <drop> <quest> <party%>, !rates, !job <jobId>, !npcecho [dx], !nx [amount], !lp [amount], !meso [amount], !resetap, !resetsp, !learn [level] | !learn <skillId> <level>, !npcreload [templateId], !hair <hairId>, !face <faceId>, !registrationcode, !recoverycode <email|username>, !online, !track <character>, !help";
+    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !setrates <exp> <meso> <drop> <quest> <party%>, !rates, !job <jobId>, !npcecho [dx], !nx [amount], !lp [amount], !meso [amount], !resetap, !resetsp, !learn [level] | !learn <skillId> <level>, !npcreload [templateId], !hair <hairId>, !face <faceId>, !giftdrop <player> <itemId> [count] [message], !giftall <itemId> [count] [message], !registrationcode, !recoverycode <email|username>, !online, !track <character>, !help";
 
 /// What a player who is not a GM is shown by `!help`, and all they may run. The owner,
 /// 2026-09-06: *"A player should only be shown commands that they are allowed to execute."*
-const PLAYER_COMMANDS: &str = "Commands: !tool, !scroll, !rates, !online, !help";
+const PLAYER_COMMANDS: &str = "Commands: !tool, !scroll, !giftdrop, !rates, !online, !help";
 
 /// One packet to send, plus what it is - the label goes in the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -346,6 +346,11 @@ pub struct Session {
     /// works, because it lands on a pet the client has FINISHED building. session/pet.rs
     /// `pet_settle_replies`.
     pet_settle_pending: bool,
+    /// **A field entry found a gift waiting.** Set by `arm_gift_drop` after the bag restore,
+    /// cleared by the first move after it, which sends the notice and the Administrator's
+    /// box - the same "the client is provably live" moment the pet settle uses, so a
+    /// `0x055B` never lands with a `SetField`. session/giftdrop.rs.
+    gift_drop_pending: bool,
     /// **This connection is ending because the character is moving to another channel**, so
     /// its drop is a handover, not a departure: the party keeps the seat. Set by
     /// `on_change_channel` once the migration is minted. `session/party.rs`
@@ -540,6 +545,7 @@ mod cashitem;
 mod charinfo;
 mod fame;
 mod cashshop;
+mod giftdrop;
 mod combat;
 mod consume;
 mod field;
@@ -621,6 +627,7 @@ impl Session {
             pet_hunger_due_ms: None,
             pet_overfeeds: 0,
             pet_settle_pending: false,
+            gift_drop_pending: false,
             handing_over: false,
             party_told_of_disconnect: false,
             party_window_sent: false,
@@ -1011,7 +1018,10 @@ impl Session {
                     self.publish_user_move(&m, payload);
                 }
                 // **The pet's settle, on the first move after a field entry.** session/pet.rs.
-                return self.pet_settle_replies();
+                // And a waiting gift's box, the same way. session/giftdrop.rs.
+                let mut out = self.pet_settle_replies();
+                out.extend(self.gift_drop_replies());
+                return out;
             }
             // **Party requests are answered, even though there is no party system.** One
             // archived `0x0182` exists - the owner pressing Create - and the log line beside it

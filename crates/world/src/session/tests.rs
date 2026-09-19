@@ -9367,6 +9367,208 @@ fn double_clicking_another_player_answers_with_their_character_info() {
     assert_eq!(u32::from_le_bytes(out[0].body[4..8].try_into().unwrap()), their_id, "resolved by name");
 }
 
+// ---------------------------------------------------------------------------------------
+// Gift Drops - session/giftdrop.rs, crate::giftdrop, store::gifts.
+
+/// **A GM queues a gift; the player on the same channel gets the Administrator's box at once;
+/// Claim puts the item in the bag and settles the row; the box for a second gift follows.**
+/// The owner, 2026-09-18: *"Can we do it via our usual MapleStory Administrator, but this time it
+/// is via !giftdrop, and our usual show NPC chat dialogue."*
+#[test]
+fn a_gift_drop_is_queued_by_a_gm_offered_at_once_and_claimed_into_the_bag() {
+    let (store, config, fields, account) = shared_channel(0, 30);
+    let mut item_names = std::collections::HashMap::new();
+    item_names.insert(1_302_000u32, "Sword".to_string());
+    item_names.insert(2_000_000u32, "Red Potion".to_string());
+    let config = Arc::new(Config { item_names, ..(*config).clone() });
+    let (mut gm, _gm_id) = join_channel(&store, &config, &fields, account, "Wisp");
+    store.set_gm("maplecw", true).unwrap();
+    gm.on_field_entered();
+    // Tester2 is on a second, non-GM account: the "said out loud" control at the end needs it.
+    let player_account = store.create_account("player", "correct horse battery").unwrap();
+    let (mut them, their_id) = join_channel(&store, &config, &fields, player_account, "Tester2");
+    them.on_field_entered();
+    gm.collect_mail();
+    them.collect_mail();
+
+    // Nothing waiting: the public word says so, in their box.
+    let out = them.handle(&gm_chat("!giftdrop"));
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].opcode, net::script::SCRIPT_MESSAGE);
+    assert!(String::from_utf8_lossy(&out[0].body).contains("nothing to claim"), "{}", out[0].what);
+
+    // The GM queues two. The ack names the row, and the target is on this channel.
+    let out = gm.handle(&gm_chat("!giftdrop Tester2 1302000 1 Sorry about the crash"));
+    let ack = notice_text(&out[0]);
+    assert!(ack.contains("Gift #1 queued for Tester2: 1x Sword (1302000) - \"Sorry about the crash\"; expires in 7 days"), "{ack}");
+    assert!(ack.contains("on this channel"), "{ack}");
+    gm.handle(&gm_chat("!giftdrop Tester2 2000000 10"));
+    let now = store::Store::unix_now();
+    assert_eq!(store.pending_gifts(their_id, player_account, now).unwrap().len(), 2);
+
+    // Tester2's session drains the event: the notice, then the box for the OLDEST gift, with
+    // the sword's icon and name, the message, "1 more waiting", Claim = 0, Refuse = 1.
+    let seen = them.collect_mail();
+    let boxes: Vec<&Reply> = seen.iter().filter(|r| r.opcode == net::script::SCRIPT_MESSAGE).collect();
+    assert_eq!(boxes.len(), 1, "one box: {:?}", seen.iter().map(|r| &r.what).collect::<Vec<_>>());
+    let text = String::from_utf8_lossy(&boxes[0].body).into_owned();
+    assert!(text.contains("GIFT DROP") && text.contains("Sorry about the crash") && text.contains("#i1302000# #t1302000# x1"), "{text}");
+    assert!(text.contains("1 more waiting") && text.contains("#L0# Claim#l") && text.contains("#L1# Refuse#l") && text.contains("#L2# Cancel"), "{text}");
+    assert!(text.contains("Expires in 7 days."), "{text}");
+    assert!(seen.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE && notice_text(r).contains("2 gifts waiting")), "the notice");
+    assert_eq!(them.conversation.as_ref().map(|c| c.path.clone()), Some("giftdrop.1".to_string()));
+
+    // Claim: the row settles, the sword is in the Equip tab, the bag op goes out, they say so,
+    // and the second gift's box opens behind it.
+    let out = them.on_script_reply(&menu_reply(Some(0)));
+    assert!(out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    let says: Vec<String> = out.iter().filter(|r| r.opcode == net::script::SCRIPT_MESSAGE).map(|r| String::from_utf8_lossy(&r.body).into_owned()).collect();
+    assert!(says[0].contains("Claimed: #i1302000# #t1302000# x1"), "{}", says[0]);
+    assert!(says[1].contains("#i2000000# #t2000000# x10") && !says[1].contains("more waiting"), "the next box: {}", says[1]);
+    let bag = store.bag(their_id).unwrap();
+    assert_eq!(bag.items_in(store::InventoryType::Equip).filter(|i| i.item.item_id == 1_302_000).count(), 1);
+    assert_eq!(store.pending_gifts(their_id, player_account, now).unwrap().len(), 1);
+    assert_eq!(them.conversation.as_ref().map(|c| c.path.clone()), Some("giftdrop.2".to_string()));
+
+    // Cancel on the second box: nothing settles, nothing given, they say it is kept.
+    let out = them.on_script_reply(&menu_reply(Some(2)));
+    let says: Vec<String> = out.iter().filter(|r| r.opcode == net::script::SCRIPT_MESSAGE).map(|r| String::from_utf8_lossy(&r.body).into_owned()).collect();
+    assert_eq!(says.len(), 1, "{says:?}");
+    assert!(says[0].contains("Kept for later"), "{}", says[0]);
+    assert!(!out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION));
+    assert_eq!(store.pending_gifts(their_id, player_account, now).unwrap().len(), 1, "still queued after a cancel");
+    assert!(them.conversation.is_none());
+
+    // A stale click on the first box gives nothing: the path names row 1, which is settled.
+    them.conversation = Some(Conversation { npc_template: crate::dailyperks::ADMIN_TEMPLATE, quest_id: None, path: "giftdrop.1".into(), sent: 0, awaiting_yes_no: false, sent_with_next: false });
+    let out = them.on_script_reply(&menu_reply(Some(0)));
+    assert!(!out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "nothing given twice");
+    assert_eq!(store.bag(their_id).unwrap().items_in(store::InventoryType::Equip).count(), 1);
+
+    // Refuse the potions: settled without giving, nothing more waiting, no further box.
+    them.handle(&gm_chat("!giftdrop"));
+    let out = them.on_script_reply(&menu_reply(Some(1)));
+    let says: Vec<String> = out.iter().filter(|r| r.opcode == net::script::SCRIPT_MESSAGE).map(|r| String::from_utf8_lossy(&r.body).into_owned()).collect();
+    assert_eq!(says.len(), 1, "{says:?}");
+    assert!(says[0].contains("You refused #t2000000#"));
+    assert!(store.pending_gifts(their_id, player_account, now).unwrap().is_empty());
+    assert!(store.bag(their_id).unwrap().items_in(store::InventoryType::Use).next().is_none(), "nothing given on a refuse");
+
+    // A non-GM with arguments is said out loud, like every GM word; the bare word still works.
+    let out = them.handle(&gm_chat("!giftdrop the owner 1302000"));
+    assert!(out.iter().any(|r| r.opcode == net::userchat::USER_CHAT), "said out loud: {:?}", out.iter().map(|r| r.opcode).collect::<Vec<_>>());
+    assert_eq!(store.pending_gifts(_gm_id, account, now).unwrap().len(), 0, "and nothing queued");
+}
+
+/// **`!giftall` is one gift per account, offered on every screen on the channel, claimable on
+/// any character of the account, once; the second character sees it gone.** The owner: *"gives all
+/// accounts (not character) an item. The player can claim it on any character they want."*
+#[test]
+fn giftall_queues_one_gift_per_account_that_any_of_its_characters_can_claim_once() {
+    let (store, config, fields, account) = shared_channel(0, 30);
+    let mut item_names = std::collections::HashMap::new();
+    item_names.insert(2_000_000u32, "Red Potion".to_string());
+    let config = Arc::new(Config { item_names, ..(*config).clone() });
+    let (mut gm, gm_id) = join_channel(&store, &config, &fields, account, "Wisp");
+    store.set_gm("maplecw", true).unwrap();
+    gm.on_field_entered();
+    let player_account = store.create_account("player", "correct horse battery").unwrap();
+    let (mut main, main_id) = join_channel(&store, &config, &fields, player_account, "Tester2");
+    main.on_field_entered();
+    // The same account's second character, not online.
+    let alt = net::opcode::Character { name: "Tester3".to_string(), map_id: SHARED_MAP, ..Default::default() };
+    let alt_id = store.create_character(player_account, 0, &alt).unwrap().id;
+    gm.collect_mail();
+    main.collect_mail();
+
+    let out = gm.handle(&gm_chat("!giftall 2000000 5 Thanks for testing"));
+    let ack = notice_text(&out[0]);
+    assert!(ack.contains("Gift queued for 2 account(s)") && ack.contains("5x Red Potion") && ack.contains("expires in 7 days"), "{ack}");
+    let now = store::Store::unix_now();
+    // Both of the player account's characters see the same row; the GM's account has its own.
+    let seen_by_main = store.pending_gifts(main_id, player_account, now).unwrap();
+    assert_eq!(seen_by_main.len(), 1);
+    assert_eq!(store.pending_gifts(alt_id, player_account, now).unwrap(), seen_by_main);
+    assert_eq!(store.pending_gifts(gm_id, account, now).unwrap().len(), 1);
+
+    // Tester2's screen: the box, marked as the account's, at once.
+    let seen = main.collect_mail();
+    let box_text = seen.iter().find(|r| r.opcode == net::script::SCRIPT_MESSAGE).map(|r| String::from_utf8_lossy(&r.body).into_owned()).expect("the box");
+    assert!(box_text.contains("For your account: claim it on whichever character you like."), "{box_text}");
+    // The GM's own screen got one too - the GM's account is an account, and a session drains
+    // its own events right after the reply to the packet that queued them.
+    assert!(out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE), "the GM's own box: {:?}", out.iter().map(|r| r.opcode).collect::<Vec<_>>());
+
+    // Tester2 cancels (to claim on Tester3), logs the alt in: the alt is offered it on the
+    // first move and claims it; Tester2 then has nothing.
+    main.on_script_reply(&menu_reply(Some(2)));
+    store.create_migration(player_account, alt_id, 0, 0).unwrap();
+    let mut alt_s = Session::joining(store.clone(), config.clone(), fields.clone());
+    assert!(alt_s.claim_for_character(alt_id).contains("claimed"), "the alt's claim");
+    alt_s.on_field_entered();
+    let a_move = || { let mut b = net::usermove::CLIENT_USER_MOVE.to_le_bytes().to_vec(); b.extend_from_slice(&[0u8; 8]); b };
+    let out = alt_s.handle(&a_move());
+    assert!(out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE), "offered to the alt on its first move");
+    let out = alt_s.on_script_reply(&menu_reply(Some(0)));
+    assert!(out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "claimed on the alt");
+    assert_eq!(store.bag(alt_id).unwrap().items_in(store::InventoryType::Use).filter(|i| i.item.item_id == 2_000_000).count(), 1);
+    assert!(store.pending_gifts(main_id, player_account, now).unwrap().is_empty(), "settled for the whole account");
+    let out = main.handle(&gm_chat("!giftdrop"));
+    assert!(String::from_utf8_lossy(&out[0].body).contains("nothing to claim"), "Tester2 cannot claim it again");
+    assert_eq!(store.bag(main_id).unwrap().items_in(store::InventoryType::Use).count(), 0);
+}
+
+/// **A full tab keeps the gift queued** - the quests' own "make N spaces" box, no settle, no
+/// item - and a gift queued while the player was away is offered on the first move after
+/// their next field entry, never with the SetField.
+#[test]
+fn a_gift_drop_into_a_full_tab_waits_and_an_offline_gift_is_offered_on_the_first_move() {
+    let (mut s, store, id) = claimed_session();
+    let mut names = std::collections::HashMap::new();
+    names.insert(1_302_000u32, "Sword".to_string());
+    s.config = Arc::new(Config { item_names: names, ..(*s.config).clone() });
+    empty_bag(&store, id);
+    for i in 0..30u32 {
+        store.add_item(id, store::InventoryType::Equip, &store::Item::equip(1_302_000 + i % 3), 1).unwrap();
+    }
+    // Queued "offline": straight into the store, as another channel's GM would. Dated now,
+    // so the seven-day expiry has not passed.
+    let now = store::Store::unix_now();
+    let account = s.claimed.as_ref().unwrap().account_id;
+    store.queue_gift(store::GiftTarget::Character(id), 1_302_000, 1, "", "Wisp", now).unwrap();
+
+    // Field entry arms it and sends no box; the first move sends the notice and the box.
+    let entered = s.on_field_entered();
+    assert!(!entered.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE), "no 0x055B with the entry");
+    let a_move = || { let mut b = net::usermove::CLIENT_USER_MOVE.to_le_bytes().to_vec(); b.extend_from_slice(&[0u8; 8]); b };
+    let out = s.handle(&a_move());
+    assert!(out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE && notice_text(r).contains("a gift waiting")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE), "the box on the first move");
+    assert!(s.handle(&a_move()).iter().all(|r| r.opcode != net::script::SCRIPT_MESSAGE), "once");
+
+    // Claim with the Equip tab full: their refusal names the tab, the row stays pending.
+    let out = s.on_script_reply(&menu_reply(Some(0)));
+    let say = out.iter().find(|r| r.opcode == net::script::SCRIPT_MESSAGE).expect("the refusal box");
+    let text = String::from_utf8_lossy(&say.body);
+    assert!(text.contains("Please make 1 space in your Equip tab."), "{text}");
+    assert!(!out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION));
+    assert_eq!(store.pending_gifts(id, account, now).unwrap().len(), 1, "still queued");
+
+    // One slot freed: the same gift claims.
+    store.remove_item(id, store::InventoryType::Equip, 30, None).unwrap();
+    s.handle(&gm_chat("!giftdrop"));
+    let out = s.on_script_reply(&menu_reply(Some(0)));
+    assert!(out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION));
+    assert!(store.pending_gifts(id, account, now).unwrap().is_empty());
+
+    // An expired gift is not offered: eight days old, the entry arms nothing.
+    store.queue_gift(store::GiftTarget::Character(id), 1_302_000, 1, "", "Wisp", now - 8 * 86_400).unwrap();
+    s.on_field_entered();
+    assert!(s.handle(&a_move()).iter().all(|r| r.opcode != net::script::SCRIPT_MESSAGE), "expired: no box");
+    let out = s.handle(&gm_chat("!giftdrop"));
+    assert!(String::from_utf8_lossy(&out[0].body).contains("nothing to claim"));
+}
+
 /// **A late joiner is told where people ARE, not where they were when they arrived.**
 ///
 /// The owner, 2026-09-03: *"the positioning is off if someone joins the map later since they don't

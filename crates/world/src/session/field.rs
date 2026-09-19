@@ -390,6 +390,8 @@ impl Session {
             Err(e) => out.extend(self.notice(format!("Could not read your mesos: {e}"))),
         }
         out.extend(self.quest_helper_recount(chr.id));
+        // A gift queued while this character was away: its box opens on the first move.
+        self.arm_gift_drop();
         out
     }
 

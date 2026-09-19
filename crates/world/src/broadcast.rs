@@ -211,6 +211,11 @@ pub enum Event {
     /// reason a party buff crosses as a fact - only the owner knows its own maximum, and only
     /// the owning session can move that client's bar. `Session::heal_cast`.
     PartyHeal { percent: u32, caster: u32 },
+
+    /// A GM queued a gift for this character while they are on this channel: open the
+    /// Administrator's box now rather than at their next field entry. Carries nothing - the
+    /// row in `store::gifts` is the gift, and the receiving session reads it.
+    GiftDrop,
 }
 
 /// One queued packet and whether a newer one may replace it.
@@ -534,6 +539,12 @@ impl Bus {
     /// other channels) so a crown never goes to someone who is offline.
     pub fn character_online(&self, character: u32) -> bool {
         self.lock().boxes.values().any(|m| m.presence.as_ref().is_some_and(|p| p.character == character))
+    }
+
+    /// **Every character playing on this channel right now** - one per connection with a
+    /// presence. For `!giftall`, which has one box to open per screen.
+    pub fn online_characters(&self) -> Vec<u32> {
+        self.lock().boxes.values().filter_map(|m| m.presence.as_ref().map(|p| p.character)).collect()
     }
 
     /// **Which of `characters` are playing on `map` right now.** Order preserved, duplicates
@@ -1135,6 +1146,7 @@ mod tests {
                 Event::PartyBuff { skill_id, .. } => panic!("not an EXP share: skill {skill_id}"),
                 Event::PartyHeal { caster, .. } => panic!("not an EXP share: heal from {caster}"),
                 Event::PartyMesos { picker, .. } => panic!("not an EXP share: mesos from {picker}"),
+                Event::GiftDrop => panic!("not an EXP share: a gift drop"),
             })
             .collect()
     }

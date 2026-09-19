@@ -34,6 +34,7 @@ pub mod config;
 /// The Maple Administrator's three once-a-day favours, and the words they say about them.
 /// The gate itself is `store::dailyperks`; the grants are in `session::npc`.
 pub mod dailyperks;
+pub mod giftdrop;
 pub mod dropsite;
 pub mod drops;
 pub mod droptables;
