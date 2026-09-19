@@ -2169,34 +2169,48 @@
                        0x0123's latch; paste the 0x007C that answered it
           !map 20001000 (El Nath), !item 2030008 1: Orbis works; !item 2030004 1: Henesys
                    refused there -> the Ossyria half
-     TS. THE HAIR SALONS (2026-09-18). The owner, corrected: Henesys Plastic Surgery (10001043) -
-         Dr. Feeble takes the SIGNATURE coupon (5150100, you pick from the REG list), Denma
-         the Owner the MYSTERY coupon (5150000, a random VIP style); Kerning City Hair Salon
-         (10003005) - Andre Signature, Don Giovanni Mystery. Each salon has its own lists
-         (the COT rotation), males from the male pool, females from the female one; a
-         player without the coupon is pointed at the Cash Shop with the item link; the hair
-         COLOUR is kept (black stays black, blue stays blue). The Signature NPC uses the
-         client's own "pick a look" script box, message type 0x0a, decoded from the client
-         (net::script::npc_avatar) - NEVER ON A SCREEN; the Mystery NPC asks yes/no first
-         because a random pick spends the coupon.
-           1. click Dr. Feeble with NO Signature Hair Coupon: a line with the coupon's icon
-              + name and "Cash Shop" -> fixed; a bare "no dialogue" line -> paste it
-           2. buy/!item 5150100 1, click Dr. Feeble: a window with your character wearing
-              each of 6 styles (male: Metro, Line Scratch, Mane, Shaggy Wax, Cabana Boy,
-              Dragon Layered; female: Monica, Miru, Angelica, Lori, Rose, Swooshy Ponytail)
-              -> the 0x0a box draws. Pick one: your hair changes IN PLACE, in your current
-              colour, the coupon is gone, a chat line names the style -> fixed
+     TS. THE HAIR SALONS (2026-09-18). The owner, third correction: the OWNERS take both style
+         coupons and the ASSISTANTS do colour. Henesys Hair Salon (10001044): Natalie
+         (owner), Brittany (assistant); Kerning City Hair Salon (10003005): Don Giovanni,
+         Andre. The plastic surgeons (Denma, Dr. Feeble) are out. Coupons: 5150100
+         Signature Hair (you pick from the salon's REG list), 5150000 Mystery Hair (a
+         random VIP style); 5151100 Signature Color (you pick one of 8), 5151000 Mystery
+         Hair Color (random of the 8, equal odds). Each salon its own style lists (COT
+         rotation), males from the male pool, females from the female; colours are the
+         same everywhere. A style change KEEPS your colour; a colour change KEEPS your
+         style. An NPC lists the coupons you hold as a menu (one line each, with the item
+         icon); with neither, a line links both and names the Cash Shop. Signature opens
+         the client's own "pick a look" box (message type 0x0a, decoded from the client,
+         net::script::npc_avatar) - NEVER ON A SCREEN; a Mystery line spends the coupon
+         on the roll the moment you click it (the line says so).
+           1. click Natalie with NO style coupon: a line with BOTH coupons' icons + names
+              and "Cash Shop" -> fixed; a bare "no dialogue" line -> paste it
+           2. !item 5150100 1, click Natalie: a one-line menu with the coupon's icon. Pick
+              it: a window with your character wearing each of 6 styles (male: Metro, Line
+              Scratch, Mane, Shaggy Wax, Cabana Boy, Dragon Layered; female: Monica, Miru,
+              Angelica, Lori, Rose, Swooshy Ponytail) -> the 0x0a box draws. Pick one:
+              your hair changes IN PLACE, in your current colour, the coupon is gone, a
+              chat line names the style -> fixed
+                the menu shows but the line has no icon -> paste the MENU line
                 the window opens but shows a different set/gender -> paste the AVATAR line
                 nothing opens, log has "ScriptMessage AVATAR" -> the 0x0a body is wrong;
                           paste the line and, if the client died, client-exit.log
-                the style lands in colour 0 (black) though you were blue -> hair_ids
+                the style lands in colour 0 (black) though you were not -> hair_ids
                           empty: gm-handbook/beauty.txt missing on the server box
-           3. !item 5150000 1, click Denma: a yes/no; Yes -> one of the 7 (male) / 6
-              (female) Henesys VIP styles, your colour, coupon gone -> fixed; No -> nothing
-           4. Kerning City Hair Salon: Andre's window shows the KERNING REG list (male 7:
-              Antagonist .. Shaggy Dragon; female 6: Cutie Hair .. Chantelle); Don Giovanni
-              rolls a Kerning VIP style -> fixed. Henesys's list there -> paste the line
-           5. the other client sees the new hair without a map change -> the look
+           3. !item 5150000 1 AND hold a 5150100: the menu has TWO lines. Pick the Mystery
+              line: one of the 7 (male) / 6 (female) Henesys VIP styles at once, your
+              colour, the Mystery coupon gone, the Signature one still there -> fixed
+           4. Brittany with no colour coupon: a line linking 5151100 and 5151000 + "Cash
+              Shop" (a style coupon in the bag does not count) -> fixed. !item 5151100 1,
+              click them, pick the line: a window with YOUR style in 8 colours (Black, Red,
+              Orange, Blonde, Green, Blue, Purple, Brown); pick one -> your colour changes,
+              the style stays, the line names the colour -> fixed. !item 5151000 1, the
+              Mystery line -> a random one of the 8 at once
+           5. Kerning City Hair Salon: Don Giovanni's window shows the KERNING REG list
+              (male 7: Antagonist .. Shaggy Dragon; female 6: Cutie Hair .. Chantelle) and
+              their Mystery line rolls a Kerning VIP style; Andre does colours the same as
+              Brittany -> fixed. Henesys's list there -> paste the line
+           6. the other client sees the new hair without a map change -> the look
               broadcast; a stale look there -> paste "look change for" lines
 
      T6. !npcreload. Add a line to data/npc-dialogue.txt while the server is RUNNING, then
@@ -5467,17 +5481,20 @@ function Show-TestPlan {
         Write-Host '          nothing at all + no 0x0123 in the log -> the client''s own map rule;' -ForegroundColor Yellow
         Write-Host '          nothing + the 0x0123 IS there -> paste it and the reply' -ForegroundColor Yellow
         Write-Host '        !map 20001000, !item 2030008 1: Orbis works; 2030004 refused there' -ForegroundColor Green
-        Write-Host '  TS. THE HAIR SALONS. Henesys (10001043): Dr. Feeble = Signature (pick, REG),' -ForegroundColor Magenta
-        Write-Host '      Denma = Mystery (random VIP). Kerning (10003005): Andre = Signature,' -ForegroundColor Magenta
-        Write-Host '      Don Giovanni = Mystery. Own lists per salon. NEVER ON A SCREEN.' -ForegroundColor Magenta
-        Write-Host '      1. Dr. Feeble with no 5150100: coupon icon + "Cash Shop" line -> fixed'
-        Write-Host '      2. with one: a pick-a-look window, YOUR gender''s 6 REG styles; pick ->'
-        Write-Host '         hair changes in place, colour kept, coupon gone, line names it -> fixed' -ForegroundColor Green
+        Write-Host '  TS. THE HAIR SALONS. OWNERS do styles (Natalie 10001044, Don Giovanni' -ForegroundColor Magenta
+        Write-Host '      10003005), ASSISTANTS do colour (Brittany, Andre). NEVER ON A SCREEN.' -ForegroundColor Magenta
+        Write-Host '      1. Natalie with no 5150100/5150000: both icons + "Cash Shop" line -> fixed'
+        Write-Host '      2. !item 5150100 1: a 1-line menu with the icon; pick -> a pick-a-look window,'
+        Write-Host '         YOUR gender''s 6 REG styles; pick -> hair changes in place, colour kept,' -ForegroundColor Green
+        Write-Host '         coupon gone, line names it -> fixed' -ForegroundColor Green
         Write-Host '         wrong set/gender -> paste the AVATAR line; nothing opens -> the 0x0a' -ForegroundColor Yellow
-        Write-Host '         body; black though you were blue -> beauty.txt missing on the box' -ForegroundColor Yellow
-        Write-Host '      3. Denma with 5150000: yes/no; Yes -> a random VIP style, colour kept'
-        Write-Host '      4. Kerning: Andre shows the KERNING REG list; Don Giovanni rolls Kerning VIP'
-        Write-Host '      5. the other client sees it without a map change -> fixed'
+        Write-Host '         body; black though you were not -> beauty.txt missing on the box' -ForegroundColor Yellow
+        Write-Host '      3. hold both: 2 menu lines; the Mystery line rolls a VIP style AT ONCE,'
+        Write-Host '         colour kept, only the Mystery coupon gone'
+        Write-Host '      4. Brittany: no colour coupon -> 5151100 + 5151000 icons + Cash Shop; with'
+        Write-Host '         5151100 -> your style in 8 colours, pick one, style kept; 5151000 -> random'
+        Write-Host '      5. Kerning: Don Giovanni shows the KERNING lists; Andre = colours, same'
+        Write-Host '      6. the other client sees it without a map change -> fixed'
         Write-Host '  T6. !npcreload. Add a line to data/npc-dialogue.txt with the' -ForegroundColor White
         Write-Host '      server RUNNING, run the command, click that NPC.'
         Write-Host '        a) new line with no restart?'

@@ -1,70 +1,79 @@
-//! **The hair salons: Mystery and Signature Hair Coupons at Henesys' and Kerning City's NPCs.**
+//! **The hair salons: styles from the owners, colours from the assistants.**
 //!
-//! The owner, 2026-09-18: *"Coupons offer different hair styles depending on the location they are
-//! used at."* - with the COT rotation's REG and VIP hair lists for Henesys and for Kerning
-//! City - then *"Males should only be picked out of the male hair pool. Females only being
-//! offered the female ones."*, *"If the clients clicked on the NPC without having the
-//! required cash items, the dialogue should direct them with the item link icon of the
-//! required item and ask them to purchase it in the Cash Shop."*, and the corrected
-//! assignment: *"In Henesys: Dr. Feeble takes the signature ones (player choice REG faces).
-//! Denma the Owner takes mystery ones (randomly chosen VIP faces)"* and *"Don Giovanni takes
-//! the Mystery VIP coupons that randomly changes the hair. Andre takes the REG Signature
-//! coupons that allows users to choose"*. ("faces" is a slip: the lists are hair ids, the
-//! coupons are the two Cash-tab hair coupons, the follow-up says hair pools. This is hair.)
+//! The owner, 2026-09-18, in four messages, the last correcting the NPCs: *"the Hair Salon Owners
+//! will take both the VIP mystery (random) or REG Signature Coupons. The player get to choose
+//! which one they want to use if they have both. The dialogue should list out all available
+//! coupons for use, or ask the player to purchase one from the Cash Shop if there isn't one
+//! detected in the inventory. The Hair Salon assistants will now deal with Hair Color. Hair
+//! color has two coupons as well, mystery and signature. Signature REG coupons lets users
+//! choose, while mystery rolls a random one from the list with equal chances. The hair
+//! colors function the same across the different towns."* Earlier: *"Males should only be
+//! picked out of the male hair pool. Females only being offered the female ones."*, the
+//! Cash Shop pointer *"with the item link icon of the required item"*, and *"If the user
+//! comes in with Black Hair, they will be changed to a Black Hair Equivalent version of the
+//! resulting hair style"* - the style keeps the colour, and the colour keeps the style.
 //!
-//! # Two salons, two coupons each
+//! # Who takes what
 //!
-//! | salon | map | Signature (player picks, REG) | Mystery (random, VIP) |
+//! | salon | map | owner (styles) | assistant (colours) |
 //! |---|---|---|---|
-//! | Henesys Plastic Surgery | 10001043 | Dr. Feeble 214 | Denma the Owner 213 |
-//! | Kerning City Hair Salon | 10003005 | Andre 414 | Don Giovanni 413 |
+//! | Henesys Hair Salon | 10001044 | Natalie 215 | Brittany 216 |
+//! | Kerning City Hair Salon | 10003005 | Don Giovanni 413 | Andre 414 |
 //!
-//! `gm-handbook/npcs.txt` places each pair on exactly that map. The lists are the COT
-//! rotation the owner supplied, split by the gender the site marks on each style; every one of
-//! the 51 base ids is in this client's own hair data with all eight colours
-//! (`gm-handbook/beauty.txt`; a test checks it). The client's own `BeautyPreview.img` lists
-//! for these coupons are different and broader - they are the generic previews, not a
-//! salon's stock - and are deliberately not used.
+//! `gm-handbook/npcs.txt` places each pair on exactly that map; the plastic surgeons next
+//! door in Henesys (Denma, Dr. Feeble, `10001043`) are not salon NPCs - an earlier version of
+//! this file had them, from a slip in the brief.
 //!
-//! # What a pick does
+//! | coupon | id | at | what |
+//! |---|---|---|---|
+//! | Signature Hair Coupon | 5150100 | owner | the player picks from the salon's REG list |
+//! | Mystery Hair Coupon | 5150000 | owner | a random style from the salon's VIP list |
+//! | Signature Color Coupon | 5151100 | assistant | the player picks one of the eight colours |
+//! | Mystery Hair Color Coupon | 5151000 | assistant | a random colour, each of the eight equally |
 //!
-//! The style is a BASE id (colour digit 0). The player keeps their current hair **colour**:
-//! `new = base + (current % 10)`, every listed base having colours 0..7 - so a colour digit
-//! 8 (60 of the classic bases go to 8) falls back to 0 rather than to an id that does not
-//! draw. Then, in the order the beauty coupons established (`session/beautycoupon.rs`): the
-//! look is written, the coupon leaves the Cash tab, the player's own avatar is redrawn by a
-//! `0x007C` with the HAIR bit, and the other clients are told.
+//! The style lists are the COT rotation the owner supplied, per salon and per gender; every one
+//! of the 51 base ids is in this client's own hair data with all eight colours
+//! (`gm-handbook/beauty.txt`; a test reads it). The eight colours are one palette for every
+//! style - the id's last digit, `0` black through `7` brown - so the colour coupons need no
+//! list of their own and work the same in both towns.
 //!
-//! # The box
+//! # The dialogue
 //!
-//! The Signature NPC's choice is the client's own "pick a look" script box, message type `0x0a`
-//! (`net::script::npc_avatar`), which draws the player wearing each style. The Mystery NPC asks a
-//! yes/no first, because a random pick spends the coupon. Neither has been on a screen.
+//! An owner or an assistant lists the coupons the player holds as a type-6 menu, one line
+//! per kind, each with the item's icon; with none, a Say links both coupons and names the
+//! Cash Shop. A Signature pick opens the client's own "pick a look" box (message type `0x0a`,
+//! `net::script::npc_avatar`): the styles for the player's gender, or the player's own style
+//! in all eight colours. A Mystery line spends the coupon on the roll at once - the line
+//! says so, and picking it is the consent. Applying a look is the beauty-coupon sequence:
+//! write it, spend the coupon, one `0x007C` with the HAIR bit, the field told.
 
 use crate::config::Config;
 
-/// Denma the Owner - Henesys, the Mystery (random VIP) side.
-pub const DENMA: u32 = 213;
-/// Dr. Feeble - Henesys, the Signature (player picks, REG) side.
-pub const DR_FEEBLE: u32 = 214;
-/// Henesys Plastic Surgery, where both stand.
-pub const HENESYS_SALON_MAP: u32 = 10_001_043;
-/// Don Giovanni - Kerning City, the Mystery side.
+/// Natalie - the Henesys Hair Salon's owner.
+pub const NATALIE: u32 = 215;
+/// Brittany - the Henesys Hair Salon's assistant, "in charge of dyeing hair".
+pub const BRITTANY: u32 = 216;
+/// Henesys Hair Salon.
+pub const HENESYS_SALON_MAP: u32 = 10_001_044;
+/// Don Giovanni - the Kerning City Hair Salon's owner.
 pub const DON_GIOVANNI: u32 = 413;
-/// Andre - Kerning City, the Signature side.
+/// Andre - the Kerning City Hair Salon's assistant.
 pub const ANDRE: u32 = 414;
-/// Kerning City Hair Salon, where both stand.
+/// Kerning City Hair Salon.
 pub const KERNING_SALON_MAP: u32 = 10_003_005;
 
-/// Signature Hair Coupon - the player chooses from the REG list.
-pub const SIGNATURE_COUPON: u32 = 5_150_100;
-/// Mystery Hair Coupon - a random style from the VIP list.
-pub const MYSTERY_COUPON: u32 = 5_150_000;
+pub const SIGNATURE_HAIR_COUPON: u32 = 5_150_100;
+pub const MYSTERY_HAIR_COUPON: u32 = 5_150_000;
+pub const SIGNATURE_COLOR_COUPON: u32 = 5_151_100;
+pub const MYSTERY_COLOR_COUPON: u32 = 5_151_000;
 
-/// The conversation path the Signature NPC's avatar box is parked at.
+/// The conversation path of an owner's or assistant's coupon menu.
+pub const MENU_PATH: &str = "salon.menu";
+/// The conversation path of the pick-a-look box, styles or colours.
 pub const CHOICE_PATH: &str = "salon.choice";
-/// The conversation path the Mystery NPC's yes/no is parked at.
-pub const MYSTERY_PATH: &str = "salon.mystery";
+
+/// The eight colours, by the id's last digit.
+pub const COLOURS: [&str; 8] = ["Black", "Red", "Orange", "Blonde", "Green", "Blue", "Purple", "Brown"];
 
 /// Henesys REG, male: Metro, Line Scratch, Mane, Shaggy Wax, Cabana Boy, Dragon Layered.
 pub const HENESYS_REG_MALE: &[u32] = &[30_050, 30_170, 30_180, 30_210, 30_330, 30_380];
@@ -91,6 +100,22 @@ pub enum Salon {
     Kerning,
 }
 
+/// What an NPC does: the owner's styles or the assistant's colours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Desk {
+    Styles,
+    Colours,
+}
+
+/// Which of a desk's two coupons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tier {
+    /// REG - the player picks.
+    Signature,
+    /// VIP - a random pick.
+    Mystery,
+}
+
 impl Salon {
     pub fn of_map(map_id: u32) -> Option<Salon> {
         match map_id {
@@ -107,59 +132,120 @@ impl Salon {
         }
     }
 
-    /// The pool this salon offers for `service` to a character of `gender` (0 male, 1
-    /// female - the record's byte).
-    pub fn styles(self, service: Service, gender: u8) -> &'static [u32] {
-        match (self, service, gender) {
-            (Salon::Henesys, Service::Signature, 0) => HENESYS_REG_MALE,
-            (Salon::Henesys, Service::Signature, _) => HENESYS_REG_FEMALE,
-            (Salon::Henesys, Service::Mystery, 0) => HENESYS_VIP_MALE,
-            (Salon::Henesys, Service::Mystery, _) => HENESYS_VIP_FEMALE,
-            (Salon::Kerning, Service::Signature, 0) => KERNING_REG_MALE,
-            (Salon::Kerning, Service::Signature, _) => KERNING_REG_FEMALE,
-            (Salon::Kerning, Service::Mystery, 0) => KERNING_VIP_MALE,
-            (Salon::Kerning, Service::Mystery, _) => KERNING_VIP_FEMALE,
-        }
-    }
-
-    /// Which service an NPC of this salon gives.
-    pub fn service_of(self, npc_template: u32) -> Option<Service> {
+    /// The desk an NPC of this salon sits at.
+    pub fn desk_of(self, npc_template: u32) -> Option<Desk> {
         match (self, npc_template) {
-            (Salon::Henesys, DR_FEEBLE) | (Salon::Kerning, ANDRE) => Some(Service::Signature),
-            (Salon::Henesys, DENMA) | (Salon::Kerning, DON_GIOVANNI) => Some(Service::Mystery),
+            (Salon::Henesys, NATALIE) | (Salon::Kerning, DON_GIOVANNI) => Some(Desk::Styles),
+            (Salon::Henesys, BRITTANY) | (Salon::Kerning, ANDRE) => Some(Desk::Colours),
             _ => None,
         }
     }
-}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Service {
-    /// The player picks from the salon's REG list.
-    Signature,
-    /// A random style from the salon's VIP list.
-    Mystery,
-}
-
-impl Service {
-    pub fn coupon(self) -> u32 {
-        match self {
-            Service::Signature => SIGNATURE_COUPON,
-            Service::Mystery => MYSTERY_COUPON,
+    /// The style pool this salon offers for `tier` to a character of `gender` (0 male, 1
+    /// female - the record's byte).
+    pub fn styles(self, tier: Tier, gender: u8) -> &'static [u32] {
+        match (self, tier, gender) {
+            (Salon::Henesys, Tier::Signature, 0) => HENESYS_REG_MALE,
+            (Salon::Henesys, Tier::Signature, _) => HENESYS_REG_FEMALE,
+            (Salon::Henesys, Tier::Mystery, 0) => HENESYS_VIP_MALE,
+            (Salon::Henesys, Tier::Mystery, _) => HENESYS_VIP_FEMALE,
+            (Salon::Kerning, Tier::Signature, 0) => KERNING_REG_MALE,
+            (Salon::Kerning, Tier::Signature, _) => KERNING_REG_FEMALE,
+            (Salon::Kerning, Tier::Mystery, 0) => KERNING_VIP_MALE,
+            (Salon::Kerning, Tier::Mystery, _) => KERNING_VIP_FEMALE,
         }
     }
 }
 
-/// Which salon and service an NPC click is, if the NPC is one of the four and the player is
-/// in that NPC's salon. The map is checked because it is the thing the owner's rule is about
-/// ("depending on the location they are used at"), not only the template.
-pub fn service_for(npc_template: u32, map_id: u32) -> Option<(Salon, Service)> {
-    let salon = Salon::of_map(map_id)?;
-    let service = salon.service_of(npc_template)?;
-    Some((salon, service))
+impl Desk {
+    /// The coupon this desk takes for `tier`.
+    pub fn coupon(self, tier: Tier) -> u32 {
+        match (self, tier) {
+            (Desk::Styles, Tier::Signature) => SIGNATURE_HAIR_COUPON,
+            (Desk::Styles, Tier::Mystery) => MYSTERY_HAIR_COUPON,
+            (Desk::Colours, Tier::Signature) => SIGNATURE_COLOR_COUPON,
+            (Desk::Colours, Tier::Mystery) => MYSTERY_COLOR_COUPON,
+        }
+    }
+
+    /// The menu's line for `tier`, said as what picking it does.
+    pub fn menu_line(self, tier: Tier) -> &'static str {
+        match (self, tier) {
+            (Desk::Styles, Tier::Signature) => "pick a style from my board",
+            (Desk::Styles, Tier::Mystery) => "a surprise VIP style - I choose, you wear it",
+            (Desk::Colours, Tier::Signature) => "pick a colour",
+            (Desk::Colours, Tier::Mystery) => "a surprise colour - any of the eight, I roll it",
+        }
+    }
 }
 
-/// The id the player ends up wearing: `base` in their current colour when that colour
-/// exists for it, `base` itself otherwise.
+/// Which salon and desk an NPC click is, if the NPC is one of the four and the player is in
+/// its salon. The map is checked because it is the thing the owner's rule is about ("depending
+/// on the location they are used at"), not only the template.
+pub fn desk_for(npc_template: u32, map_id: u32) -> Option<(Salon, Desk)> {
+    let salon = Salon::of_map(map_id)?;
+    let desk = salon.desk_of(npc_template)?;
+    Some((salon, desk))
+}
+
+/// The menu's `#L` numbers, fixed so an answer can be read back without the menu: 0 is the
+/// Signature line, 1 the Mystery line. A line the player does not hold the coupon for is
+/// simply not in the text, and an answer naming it is refused.
+pub const MENU_SIGNATURE: u32 = 0;
+pub const MENU_MYSTERY: u32 = 1;
+
+/// The coupon menu for a desk: one line per coupon the player holds, in the client's own
+/// `#d#L%d# %s#l#k` line format with the item's icon and name. `None` when they hold neither.
+pub fn menu_text(desk: Desk, has_signature: bool, has_mystery: bool) -> Option<String> {
+    if !has_signature && !has_mystery {
+        return None;
+    }
+    let mut lines = vec![match desk {
+        Desk::Styles => "Which coupon would you like to use today?",
+        Desk::Colours => "A new colour, then? Which coupon would you like to use?",
+    }
+    .to_string()];
+    for (tier, held, sel) in [(Tier::Signature, has_signature, MENU_SIGNATURE), (Tier::Mystery, has_mystery, MENU_MYSTERY)] {
+        if held {
+            let c = desk.coupon(tier);
+            lines.push(format!("#d#L{sel}##i{c}# #t{c}# - {}#l#k", desk.menu_line(tier)));
+        }
+    }
+    Some(lines.join("\r\n"))
+}
+
+/// The tier a menu answer names, given what the menu offered.
+pub fn tier_of_selection(selection: u32, has_signature: bool, has_mystery: bool) -> Option<Tier> {
+    match selection {
+        MENU_SIGNATURE if has_signature => Some(Tier::Signature),
+        MENU_MYSTERY if has_mystery => Some(Tier::Mystery),
+        _ => None,
+    }
+}
+
+/// The line for a player with neither coupon: both linked (`#i..#`, `#t..#` - the tokens the
+/// scroll NPC already uses), and where to buy them.
+pub fn no_coupon_line(desk: Desk) -> String {
+    let (sig, mys) = (desk.coupon(Tier::Signature), desk.coupon(Tier::Mystery));
+    let what = match desk {
+        Desk::Styles => "a new style",
+        Desk::Colours => "a new colour",
+    };
+    format!(
+        "Looking for {what}? Bring me one of these and I'll take care of you.\r\n\r\n#i{sig}# #b#t{sig}##k - you choose\r\n#i{mys}# #b#t{mys}##k - a surprise\r\n\r\nYou can buy either in the #bCash Shop#k."
+    )
+}
+
+/// The prompt over the pick-a-look box.
+pub fn choice_prompt(desk: Desk) -> &'static str {
+    match desk {
+        Desk::Styles => "Pick any of these styles. Your hair colour stays as it is. Which one will it be?",
+        Desk::Colours => "Pick a colour. Your style stays as it is. Which one will it be?",
+    }
+}
+
+/// The id the player ends up wearing after a STYLE change: `base` in their current colour
+/// when that colour exists for it, `base` itself otherwise.
 pub fn with_current_colour(base: u32, current_hair: u32, config: &Config) -> u32 {
     let colour = current_hair % 10;
     let candidate = base + colour;
@@ -170,7 +256,20 @@ pub fn with_current_colour(base: u32, current_hair: u32, config: &Config) -> u32
     }
 }
 
-/// A random index into `pool` from a raw roll. Pure so the pick is a unit test.
+/// The player's current style (its base id, colour digit 0).
+pub fn base_of(hair: u32) -> u32 {
+    hair - hair % 10
+}
+
+/// The colour variants of the player's current style that this client draws, in colour
+/// order - what the assistant's pick box shows. Empty when the base itself is unknown to
+/// the hair table, so a bare table refuses rather than offers ids that do not draw.
+pub fn colour_variants(current_hair: u32, config: &Config) -> Vec<u32> {
+    let base = base_of(current_hair);
+    (0..COLOURS.len() as u32).map(|c| base + c).filter(|id| config.hair_exists(*id)).collect()
+}
+
+/// A random element of `pool` from a raw roll. Pure so the pick is a unit test.
 pub fn pick(pool: &[u32], roll: u64) -> Option<u32> {
     if pool.is_empty() {
         return None;
@@ -178,35 +277,17 @@ pub fn pick(pool: &[u32], roll: u64) -> Option<u32> {
     Some(pool[(roll % pool.len() as u64) as usize])
 }
 
-/// The line for a player who has no coupon: the item's icon and name as a link (`#i..#`,
-/// `#t..#` - the tokens the scroll NPC already uses), and where to buy it.
-pub fn no_coupon_line(service: Service) -> String {
-    let coupon = service.coupon();
-    let (what, how) = match service {
-        Service::Signature => ("a Signature Hair Coupon", "pick any style on my board"),
-        Service::Mystery => ("a Mystery Hair Coupon", "get a surprise from my VIP list"),
-    };
-    format!(
-        "Looking for a new look? Bring me {what} and I'll {how}.\r\n\r\n#i{coupon}# #b#t{coupon}##k\r\n\r\nYou can buy one in the #bCash Shop#k."
-    )
-}
-
-/// The Signature NPC's prompt over the avatar box.
-pub fn choice_prompt() -> &'static str {
-    "Welcome! With your Signature Hair Coupon you can pick any of these styles. Your hair colour stays as it is. Which one will it be?"
-}
-
-/// The Mystery NPC's yes/no before spending the coupon.
-pub fn mystery_prompt() -> &'static str {
-    "Feeling lucky? Your Mystery Hair Coupon gets you one of my VIP styles - I pick, you wear it. Your hair colour stays as it is. Shall I go ahead?"
+/// The colour's name for a notice.
+pub fn colour_name(hair: u32) -> &'static str {
+    COLOURS.get((hair % 10) as usize).copied().unwrap_or("?")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Every listed base id is one this client can draw, with the colour a player keeps.
-    /// Read from `gm-handbook/beauty.txt`; skipped loudly without it.
+    /// Every listed base id is one this client can draw, with all eight colours. Read from
+    /// `gm-handbook/beauty.txt`; skipped loudly without it.
     #[test]
     fn every_listed_style_exists_in_the_client_with_all_colours() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../gm-handbook/beauty.txt");
@@ -248,50 +329,69 @@ mod tests {
         }
     }
 
-    /// The corrected assignment (the owner, "I take back the previous instructions"): Dr. Feeble
-    /// and Andre take the Signature coupon, Denma and Don Giovanni the Mystery one; each NPC
-    /// only in its own salon.
+    /// Owners take styles, assistants colours, each pair only in its own salon; the pools
+    /// split by salon, tier and gender; the plastic surgeons are nobody here.
     #[test]
-    fn the_four_npcs_serve_only_in_their_salon_and_pools_split_by_gender() {
-        assert_eq!(service_for(DR_FEEBLE, HENESYS_SALON_MAP), Some((Salon::Henesys, Service::Signature)));
-        assert_eq!(service_for(DENMA, HENESYS_SALON_MAP), Some((Salon::Henesys, Service::Mystery)));
-        assert_eq!(service_for(ANDRE, KERNING_SALON_MAP), Some((Salon::Kerning, Service::Signature)));
-        assert_eq!(service_for(DON_GIOVANNI, KERNING_SALON_MAP), Some((Salon::Kerning, Service::Mystery)));
-        assert_eq!(service_for(DENMA, 10_001_044), None, "not in the Hair Salon next door");
-        assert_eq!(service_for(DENMA, KERNING_SALON_MAP), None, "a Henesys NPC is not a Kerning one");
-        assert_eq!(service_for(215, HENESYS_SALON_MAP), None, "Natalie is not one of the four");
-        assert_eq!(Salon::Henesys.styles(Service::Signature, 0), HENESYS_REG_MALE);
-        assert_eq!(Salon::Henesys.styles(Service::Signature, 1), HENESYS_REG_FEMALE);
-        assert_eq!(Salon::Henesys.styles(Service::Mystery, 0), HENESYS_VIP_MALE);
-        assert_eq!(Salon::Henesys.styles(Service::Mystery, 1), HENESYS_VIP_FEMALE);
-        assert_eq!(Salon::Kerning.styles(Service::Signature, 0), KERNING_REG_MALE);
-        assert_eq!(Salon::Kerning.styles(Service::Signature, 1), KERNING_REG_FEMALE);
-        assert_eq!(Salon::Kerning.styles(Service::Mystery, 0), KERNING_VIP_MALE);
-        assert_eq!(Salon::Kerning.styles(Service::Mystery, 1), KERNING_VIP_FEMALE);
+    fn owners_take_styles_assistants_take_colours_each_in_their_own_salon() {
+        assert_eq!(desk_for(NATALIE, HENESYS_SALON_MAP), Some((Salon::Henesys, Desk::Styles)));
+        assert_eq!(desk_for(BRITTANY, HENESYS_SALON_MAP), Some((Salon::Henesys, Desk::Colours)));
+        assert_eq!(desk_for(DON_GIOVANNI, KERNING_SALON_MAP), Some((Salon::Kerning, Desk::Styles)));
+        assert_eq!(desk_for(ANDRE, KERNING_SALON_MAP), Some((Salon::Kerning, Desk::Colours)));
+        assert_eq!(desk_for(NATALIE, KERNING_SALON_MAP), None, "a Henesys NPC is not a Kerning one");
+        assert_eq!(desk_for(213, 10_001_043), None, "Denma, the plastic surgeon, is not a salon NPC");
+        assert_eq!(desk_for(214, HENESYS_SALON_MAP), None, "nor Dr. Feeble, wherever they stood");
+        assert_eq!(Salon::Henesys.styles(Tier::Signature, 0), HENESYS_REG_MALE);
+        assert_eq!(Salon::Henesys.styles(Tier::Signature, 1), HENESYS_REG_FEMALE);
+        assert_eq!(Salon::Henesys.styles(Tier::Mystery, 0), HENESYS_VIP_MALE);
+        assert_eq!(Salon::Henesys.styles(Tier::Mystery, 1), HENESYS_VIP_FEMALE);
+        assert_eq!(Salon::Kerning.styles(Tier::Signature, 0), KERNING_REG_MALE);
+        assert_eq!(Salon::Kerning.styles(Tier::Signature, 1), KERNING_REG_FEMALE);
+        assert_eq!(Salon::Kerning.styles(Tier::Mystery, 0), KERNING_VIP_MALE);
+        assert_eq!(Salon::Kerning.styles(Tier::Mystery, 1), KERNING_VIP_FEMALE);
         for pool in [HENESYS_REG_MALE, HENESYS_VIP_MALE, KERNING_REG_MALE, KERNING_VIP_MALE] {
             assert!(pool.iter().all(|id| (30_000..31_000).contains(id)));
         }
         for pool in [HENESYS_REG_FEMALE, HENESYS_VIP_FEMALE, KERNING_REG_FEMALE, KERNING_VIP_FEMALE] {
             assert!(pool.iter().all(|id| (31_000..32_000).contains(id)));
         }
-        assert_eq!(Service::Signature.coupon(), 5_150_100);
-        assert_eq!(Service::Mystery.coupon(), 5_150_000);
+        assert_eq!(Desk::Styles.coupon(Tier::Signature), 5_150_100);
+        assert_eq!(Desk::Styles.coupon(Tier::Mystery), 5_150_000);
+        assert_eq!(Desk::Colours.coupon(Tier::Signature), 5_151_100);
+        assert_eq!(Desk::Colours.coupon(Tier::Mystery), 5_151_000);
+    }
+
+    /// The menu lists exactly the coupons held, with icons, under fixed #L numbers; an
+    /// answer naming an unheld line is refused; neither held is no menu at all.
+    #[test]
+    fn the_menu_lists_what_is_held_and_an_answer_is_read_back_against_it() {
+        assert_eq!(menu_text(Desk::Styles, false, false), None);
+        let both = menu_text(Desk::Styles, true, true).unwrap();
+        assert!(both.contains("#L0##i5150100# #t5150100#") && both.contains("#L1##i5150000# #t5150000#"), "{both}");
+        let only_mystery = menu_text(Desk::Colours, false, true).unwrap();
+        assert!(only_mystery.contains("#L1##i5151000#") && !only_mystery.contains("#L0#"), "{only_mystery}");
+        assert_eq!(tier_of_selection(0, true, true), Some(Tier::Signature));
+        assert_eq!(tier_of_selection(1, true, true), Some(Tier::Mystery));
+        assert_eq!(tier_of_selection(0, false, true), None, "the Signature line was not offered");
+        assert_eq!(tier_of_selection(7, true, true), None);
+        let line = no_coupon_line(Desk::Colours);
+        assert!(line.contains("#i5151100#") && line.contains("#i5151000#") && line.contains("Cash Shop"), "{line}");
     }
 
     #[test]
-    fn a_random_pick_covers_the_whole_pool_and_nothing_outside_it() {
+    fn colours_are_the_last_digit_and_a_roll_covers_all_eight_equally() {
+        assert_eq!(base_of(31_233), 31_230);
+        assert_eq!(colour_name(31_233), "Blonde");
+        assert_eq!(colour_name(31_235), "Blue");
+        assert_eq!(colour_name(30_050), "Black");
+        assert_eq!(colour_name(31_237), "Brown");
+        let pool: Vec<u32> = (0..8).map(|c| 31_230 + c).collect();
+        let mut counts = [0u32; 8];
+        for r in 0..800u64 {
+            counts[(pick(&pool, r).unwrap() % 10) as usize] += 1;
+        }
+        assert!(counts.iter().all(|&n| n == 100), "{counts:?}");
         let seen: std::collections::HashSet<u32> = (0..200u64).filter_map(|r| pick(HENESYS_VIP_FEMALE, r)).collect();
         assert_eq!(seen.len(), HENESYS_VIP_FEMALE.len());
-        assert!(seen.iter().all(|id| HENESYS_VIP_FEMALE.contains(id)));
         assert_eq!(pick(&[], 5), None);
-    }
-
-    #[test]
-    fn the_no_coupon_line_links_the_coupon_and_names_the_cash_shop() {
-        let line = no_coupon_line(Service::Mystery);
-        assert!(line.contains("#i5150000#"), "{line}");
-        assert!(line.contains("#t5150000#"), "{line}");
-        assert!(line.contains("Cash Shop"), "{line}");
-        assert!(no_coupon_line(Service::Signature).contains("#i5150100#"));
     }
 }
