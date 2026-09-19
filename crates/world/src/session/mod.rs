@@ -984,6 +984,12 @@ impl Session {
             net::useitem::CLIENT_USE_ITEM => {
                 return self.on_use_item(body.get(2..).unwrap_or(&[]))
             }
+            // A Return Scroll: the client's own opcode for the 0203 range, same body as
+            // 0x010E, same latch. The handler has answered scrolls since 2026-08-29; this arm
+            // is what makes it reachable (2026-09-18). session/consume.rs.
+            net::useitem::CLIENT_USE_RETURN_SCROLL => {
+                return self.on_use_return_scroll(body.get(2..).unwrap_or(&[]))
+            }
             net::userhit::CLIENT_USER_HIT => {
                 return self.on_user_hit(body.get(2..).unwrap_or(&[]))
             }

@@ -39,6 +39,21 @@ use crate::packet::PacketWriter;
 /// The client asking to use an item out of the Use tab. **Inbound `0x010E`, 14 bytes.**
 pub const CLIENT_USE_ITEM: u16 = 0x010E;
 
+/// **A Return Scroll being used.** The client never sends [`CLIENT_USE_ITEM`] for a
+/// `2030000..2039999` item: both of its item-use dispatchers (`FUN_141784fa0` for a bag
+/// double-click, `FUN_1428af6d0` for the quick slot) route that range to their own builder,
+/// `FUN_142d4be40`, which writes **`0x0123`** with the same three fields - `u32 tick, u16
+/// slot, u32 itemId` - and then sets the exclusive-request latch (`FUN_142cc4430(ctx, 1)`).
+/// `research/summon-sacks-2026-09-09.md` §3.1 read the routing; the live server's logs of
+/// 2026-09-18 had fifty `0x010E`s and not one naming a scroll. The handler existed for
+/// three weeks on the wrong opcode - CLAUDE.md's "built is not wired". **[L]**
+///
+/// Before sending, the builder itself refuses on some fields (`0x0F25` *"Return Stones
+/// cannot be used here."* for `2030023`, `0x00B8` *"cannot use that in this map"* for the
+/// rest) - so a scroll that produces no packet at all is the client's own map rule, not
+/// this server's.
+pub const CLIENT_USE_RETURN_SCROLL: u16 = 0x0123;
+
 /// A parsed [`CLIENT_USE_ITEM`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UseItem {
