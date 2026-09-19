@@ -389,7 +389,44 @@ impl Session {
             }),
             Err(e) => out.extend(self.notice(format!("Could not read your mesos: {e}"))),
         }
+        out.extend(self.quest_helper_recount(chr.id));
         out
+    }
+
+    /// **The Quest Helper's item counts, after the quiet restore.** The owner, 2026-09-18, two
+    /// screenshots: *"when players enter a new map, the progress in quest helper completely
+    /// zeroes out. But when you pick up an item in that map from killing mobs, it will return
+    /// back to normal"* - `0/5 Bronze Ore` after the map change, `49/5` after one pickup.
+    ///
+    /// The helper caches its item counts and refreshes them from the quest hook the loud
+    /// `0x0070` modes call (`FUN_142ce53e0`: for every quest that wants the item,
+    /// `FUN_142ce5f80(quest)`). The bag is restored with mode 5 on purpose - it is the mode
+    /// that skips the collection popup the owner asked to be rid of on 2026-08-30 - and mode 5
+    /// skips that hook too, so the counts stay at the zero the empty bag left until the next
+    /// real inventory change. The `0x0089` quest-record message's handler (`FUN_142d59e20`)
+    /// calls the same `FUN_142ce5f80` and does not go near the popup (`FUN_142d9b200`, the
+    /// inventory path only), so re-sending each in-progress quest's own record, progress
+    /// string unchanged, after the bag is back makes the helper count again. **[L]** for
+    /// both call chains (`tools/callers.py 0x142ce5f80`), **[I]** that the refresh re-reads
+    /// the bag rather than a cached count - the run is the test.
+    ///
+    /// Sent after the restore, never before it, and never on the record itself: this packet
+    /// is a no-op while the character-data object is null, which it is on the first
+    /// `SetField` (`net::quest::quest_record`). Here the client has finished the field entry
+    /// (`0x00DC`) and every `0x0070` before it has been handled.
+    fn quest_helper_recount(&self, character_id: u32) -> Vec<Reply> {
+        let Ok(rows) = self.store.quest_rows(character_id) else { return Vec::new() };
+        rows.into_iter()
+            .filter(|row| row.state == store::QuestState::InProgress)
+            .map(|row| Reply {
+                opcode: net::quest::MESSAGE,
+                body: net::quest::quest_record(row.quest_id, &net::quest::QuestProgress::InProgress { progress: row.progress.clone() }),
+                what: format!(
+                    "QuestRecord: quest {} progress {:?} re-sent after the bag restore, unchanged - the Quest Helper recounts its items from it (mode 5 restores do not wake it)",
+                    row.quest_id, row.progress
+                ),
+            })
+            .collect()
     }
 
 

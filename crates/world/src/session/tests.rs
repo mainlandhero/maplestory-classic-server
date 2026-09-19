@@ -11053,6 +11053,34 @@ fn a_cash_equip_lands_in_the_deco_tab_and_the_notice_is_ascii() {
     assert_eq!(restored, uebel.equips.len() + 1, "the Deco tab is restored on field entry");
 }
 
+/// **The Quest Helper counts its items again after the map change.** The owner, 2026-09-18: *"when
+/// players enter a new map, the progress in quest helper completely zeroes out. But when you
+/// pick up an item ... it will return back to normal."* The quiet restore skips the client's
+/// quest hook; each in-progress quest's own record, unchanged, is re-sent AFTER the bag so the
+/// helper recounts. A completed quest and a never-taken one send nothing.
+#[test]
+fn the_bag_restore_is_followed_by_every_in_progress_quests_record_so_the_helper_recounts() {
+    let (mut s, store, id) = claimed_session();
+    store.start_quest(id, 1008).unwrap();
+    store.start_quest(id, 1010).unwrap();
+    store.set_quest_progress(id, 1010, "003").unwrap();
+    store.start_quest(id, 1002).unwrap();
+    store.complete_quest(id, 1002).unwrap();
+
+    let out = s.restore_bag_and_mesos();
+    let last_bag = out.iter().rposition(|r| r.opcode == net::inventory::INVENTORY_OPERATION).unwrap_or(0);
+    let records: Vec<(usize, &Reply)> = out.iter().enumerate().filter(|(_, r)| r.opcode == net::quest::MESSAGE).collect();
+    assert_eq!(records.len(), 2, "one record per in-progress quest, none for the finished one: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(records.iter().all(|(i, _)| *i > last_bag), "after the last 0x0070 of the restore, never before it");
+    let mut got: Vec<(u32, u8, Vec<u8>)> = records
+        .iter()
+        .map(|(_, r)| (u32::from_le_bytes(r.body[1..5].try_into().unwrap()), r.body[5], r.body[6..].to_vec()))
+        .collect();
+    got.sort();
+    assert_eq!(got[0], (1008, net::quest::QUEST_STATE_IN_PROGRESS, vec![0, 0]), "1008: in progress, empty progress string");
+    assert_eq!(got[1], (1010, net::quest::QUEST_STATE_IN_PROGRESS, b"\x03\x00003".to_vec()), "1010: its own progress string, unchanged");
+}
+
 /// **The Frieren coupon, on a live-shaped bag.** The owner, 2026-09-16: *"The coupon also should
 /// not be used if the user does not have enough inventory space to use the coupon. The coupon
 /// should remain in the player's inventory."* Live, the set's five equips are cash equips
