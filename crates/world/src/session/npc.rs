@@ -899,8 +899,9 @@ impl Session {
             return replies;
         }
 
-        // **The hair salons' four NPCs**, each in its own salon: the owner's style-coupon
-        // menu, the assistant's colour-coupon menu, and a pointer at the Cash Shop for a
+        // **The beauty shops' eight NPCs**, each in its own shop: a salon owner's style-coupon
+        // menu, its assistant's colour-coupon menu, a surgery owner's faces, its assistant's
+        // skins, and a pointer at the Cash Shop for a
         // player without either. session/salon.rs.
         if let Some(replies) = self.open_salon_for(template) {
             return replies;

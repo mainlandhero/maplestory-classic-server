@@ -8062,6 +8062,163 @@ fn the_salon_owner_does_styles_the_assistant_does_colours_and_each_keeps_the_oth
     assert_eq!(crate::salon::desk_for(crate::salon::NATALIE, crate::salon::KERNING_SALON_MAP), None);
     let out = k.handle(&npc_click(1002));
     assert!(out.iter().all(|r| !r.what.contains("MENU") && !r.what.contains("AVATAR")), "{:?}", names(&out));
+
+    assert!(s.config.face_ids.is_empty(), "the salon test runs without a face table");
+}
+
+/// **The plastic surgeries: the owner's face coupons and the assistant's skin coupon.**
+///
+/// The owner, 2026-09-18: *"The Plastic Surgeon Owners at Henesys and Kerning will handle the REG
+/// (Signature) or VIP (Mystery) face coupons. The assistants will take the Skin Signature or
+/// Skin Mystery coupons."* This client has surgeries in Henesys and Orbis (Kerning has none)
+/// and one skin coupon, 5153000. A female with eye colour 4 (21005 + 400) at Denma: no coupon
+/// is a Say linking both face coupons; the Signature Face coupon's line opens the six REG
+/// female faces; index 2 is Look of Death 21009 and they end up in 21409 - the eye colour
+/// kept - the coupon gone, one 0x007C with the FACE bit; the Mystery line rolls a VIP female
+/// face. At Dr. Feeble the skin coupon opens the seven skins as plain numbers (the client
+/// reads ids under 24000 as skins) and index 6 is Pink, skin 6, one 0x007C with the SKIN bit;
+/// their no-coupon line names only 5153000. Franz and Riza in Orbis do the same; Denma in
+/// Orbis is nobody.
+#[test]
+fn the_surgery_owner_does_faces_and_the_assistant_does_skins() {
+    let mut npcs = std::collections::HashMap::new();
+    npcs.insert(
+        crate::salon::HENESYS_SURGERY_MAP,
+        vec![
+            net::opcode::FieldNpc { object_id: 1000, template_id: crate::salon::DENMA, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 },
+            net::opcode::FieldNpc { object_id: 1001, template_id: crate::salon::DR_FEEBLE, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 },
+        ],
+    );
+    npcs.insert(
+        crate::salon::ORBIS_SURGERY_MAP,
+        vec![
+            net::opcode::FieldNpc { object_id: 1000, template_id: crate::salon::FRANZ, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 },
+            net::opcode::FieldNpc { object_id: 1001, template_id: crate::salon::RIZA, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 },
+            net::opcode::FieldNpc { object_id: 1002, template_id: crate::salon::DENMA, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 },
+        ],
+    );
+    let mut face_ids = std::collections::HashSet::new();
+    for base in crate::salon::FACE_REG_FEMALE.iter().chain(crate::salon::FACE_VIP_FEMALE).chain(crate::salon::FACE_REG_MALE) {
+        for c in 0..9 {
+            face_ids.insert(base + c * 100);
+        }
+    }
+    let mut item_names = std::collections::HashMap::new();
+    item_names.insert(21_009u32, "Look of Death".to_string());
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Patient".to_string(), gender: 1, face: 21_405, skin: 0, ..Default::default() };
+    let made = store.create_character(account_id, 0, &chr).unwrap();
+    store.set_character_map(made.id, crate::salon::HENESYS_SURGERY_MAP).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let mut s = Session::new(store.clone(), Arc::new(Config { npcs, face_ids, item_names, ..Config::default() }));
+    s.claim_for_character(made.id);
+    let names = |out: &[Reply]| out.iter().map(|r| r.what.clone()).collect::<Vec<_>>();
+    let look_now = |store: &Arc<Store>| {
+        let c = store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == made.id).unwrap();
+        (c.face, c.skin)
+    };
+    let ids_in = |body: &[u8]| -> Vec<u32> {
+        let b = &body[net::script::SCRIPT_HEAD_LEN..];
+        let text_len = u16::from_le_bytes([b[4], b[5]]) as usize;
+        let count_at = 4 + 2 + text_len + 1;
+        (0..b[count_at] as usize).map(|k| u32::from_le_bytes(b[count_at + 1 + k * 4..count_at + 5 + k * 4].try_into().unwrap())).collect()
+    };
+    let text_of = |body: &[u8]| String::from_utf8_lossy(body).to_string();
+    let avatar_pick = |index: u8| {
+        let mut reply = net::script::CLIENT_SCRIPT_REPLY.to_le_bytes().to_vec();
+        reply.extend_from_slice(&0u32.to_le_bytes());
+        reply.extend_from_slice(&[net::script::SCRIPT_TYPE_AVATAR, 1, 0, 0]);
+        reply.extend_from_slice(&0u32.to_le_bytes());
+        reply.push(index);
+        reply
+    };
+    let give = |who: u32, coupon: u32| store.add_item(who, store::InventoryType::Cash, &store::Item::bundle(coupon, 1), 1).unwrap();
+
+    // 1. Denma, no coupon: both face coupons linked, the Cash Shop named.
+    let out = s.handle(&npc_click(1000));
+    assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_SAY, "{:?}", names(&out));
+    let text = text_of(&out[0].body);
+    assert!(text.contains("#i5152200#") && text.contains("#i5152000#") && text.contains("Cash Shop"), "{text}");
+
+    // 2. The Signature Face coupon: menu, then the six REG female faces; index 2 is Look of
+    //    Death 21009, worn at their eye colour 4 as 21409.
+    give(made.id, crate::salon::SIGNATURE_FACE_COUPON);
+    let out = s.handle(&npc_click(1000));
+    assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_MENU, "{:?}", names(&out));
+    assert!(text_of(&out[0].body).contains("#L0##i5152200#"));
+    let out = s.on_script_reply(&menu_reply(Some(0)));
+    assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_AVATAR, "{:?}", names(&out));
+    assert_eq!(ids_in(&out[0].body), crate::salon::FACE_REG_FEMALE);
+    let out = s.handle(&avatar_pick(2));
+    assert_eq!(look_now(&store), (21_409, 0), "Look of Death at eye colour 4");
+    let stat: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::stats::STAT_CHANGED).collect();
+    assert_eq!(stat.len(), 1, "{:?}", names(&out));
+    assert!(stat[0].what.contains("FACE bit -> 21409"), "{}", stat[0].what);
+    assert!(out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "{:?}", names(&out));
+    assert_eq!(s.held_count(made.id, crate::salon::SIGNATURE_FACE_COUPON), 0, "spent");
+    let notice = out.iter().find(|r| r.opcode == net::notice::CHAT_NOTICE).expect("a line");
+    assert!(text_of(&notice.body).contains("Look of Death"), "{}", text_of(&notice.body));
+
+    // 3. The Mystery Face coupon rolls a VIP female face at once, eye colour kept.
+    give(made.id, crate::salon::MYSTERY_FACE_COUPON);
+    let _ = s.handle(&npc_click(1000));
+    let out = s.on_script_reply(&menu_reply(Some(1)));
+    let (face, _) = look_now(&store);
+    assert!(crate::salon::FACE_VIP_FEMALE.contains(&(face - 400)) && (face / 100) % 10 == 4, "a VIP female face at colour 4, got {face}");
+    assert!(out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED && r.what.contains(&format!("FACE bit -> {face}"))), "{:?}", names(&out));
+    assert_eq!(s.held_count(made.id, crate::salon::MYSTERY_FACE_COUPON), 0, "spent");
+
+    // 4. Dr. Feeble: no skin coupon names 5153000 only; with one, the seven skins as plain
+    //    numbers; index 6 is Pink, one 0x007C with the SKIN bit.
+    let out = s.handle(&npc_click(1001));
+    assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_SAY, "{:?}", names(&out));
+    let text = text_of(&out[0].body);
+    assert!(text.contains("#i5153000#") && text.contains("Cash Shop"), "{text}");
+    give(made.id, crate::salon::SIGNATURE_SKIN_COUPON);
+    let out = s.handle(&npc_click(1001));
+    assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_MENU, "{:?}", names(&out));
+    let text = text_of(&out[0].body);
+    assert!(text.contains("#L0##i5153000#") && !text.contains("#L1#"), "{text}");
+    let out = s.on_script_reply(&menu_reply(Some(0)));
+    assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_AVATAR, "{:?}", names(&out));
+    assert_eq!(ids_in(&out[0].body), vec![0, 1, 2, 3, 4, 5, 6]);
+    let out = s.handle(&avatar_pick(6));
+    assert_eq!(look_now(&store), (face, 6), "Pink, the face untouched");
+    let stat: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::stats::STAT_CHANGED).collect();
+    assert_eq!(stat.len(), 1, "{:?}", names(&out));
+    assert!(stat[0].what.contains("SKIN bit -> 6"), "{}", stat[0].what);
+    assert_eq!(stat[0].body[7..12], [6, 0, 0, 0, 0], "u8 skin 6, u32 0");
+    assert_eq!(s.held_count(made.id, crate::salon::SIGNATURE_SKIN_COUPON), 0, "spent");
+    let notice = out.iter().find(|r| r.opcode == net::notice::CHAT_NOTICE).expect("a line");
+    assert!(text_of(&notice.body).contains("Pink"), "{}", text_of(&notice.body));
+    // A Mystery line was never offered, so answering it spends nothing.
+    give(made.id, crate::salon::SIGNATURE_SKIN_COUPON);
+    let _ = s.handle(&npc_click(1001));
+    let out = s.on_script_reply(&menu_reply(Some(1)));
+    assert!(out.is_empty(), "{:?}", names(&out));
+    assert_eq!(s.held_count(made.id, crate::salon::SIGNATURE_SKIN_COUPON), 1, "kept");
+
+    // 5. Orbis: Franz offers the same REG faces (male pool for a male), Riza the same skins;
+    //    Denma standing there is not a surgeon.
+    let boy = net::opcode::Character { name: "Orbisman".to_string(), gender: 0, face: 20_000, ..Default::default() };
+    let him = store.create_character(account_id, 0, &boy).unwrap();
+    store.set_character_map(him.id, crate::salon::ORBIS_SURGERY_MAP).unwrap();
+    give(him.id, crate::salon::SIGNATURE_FACE_COUPON);
+    give(him.id, crate::salon::SIGNATURE_SKIN_COUPON);
+    store.create_migration(account_id, him.id, 0, 0).unwrap();
+    let mut t = Session::new(store.clone(), s.config.clone());
+    t.claim_for_character(him.id);
+    let _ = t.handle(&npc_click(1000));
+    let out = t.on_script_reply(&menu_reply(Some(0)));
+    assert_eq!(ids_in(&out[0].body), crate::salon::FACE_REG_MALE, "{:?}", names(&out));
+    let _ = t.handle(&avatar_pick(0));
+    let _ = t.handle(&npc_click(1001));
+    let out = t.on_script_reply(&menu_reply(Some(0)));
+    assert_eq!(ids_in(&out[0].body), vec![0, 1, 2, 3, 4, 5, 6], "{:?}", names(&out));
+    assert_eq!(crate::salon::desk_for(crate::salon::DENMA, crate::salon::ORBIS_SURGERY_MAP), None);
+    let out = t.handle(&npc_click(1002));
+    assert!(out.iter().all(|r| !r.what.contains("MENU") && !r.what.contains("AVATAR")), "{:?}", names(&out));
 }
 
 #[test]

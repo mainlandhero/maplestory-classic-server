@@ -356,6 +356,7 @@ fn main() -> ExitCode {
     // Config::map_names - so neither of these gets a startup warning.
     config.map_names = world::config::Config::load_id_names(&PathBuf::from("gm-handbook/maps.txt"));
     config.hair_ids = world::config::Config::load_hair_ids(&PathBuf::from("gm-handbook/beauty.txt"));
+    config.face_ids = world::config::Config::load_face_ids(&PathBuf::from("gm-handbook/beauty.txt"));
     config.item_names =
         world::config::Config::load_id_names(&PathBuf::from("gm-handbook/items.txt"));
     config.fields = world::config::Config::load_fields(&fields_path);
