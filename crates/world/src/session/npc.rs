@@ -899,6 +899,13 @@ impl Session {
             return replies;
         }
 
+        // **The hair salon's two NPCs**, in Henesys Plastic Surgery only: Denma's pick-a-look
+        // box for a Signature Hair Coupon, Dr. Feeble's yes/no for a Mystery one, and a
+        // pointer at the Cash Shop for a player without the coupon. session/salon.rs.
+        if let Some(replies) = self.open_salon_for(template) {
+            return replies;
+        }
+
         if let Some(replies) = self.open_taxi_for(template) {
             return replies;
         }
@@ -2391,6 +2398,10 @@ impl Session {
         if let Some(replies) = self.taxi_menu_answer(body) {
             return replies;
         }
+        // Denma's avatar box (type 0x0a) - only when a salon choice is parked. session/salon.rs.
+        if let Some(replies) = self.salon_choice_answer(body) {
+            return replies;
+        }
         // **And so is the second advancement's choice box.** Same precondition, disjoint
         // path prefix: each answers only when this session has *its* conversation parked, so
         // the order between the two does not matter and a test in each module says so.
@@ -2439,6 +2450,9 @@ impl Session {
         // find no quest id, and drop the conversation with NO PACKET SENT - and they would go
         // silent on the first Yes. (Phil's guide used to sit here for the same reason; it is
         // a type-6 menu now and is answered above, beside the taxi's.)
+        if convo.path == crate::salon::MYSTERY_PATH {
+            return self.salon_mystery_answer(reply.action);
+        }
         if convo.path == crate::shanks::ASK_PATH {
             return self.shanks_reply(reply.action);
         }

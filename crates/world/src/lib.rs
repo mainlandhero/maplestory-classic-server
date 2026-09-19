@@ -63,6 +63,7 @@ pub mod questitems;
 pub mod questroom;
 pub mod remoteattack;
 pub mod returnscroll;
+pub mod salon;
 pub mod scrollnpc;
 pub mod scriptportals;
 pub mod scrolls;

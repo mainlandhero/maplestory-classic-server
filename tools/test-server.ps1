@@ -2169,6 +2169,31 @@
                        0x0123's latch; paste the 0x007C that answered it
           !map 20001000 (El Nath), !item 2030008 1: Orbis works; !item 2030004 1: Henesys
                    refused there -> the Ossyria half
+     TS. THE HAIR SALON (2026-09-18). The owner: "Dr. Feeble takes mystery ones (randomly chosen
+         VIP), Denma the Owner takes the signature ones (player choice REG)"; males from
+         the male pool, females from the female one; a player without the coupon is
+         pointed at the Cash Shop with the item link; the hair COLOUR is kept (black stays
+         black, blue stays blue). Both NPCs stand in Henesys Plastic Surgery (10001043),
+         and only there. Denma uses the client's own "pick a look" script box, message
+         type 0x0a, decoded from the client (net::script::npc_avatar) - NEVER ON A SCREEN;
+         Dr. Feeble asks yes/no first because a random pick spends the coupon.
+           1. click Denma with NO Signature Hair Coupon (5150100): a line with the coupon's
+              icon + name and "Cash Shop" -> fixed; a bare "no dialogue" line -> paste it
+           2. buy/!item 5150100 1, click Denma: a window with your character wearing each
+              of 6 styles (male: Metro, Line Scratch, Mane, Shaggy Wax, Cabana Boy, Dragon
+              Layered; female: Monica, Miru, Angelica, Lori, Rose, Swooshy Ponytail) ->
+              the 0x0a box draws. Pick one: your hair changes IN PLACE, in your current
+              colour, the coupon is gone, a chat line names the style -> fixed
+                the window opens but shows a different set/gender -> paste the AVATAR line
+                nothing opens, log has "ScriptMessage AVATAR" -> the 0x0a body is wrong;
+                          paste the line and, if the client died, client-exit.log
+                the style lands in colour 0 (black) though you were blue -> hair_ids
+                          empty: gm-handbook/beauty.txt missing on the server box
+           3. !item 5150000 1, click Dr. Feeble: a yes/no; Yes -> one of the 7 (male) / 6
+              (female) VIP styles, your colour, coupon gone -> fixed; No -> nothing spent
+           4. the other client sees the new hair without a map change -> the look
+              broadcast; a stale look there -> paste "look change for" lines
+
      T6. !npcreload. Add a line to data/npc-dialogue.txt while the server is RUNNING, then
          run the command and click that NPC.
           a) does it say the new line without a restart?
@@ -5437,6 +5462,14 @@ function Show-TestPlan {
         Write-Host '          nothing at all + no 0x0123 in the log -> the client''s own map rule;' -ForegroundColor Yellow
         Write-Host '          nothing + the 0x0123 IS there -> paste it and the reply' -ForegroundColor Yellow
         Write-Host '        !map 20001000, !item 2030008 1: Orbis works; 2030004 refused there' -ForegroundColor Green
+        Write-Host '  TS. THE HAIR SALON (Henesys Plastic Surgery, 10001043). NEVER ON A SCREEN.' -ForegroundColor Magenta
+        Write-Host '      1. Denma with no 5150100: coupon icon + "Cash Shop" line -> fixed'
+        Write-Host '      2. with one: a pick-a-look window, YOUR gender''s 6 REG styles; pick ->'
+        Write-Host '         hair changes in place, colour kept, coupon gone, line names it -> fixed' -ForegroundColor Green
+        Write-Host '         wrong set/gender -> paste the AVATAR line; nothing opens -> the 0x0a' -ForegroundColor Yellow
+        Write-Host '         body; black though you were blue -> beauty.txt missing on the box' -ForegroundColor Yellow
+        Write-Host '      3. Dr. Feeble with 5150000: yes/no; Yes -> a random VIP style, colour kept'
+        Write-Host '      4. the other client sees it without a map change -> fixed'
         Write-Host '  T6. !npcreload. Add a line to data/npc-dialogue.txt with the' -ForegroundColor White
         Write-Host '      server RUNNING, run the command, click that NPC.'
         Write-Host '        a) new line with no restart?'
