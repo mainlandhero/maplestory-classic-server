@@ -12272,6 +12272,44 @@ fn a_pet_restored_at_field_entry_is_named_by_the_serial_it_was_sent_with_and_by_
     assert!(s.pet_named_by(&s.claimed_character().unwrap(), Some(empty)).is_none());
 }
 
+/// **A pet's re-send names the slot the pet is in NOW, not the one it was summoned from.**
+/// The live server, 2026-09-18 02:28 (Cobalt): summoned from Cash slot 3, slid to slot 1 by
+/// Consolidate, and every later re-send wrote a pet item over slot 3 while the restore put
+/// the pet in slot 1 - the client, handed a pet where it had a coupon, printed "Closeness
+/// has increased (+1)" on every map change. The owner: *"Pet closeness increase should only be
+/// sent to the client if it is actually being increased."* The server never sends that line;
+/// the client derives it from a pet item landing where none was.
+#[test]
+fn a_pet_re_send_after_the_pet_changed_slots_names_the_new_slot() {
+    let (mut s, store, id) = gm_session();
+    let cash = store::InventoryType::Cash;
+    store.set_inventory_slot(id, cash, 1, &store::Item::bundle(5_150_000, 1)).unwrap();
+    store.set_inventory_slot(id, cash, 2, &store::Item::bundle(5_150_000, 1)).unwrap();
+    store.add_item(id, cash, &store::Item::bundle(5_000_006, 1), 1).unwrap(); // numbered, lands in slot 3
+    assert_eq!(cash_slot_of(&store, id, 5_000_006), 3);
+    s.last_position = Some((300, -50));
+    s.on_pet_activate(&hex("509a18140300"));
+    assert_eq!(s.active_pet.map(|p| p.slot), Some(3), "summoned from slot 3");
+
+    // Sort Items on the Cash tab: the two coupons merge into one stack of 2 and lead, the
+    // Husky slides up behind them - out of slot 3 either way.
+    let mut packet = net::inventory::CLIENT_SORT_ITEMS.to_le_bytes().to_vec();
+    packet.extend_from_slice(&[0x5c, 0xc5, 0x4b, 0x00, cash.as_u8()]);
+    let _ = s.handle(&packet);
+    let now = cash_slot_of(&store, id, 5_000_006);
+    assert_ne!(now, 3, "the pet moved");
+    assert_eq!(s.active_pet.map(|p| p.slot), Some(3), "the summon's number is stale - by design the send-time lookup covers it");
+
+    // A field entry re-sends the pet item: it must name the slot the pet is in, never slot 3.
+    let out = s.on_field_entered();
+    let re_sends: Vec<&Reply> = out.iter().filter(|r| r.what.contains("re-sent as pet 5000006")).collect();
+    assert!(!re_sends.is_empty(), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    for r in &re_sends {
+        let slot = i16::from_le_bytes([r.body[9], r.body[10]]);
+        assert_eq!(slot, now as i16, "the re-send names the slot the pet is in now: {}", r.what);
+    }
+}
+
 /// **The in-range vacuum is free: every pet's item is `wonderGrade 6`, and the `0x0198` box
 /// rides every SetField.** The owner, 2026-09-17: *"vacuuming loot within a certain range of the pet
 /// (Petite Luna) should be free. Auto move ... should be a skill ... Expanded auto move
