@@ -399,6 +399,17 @@ impl Session {
             .unwrap_or_else(store::PetState::fresh)
     }
 
+    /// Where a pet sits in the Cash tab **right now**, by its pet id. `None` when it is not
+    /// in the bag (stored, traded away, or a number the store never gave out).
+    pub(super) fn pet_slot_now(&self, character_id: u32, pet_id: u32) -> Option<u16> {
+        self.store
+            .bag_items(character_id, store::InventoryType::Cash)
+            .ok()?
+            .into_iter()
+            .find(|r| r.item.pet_id == Some(pet_id) && net::inventory::is_pet(r.item.item_id))
+            .map(|r| r.slot)
+    }
+
     /// The four moving fields of the pet's Cash item, from the store.
     pub(super) fn pet_vitals(&self, pet_id: Option<u32>) -> net::bag::PetVitals {
         let st = self.pet_state(pet_id);
@@ -799,7 +810,16 @@ impl Session {
     /// `CPet` re-reads the item's active byte from a mode-5 store the same as from a mode-0
     /// one - it reads the bag row, not the packet; plan step 8 has the reading.
     fn pet_item_refresh(&self, chr: &net::opcode::Character, which: ActivePet, active: bool) -> Reply {
-        let ActivePet { slot, item_id, pet_id } = which;
+        let ActivePet { slot: cached, item_id, pet_id } = which;
+        // **The slot is looked up now, by pet id, not taken from the summon.** The live
+        // server, 2026-09-18 02:28 (Cobalt): the pet had been summoned from Cash slot 3, then
+        // Consolidate slid it to slot 1, and every re-send after that wrote a pet item over
+        // slot 3 - where a coupon was - while the field-entry restore put the pet in slot 1.
+        // The client, handed a pet where it had none, printed "Brown Puppy's Closeness has
+        // increased (+1)" on every map change: once for the entry re-send, once for the
+        // first-move re-summon. A slot can move under a summoned pet (Consolidate, Sort, a
+        // drag), so the summon's number is only a fallback for a pet that has left the bag.
+        let slot = self.pet_slot_now(chr.id, pet_id).unwrap_or(cached);
         let vitals = self.pet_vitals(Some(pet_id));
         let name = self.pet_name(Some(pet_id), item_id);
         let blob = net::bag::pet_item_with_state(

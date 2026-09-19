@@ -2285,6 +2285,16 @@
                a skill item on the pet WITHOUT summoning: (Learned) in the tooltip, item gone
                -> fixed. The old message again -> paste the "pet skill:" line (it prints the
                serial)
+            d. NO "CLOSENESS HAS INCREASED (+1)" ON A MAP CHANGE (2026-09-18, the owner's screenshot,
+               two lines in the lower right every map change). The live log: the pet had been
+               summoned from Cash slot 3, Consolidate slid it to slot 1, and every re-send
+               after that wrote the pet item over slot 3 - where a coupon was - while the
+               restore put the pet in slot 1. The client, handed a pet where it had none,
+               printed +1 (once for the entry re-send, once for the first-move re-summon).
+               The re-send names the slot the pet is in NOW. Summon, Consolidate or Sort the
+               Cash tab so the pet moves, change maps twice: no closeness line -> fixed. A
+               line -> paste the "re-sent as pet" 0x0070 lines and the "restored on field
+               entry" line for the pet's item; their slots should agree
           THE COLLABORATION PETS AND EVERY PET EQUIP (2026-09-17, INSTALLED here - the
           client package must be rebuilt from client-patched\Data). The owner: "backport these
           pets ... as well as these pet equipment. All pets from these collaboration should
@@ -5486,6 +5496,9 @@ function Show-TestPlan {
         Write-Host '            item gone -> fixed (live server: "needs a pet" - the restore sent the'
         Write-Host '            bag serial, the lookup knew only the pet serial). Same message again'
         Write-Host '            -> paste the "pet skill:" line, it prints the serial' -ForegroundColor Yellow
+        Write-Host '         d. NO "Closeness has increased (+1)" on a map change after the pet moved' -ForegroundColor Magenta
+        Write-Host '            slots (Consolidate/Sort): the re-send names the slot it is in NOW.'
+        Write-Host '            no line -> fixed; a line -> paste the "re-sent as pet" + restore lines' -ForegroundColor Yellow
         Write-Host '       NO "NEW" MARK ON THE PET: mode 5 on the re-send. No highlighted Cash cell' -ForegroundColor Yellow
         Write-Host '         on login -> struck; still highlighted -> paste the Cash-tab 0x0070 lines.' -ForegroundColor Yellow
         Write-Host '       PET VACUUM AT LOGIN/MAP CHANGE: CONFIRMED ("Pets now work on initial summon").' -ForegroundColor DarkGray
