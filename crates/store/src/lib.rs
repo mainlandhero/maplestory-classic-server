@@ -39,6 +39,7 @@ pub mod kick;
 pub mod migration;
 pub mod error;
 pub mod fame;
+pub mod gifts;
 pub mod password;
 /// Which process owns the far end of a local TCP connection - the per-launch discriminator
 /// `claims` resolves by. A socket concern in a database crate, deliberately: `crates/login`
@@ -75,6 +76,7 @@ pub use dailyperks::{
     SECONDS_PER_DAY,
 };
 pub use fame::{fame_windows, FameOutcome, FameWindows};
+pub use gifts::{Gift, GiftTarget, GIFT_TTL_SECS};
 pub use inventory::{
     plan_consolidation, plan_sort, Bag, Equipped, EquippedItem, InvItem, InventoryType, Item,
     ItemKind, ItemRules, MoveOutcome, Stack, StackChange,

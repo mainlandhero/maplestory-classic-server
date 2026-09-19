@@ -2427,6 +2427,9 @@ impl Session {
         if let Some(replies) = self.scroll_menu_answer(body) {
             return replies;
         }
+        if let Some(replies) = self.gift_menu_answer(body) {
+            return replies;
+        }
         if let Some(replies) = self.daily_perk_menu_answer(body) {
             return replies;
         }

@@ -284,6 +284,10 @@ impl Store {
         // and a number for every pet in every bag - after `inventory` has its `pet_id` column
         // and before the rename pass, which visits `pets` too (it carries an item id).
         crate::pets::create_tables(&conn)?;
+        // Gift Drops (`store::gifts`): a queued gift carries an item id, so the table must
+        // exist BEFORE the rename pass, which visits it - a hat queued as 1006910 the day
+        // before its renumbering must be claimed as 1007910.
+        crate::gifts::create_tables(&conn)?;
         crate::inventory::rename_item_ids(&conn)?;
         crate::skills::create_tables(&conn)?;
         // The spent half of a skill point. A whole new table, so `CREATE TABLE IF NOT EXISTS`

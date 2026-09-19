@@ -108,6 +108,10 @@ impl Session {
             // Same shape as !tool and open to everyone: the owner asked for a command that
             // "functions very similar to !tool" with the Administrator's dialogue.
             crate::scrollnpc::COMMAND => return self.open_scroll_picker(),
+            // `!giftdrop` alone opens the caller's own box; with arguments it is a GM word
+            // that queues a gift, and a non-GM typing that is said out loud like any other.
+            // crate::giftdrop.
+            crate::giftdrop::COMMAND => return self.giftdrop_command(arg, is_gm, text),
             "help" => {
                 return self.gm_ack(if is_gm { GM_COMMANDS.to_string() } else { PLAYER_COMMANDS.to_string() })
             }
@@ -150,6 +154,8 @@ impl Session {
         match name {
             "map" => self.gm_map(arg),
             "item" => self.gm_item(arg),
+            // One gift per account, claimable on any of its characters. crate::giftdrop.
+            crate::giftdrop::COMMAND_ALL => self.giftall_command(arg),
             "hair" => self.gm_look("hair", arg),
             "face" => self.gm_look("face", arg),
             "exp" => self.gm_exp(arg),
