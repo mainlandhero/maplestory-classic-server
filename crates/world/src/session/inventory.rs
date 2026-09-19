@@ -71,21 +71,37 @@ impl Session {
     }
 
 
-    /// Each worn item with the stats its `Character.wz` template gives it.
+    /// Each worn item with its stats: **the worn row's own when it has them, the template's
+    /// otherwise.**
     ///
-    /// **The stats belong to the item template, not to the character**, so they are resolved
-    /// here rather than persisted: `crates/store` keeps `(slot, itemId)` and nothing else,
-    /// and a stat column in the database would be a second source of truth for a value the
-    /// client already has its own copy of.
+    /// The owner, 2026-09-18, two screenshots of the same Blue Training Shirt: *"I just scrolled an
+    /// item in a map. When I change maps, those scrolled stats disappear. I have to keep those
+    /// items in the inventory, change maps, then upon map change, those scrolled stats will
+    /// come back."* This function dressed every worn item from its template, under a doc block
+    /// written when `crates/store` kept `(slot, itemId)` and nothing else. The store has kept
+    /// per-item stats on the `equipment` row since the scroll work (`set_worn_equip` writes
+    /// them; `equipped_items` reads them back as `Some`), and every OTHER path already reads
+    /// them - the bag restore, the Character Info list, storage. The `SetField` record was the
+    /// one still asking the template, which is exactly the symptom: a scrolled shirt showed
+    /// +70 HP and 0 enhancements left until a map change put the template's 0 and 7 back,
+    /// and the same shirt in the bag kept its scroll because the bag path never lost it.
     ///
-    /// An item with no template row goes out bare. That is the behaviour confirmed on screen
-    /// on 2026-08-19 - the character was dressed, the items simply had no stats - so a
-    /// missing or stale `gm-handbook/equips.txt` degrades to something known to work rather
-    /// than to something untested.
+    /// An item with no template row and no stored stats goes out bare, as it has since
+    /// 2026-08-19.
     pub(super) fn dressed(&self, chr: &net::opcode::Character) -> Vec<(u8, u32, net::opcode::EquipStats)> {
+        let stored: std::collections::HashMap<u8, net::opcode::EquipStats> = self
+            .store
+            .equipped_items(chr.id)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|e| e.stats.map(|s| (e.slot, s)))
+            .collect();
         chr.equips
             .iter()
-            .map(|&(slot, item_id)| (slot, item_id, self.template_stats(item_id)))
+            .map(|&(slot, item_id)| {
+                let stats = stored.get(&slot).copied().unwrap_or_else(|| self.template_stats(item_id));
+                (slot, item_id, stats)
+            })
             .collect()
     }
 

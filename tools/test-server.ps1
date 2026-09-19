@@ -1717,7 +1717,15 @@
 
          a) REAL SCROLLING, the client's own window - drag a scroll onto an equip.
             `0x0125` was decoded in full and NEVER HANDLED; your four attempts got the
-            latch unlock and nothing else.
+            latch unlock and nothing else. CONFIRMED WORKING 2026-09-18 (the shirt took
+            +70 HP). WHAT WAS WRONG THAT DAY: "When I change maps, those scrolled stats
+            disappear ... in the inventory ... they come back" - the SetField record's
+            dresser asked the item TEMPLATE for every worn item (a doc block from before
+            the store kept per-item stats); the bag restore never did. It reads the worn
+            row's own stats first now (session/inventory.rs dressed).
+              scroll a WORN shirt, change maps: the tooltip keeps the +HP and the spent
+                         enhancement -> DONE; template numbers come back -> paste the
+                         SetField line and the "scroll" line before it
             **`!item 2040400 3`** - a topwear DEF scroll, 100% success and cursed 0, so it
             cannot destroy anything. Use THAT one first.
               the stats change and a sound plays -> the whole path works
@@ -4717,8 +4725,9 @@ function Show-TestPlan {
         Write-Host '  TD. THE FOUR THINGS FIXED AFTER THE LAST RUN.' -ForegroundColor Magenta
         Write-Host '      All four came out of that run. None has been seen working.'
         Write-Host '      a) REAL SCROLLING - drag a scroll onto an equip in the'
-        Write-Host '         inventory. 0x0125 was decoded and NEVER HANDLED; your'
-        Write-Host '         four tries got the latch unlock and nothing else.'
+        Write-Host '         inventory. WORKS (2026-09-18). A WORN item''s scroll was lost on a'
+        Write-Host '         map change (the record dressed from the template); it reads the' -ForegroundColor Yellow
+        Write-Host '         worn row now. Scroll a worn shirt, change maps: +HP stays -> DONE' -ForegroundColor Green
         Write-Host '         !item 2040400 3 - topwear DEF, 100% and cursed 0,'
         Write-Host '         so it CANNOT destroy anything. That one first.' -ForegroundColor Yellow
         Write-Host '           stats change + a sound -> the whole path works'
