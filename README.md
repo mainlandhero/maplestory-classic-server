@@ -20,7 +20,7 @@ A local, testing-only server emulator for the MapleStory **`mscw`** client
 > not data.
 
 **Start here:** [STATUS.md](STATUS.md) — current state and next steps.
-[ROADMAP.md](ROADMAP.md) has the staged plan.
+[STATUS-history.md](STATUS-history.md) has the finished goals, kept for the method.
 
 ## Status
 
