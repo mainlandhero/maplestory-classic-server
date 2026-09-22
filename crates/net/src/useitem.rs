@@ -99,6 +99,91 @@ pub fn use_item(tick: u32, slot: i16, item_id: u32, tail: u32) -> Vec<u8> {
 /// Length of a [`use_item`] body.
 pub const USE_ITEM_LEN: usize = 14;
 
+/// Length of a [`CLIENT_USE_RETURN_SCROLL`] body: **ten, not fourteen.**
+///
+/// `0x010E` carries a trailing `u32` after the item id; `0x0123` does not, and this is the
+/// difference that broke the feature. Measured on the wire, three captures, every one ten
+/// bytes:
+///
+/// ```text
+/// world-ch0.log      <- 0x0123  10 byte body  cf80f90c 1600 b2f91e00   slot 22, 2030002
+/// Server Investigation  ...     10 byte body  f904ab1d 0300 b2f91e00   slot  3, 2030002
+/// Server Investigation  ...     10 byte body  06aa531d 0d00 b4f91e00   slot 13, 2030004
+/// ```
+///
+/// 2030002 is the Return Scroll to Ellinia - the one the owner used when they reported this.
+pub const USE_RETURN_SCROLL_LEN: usize = 10;
+
+/// Parse a [`CLIENT_USE_RETURN_SCROLL`] body (opcode already stripped).
+///
+/// # Why this is not [`parse_use_item`]
+///
+/// Until 2026-09-21 it was. `session/consume.rs` forwarded `0x0123` straight into the
+/// `0x010E` walk, whose parser has a `len() < 14` guard, so **every** return scroll the
+/// client actually sent was refused with *"the 0x010E body did not parse"* - which is the
+/// message the owner saw on screen.
+///
+/// The tests did not catch it because every one of them built its request with
+/// [`use_item`], a fourteen-byte body the client never sends for this opcode. `CLAUDE.md`:
+/// *a test that pins what the code already does is not a check.*
+///
+/// [`UseItem::tail`] is reported as `0`: this body has no such field, and inventing a value
+/// would be a guess wearing a measurement's clothes. Nothing on the scroll path reads it.
+pub fn parse_use_return_scroll(body: &[u8]) -> Option<UseItem> {
+    if body.len() < USE_RETURN_SCROLL_LEN {
+        return None;
+    }
+    Some(UseItem {
+        tick: u32::from_le_bytes([body[0], body[1], body[2], body[3]]),
+        slot: i16::from_le_bytes([body[4], body[5]]),
+        item_id: u32::from_le_bytes([body[6], body[7], body[8], body[9]]),
+        tail: 0,
+    })
+}
+
+/// Build a [`CLIENT_USE_RETURN_SCROLL`] body - ten bytes, so a test cannot accidentally
+/// exercise the fourteen-byte shape the client does not send.
+pub fn use_return_scroll(tick: u32, slot: i16, item_id: u32) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(tick);
+    w.i16(slot);
+    w.u32(item_id);
+    w.into_vec()
+}
+
+#[cfg(test)]
+mod return_scroll_tests {
+    use super::*;
+
+    /// **The three bodies that were actually on the wire**, pasted from the logs rather than
+    /// rebuilt, because rebuilding them is exactly how this bug survived its own tests.
+    #[test]
+    fn the_captured_return_scroll_bodies_parse_to_the_scroll_that_was_used() {
+        for (hex, slot, item) in [
+            ("cf80f90c1600b2f91e00", 22i16, 2_030_002u32),
+            ("f904ab1d0300b2f91e00", 3, 2_030_002),
+            ("06aa531d0d00b4f91e00", 13, 2_030_004),
+        ] {
+            let body: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap()).collect();
+            assert_eq!(body.len(), USE_RETURN_SCROLL_LEN, "{hex}");
+            let got = parse_use_return_scroll(&body).unwrap_or_else(|| panic!("{hex} must parse"));
+            assert_eq!((got.slot, got.item_id), (slot, item), "{hex}");
+            // The old path is the bug, stated as an assertion: the 0x010E parser refuses it.
+            assert_eq!(parse_use_item(&body), None, "{hex} is too short for the 0x010E shape");
+        }
+    }
+
+    #[test]
+    fn a_short_return_scroll_body_is_refused_rather_than_panicked_on() {
+        let full = use_return_scroll(7, 3, 2_030_002);
+        assert_eq!(full.len(), USE_RETURN_SCROLL_LEN);
+        assert_eq!(parse_use_return_scroll(&full), Some(UseItem { tick: 7, slot: 3, item_id: 2_030_002, tail: 0 }));
+        for n in 0..USE_RETURN_SCROLL_LEN {
+            assert_eq!(parse_use_return_scroll(&full[..n]), None, "len {n}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
