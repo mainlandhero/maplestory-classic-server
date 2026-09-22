@@ -20,13 +20,26 @@ impl Session {
     /// the way an unknown item on `0x010E` is.
     pub(super) fn on_use_return_scroll(&mut self, payload: &[u8]) -> Vec<Reply> {
         crate::server::log("   return scroll: 0x0123 - the client's opcode for the 0203 range");
-        self.on_use_item(payload)
+        // **Its own parser, and this is the whole bug of 2026-09-18..21.** This forwarded
+        // into `on_use_item`, whose parser wants fourteen bytes; `0x0123` is ten, so every
+        // scroll the client actually sent came back "the 0x010E body did not parse" - which
+        // is the line the owner read on screen. See `net::useitem::parse_use_return_scroll`.
+        let Some(req) = net::useitem::parse_use_return_scroll(payload) else {
+            return self.use_refused(format!("the 0x0123 body did not parse ({} bytes)", payload.len()));
+        };
+        self.use_parsed_item(req)
     }
 
     pub(super) fn on_use_item(&mut self, payload: &[u8]) -> Vec<Reply> {
         let Some(req) = net::useitem::parse_use_item(payload) else {
             return self.use_refused("the 0x010E body did not parse".to_string());
         };
+        self.use_parsed_item(req)
+    }
+
+    /// The walk both opcodes share, from an already-parsed request. The two differ only in
+    /// the bytes on the wire.
+    fn use_parsed_item(&mut self, req: net::useitem::UseItem) -> Vec<Reply> {
         let Some(mut chr) = self.claimed_character() else {
             return self.use_refused("no character is claimed on this connection".to_string());
         };
@@ -595,7 +608,7 @@ mod scroll_tests {
             ]
             .into_iter()
             .collect(),
-            fields: [40, 60, 10_000_000, 10_001_000, 10_001_090, 20_000_000, 20_001_000]
+            fields: [40, 60, 10_000_000, 10_001_000, 10_001_090, 10_002_000, 20_000_000, 20_001_000]
                 .into_iter()
                 .collect(),
             consumables: crate::consumables::Consumables::parse("2000000, 100, 0, 0, 0\n"),
@@ -727,6 +740,46 @@ mod scroll_tests {
         assert_eq!(stored_map(&s, acct, id), 20_000_000, "Orbis from El Nath, both Ossyria");
         assert!(has(&out, net::opcode::SET_FIELD));
         assert_eq!(held(&s, id), None);
+    }
+
+    /// **The owner's Ellinia scroll, byte for byte off the wire.** 2026-09-21: *"I just tried to
+    /// use the Return Scroll to Ellinia, but the item showed a message that says 0x010E body
+    /// did not parse."*
+    ///
+    /// This drives `on_use_return_scroll` with the **ten-byte** body the client really sent -
+    /// `world-ch0.log`, `cf80f90c 1600 b2f91e00` - rather than rebuilding it with
+    /// `use_item`, which is a fourteen-byte shape this opcode never carries and is the reason
+    /// every other test on this page passed while the feature was broken on screen.
+    #[test]
+    fn the_captured_ellinia_scroll_packet_teleports_and_is_consumed() {
+        // slot 22 on the wire; the fixture puts the scroll in slot 1, so only the id and the
+        // body's LENGTH are what this test is really about.
+        let (mut s, acct, id) = session_with_scroll(2_030_002, 1, 10_001_090);
+        let body = net::useitem::use_return_scroll(0x0cf9_80cf, 1, 2_030_002);
+        assert_eq!(body.len(), 10, "the client's shape, not 0x010E's fourteen");
+
+        let out = s.on_use_return_scroll(&body);
+
+        assert_eq!(stored_map(&s, acct, id), 10_002_000, "Ellinia");
+        assert!(has(&out, net::opcode::SET_FIELD), "it actually teleports: {:?}", out.iter().map(|r| r.what.clone()).collect::<Vec<_>>());
+        assert_eq!(held(&s, id), None, "and the scroll is spent");
+        assert!(
+            !out.iter().any(|r| String::from_utf8_lossy(&r.body).contains("did not parse")),
+            "no parse complaint reaches the screen"
+        );
+    }
+
+    /// The same packet one byte short is still **answered** - this path is latched, so a
+    /// silent refusal would cost every later inventory action in the session.
+    #[test]
+    fn a_truncated_return_scroll_packet_is_still_answered() {
+        let (mut s, _acct, id) = session_with_scroll(2_030_002, 1, 10_001_090);
+        let body = net::useitem::use_return_scroll(0, 1, 2_030_002);
+        for n in 0..body.len() {
+            let out = s.on_use_return_scroll(&body[..n]);
+            assert!(!out.is_empty(), "len {n} must still answer");
+        }
+        assert_eq!(held(&s, id), Some(1), "and nothing was taken");
     }
 
     /// The other half of the same rule: on its own continent the same shape of scroll works.
