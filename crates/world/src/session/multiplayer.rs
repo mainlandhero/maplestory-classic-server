@@ -926,6 +926,85 @@ mod tests {
         assert_eq!(again[0].1, u32::try_from(hurt.hp).unwrap(), "with the new HP");
     }
 
+    /// **A party member's HP waits for their own spawn** - the channel-change bug.
+    ///
+    /// The owner, 2026-09-21: *"the owner changing channels back from channel 2 to channel 1, the owner's HP
+    /// bar was unavailable on Tester2's screen until much later."* `world-ch0.log` has the
+    /// race exactly: the `0x02B2` left 121 ms after the migration hello and the
+    /// `UserEnterField` that creates the `CUser` it describes left 220 ms **after that**, so
+    /// the client dropped it - and the unchanged-value cache then suppressed every resend
+    /// until regen moved their HP fifteen seconds later.
+    ///
+    /// A session is claimed and carries a map from `SetField` long before `on_field_entered`
+    /// publishes its spawn, and that window is what this pins: no HP goes out during it, and
+    /// one does as soon as the spawn has.
+    #[test]
+    fn a_members_hp_is_not_sent_until_their_own_spawn_has_reached_the_field() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut ids = Vec::new();
+        for name in ["Tester2", "Wisp"] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: 104_040_000, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.create_migration(account, id, 0, 0).unwrap();
+            ids.push(id);
+        }
+        let mut resident = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut arriving = Session::joining(store.clone(), config.clone(), fields.clone());
+        resident.claim_for_character(ids[0]);
+        arriving.claim_for_character(ids[1]);
+        resident.on_field_entered();
+        arriving.on_field_entered();
+
+        let is_hp = |r: &Reply| r.opcode == net::userpool::USER_HP_REMOTE;
+        let about = |r: &Reply| u32::from_le_bytes(r.body[0..4].try_into().unwrap());
+
+        // Form the party while both are properly on the field.
+        let created = resident
+            .run_party_request(ids[0], crate::party::Request::Create { name: "Party".into() });
+        let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        let _ = resident.run_party_request(ids[0], crate::party::Request::Invite { target: ids[1] });
+        let _ = arriving.tick(1_000);
+        let _ = arriving.run_party_request(ids[1], crate::party::Request::Accept { party });
+        let _ = resident.tick(1_100);
+        let _ = arriving.tick(1_100);
+        // Drain what the pre-change session already queued, so the loop below cannot pass or
+        // fail on mail that predates the channel change.
+        let _ = resident.tick(1_200);
+        assert!(
+            !resident.tick(1_300).iter().any(|r| is_hp(r) && about(r) == ids[1]),
+            "baseline: the mailbox is quiet before the channel change"
+        );
+
+        // **The channel change.** A fresh session for the same character: claimed, carrying
+        // the map, but its spawn has not been announced - exactly the state the owner's client was
+        // in between 01:36:38.045 and 01:36:38.384.
+        drop(arriving);
+        // A channel change is a new connection, so it stakes a new migration claim.
+        store.create_migration(account, ids[1], 0, 0).unwrap();
+        let mut rejoined = Session::joining(store.clone(), config, fields);
+        rejoined.claim_for_character(ids[1]);
+        assert!(rejoined.claimed_character().is_some(), "the rejoined session must hold the character");
+        for t in [2_000, 2_100, 2_200] {
+            let _ = rejoined.tick(t);
+            let seen = resident.tick(t + 10);
+            assert!(
+                !seen.iter().filter(|r| is_hp(r)).any(|r| about(r) == ids[1]),
+                "no HP about the arriving member before their spawn: {seen:?}"
+            );
+        }
+
+        // The spawn goes out, and only now does the HP follow it.
+        rejoined.on_field_entered();
+        eprintln!("DEBUG map_of_self={:?} chr_map={:?}", rejoined.bus().map_of(rejoined.subscriber), rejoined.claimed_character().map(|c| c.map_id));
+        let _ = rejoined.tick(3_000);
+        let seen = resident.tick(3_100);
+        assert!(
+            seen.iter().filter(|r| is_hp(r)).any(|r| about(r) == ids[1]),
+            "once the spawn has gone out the HP follows: {seen:?}"
+        );
+    }
+
     /// **A party buff reaches every member on the caster's field, and nobody else.**
     ///
     /// The owner, 2026-09-06: *"party buffs should apply to everyone in the party who is in the

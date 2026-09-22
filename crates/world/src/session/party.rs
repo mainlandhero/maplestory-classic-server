@@ -564,6 +564,32 @@ impl super::Session {
                 return;
             }
         };
+        // **Not until this character's own spawn has reached the field.** Measured on a
+        // channel change back into ch0, `world-ch0.log` 2026-09-19:
+        //
+        // ```text
+        //   01:36:38.043  <- the owner     MIGRATION HELLO
+        //   01:36:38.045  -> the owner     SetField
+        //   01:36:38.164  -> Tester2  0x02B2  the owner 229/247        <- HP, 121 ms after the hello
+        //   01:36:38.320  <- the owner     0x00DC CLIENT_FIELD_ENTERED
+        //   01:36:38.384  -> Tester2  0x0224 UserEnterField: the owner <- Tester2 first hears of them
+        //   01:36:53.025  -> Tester2  0x02B2  the owner 239/247        <- regen, 15 s later
+        // ```
+        //
+        // The HP arrived **220 ms before** the spawn that creates the `CUser` it describes,
+        // so the client dropped it - and then `last_party_hp` below cached the value and
+        // suppressed every resend until regen happened to change it fifteen seconds later.
+        // The owner: *"the owner's HP bar was unavailable on Tester2's screen until much later."*
+        //
+        // A session is claimed and carrying a map from `SetField`, but it has no presence on
+        // the bus until `announce_field_entry` publishes its spawn on `0x00DC` - so presence
+        // for *this* map is exactly the question "has my spawn gone out here yet", and it
+        // needs no new state. Checked against `chr.map_id` rather than `is_some()` because a
+        // map change leaves the previous field's presence in place until the new one lands.
+        if self.bus().map_of(self.subscriber) != Some(chr.map_id) {
+            self.last_party_hp = None;
+            return;
+        }
         let others: Vec<u32> = members.into_iter().filter(|&m| m != chr.id).collect();
         let here = self.bus().characters_on(chr.map_id, &others);
         if here.is_empty() {
@@ -579,6 +605,7 @@ impl super::Session {
         if self.last_party_hp.as_ref() == Some(&now) {
             return;
         }
+        let mut every_one_delivered = true;
         for member in &now.2 {
             let reply = Reply {
                 opcode: net::userpool::USER_HP_REMOTE,
@@ -591,10 +618,14 @@ impl super::Session {
                 ),
             };
             // A member who left the map between the presence read and now is a `false`
-            // here; the next tick's list will differ and they are resent when they return.
-            let _ = self.bus().publish_to_character(*member, chr.map_id, reply);
+            // here. That used to be discarded and the value cached anyway, so a delivery
+            // that failed was never retried while hp, max and the recipient list all stayed
+            // the same - which for a player standing still at full HP is forever.
+            every_one_delivered &= self.bus().publish_to_character(*member, chr.map_id, reply);
         }
-        self.last_party_hp = Some(now);
+        // Cache only what actually went out, so a failed send is retried next tick rather
+        // than remembered as sent.
+        self.last_party_hp = every_one_delivered.then_some(now);
     }
 
     /// Who should be told about a change to `party`: its current members, plus `also` when it
