@@ -117,6 +117,11 @@ impl Session {
                 crate::broadcast::Event::PartyBuff { skill_id, level, caster } => {
                     out.extend(self.receive_party_buff(skill_id, level, caster));
                 }
+                crate::broadcast::Event::FriendRequest => {
+                    // Their list changed: redraw it, and say out loud anything that is now
+                    // waiting on this player. session/friends.rs.
+                    out.extend(self.friend_entry_replies());
+                }
                 crate::broadcast::Event::GiftDrop => {
                     // Two gifts queued back to back are two events and ONE box: the box lists
                     // "N more waiting", and the next opens behind the answer. A box already
@@ -1445,6 +1450,43 @@ mod tests {
         // answered with 0x009E CLIENT_PACKET_REJECTED before dying; `net::messenger::members`
         // carries the capture.
         assert_eq!(joined.body, net::messenger::members(id, &seats), "all six seats to the seated member too");
+
+        // **A typed line reaches everyone, the speaker included.** The owner, 2026-09-22: "any
+        // chat messages happen does not show on screen". The client's own send builder does
+        // not draw the line locally, so the echo is not a nicety.
+        let mut say = net::messenger::CLIENT_MESSENGER.to_le_bytes().to_vec();
+        say.extend_from_slice(&3u32.to_le_bytes());
+        say.extend_from_slice(&5u16.to_le_bytes());
+        say.extend_from_slice(b"hello");
+        let own = tester.handle(&say);
+        let line = net::messenger::chat(id, 1, "Tester2", "hello");
+        assert_eq!(
+            own.iter().filter(|r| r.opcode == net::messenger::MESSENGER).map(|r| r.body.clone()).collect::<Vec<_>>(),
+            vec![line.clone()],
+            "the speaker is echoed their own line"
+        );
+        let heard = wisp.tick(2_500);
+        assert!(
+            heard.iter().any(|r| r.opcode == net::messenger::MESSENGER && r.body == line),
+            "and the other member is told: {:?}",
+            heard.iter().map(|r| &r.what).collect::<Vec<_>>()
+        );
+
+        // **Leaving frees the seat and the remaining member is sent the table again.**
+        // The owner, 2026-09-22: "when the owner exit the chat room, Tester2's chat room still shows
+        // that the owner is still in the room."
+        let mut bye = net::messenger::CLIENT_MESSENGER.to_le_bytes().to_vec();
+        bye.extend_from_slice(&1u32.to_le_bytes());
+        bye.extend_from_slice(&id.to_le_bytes());
+        let nothing = tester.handle(&bye);
+        assert!(nothing.is_empty(), "the leaver's own window is already shut: {nothing:?}");
+        seats[1] = None;
+        let told = wisp.tick(3_000);
+        let table = told
+            .iter()
+            .find(|r| r.opcode == net::messenger::MESSENGER)
+            .unwrap_or_else(|| panic!("the remaining member is told: {:?}", told.iter().map(|r| &r.what).collect::<Vec<_>>()));
+        assert_eq!(table.body, net::messenger::members(id, &seats), "six seats with the leaver's zeroed");
 
         // An accept for a room this channel does not hold: result 1, nothing opens.
         let mut acc = net::messenger::CLIENT_MESSENGER.to_le_bytes().to_vec();
