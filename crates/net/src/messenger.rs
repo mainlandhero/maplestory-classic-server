@@ -169,8 +169,27 @@ fn write_seat(w: &mut PacketWriter, position: u32, seat: Option<&Seat>) {
     };
 }
 
-/// Mode 4 with **the whole room** - what a client whose window is empty reads: six records,
-/// one per seat, empty seats as `u32 position, u32 0`.
+/// Mode 4: **six records, one per seat, always** - empty seats as `u32 position, u32 0`.
+///
+/// # There is no one-record form, and assuming there was crashed the client
+///
+/// This module used to carry a `member_joined` that sent the newcomer's single record to
+/// the members already seated, on the reasoning that a window with somebody in it only
+/// needs the new arrival. **The client refuses it.** Measured, `world-ch0.log` 2026-09-18:
+///
+/// ```text
+/// 01:38:09.581 -> [Wisp#215] 0x00A3 mode 4: Tester2 joined in seat 1, ONE record
+/// 01:38:09.590 <- [Wisp#215] 0x009E CLIENT_PACKET_REJECTED, 262 byte body
+/// 01:38:12.695    ch0 #3 ended: forcibly closed by the remote host (os error 10054)
+/// ```
+///
+/// The rejected packet inside that `0x009E` is byte-for-byte the one we sent, and the
+/// client's copy of it is **262 bytes** where ours was 86 - it kept reading past the end of
+/// the packet into zero padding, looking for the five records that were not there, and threw
+/// the whole thing out. Nine milliseconds, and the process was gone three seconds later.
+///
+/// The six-record form was never rejected by either client in the same capture, so that is
+/// the only mode-4 shape known to be accepted and every join now sends it to everybody.
 pub fn members(messenger_id: u32, seats: &[Option<Seat>; SEATS]) -> Vec<u8> {
     let mut w = PacketWriter::new();
     w.u32(messenger_id);
@@ -181,16 +200,6 @@ pub fn members(messenger_id: u32, seats: &[Option<Seat>; SEATS]) -> Vec<u8> {
     w.into_vec()
 }
 
-/// Mode 4 with **one newcomer** - what a client whose window already has someone in it
-/// reads. Sending this to an empty window would make it read five more records that are
-/// not there; [`members`] is for that window.
-pub fn member_joined(messenger_id: u32, position: u32, seat: &Seat) -> Vec<u8> {
-    let mut w = PacketWriter::new();
-    w.u32(messenger_id);
-    w.i32(result::MEMBERS);
-    write_seat(&mut w, position, Some(seat));
-    w.into_vec()
-}
 
 #[cfg(test)]
 mod tests {
@@ -225,9 +234,33 @@ mod tests {
             at += 8;
         }
         assert_eq!(at, b.len());
-        let one = member_joined(0x10001, 2, &wisp);
-        assert_eq!(one.len(), 8 + 35);
-        assert_eq!(&one[8..12], &2u32.to_le_bytes());
+    }
+
+    /// **The whole table is the only mode-4 shape**, and its length is fixed by the seats
+    /// rather than by who just arrived: a reader that kept going past a short packet is what
+    /// the client did with the old one-record form before rejecting it. See `members`.
+    #[test]
+    fn mode_four_is_always_six_records_however_many_are_seated() {
+        let wisp = Seat { character_id: 215, name: "Wisp".into(), look: vec![0xAA; 20] };
+        let mut seats: [Option<Seat>; SEATS] = Default::default();
+        let empty = members(0x10001, &seats).len();
+        assert_eq!(empty, 8 + SEATS * 8, "six empty records and the header");
+        seats[0] = Some(wisp.clone());
+        seats[1] = Some(Seat { character_id: 214, name: "Tester2".into(), look: vec![0xBB; 20] });
+        let two = members(0x10001, &seats);
+        // Two occupied records are longer than the empty pair they replace, and the other
+        // four are still there - the count never changes.
+        let mut at = 8;
+        for pos in 0..SEATS as u32 {
+            assert_eq!(&two[at..at + 4], &pos.to_le_bytes(), "record {pos} is present");
+            let id = u32::from_le_bytes(two[at + 4..at + 8].try_into().unwrap());
+            at += 8;
+            if id != 0 {
+                let n = u16::from_le_bytes(two[at..at + 2].try_into().unwrap()) as usize;
+                at += 2 + n + 1 + 20;
+            }
+        }
+        assert_eq!(at, two.len(), "the six records account for every byte");
     }
 
     /// The owner's open-and-invite, the log's own hex.
