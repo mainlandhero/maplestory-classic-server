@@ -127,14 +127,17 @@ impl Session {
                         what: format!("Messenger 0x00A3 mode 0 to character {}: messenger {messenger_id:#x} result 1 - not here; nothing opens", chr.id),
                     }];
                 };
-                // Everyone already seated sees the newcomer as one record.
+                // **Everyone already seated is sent the whole table, not just the newcomer.**
+                // A one-record mode 4 is refused by the client and kills it - measured, and
+                // written up on `net::messenger::members`. The table already holds the
+                // newcomer, because the seat was taken above.
                 for other in &others {
                     let told = self.deliver_anywhere(
                         *other,
                         Reply {
                             opcode: net::messenger::MESSENGER,
-                            body: net::messenger::member_joined(messenger_id, pos as u32, &me),
-                            what: format!("Messenger 0x00A3 mode 4 to character {other}: {} joined {messenger_id:#x} in seat {pos}, one record with their look", chr.name),
+                            body: net::messenger::members(messenger_id, &seats),
+                            what: format!("Messenger 0x00A3 mode 4 to character {other}: {} joined {messenger_id:#x} in seat {pos}; all six seats, because a one-record mode 4 is rejected with 0x009E and crashes the client", chr.name),
                         },
                     );
                     if !told {

@@ -1441,7 +1441,10 @@ mod tests {
         assert_eq!(theirs[1].body, net::messenger::members(id, &seats), "both seats, in order");
         let mail = wisp.tick(2_000);
         let joined = mail.iter().find(|r| r.opcode == net::messenger::MESSENGER).expect("the newcomer to the owner");
-        assert_eq!(joined.body, net::messenger::member_joined(id, 1, &t_seat));
+        // **The whole table, not just the newcomer.** A one-record mode 4 is what the client
+        // answered with 0x009E CLIENT_PACKET_REJECTED before dying; `net::messenger::members`
+        // carries the capture.
+        assert_eq!(joined.body, net::messenger::members(id, &seats), "all six seats to the seated member too");
 
         // An accept for a room this channel does not hold: result 1, nothing opens.
         let mut acc = net::messenger::CLIENT_MESSENGER.to_le_bytes().to_vec();
