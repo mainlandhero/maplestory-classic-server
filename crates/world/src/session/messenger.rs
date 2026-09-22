@@ -51,6 +51,10 @@ impl Room {
     fn free_seat(&self) -> Option<usize> {
         self.seats.iter().position(Option::is_none)
     }
+    /// Everyone seated, the caller included.
+    fn members(&self) -> Vec<u32> {
+        self.seats.iter().flatten().map(|m| m.seat.character_id).collect()
+    }
     fn others(&self, character: u32) -> Vec<u32> {
         self.seats
             .iter()
@@ -157,6 +161,76 @@ impl Session {
                         what: format!("Messenger 0x00A3 mode 4 to character {}: all six seats of {messenger_id:#x} for the freshly opened window", chr.id),
                     },
                 ]
+            }
+            net::messenger::MessengerRequest::Chat { text } => {
+                let Some(id) = room_of(chr.id) else {
+                    crate::server::log(&format!("   maple chat: {} typed a line but is in no room this channel holds; nothing sent", chr.name));
+                    return Vec::new();
+                };
+                let Some((pos, everyone)) = with_room(id, |room| {
+                    room.position_of(chr.id).map(|pos| (pos, room.members()))
+                })
+                .flatten() else {
+                    return Vec::new();
+                };
+                let body = net::messenger::chat(id, pos as u8, &chr.name, &text);
+                // **Everyone, the speaker included.** The client's own send builder does not
+                // draw the line locally, so leaving the speaker out shows them an empty
+                // window. `net::messenger::chat`.
+                for member in &everyone {
+                    if *member == chr.id {
+                        continue;
+                    }
+                    if !self.deliver_anywhere(*member, Reply {
+                        opcode: net::messenger::MESSENGER,
+                        body: body.clone(),
+                        what: format!("Messenger 0x00A3 mode 3 to character {member}: {} said {text:?} in {id:#x} from seat {pos}", chr.name),
+                    }) {
+                        crate::server::log(&format!("   maple chat: member {member} of {id:#x} is online nowhere this process can reach; not given the line"));
+                    }
+                }
+                crate::server::log(&format!("   maple chat: {} ({}) said {text:?} in {id:#x} from seat {pos}; {} other(s) told, and the speaker echoed", chr.name, chr.id, everyone.len() - 1));
+                vec![Reply {
+                    opcode: net::messenger::MESSENGER,
+                    body,
+                    what: format!("Messenger 0x00A3 mode 3 to character {}: their own line {text:?} echoed back - the client does not draw it itself", chr.id),
+                }]
+            }
+            net::messenger::MessengerRequest::Leave { messenger_id } => {
+                let left = with_room(messenger_id, |room| {
+                    let pos = room.position_of(chr.id)?;
+                    room.seats[pos] = None;
+                    Some((pos, room.seats_for_wire(), room.members()))
+                })
+                .flatten();
+                let Some((pos, seats, remaining)) = left else {
+                    crate::server::log(&format!("   maple chat: character {} ({}) closed messenger {messenger_id:#x}, which this channel does not hold or which they were not in", chr.id, chr.name));
+                    return Vec::new();
+                };
+                // **The whole table again, with the seat now zero.** `FUN_141184360`'s
+                // occupied-window loop reads a record per slot and compares the id it had
+                // against the one arriving, so a zeroed seat is how a departure is announced
+                // and drawn. There is no "member left" result to send instead: results 1 and
+                // 2 both run `FUN_141183cc0`, which clears the reader's OWN messenger id and
+                // wipes all six of its slots - sending that to the people still in the room
+                // would shut their windows.
+                for member in &remaining {
+                    if !self.deliver_anywhere(*member, Reply {
+                        opcode: net::messenger::MESSENGER,
+                        body: net::messenger::members(messenger_id, &seats),
+                        what: format!("Messenger 0x00A3 mode 4 to character {member}: {} left {messenger_id:#x} from seat {pos}; all six seats with that one zeroed, which is how the window drops them", chr.name),
+                    }) {
+                        crate::server::log(&format!("   maple chat: member {member} of {messenger_id:#x} is online nowhere this process can reach; not told of the departure"));
+                    }
+                }
+                if remaining.is_empty() {
+                    ROOMS.lock().unwrap_or_else(|e| e.into_inner()).retain(|(rid, _)| *rid != messenger_id);
+                    crate::server::log(&format!("   maple chat: {} ({}) left {messenger_id:#x} from seat {pos}; the room is empty and is forgotten", chr.name, chr.id));
+                } else {
+                    crate::server::log(&format!("   maple chat: {} ({}) left {messenger_id:#x} from seat {pos}; {} remaining told", chr.name, chr.id, remaining.len()));
+                }
+                // The leaver's own client closed its window before sending this.
+                Vec::new()
             }
             net::messenger::MessengerRequest::Invite { name } => match room_of(chr.id) {
                 Some(id) => self.messenger_invite(id, &chr, &name),

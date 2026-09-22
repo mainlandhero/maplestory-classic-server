@@ -23,7 +23,7 @@
 //!
 //! ```text
 //! 0   open          u8 hasName, [str name]           FUN_141183010 (new), FUN_141182e70
-//! 3   ?             str                              FUN_141188700
+//! 3   chat          str text                         FUN_141188700 (the chatinput box)
 //! 5   invite        str name                         FUN_141183310 (resolves 'already in room')
 //! 7   ?             u32                              FUN_14180b750
 //! 8   decline       u32 messengerId, str name        FUN_1411838e0 - sent by the invitee's
@@ -31,7 +31,18 @@
 //! ```
 //!
 //! Mode 7 IS the accept - captured 01:52:50: `07000000 01000100`, u32 mode 7 then the
-//! messenger id the dialog was given. Mode 3 has not been captured and is logged.
+//! messenger id the dialog was given. **Mode 3 is a typed line** and **mode 1 is the window
+//! being closed**, both captured 2026-09-22.
+//!
+//! # There is no typing indicator, and it is not a missing feature
+//!
+//! The owner, 2026-09-22: *"I believe in the UI when someone is typing, there's an indicator."*
+//! The client has **eight** `0x01FD` builders (`research/msexe-send-opcodes.txt` 1305-1312)
+//! and the mode each one writes is a literal read off the instruction that stores it: 0, 1,
+//! 3, 5, 7, 8 and two more 8s. That set accounts for every mode ever captured, so the
+//! enumeration is verified rather than assumed - and **none of them says "typing"**. The
+//! client never tells the server that a box has focus, so no indicator can be driven from
+//! here whatever the window may draw for the local player.
 //!
 //! # The reply: `0x00A3`, `FUN_141183ec0` (`research/msexe-gamestage-cases.txt`)
 //!
@@ -43,9 +54,13 @@
 //! 1  141183f7c  u32, then FUN_141183cc0 (a member leaves?)
 //! 2  141183f92  FUN_141183cc0 with no read
 //! 3  141183fb0  only for the current messenger: u8, str [, str] -> a line in the window
-//! 4  14118400a  MEMBERS. FUN_141184360 first scans the window's six slots (0x143aca880,
-//!               0x20 apart, occupied when [slot+4] != 0). ALL EMPTY -> it reads SIX
-//!               records, one per slot; otherwise ONE record, the newcomer. Each record,
+//! 4  14118400a  MEMBERS. **SIX records either way** - the "otherwise ONE record" this note
+//!               used to claim was wrong, and sending one killed the client (see `members`).
+//!               FUN_141184360 scans the window's six slots (0x143aca880, 0x20 apart,
+//!               occupied when [slot+4] != 0) only to pick which LOOP to run, and both loops
+//!               run six times: the all-empty one fills the slots, the other reads a record
+//!               per slot while DIFFING the old id against the new, which is how the window
+//!               announces who entered and who left. Each record,
 //!               FUN_140425ed0: u32 -> [slot+0] (the position), u32 -> [slot+4] (the
 //!               character id; 0 = empty, and the record ENDS there), str name, u8 (0 = no
 //!               look, the record ends), then the avatar look FUN_1402ee8d0 reads - the
@@ -77,7 +92,13 @@ pub const MESSENGER: u16 = 0x00A3;
 /// The request's `u32` mode.
 pub mod request {
     pub const OPEN: u32 = 0;
-    pub const UNKNOWN_3: u32 = 3;
+    /// Mode 1: the player closed their Maple Chat window. `u32 messengerId`. Captured
+    /// 2026-09-22 14:29:08: `01000000 01000100`. Builder: the inline one at `1411865d1`,
+    /// which writes the literal `1`.
+    pub const LEAVE: u32 = 1;
+    /// Mode 3: a typed line. `str text`. Captured 2026-09-22 14:27:36 twice:
+    /// `03000000 0500 "hello"`. Builder `FUN_141188700`, which reads the `chatinput` box.
+    pub const CHAT: u32 = 3;
     pub const INVITE: u32 = 5;
     /// The invite dialog's Accept: `u32 messengerId`. Captured 2026-09-15 01:52:50.
     pub const ENTER: u32 = 7;
@@ -87,6 +108,8 @@ pub mod request {
 /// The reply's `i32` mode.
 pub mod result {
     pub const SELF_ENTER: i32 = 0;
+    /// A line in the window: `u8 position, str, str`. See [`chat`].
+    pub const CHAT: i32 = 3;
     pub const MEMBERS: i32 = 4;
     pub const INVITE: i32 = 6;
 }
@@ -99,6 +122,10 @@ pub const SEATS: usize = 6;
 pub enum MessengerRequest {
     /// Mode 0. `invite` is the name given with the open, if any.
     Open { invite: Option<String> },
+    /// Mode 1: the window was closed.
+    Leave { messenger_id: u32 },
+    /// Mode 3: a typed line.
+    Chat { text: String },
     /// Mode 5.
     Invite { name: String },
     /// Mode 7: the invite dialog's Accept.
@@ -119,6 +146,8 @@ pub fn parse_messenger(body: &[u8]) -> Option<MessengerRequest> {
             let invite = if has_name { Some(r.str().ok()?) } else { None };
             MessengerRequest::Open { invite }
         }
+        request::LEAVE => MessengerRequest::Leave { messenger_id: r.u32().ok()? },
+        request::CHAT => MessengerRequest::Chat { text: r.str().ok()? },
         request::INVITE => MessengerRequest::Invite { name: r.str().ok()? },
         request::ENTER => MessengerRequest::Enter { messenger_id: r.u32().ok()? },
         request::DECLINE => MessengerRequest::Decline { messenger_id: r.u32().ok()?, name: r.str().ok()? },
@@ -144,6 +173,33 @@ pub fn invite(messenger_id: u32, inviter_id: u32, inviter_name: &str) -> Vec<u8>
     w.u8(1); //                 14118403f  flag: show the dialog
     w.u32(inviter_id); //       14118404d
     w.str(inviter_name); //     14118405b
+    w.into_vec()
+}
+
+/// Mode 3 - **one line in every window**: `u32 messengerId, i32 3, u8 position, str, str`.
+///
+/// Decompiled 2026-09-22 rather than guessed. `FUN_141183ec0` case 3 runs only when the id
+/// matches the client's current messenger, then `FUN_140426220` reads **`u8`, `str`, `str`**
+/// into a `{u32, String, String}` and `FUN_141183b20` appends it to the window's line list.
+///
+/// The `u8` is the **speaker's seat**, not a flag: `FUN_141183b20` uses it to index the six
+/// slots at `DAT_143aca880` (`0x20` apart) and asks `FUN_142d01050` whether that slot's
+/// character is blocked, dropping the line if so. A value of 6 or more falls back to a
+/// scratch slot, so it must be a real seat for the block check to mean anything.
+///
+/// # This is sent to the speaker as well
+///
+/// `FUN_141188700` builds the request from the `chatinput` box and **does not** call
+/// `FUN_141183b20` - the client never draws its own line. So a server that sends the line
+/// only to the others leaves the speaker looking at an empty window, which is half of what
+/// The owner reported on 2026-09-22.
+pub fn chat(messenger_id: u32, position: u8, name: &str, text: &str) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(messenger_id);
+    w.i32(result::CHAT);
+    w.u8(position); //  141183b20  indexes the six slots for the block check
+    w.str(name); //     140426220  first string
+    w.str(text); //     140426220  second string
     w.into_vec()
 }
 
@@ -276,8 +332,33 @@ mod tests {
             parse_messenger(&[8, 0, 0, 0, 7, 0, 0, 0, 1, 0, b'X']),
             Some(MessengerRequest::Decline { messenger_id: 7, name: "X".into() })
         );
-        assert_eq!(parse_messenger(&[3, 0, 0, 0, 9]), Some(MessengerRequest::Other { mode: 3, rest: vec![9] }));
+        // The two captures of 2026-09-22, as hex from world-ch0.log rather than rebuilt.
+        let chat: Vec<u8> = (0.."03000000050068656c6c6f".len()).step_by(2)
+            .map(|i| u8::from_str_radix(&"03000000050068656c6c6f"[i..i + 2], 16).unwrap()).collect();
+        assert_eq!(chat.len(), 11, "the log said 11 bytes");
+        assert_eq!(parse_messenger(&chat), Some(MessengerRequest::Chat { text: "hello".into() }));
+        let leave: Vec<u8> = (0.."0100000001000100".len()).step_by(2)
+            .map(|i| u8::from_str_radix(&"0100000001000100"[i..i + 2], 16).unwrap()).collect();
+        assert_eq!(leave.len(), 8, "the log said 8 bytes");
+        assert_eq!(parse_messenger(&leave), Some(MessengerRequest::Leave { messenger_id: 0x10001 }));
         assert_eq!(parse_messenger(&[0, 0, 0]), None);
+        // A mode with no builder in the client still cannot panic the server.
+        assert_eq!(parse_messenger(&[9, 0, 0, 0, 1]), Some(MessengerRequest::Other { mode: 9, rest: vec![1] }));
+    }
+
+    /// **A chat line is `u8 position, str, str`** - the shape `FUN_140426220` reads, with the
+    /// seat first because `FUN_141183b20` indexes the six slots with it.
+    #[test]
+    fn a_chat_line_carries_the_speakers_seat_then_two_strings() {
+        let b = chat(0x10001, 1, "Wisp", "hello");
+        assert_eq!(&b[..4], &0x10001u32.to_le_bytes());
+        assert_eq!(&b[4..8], &3i32.to_le_bytes(), "mode 3");
+        assert_eq!(b[8], 1, "the speaker's seat, for the block check");
+        assert_eq!(&b[9..11], &4u16.to_le_bytes());
+        assert_eq!(&b[11..15], b"Wisp");
+        assert_eq!(&b[15..17], &5u16.to_le_bytes());
+        assert_eq!(&b[17..], b"hello");
+        assert_eq!(b.len(), 22, "every byte accounted for: no trailing field");
     }
 
     /// The two replies in the handler's read order: header, then the arm's fields.
