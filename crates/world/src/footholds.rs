@@ -393,23 +393,39 @@ impl Footholds {
     /// > jump). If it won't reach that platform, it should fall down to the next available
     /// > platform below."*
     ///
-    /// Take the **nearest walkable surface** on the vertical line through `x`. If the nearest
-    /// one is *above* the point, accept it only when the rise is within [`JUMP_HEIGHT_PX`];
-    /// otherwise take the nearest one *below*.
+    /// # Reachable beats nearer - corrected 2026-09-21
     ///
-    /// That is one comparison, and it reproduces every case rather than special-casing them:
+    /// The owner, with two screenshots of a Red Snail's drops lying at the foot of a hay bale in
+    /// Henesys Hunting Ground I: *"the drops pictured from the red snail is technically at
+    /// the wrong place... because the drops fly up, they should actually land on top of the
+    /// barrels because the drops can actually reach that foothold when dropped."*
     ///
-    /// | the point is | nearest above | nearest below | answer |
+    /// Until then this took the **nearest** surface and only lifted when the one above was
+    /// nearer (`da < db`). A drop resting on the ground has `db == 0`, so the platform above
+    /// could never win and the item was placed *inside the barrel* - the ground foothold runs
+    /// straight under the scenery. Map 10001010 has **54** such ledges within a jump of a
+    /// wider floor beneath them; `fh23` x[1191,1302] sits **55 px** over `fh22` x[1138,1337],
+    /// and that pair is the one in the screenshot.
+    ///
+    /// So the test is **reachability, not nearness**: take the surface *above* whenever it is
+    /// within [`JUMP_HEIGHT_PX`], and only otherwise fall to the one below. That is the arc
+    /// The owner describes - the item is thrown up about a jump and comes down on whatever is
+    /// there - and it still satisfies their original sentence, because the original's second
+    /// clause only ever spoke about what to do when the platform is *out of* reach.
+    ///
+    /// | the point is | above | below | answer |
     /// |---|---|---|---|
-    /// | standing on flat ground | a ceiling, far | the ground itself, **0 px** | stays exactly where it is |
+    /// | standing on flat ground, open sky | nothing, or far | the ground itself, **0 px** | stays exactly where it is |
+    /// | standing on the ground under a barrel | the barrel top, 55 px | the ground, **0 px** | **lifted onto the barrel** |
     /// | over the edge of a ledge | nothing, or far | the floor beneath, 60 px | falls 60 - items do fall |
     /// | clipped into a step | the step, 30 px | the cliff bottom, 200 px | **lifted 30 onto the step** |
     /// | clipped into a cliff face | the clifftop, 200 px | the cliff bottom, 400 px | too high to reach: **falls 400** |
-    /// | between two floors, 40 up and 10 down | 40 | 10 | falls 10 - the nearer surface, and the physical one |
     ///
-    /// **A tie goes to falling.** `da < db` rather than `<=`, because dropping is what an
-    /// object does when nothing stops it, and because a rule that lifts an item on a tie
-    /// would lift one that was already resting on the ground.
+    /// **What this deliberately gave up.** The old rule's last row was *"between two floors,
+    /// 40 up and 10 down: falls 10 - the nearer surface, and the physical one"*. An item in
+    /// mid-air between two surfaces now rises to the one above when it is in reach. That case
+    /// needs a mob to die in mid-air, and the case the owner can actually see happens on every
+    /// kill next to scenery; when the two disagree the screen wins.
     ///
     /// # Why walls need no special case beyond being excluded
     ///
@@ -442,11 +458,13 @@ impl Footholds {
             }
         }
 
-        let lift_is_better = match (above, below) {
-            (Some((da, _, _)), Some((db, _, _))) => da < db && da <= JUMP_HEIGHT_PX,
-            (Some((da, _, _)), None) => da <= JUMP_HEIGHT_PX,
-            (None, _) => false,
+        // **Reachable beats nearer.** Not `da < db`: see the rule's doc block and
+        // `a_drop_under_a_barrel_lands_on_top_of_it`.
+        let lift_is_better = match above {
+            Some((da, _, _)) => da <= JUMP_HEIGHT_PX,
+            None => false,
         };
+        let _ = &below;
         let (moved, foothold, sy, how) = if lift_is_better {
             let (d, id, sy) = above?;
             (d, id, sy, Landed::LiftedToPlatformAbove)
@@ -585,20 +603,61 @@ mod tests {
         assert_eq!(t.landing(MAP, 290, reach + 1), None);
     }
 
-    /// **Falling beats a lift when the floor below is nearer**, even though the platform above
-    /// is within a jump. An item between two surfaces does what an object does.
+    /// **A surface within reach above wins, however near the floor below is** - the
+    /// 2026-09-21 correction. This test asserted the opposite until then; see the rule's doc
+    /// block for why the screen overruled it.
     #[test]
-    fn the_nearer_surface_wins_and_a_tie_falls() {
-        // A ceiling-and-floor pair 40 apart, with the point 10 above the floor.
+    fn a_reachable_surface_above_beats_a_nearer_floor_below() {
+        // A ceiling-and-floor pair 40 apart, both within a jump wherever the point sits.
         let t = Footholds::parse("9, 1, 0, 100, 200, 100, 0, 0\n9, 2, 0, 150, 200, 150, 0, 0\n");
-        let l = t.landing(9, 100, 140).expect("both are within a jump");
+        for (y, moved) in [(140, 40), (125, 25), (110, 10)] {
+            let l = t.landing(9, 100, y).expect("both are within a jump");
+            assert_eq!(
+                (l.y, l.how, l.moved),
+                (100, Landed::LiftedToPlatformAbove, moved),
+                "from y={y} the ceiling is in reach, so the item goes up"
+            );
+        }
+        // Out of reach, and only then does it fall.
+        let far = Footholds::parse("9, 1, 0, 0, 200, 0, 0, 0\n9, 2, 0, 150, 200, 150, 0, 0\n");
+        let l = far.landing(9, 100, 140).unwrap();
         assert_eq!((l.y, l.how, l.moved), (150, Landed::Fell, 10));
-        // Dead centre: 25 either way. The tie falls.
-        let l = t.landing(9, 100, 125).unwrap();
-        assert_eq!((l.y, l.how, l.moved), (150, Landed::Fell, 25));
-        // Nearer the ceiling: now it lifts.
-        let l = t.landing(9, 100, 110).unwrap();
-        assert_eq!((l.y, l.how, l.moved), (100, Landed::LiftedToPlatformAbove, 10));
+    }
+
+    /// **The owner's barrel, from the real map.** A Red Snail dies on the ground in Henesys
+    /// Hunting Ground I with a hay bale over it, and the drop belongs on the bale rather than
+    /// inside it. The geometry is `gm-handbook/footholds.txt`'s own rows for map 10001010 -
+    /// restated here so the test is readable, and asserted against the shipped file below so
+    /// it cannot quietly drift from it.
+    #[test]
+    fn a_drop_under_a_barrel_lands_on_top_of_it() {
+        // fh22, the ground, and fh23, the bale top 55 px above part of it.
+        let t = Footholds::parse(
+            "10001010, 22, 1138, -149, 1337, -149, 0, 0\n10001010, 23, 1191, -204, 1302, -204, 0, 0\n",
+        );
+        // On the ground, under the bale: up onto it.
+        let l = t.landing(10_001_010, 1250, -149).expect("the bale is overhead");
+        assert_eq!((l.y, l.foothold, l.how, l.moved), (-204, 23, Landed::LiftedToPlatformAbove, 55));
+        // On the same ground but clear of the bale: nothing overhead, so it stays put.
+        let l = t.landing(10_001_010, 1160, -149).expect("the ground is right there");
+        assert_eq!((l.y, l.foothold, l.how, l.moved), (-149, 22, Landed::Fell, 0));
+    }
+
+    /// The two rows the test above hard-codes are really in the shipped table, so the fixture
+    /// cannot drift from the map. Skipped loudly when the handbook has not been generated.
+    #[test]
+    fn the_barrel_fixture_matches_the_shipped_foothold_table() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../gm-handbook/footholds.txt");
+        let Ok(text) = std::fs::read_to_string(path) else {
+            eprintln!("skipped: {path} is not present (python tools/dump_portals.py)");
+            return;
+        };
+        let t = Footholds::parse(&text);
+        let on = t.on_map(10_001_010);
+        for (id, x1, y1, x2, y2) in [(22u32, 1138i32, -149i32, 1337i32, -149i32), (23, 1191, -204, 1302, -204)] {
+            let fh = on.iter().find(|f| f.id == id).unwrap_or_else(|| panic!("fh{id} is gone from map 10001010"));
+            assert_eq!((fh.x1, fh.y1, fh.x2, fh.y2), (x1, y1, x2, y2), "fh{id} moved");
+        }
     }
 
     /// **No platform anywhere.** x=550 is between the ground (ends at 500) and the low floor
