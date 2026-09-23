@@ -49,6 +49,12 @@ pub const MAX_PARTY: usize = 4;
 /// (`net::clock::clock_seconds`) rather than the map's own clock.
 pub const TIME_LIMIT_S: u32 = 1_800;
 
+/// The Ligator, stage 1's only monster - 22 of them.
+pub const LIGATOR: u32 = 800_000;
+/// The coupon a Ligator drops, one per kill. `data/drops.txt` carries the rate and
+/// `droptables.rs` has the test that keeps it at 100%.
+pub const COUPON: u32 = 4_001_001;
+
 /// Nella - in every one of the seven fields, including the Exit. The way out.
 pub const NELLA: u32 = 800_002;
 /// The conversation path Nella's yes/no is parked under.
