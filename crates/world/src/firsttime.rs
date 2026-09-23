@@ -5,7 +5,8 @@
 //! person talking is not a party leader, if the person is not in a party with all members
 //! that are level 21 or above, is not in a party of at least two players. The maximum for
 //! the party quest will be 4 players. Once the entry requirement is fulfilled, all party
-//! members will be teleported into Stage 1."*
+//! members will be teleported into Stage 1."* And, in the message after it: *"all party
+//! members must be online and in the same map (Kerning City)"*.
 //!
 //! **This is deliberately a change from the client's own text**, which says *"a party of
 //! four adventurers, all level 21 or higher"* (`Quest.wz` 10311, and Lakelis says it again
@@ -62,6 +63,17 @@ pub enum Refusal {
     TooLarge { size: usize },
     /// At least one member is under [`MIN_LEVEL`]; the lowest is named.
     Underlevelled { name: String, level: u16 },
+    /// A member is playing on this channel but standing somewhere other than
+    /// [`ENTRY_MAP`].
+    Elsewhere { name: String },
+    /// A member is not visible on this channel at all.
+    ///
+    /// **This deliberately does not claim they are offline.** A party is hub-replicated and
+    /// spans channels, so a member missing from this channel's bus is either logged out or
+    /// playing on another channel, and this process cannot tell which. Saying "not here
+    /// with you" is true of both; saying "offline" would be asserting the half nobody looked
+    /// up - the same rule as [`Refusal::UnknownMember`].
+    NotHere { name: String },
     /// A member's record could not be read, so their level is unknown. Refusing is the
     /// only safe answer: letting them in would be asserting a level nobody looked up.
     UnknownMember { character: CharacterId },
@@ -94,6 +106,14 @@ impl Refusal {
                 "#b{name}#k is only level {level}. Every one of you must be level \
                  {MIN_LEVEL} or higher before I can send you in."
             ),
+            Refusal::Elsewhere { name } => format!(
+                "#b{name}#k is not here in Kerning City. Everyone must be standing with you \
+                 before I can send you in."
+            ),
+            Refusal::NotHere { name } => format!(
+                "#b{name}#k is not online here with you. Everyone in the party must be here \
+                 in Kerning City before I can send you in."
+            ),
             Refusal::UnknownMember { character } => format!(
                 "I cannot see everyone in your party right now (character {character}). Try \
                  again in a moment."
@@ -108,14 +128,27 @@ pub struct Candidate {
     pub character: CharacterId,
     pub name: String,
     pub level: u16,
+    /// Playing on this channel right now - the broadcast bus has a presence for them.
+    pub online: bool,
+    /// That presence is on [`ENTRY_MAP`]. Implies `online`.
+    pub here: bool,
+}
+
+impl Candidate {
+    /// A candidate standing in Kerning City - the shape that passes the presence rules.
+    pub fn present(character: CharacterId, name: &str, level: u16) -> Self {
+        Self { character, name: name.to_string(), level, online: true, here: true }
+    }
 }
 
 /// **The gate.** `who` clicked Lakelis; `party` is their party, if any; `levels` answers
 /// for each member id, `None` when the record could not be read.
 ///
 /// Pure, so every rule the owner gave is a unit test rather than a client run. The order of the
-/// checks is the order a player meets them: be in a party, lead it, be the right size, then
-/// be the right level - a party of one is told it is too small before it is told a level.
+/// checks is the order a player meets them: be in a party, lead it, be the right size, all
+/// be **here**, and only then be the right level - a party with someone still in Henesys is
+/// told that before it is told about a level, because that is the one they have to fix
+/// first and the absent member's level is not something they can act on yet.
 pub fn check(
     who: CharacterId,
     party: Option<&Party>,
@@ -138,6 +171,15 @@ pub fn check(
             return Err(Refusal::UnknownMember { character: member });
         };
         out.push(c);
+    }
+    // **Everyone online and in Kerning City.** The owner, 2026-09-22: "all party members must be
+    // online and in the same map (Kerning City)". Checked before the level, and in join
+    // order so the party reads about one absent member at a time rather than a list.
+    if let Some(away) = out.iter().find(|c| !c.online) {
+        return Err(Refusal::NotHere { name: away.name.clone() });
+    }
+    if let Some(away) = out.iter().find(|c| !c.here) {
+        return Err(Refusal::Elsewhere { name: away.name.clone() });
     }
     // The LOWEST under-levelled member is named, not the first in join order, so the same
     // party always reads the same line whoever happens to be listed first.
@@ -208,7 +250,7 @@ mod tests {
     }
 
     fn at(level: u16) -> impl FnMut(CharacterId) -> Option<Candidate> {
-        move |id| Some(Candidate { character: id, name: format!("C{id}"), level })
+        move |id| Some(Candidate::present(id, &format!("C{id}"), level))
     }
 
     /// Each of the owner's four rules, refused on its own terms.
@@ -236,7 +278,7 @@ mod tests {
                 2 => 20, // one short
                 _ => 14, // lower still, and listed last
             };
-            Some(Candidate { character: id, name: format!("C{id}"), level })
+            Some(Candidate::present(id, &format!("C{id}"), level))
         };
         let err = check(1, Some(&p), levels).unwrap_err();
         assert_eq!(err, Refusal::Underlevelled { name: "C3".into(), level: 14 }, "the LOWEST");
@@ -249,8 +291,55 @@ mod tests {
     #[test]
     fn an_unreadable_member_refuses_rather_than_being_assumed_high_enough() {
         let p = party(1, &[1, 2]);
-        let err = check(1, Some(&p), |id| (id == 1).then(|| Candidate { character: 1, name: "A".into(), level: 99 }));
+        let err = check(1, Some(&p), |id| (id == 1).then(|| Candidate::present(1, "A", 99)));
         assert_eq!(err, Err(Refusal::UnknownMember { character: 2 }));
+    }
+
+    /// **Everyone has to be online and standing in Kerning City.** The owner, 2026-09-22. An
+    /// absent member is refused before any level is mentioned, and the two cases are
+    /// worded apart: away on this channel says Kerning City, invisible to it does not
+    /// claim they are offline.
+    #[test]
+    fn a_member_who_is_not_in_kerning_city_with_you_refuses_the_entry() {
+        let p = party(1, &[1, 2]);
+        // Online, but standing somewhere else.
+        let away = |id: CharacterId| {
+            let mut c = Candidate::present(id, &format!("C{id}"), 30);
+            if id == 2 {
+                c.here = false;
+            }
+            Some(c)
+        };
+        let err = check(1, Some(&p), away).unwrap_err();
+        assert_eq!(err, Refusal::Elsewhere { name: "C2".into() });
+        assert!(err.line().contains("Kerning City"), "{}", err.line());
+
+        // Not visible on this channel at all.
+        let gone = |id: CharacterId| {
+            let mut c = Candidate::present(id, &format!("C{id}"), 30);
+            if id == 2 {
+                c.online = false;
+                c.here = false;
+            }
+            Some(c)
+        };
+        let err = check(1, Some(&p), gone).unwrap_err();
+        assert_eq!(err, Refusal::NotHere { name: "C2".into() });
+        let line = err.line();
+        assert!(line.contains("not online here"), "{line}");
+        assert!(!line.contains("offline"), "must not claim offline when it could be another channel: {line}");
+
+        // **Absence outranks level**: the away member is also under-levelled, and the line
+        // still names the absence, because that is the one the party can act on.
+        let both = |id: CharacterId| {
+            let mut c = Candidate::present(id, &format!("C{id}"), 30);
+            if id == 2 {
+                c.here = false;
+                c.level = 5;
+            }
+            Some(c)
+        };
+        assert_eq!(check(1, Some(&p), both).unwrap_err(), Refusal::Elsewhere { name: "C2".into() });
     }
 
     /// An instance is per RUN, not per party, and a re-entry replaces the old one.

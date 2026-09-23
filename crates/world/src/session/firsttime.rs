@@ -49,12 +49,22 @@ impl Session {
         // The party registry is locked only for the read, because `check` calls back into
         // the store for every member and holding both locks is how a deadlock starts.
         let party = self.fields.parties().party_of(chr.id).cloned();
+        // Who is playing on this channel, and which of them are standing in Kerning City.
+        // Both come from the broadcast bus's presence table, which is the same thing that
+        // decides who can see whom - so "here with you" means exactly what it looks like on
+        // screen. A member on another channel is in neither set; see `Refusal::NotHere`.
+        let members: Vec<u32> = party.as_ref().map(|p| p.members.clone()).unwrap_or_default();
+        let online: std::collections::HashSet<u32> = self.bus().online_characters().into_iter().collect();
+        let here: std::collections::HashSet<u32> =
+            self.bus().characters_on(firsttime::ENTRY_MAP, &members).into_iter().collect();
         let store = self.store.clone();
         let gate = firsttime::check(chr.id, party.as_ref(), |id| {
             store.character_brief(id).ok().flatten().map(|b| firsttime::Candidate {
                 character: id,
                 name: b.name,
                 level: u16::try_from(b.level).unwrap_or(u16::MAX),
+                online: online.contains(&id),
+                here: here.contains(&id),
             })
         });
         let members = match gate {
