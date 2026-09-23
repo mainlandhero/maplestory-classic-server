@@ -55,7 +55,7 @@ impl Session {
         let Some(req) = net::mobmove::parse_mob_move(payload) else {
             return Vec::new();
         };
-        let Some(map) = self.claimed_character().map(|c| c.map_id) else { return Vec::new() };
+        let Some(map) = self.claimed_character().map(|c| self.field_of(&c)) else { return Vec::new() };
         // Remember where it says the mob is. This is the only source of a live mob position
         // - the client runs the movement and we only acknowledge it - and it is what lets a
         // drop fall where the mob died instead of at the player's feet.
@@ -665,7 +665,7 @@ impl Session {
         self.note_activity();
         // Read once rather than per target: it is a database round trip, and a swing can
         // legitimately kill several mobs at once.
-        let killer = self.claimed_character().map(|c| (c.id, c.map_id));
+        let killer = self.claimed_character().map(|c| (c.id, self.field_of(&c)));
         let Some((chr_id, map)) = killer else { return out };
         // **The attack half of the owner's 2026-08-29 sentence**, and the second production
         // caller of `Bus::publish` there has ever been. Before the target loop, so a swing
@@ -805,7 +805,7 @@ impl Session {
     ///
     /// The **controller handover stays in `on_attack`**: a reflection is not a swing, and a
     /// mob should not change hands because it walked into someone.
-    pub(super) fn deal_to_mob(&mut self, map: u32, object_id: u32, damage: u64, chr_id: u32) -> Vec<Reply> {
+    pub(super) fn deal_to_mob(&mut self, map: crate::fields::FieldKey, object_id: u32, damage: u64, chr_id: u32) -> Vec<Reply> {
         let mut out = Vec::new();
         let Some(hp_before) = self.fields.mob_hp(map, object_id) else {
             return out; // not a mob of ours, or already dead and removed
@@ -852,7 +852,7 @@ impl Session {
         let max_hp = self
             .config
             .mobs
-            .get(&map)
+            .get(&map.map)
             .and_then(|l| l.iter().find(|m| m.object_id == object_id))
             .map(|m| m.hp)
             .unwrap_or(hp_before);
@@ -990,7 +990,7 @@ impl Session {
         object_id: u32,
         died_at: Option<(i16, i16)>,
         killer: u32,
-        map: u32,
+        map: crate::fields::FieldKey,
     ) -> Vec<Reply> {
         // `Some(killer)` says "the one candidate is this connection's own character", which is
         // what makes the packets come back in the return value rather than going over the bus.
@@ -1048,7 +1048,7 @@ impl Session {
         // Where the mob was when it died, read BEFORE it was removed from the field.
         died_at: Option<(i16, i16)>,
         ranked: &[u32],
-        map: u32,
+        map: crate::fields::FieldKey,
         mine: Option<u32>,
     ) -> Vec<Reply> {
         // The provisional owner, replaced by the walk below the moment a drop exists. Never
@@ -1119,7 +1119,7 @@ impl Session {
         // exactly once, so a 6% row that happened to hit cannot stack with the guarantee.
         // `secondjob::MARBLE_DROP_IS_CERTAIN` is the [I] policy and the single place to
         // change it.
-        let marble_here = crate::secondjob::marble_for_kill(template, map);
+        let marble_here = crate::secondjob::marble_for_kill(template, map.map);
         rolled.retain(|r| {
             !crate::secondjob::is_marble(r.item_id) || Some(r.item_id) == marble_here
         });
@@ -1203,7 +1203,7 @@ impl Session {
             // there the corpse is strictly better: a mob was standing on it, so it is
             // certainly a floor.
             let fallback = if self.config.footholds.is_empty() { (x, y) } else { (mob_x, mob_y) };
-            let placed = self.config.footholds.landing(map, x, y);
+            let placed = self.config.footholds.landing(map.map, x, y);
             let (x, y) = placed.map(|l| (l.x, l.y)).unwrap_or(fallback);
             let (item, inv_type, meso) = if r.is_mesos() {
                 // A placeholder item: `LiveDrop::is_meso` gates every read of it.
@@ -1375,7 +1375,7 @@ impl Session {
     /// A side effect worth having: whichever session ticks first takes each new mob, so
     /// control spreads across the connections on a map over time instead of one client
     /// holding everything and freezing every monster on the field if it stalls.
-    pub(super) fn spawn_due_mobs(&mut self, map: u32, now_ms: u64) -> Vec<Reply> {
+    pub(super) fn spawn_due_mobs(&mut self, map: crate::fields::FieldKey, now_ms: u64) -> Vec<Reply> {
         let arrived = self.fields.due_respawns(map, &self.config, now_ms);
         let mut out = Vec::new();
         for live in arrived {
@@ -1595,7 +1595,7 @@ impl Session {
     /// online" is the whole of the eligibility test. Said out loud because the owner's rule names
     /// AFK and this is the honest approximation of it.
     pub(super) fn party_exp_split(&mut self, worth: u64, chr_id: u32) -> Option<Vec<Reply>> {
-        let map = self.claimed_character().map(|c| c.map_id)?;
+        let map = self.claimed_character().map(|c| self.field_of(&c))?;
         let members = self.fields.parties().party_of(chr_id).map(|p| p.members.clone())?;
         if members.len() < 2 {
             return None; // a party of one is solo for EXP purposes
@@ -1971,7 +1971,7 @@ impl Session {
         // swing uses, so the bar and the death reach every viewer the same way. Not a swing:
         // no controller handover, no arrows, no combo orb.
         if reflected > 0 {
-            let map = chr.map_id;
+            let map = self.field_of(&chr);
             out.extend(self.deal_to_mob(map, hit.mob_object_id, u64::from(reflected), chr.id));
             crate::server::log(&format!(
                 "   power guard: {reflected} of the hit went back to mob {} ({power_guard}%)",
@@ -2158,7 +2158,7 @@ impl Session {
         // The roster is read into a local so the parties lock is not held across the mutable
         // per-member crediting below - the same guard-lifetime trap `CLAUDE.md` warns of.
         let roster = self.fields.parties().party_of(killer).map(|p| p.members.clone());
-        if let Some(map) = self.claimed_character().map(|c| c.map_id) {
+        if let Some(map) = self.claimed_character().map(|c| self.field_of(&c)) {
             if let Some(members) = roster {
                 let others: Vec<u32> = members.into_iter().filter(|&m| m != killer).collect();
                 for member in self.bus().characters_on(map, &others) {

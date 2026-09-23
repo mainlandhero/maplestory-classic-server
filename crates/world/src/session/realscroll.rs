@@ -81,13 +81,13 @@ impl Session {
                 net::upgrade::CLIENT_ITEM_UPGRADE,
             );
         };
-        self.upgrade_with(chr.id, chr.map_id, &req)
+        self.upgrade_with(chr.id, self.field_of(&chr), &req)
     }
 
     fn upgrade_with(
         &mut self,
         character_id: u32,
-        map: u32,
+        map: crate::fields::FieldKey,
         req: &ItemUpgradeRequest,
     ) -> Vec<Reply> {
         // ---- the scroll -------------------------------------------------------------
@@ -278,7 +278,7 @@ impl Session {
     fn upgrade_effect(
         &mut self,
         character_id: u32,
-        map: u32,
+        map: crate::fields::FieldKey,
         result: ItemUpgradeResult,
         scroll_id: u32,
         equip_id: u32,
@@ -307,7 +307,7 @@ impl Session {
     fn upgrade_refused(
         &mut self,
         character_id: u32,
-        map: u32,
+        map: crate::fields::FieldKey,
         scroll_id: u32,
         equip_id: u32,
         why: &str,

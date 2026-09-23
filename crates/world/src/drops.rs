@@ -317,7 +317,7 @@ pub struct LiveDrop {
     pub object_id: u32,
     /// Which map's floor. The pool is destroyed and rebuilt empty on every field entry, so a
     /// drop belongs to a field and has to be re-sent to anyone entering it.
-    pub map_id: u32,
+    pub map_id: crate::fields::FieldKey,
     /// The item itself, with its per-item stats or its quantity.
     pub item: store::Item,
     /// Which bag it came out of, and which bag it goes back into.
@@ -509,7 +509,7 @@ impl LiveDrop {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DropFromMob {
     /// The map the mob died on.
-    pub map_id: u32,
+    pub map_id: crate::fields::FieldKey,
     /// The character who killed it, and therefore who owns the drop while the lock lasts.
     pub owner_id: u32,
     /// The item, or a placeholder when `meso > 0`.
@@ -574,7 +574,7 @@ pub struct PlacedMoney {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DropMoneyOnGround {
     /// The map the character is standing on.
-    pub map_id: u32,
+    pub map_id: crate::fields::FieldKey,
     /// Who dropped it. Becomes the owner and the `sourceObjectId`.
     pub character_id: u32,
     /// How many mesos. **Always positive** - the call site refuses zero and negative, because
@@ -630,7 +630,7 @@ pub fn arc_from(from: (i16, i16), rest: (i16, i16)) -> ((i16, i16), u32) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DropFromBag {
     /// The map the character is standing on.
-    pub map_id: u32,
+    pub map_id: crate::fields::FieldKey,
     /// Who dropped it. Becomes the owner and the `sourceObjectId`.
     pub character_id: u32,
     /// Which bag it came out of.
@@ -867,7 +867,7 @@ pub struct Addressed {
     /// it, exactly as it ignores a movement packet for a mob it was never shown. The pick-up
     /// leave in `session/ground.rs::take_leaves_to_field` goes to the whole field for the
     /// same reason.
-    pub map_id: u32,
+    pub map_id: crate::fields::FieldKey,
     pub reply: Reply,
 }
 
@@ -935,7 +935,7 @@ impl DropTable {
     }
 
     /// Every drop on one map, in id order.
-    pub fn on_field(&self, map_id: u32) -> impl Iterator<Item = &LiveDrop> {
+    pub fn on_field(&self, map_id: crate::fields::FieldKey) -> impl Iterator<Item = &LiveDrop> {
         self.live.values().filter(move |d| d.map_id == map_id)
     }
 
@@ -1314,7 +1314,7 @@ impl DropTable {
     /// A drop on a map **nobody is standing on** is still removed silently: this client's
     /// pool holds nothing for a field it is not in, and `publish_to_character` refuses a
     /// recipient who has walked away, so the two rules agree without a second test.
-    pub fn sweep(&mut self, watching_map_id: u32, now_ms: u64) -> Vec<Reply> {
+    pub fn sweep(&mut self, watching_map_id: crate::fields::FieldKey, now_ms: u64) -> Vec<Reply> {
         let _ = watching_map_id;
         let expired: Vec<LiveDrop> = self
             .live
@@ -1361,7 +1361,7 @@ impl DropTable {
     /// is the whole predicate and this adds nothing to it.
     pub fn field_entry(
         &mut self,
-        map_id: u32,
+        map_id: crate::fields::FieldKey,
         now_ms: u64,
         viewer: u32,
         party: &crate::mobshare::Party,
@@ -1408,7 +1408,7 @@ mod tests {
     use net::opcode::{EquipStatSet, EquipStats};
     use store::{InventoryType, Item, ItemKind};
 
-    const MAP: u32 = 1;
+    const MAP: crate::fields::FieldKey = crate::fields::FieldKey::world(1);
     const WISP: u32 = 200;
     const SOMEBODY_ELSE: u32 = 201;
     /// The sword the owner dragged out of the window on 2026-08-20. Not trade-blocked.
@@ -1812,12 +1812,12 @@ mod tests {
     #[test]
     fn expiring_on_another_map_is_still_addressed_to_that_map_and_still_removed() {
         let mut t = DropTable::with_lifetime(10_000, 1_000);
-        t.drop_item(DropFromBag { map_id: 40, ..dropping(Item::equip(SWORD), 0) });
+        t.drop_item(DropFromBag { map_id: crate::fields::FieldKey::world(40), ..dropping(Item::equip(SWORD), 0) });
         assert_eq!(t.len(), 1);
         assert!(t.sweep(MAP, 20_000).is_empty());
         let out = t.take_addressed();
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].map_id, 40, "map 40's pool, not the ticking session's map");
+        assert_eq!(out[0].map_id, crate::fields::FieldKey::world(40), "map 40's pool, not the ticking session's map");
         assert!(t.is_empty(), "and the server must not keep believing in it");
     }
 
@@ -1846,7 +1846,7 @@ mod tests {
         let mut t = DropTable::with_lifetime(100_000, 1_000);
         t.drop_item(dropping(Item::equip(SWORD), 0));
         t.drop_item(dropping(Item::bundle(2_000_000, 3), 0));
-        t.drop_item(DropFromBag { map_id: 40, ..dropping(Item::equip(SWORD), 0) });
+        t.drop_item(DropFromBag { map_id: crate::fields::FieldKey::world(40), ..dropping(Item::equip(SWORD), 0) });
 
         let out = t.field_entry(MAP, 5_000, WISP, &crate::mobshare::Party::solo(WISP));
         assert_eq!(out.len(), 2, "the map 40 drop is somebody else's field");
@@ -2077,7 +2077,7 @@ mod tests {
 
         // `!map 40` and back. The pool is rebuilt empty both times.
         let solo = crate::mobshare::Party::solo(WISP);
-        assert!(t.field_entry(40, 2_000, WISP, &solo).is_empty());
+        assert!(t.field_entry(crate::fields::FieldKey::world(40), 2_000, WISP, &solo).is_empty());
         let back = t.field_entry(MAP, 3_000, WISP, &solo);
         assert_eq!(back.len(), 1, "the sword must still be lying there");
         assert_eq!(back[0].body[1], net::drops::ENTER_INSTANT);

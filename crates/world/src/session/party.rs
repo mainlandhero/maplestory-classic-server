@@ -636,12 +636,12 @@ impl super::Session {
         // for *this* map is exactly the question "has my spawn gone out here yet", and it
         // needs no new state. Checked against `chr.map_id` rather than `is_some()` because a
         // map change leaves the previous field's presence in place until the new one lands.
-        if self.bus().map_of(self.subscriber) != Some(chr.map_id) {
+        if self.bus().map_of(self.subscriber) != Some(self.field_of(&chr)) {
             self.last_party_hp = None;
             return;
         }
         let others: Vec<u32> = members.into_iter().filter(|&m| m != chr.id).collect();
-        let here = self.bus().characters_on(chr.map_id, &others);
+        let here = self.bus().characters_on(self.field_of(&chr), &others);
         if here.is_empty() {
             self.last_party_hp = None;
             return;
@@ -671,7 +671,7 @@ impl super::Session {
             // here. That used to be discarded and the value cached anyway, so a delivery
             // that failed was never retried while hp, max and the recipient list all stayed
             // the same - which for a player standing still at full HP is forever.
-            every_one_delivered &= self.bus().publish_to_character(*member, chr.map_id, reply);
+            every_one_delivered &= self.bus().publish_to_character(*member, self.field_of(&chr), reply);
         }
         // Cache only what actually went out, so a failed send is retried next tick rather
         // than remembered as sent.

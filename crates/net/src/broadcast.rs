@@ -80,6 +80,36 @@ pub const BROADCAST_MSG: u16 = 0x00AC;
 /// The type byte that drives the scrolling banner.
 pub const BANNER: u8 = 4;
 
+/// **Type 5: one line in the chat log, in the client's own system colour.**
+///
+/// The owner, 2026-09-22, about *"Tester2 is now your friend."*: *"if it has to be a chat message
+/// we send, can we send it as a red system message?"*
+///
+/// It can, and the colour is not chosen - it is inherited. `case 5` of `FUN_142d60d40` is two
+/// instructions long:
+///
+/// ```text
+/// case 5:
+///   FUN_1415eca30(&text, 0xb);
+///   break;
+/// ```
+///
+/// `FUN_1415eca30(char**, u16 kind)` is the chat printer [`crate::notice::CHAT_NOTICE`]
+/// documents, and **kind `0xb` is the kind the client's own friend sentences use** - `0x00A7`
+/// sub-op `0x32` *"%s has declined the friend request."* ends in `FUN_1415eca30(.., 0xb)`, and
+/// that line is on the owner's screen in the colour they are asking for. So a line sent this way is
+/// drawn by the same printer, with the same kind, as the client's own.
+///
+/// Both **[L]**, out of `research/msexe-broadcast-0xac.txt` and
+/// `research/msexe-friendpopup-0x1a.c`. What is **[I]** is the word "red": nobody has measured
+/// the RGB. What is measured is *"the same as the decline line"*, which is the thing that was
+/// actually asked for.
+///
+/// **No flag byte.** The `u8` after the type is read for types 4 and 26 only; every other type
+/// reads the string straight after the type, so a flag here would be eaten as the string's
+/// length.
+pub const SYSTEM_LINE: u8 = 5;
+
 /// Show `text` in the banner.
 ///
 /// An empty string is sent as [`clear_banner`] instead, because that is what the client does
@@ -103,6 +133,25 @@ pub fn clear_banner() -> Vec<u8> {
     let mut w = PacketWriter::new();
     w.u8(BANNER);
     w.u8(0);
+    w.into_vec()
+}
+
+/// One line in the chat log, in the client's own system colour - see [`SYSTEM_LINE`].
+///
+/// The text is ASCII-folded for the reason [`crate::notice::chat_notice`] gives: this client's
+/// chat font has no glyph at `0xDC`, and an accented name came back as a box on screen.
+///
+/// ```
+/// use net::broadcast::{system_line, SYSTEM_LINE};
+/// let b = system_line("Tester2 is now your friend.");
+/// assert_eq!(b[0], SYSTEM_LINE);
+/// assert_eq!(u16::from_le_bytes([b[1], b[2]]), 27);
+/// assert_eq!(&b[3..], b"Tester2 is now your friend.");
+/// ```
+pub fn system_line(text: &str) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(SYSTEM_LINE);
+    w.str(&crate::notice::ascii_fold(text));
     w.into_vec()
 }
 
@@ -130,5 +179,15 @@ mod tests {
     #[test]
     fn an_empty_message_is_a_clear() {
         assert_eq!(banner(""), clear_banner());
+    }
+
+    /// **Type 5 has no flag byte**, unlike the banner - the client reads the string straight
+    /// after the type, so a flag would be eaten as its length prefix.
+    #[test]
+    fn a_system_line_is_type_then_string_with_no_flag() {
+        let b = system_line("hi");
+        assert_eq!(b, vec![SYSTEM_LINE, 2, 0, b'h', b'i']);
+        // Folded, because the chat font has no glyph for the raw byte.
+        assert_eq!(&system_line("\u{00dc}bel")[3..], b"Ubel");
     }
 }

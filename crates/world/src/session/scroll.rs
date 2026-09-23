@@ -470,7 +470,7 @@ impl Session {
         };
         out.push(self.publish_scroll_effect(
             chr.id,
-            chr.map_id,
+            self.field_of(&chr),
             applied.succeeded,
             named_scroll,
             item_id,
@@ -500,7 +500,7 @@ impl Session {
     fn publish_scroll_effect(
         &mut self,
         character_id: u32,
-        map: u32,
+        map: crate::fields::FieldKey,
         succeeded: bool,
         scroll_item_id: u32,
         equip_item_id: u32,

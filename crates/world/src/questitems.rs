@@ -627,7 +627,7 @@ mod tests {
     fn a_player_bag_drop_is_never_mesos() {
         let mut t = crate::drops::DropTable::default();
         let placed = t.drop_item(crate::drops::DropFromBag {
-            map_id: 104_040_000,
+            map_id: crate::fields::FieldKey::world(104_040_000),
             character_id: 200,
             inv_type: store::InventoryType::Etc,
             slot: 1,

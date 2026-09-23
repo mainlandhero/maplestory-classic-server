@@ -197,7 +197,7 @@ impl Session {
             ),
         }];
         out.extend(self.stack_change_replies(inv, slot, left));
-        out.extend(self.buff_from_item(req.item_id, &restores, chr.id, chr.map_id));
+        out.extend(self.buff_from_item(req.item_id, &restores, chr.id, self.field_of(&chr)));
         // **Eating the thing can be the turn-in.** The owner, 2026-08-21: *"Once the user
         // consumes the apple, the quest would be completed."*
         out.extend(self.quests_completed_by_consuming(req.item_id));
@@ -231,7 +231,7 @@ impl Session {
         item_id: u32,
         restores: &crate::consumables::Restores,
         character_id: u32,
-        map: u32,
+        map: crate::fields::FieldKey,
     ) -> Vec<Reply> {
         // **Every stat an item grants names the item as a NEGATIVE reason.** The owner,
         // 2026-09-16: *"Magic Potions and other similar potions are not applying the buff

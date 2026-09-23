@@ -134,7 +134,11 @@ impl SubscriberId {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Presence {
     pub character: u32,
-    pub map: u32,
+    /// The field, **and which copy of it**. Two parties standing on one party-quest map
+    /// hold two different keys here, and that is the whole of why they cannot see each
+    /// other: every fan-out below compares this, so a packet simply never reaches a
+    /// mailbox whose instance differs. `crate::fields::FieldKey`.
+    pub map: crate::fields::FieldKey,
     /// "This player is here" - sent to everyone already on the map when this player
     /// arrives, and sent to this player for everyone already there.
     pub spawn: Reply,
@@ -387,7 +391,7 @@ impl Bus {
 
     /// **Everyone in a field on this channel**, as `(character, map)`. The fallback `!online`
     /// uses when no hub is linked, and the source `!track` uses for its own channel.
-    pub fn everyone_here(&self) -> Vec<(u32, u32)> {
+    pub fn everyone_here(&self) -> Vec<(u32, crate::fields::FieldKey)> {
         let inner = self.lock();
         inner.boxes.values().filter_map(|m| m.presence.as_ref()).map(|p| (p.character, p.map)).collect()
     }
@@ -429,7 +433,7 @@ impl Bus {
     pub fn publish(
         &self,
         from: SubscriberId,
-        map: u32,
+        map: crate::fields::FieldKey,
         reply: Reply,
         supersedes: Option<u32>,
     ) {
@@ -493,7 +497,7 @@ impl Bus {
     /// reason it deliberately does *not* clear `events`.
     ///
     /// **Not supersedable.** Two drops are two items; coalescing them would silently lose one.
-    pub fn publish_to_character(&self, character: u32, map: u32, reply: Reply) -> bool {
+    pub fn publish_to_character(&self, character: u32, map: crate::fields::FieldKey, reply: Reply) -> bool {
         let mut inner = self.lock();
         let Some(id) = inner.boxes.iter().find_map(|(id, m)| {
             let p = m.presence.as_ref()?;
@@ -516,7 +520,7 @@ impl Bus {
     /// ticked first and owed to every screen the drop was on (`crate::drops::Addressed`).
     /// Same path as `publish`, so it cannot get out of order with a map broadcast in a
     /// mailbox. Not supersedable, for the same reason `publish_to_character` is not.
-    pub fn publish_to_map(&self, map: u32, reply: Reply) -> usize {
+    pub fn publish_to_map(&self, map: crate::fields::FieldKey, reply: Reply) -> usize {
         let mut inner = self.lock();
         let ids: Vec<SubscriberId> = inner
             .boxes
@@ -570,7 +574,7 @@ impl Bus {
     /// share is divided by how many party members are on the killer's field, and that count
     /// has to be known before the first payment. `publish_to_character` answers "did it land"
     /// after the fact, which is one payment too late.
-    pub fn characters_on(&self, map: u32, characters: &[u32]) -> Vec<u32> {
+    pub fn characters_on(&self, map: crate::fields::FieldKey, characters: &[u32]) -> Vec<u32> {
         let inner = self.lock();
         let here: std::collections::HashSet<u32> = inner
             .boxes
@@ -632,7 +636,7 @@ impl Bus {
     }
 
     /// Which map this connection is on, if it is on one.
-    pub fn map_of(&self, id: SubscriberId) -> Option<u32> {
+    pub fn map_of(&self, id: SubscriberId) -> Option<crate::fields::FieldKey> {
         self.lock().boxes.get(&id).and_then(|m| m.presence.as_ref()).map(|p| p.map)
     }
 
@@ -642,7 +646,7 @@ impl Bus {
     /// at the moment it broadcasts is the cheapest possible check that the fan-out
     /// went to the right set, and this project's usual failure is a delivery that
     /// looks fine because nobody counted the recipients.
-    pub fn others_on(&self, id: SubscriberId, map: u32) -> usize {
+    pub fn others_on(&self, id: SubscriberId, map: crate::fields::FieldKey) -> usize {
         self.lock()
             .boxes
             .iter()
@@ -673,7 +677,7 @@ impl Bus {
     /// The choice among several is arbitrary and deliberately so - it is the lowest id, which
     /// is stable and reproducible in a test. Nothing about the mobs makes one observer a
     /// better controller than another; what matters is that exactly one is picked.
-    pub fn successor_on(&self, map: u32, except: SubscriberId) -> Option<SubscriberId> {
+    pub fn successor_on(&self, map: crate::fields::FieldKey, except: SubscriberId) -> Option<SubscriberId> {
         self.lock()
             .boxes
             .iter()
@@ -727,7 +731,7 @@ impl Inner {
         }
     }
 
-    fn post(&mut self, from: SubscriberId, map: u32, reply: Reply, supersedes: Option<u32>) {
+    fn post(&mut self, from: SubscriberId, map: crate::fields::FieldKey, reply: Reply, supersedes: Option<u32>) {
         for (id, mailbox) in self.boxes.iter_mut() {
             if *id == from {
                 continue;
@@ -761,7 +765,7 @@ mod tests {
         Reply { opcode, body: what.as_bytes().to_vec(), what: what.to_string() }
     }
 
-    fn presence(character: u32, map: u32) -> Presence {
+    fn presence(character: u32, map: crate::fields::FieldKey) -> Presence {
         Presence {
             character,
             map,
@@ -788,22 +792,22 @@ mod tests {
     fn a_successor_is_somebody_else_standing_on_the_same_map() {
         let bus = Bus::new();
         let (a, b, elsewhere, nowhere) = (bus.join(), bus.join(), bus.join(), bus.join());
-        bus.enter_field(a, presence(200, 104_040_000));
-        bus.enter_field(b, presence(201, 104_040_000));
-        bus.enter_field(elsewhere, presence(202, 100_000_000));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(104_040_000)));
+        bus.enter_field(b, presence(201, crate::fields::FieldKey::world(104_040_000)));
+        bus.enter_field(elsewhere, presence(202, crate::fields::FieldKey::world(100_000_000)));
         // `nowhere` has a mailbox and has never entered a field - a connection at character
         // select. It must not be handed anything.
 
-        assert_eq!(bus.successor_on(104_040_000, a), Some(b), "the other one on this map");
-        assert_eq!(bus.successor_on(104_040_000, b), Some(a), "and it works both ways");
+        assert_eq!(bus.successor_on(crate::fields::FieldKey::world(104_040_000), a), Some(b), "the other one on this map");
+        assert_eq!(bus.successor_on(crate::fields::FieldKey::world(104_040_000), b), Some(a), "and it works both ways");
         assert_eq!(
-            bus.successor_on(100_000_000, elsewhere),
+            bus.successor_on(crate::fields::FieldKey::world(100_000_000), elsewhere),
             None,
             "alone on its own map, so there is nobody to hand to"
         );
-        assert_eq!(bus.successor_on(999, a), None, "a map nobody is on has no successor");
+        assert_eq!(bus.successor_on(crate::fields::FieldKey::world(999), a), None, "a map nobody is on has no successor");
         assert_eq!(
-            bus.successor_on(104_040_000, nowhere),
+            bus.successor_on(crate::fields::FieldKey::world(104_040_000), nowhere),
             Some(a),
             "the control: this map DOES have candidates, so the None answers above are about \
              the map and not about the bus being empty"
@@ -811,7 +815,7 @@ mod tests {
 
         // A departure removes the candidate, which is the case the handover actually hits.
         bus.leave_field(b);
-        assert_eq!(bus.successor_on(104_040_000, a), None, "b left, and a cannot pick itself");
+        assert_eq!(bus.successor_on(crate::fields::FieldKey::world(104_040_000), a), None, "b left, and a cannot pick itself");
     }
 
     /// A grant addressed to a mailbox that is gone says so rather than vanishing.
@@ -823,7 +827,7 @@ mod tests {
     fn publishing_to_a_departed_subscriber_reports_that_it_did_not_land() {
         let bus = Bus::new();
         let a = bus.join();
-        bus.enter_field(a, presence(200, 104_040_000));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(104_040_000)));
         assert!(bus.publish_to_subscriber(a, reply(0x03D2, "grant")), "the control: it lands");
         assert_eq!(whats(&bus.drain(a)), vec!["grant"]);
 
@@ -841,11 +845,11 @@ mod tests {
         let b = bus.join();
 
         // A arrives first, to an empty map.
-        assert!(bus.enter_field(a, presence(200, 104_040_000)).is_empty());
+        assert!(bus.enter_field(a, presence(200, crate::fields::FieldKey::world(104_040_000))).is_empty());
         assert!(bus.drain(a).is_empty(), "nobody to hear A yet");
 
         // B arrives and is handed A.
-        let seen_by_b = bus.enter_field(b, presence(201, 104_040_000));
+        let seen_by_b = bus.enter_field(b, presence(201, crate::fields::FieldKey::world(104_040_000)));
         assert_eq!(whats(&seen_by_b), vec!["spawn 200"]);
 
         // ...and A is told about B without having asked.
@@ -858,13 +862,13 @@ mod tests {
         let bus = Bus::new();
         let a = bus.join();
         let b = bus.join();
-        bus.enter_field(a, presence(200, 104_040_000));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(104_040_000)));
 
-        let seen_by_b = bus.enter_field(b, presence(201, 100_000_000));
+        let seen_by_b = bus.enter_field(b, presence(201, crate::fields::FieldKey::world(100_000_000)));
         assert!(seen_by_b.is_empty(), "different map");
         assert!(bus.drain(a).is_empty(), "different map");
 
-        bus.publish(b, 100_000_000, reply(0x02A5, "b was hit"), None);
+        bus.publish(b, crate::fields::FieldKey::world(100_000_000), reply(0x02A5, "b was hit"), None);
         assert!(bus.drain(a).is_empty());
     }
 
@@ -873,12 +877,12 @@ mod tests {
         let bus = Bus::new();
         let a = bus.join();
         let b = bus.join();
-        bus.enter_field(a, presence(200, 1));
-        bus.enter_field(b, presence(201, 1));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(b, presence(201, crate::fields::FieldKey::world(1)));
         let _ = bus.drain(a);
         let _ = bus.drain(b);
 
-        bus.publish(a, 1, reply(0x02A5, "a swung"), None);
+        bus.publish(a, crate::fields::FieldKey::world(1), reply(0x02A5, "a swung"), None);
         assert!(bus.drain(a).is_empty(), "a session must not receive its own broadcast");
         assert_eq!(whats(&bus.drain(b)), vec!["a swung"]);
     }
@@ -891,13 +895,13 @@ mod tests {
         let bus = Bus::new();
         let a = bus.join();
         let waiting = bus.join();
-        bus.enter_field(a, presence(200, 1));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(1)));
 
-        bus.publish(a, 1, reply(0x02A5, "a swing"), None);
+        bus.publish(a, crate::fields::FieldKey::world(1), reply(0x02A5, "a swing"), None);
         assert!(bus.drain(waiting).is_empty());
 
         // And it still gets a clean arrival afterwards.
-        let seen = bus.enter_field(waiting, presence(201, 1));
+        let seen = bus.enter_field(waiting, presence(201, crate::fields::FieldKey::world(1)));
         assert_eq!(whats(&seen), vec!["spawn 200"]);
         assert!(bus.drain(waiting).is_empty(), "no backlog from before it arrived");
     }
@@ -907,8 +911,8 @@ mod tests {
         let bus = Bus::new();
         let a = bus.join();
         let b = bus.join();
-        bus.enter_field(a, presence(200, 1));
-        bus.enter_field(b, presence(201, 1));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(b, presence(201, crate::fields::FieldKey::world(1)));
         let _ = bus.drain(a);
 
         bus.leave_field(b);
@@ -923,8 +927,8 @@ mod tests {
         let bus = Bus::new();
         let a = bus.join();
         let b = bus.join();
-        bus.enter_field(a, presence(200, 1));
-        bus.enter_field(b, presence(201, 1));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(b, presence(201, crate::fields::FieldKey::world(1)));
         let _ = bus.drain(a);
 
         bus.part(b);
@@ -939,8 +943,8 @@ mod tests {
         let bus = Bus::new();
         let a = bus.join();
         let b = bus.join();
-        bus.enter_field(a, presence(200, 1));
-        bus.enter_field(b, presence(201, 1));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(b, presence(201, crate::fields::FieldKey::world(1)));
         let _ = bus.drain(a);
 
         bus.leave_field(b);
@@ -956,13 +960,13 @@ mod tests {
         let stays = bus.join();
         let walker = bus.join();
         let over_there = bus.join();
-        bus.enter_field(stays, presence(200, 1));
-        bus.enter_field(over_there, presence(202, 2));
-        bus.enter_field(walker, presence(201, 1));
+        bus.enter_field(stays, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(over_there, presence(202, crate::fields::FieldKey::world(2)));
+        bus.enter_field(walker, presence(201, crate::fields::FieldKey::world(1)));
         let _ = bus.drain(stays);
         let _ = bus.drain(over_there);
 
-        let seen = bus.enter_field(walker, presence(201, 2));
+        let seen = bus.enter_field(walker, presence(201, crate::fields::FieldKey::world(2)));
 
         assert_eq!(whats(&seen), vec!["spawn 202"], "the new map's occupants");
         assert_eq!(whats(&bus.drain(stays)), vec!["farewell 201"], "the old map");
@@ -976,11 +980,11 @@ mod tests {
         let bus = Bus::new();
         let a = bus.join();
         let mover = bus.join();
-        bus.enter_field(a, presence(200, 1));
-        bus.enter_field(mover, presence(201, 1));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(mover, presence(201, crate::fields::FieldKey::world(1)));
 
-        bus.publish(a, 1, reply(0x02A5, "a swing on map 1"), None);
-        let seen = bus.enter_field(mover, presence(201, 2));
+        bus.publish(a, crate::fields::FieldKey::world(1), reply(0x02A5, "a swing on map 1"), None);
+        let seen = bus.enter_field(mover, presence(201, crate::fields::FieldKey::world(2)));
 
         assert!(seen.is_empty(), "map 2 is empty");
         assert!(bus.drain(mover).is_empty(), "the map-1 swing must not follow it over");
@@ -994,12 +998,12 @@ mod tests {
         let bus = Bus::new();
         let watcher = bus.join();
         let mover = bus.join();
-        bus.enter_field(watcher, presence(200, 1));
-        bus.enter_field(mover, presence(201, 1));
+        bus.enter_field(watcher, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(mover, presence(201, crate::fields::FieldKey::world(1)));
         let _ = bus.drain(watcher);
 
         for step in 0..50 {
-            bus.publish(mover, 1, reply(0x02B0, &format!("move to {step}")), Some(201));
+            bus.publish(mover, crate::fields::FieldKey::world(1), reply(0x02B0, &format!("move to {step}")), Some(201));
         }
 
         let mail = bus.drain(watcher);
@@ -1012,16 +1016,16 @@ mod tests {
         let watcher = bus.join();
         let one = bus.join();
         let two = bus.join();
-        bus.enter_field(watcher, presence(200, 1));
-        bus.enter_field(one, presence(201, 1));
-        bus.enter_field(two, presence(202, 1));
+        bus.enter_field(watcher, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(one, presence(201, crate::fields::FieldKey::world(1)));
+        bus.enter_field(two, presence(202, crate::fields::FieldKey::world(1)));
         let _ = bus.drain(watcher);
 
-        bus.publish(one, 1, reply(0x02B0, "201 moves"), Some(201));
-        bus.publish(two, 1, reply(0x02B0, "202 moves"), Some(202));
+        bus.publish(one, crate::fields::FieldKey::world(1), reply(0x02B0, "201 moves"), Some(201));
+        bus.publish(two, crate::fields::FieldKey::world(1), reply(0x02B0, "202 moves"), Some(202));
         // Same character, different opcode - a different kind of event entirely.
-        bus.publish(one, 1, reply(0x02A5, "201 is hit"), Some(201));
-        bus.publish(one, 1, reply(0x02B0, "201 moves again"), Some(201));
+        bus.publish(one, crate::fields::FieldKey::world(1), reply(0x02A5, "201 is hit"), Some(201));
+        bus.publish(one, crate::fields::FieldKey::world(1), reply(0x02B0, "201 moves again"), Some(201));
 
         assert_eq!(
             whats(&bus.drain(watcher)),
@@ -1038,12 +1042,12 @@ mod tests {
         let bus = Bus::new();
         let watcher = bus.join();
         let attacker = bus.join();
-        bus.enter_field(watcher, presence(200, 1));
-        bus.enter_field(attacker, presence(201, 1));
+        bus.enter_field(watcher, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(attacker, presence(201, crate::fields::FieldKey::world(1)));
         let _ = bus.drain(watcher);
 
         for n in 0..3 {
-            bus.publish(attacker, 1, reply(0x02B2, &format!("swing {n}")), None);
+            bus.publish(attacker, crate::fields::FieldKey::world(1), reply(0x02B2, &format!("swing {n}")), None);
         }
         assert_eq!(whats(&bus.drain(watcher)), vec!["swing 0", "swing 1", "swing 2"]);
     }
@@ -1054,17 +1058,17 @@ mod tests {
         let a = bus.join();
         let b = bus.join();
         let c = bus.join();
-        bus.enter_field(a, presence(200, 1));
-        bus.enter_field(b, presence(201, 1));
-        bus.enter_field(c, presence(202, 2));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(b, presence(201, crate::fields::FieldKey::world(1)));
+        bus.enter_field(c, presence(202, crate::fields::FieldKey::world(2)));
 
-        assert_eq!(bus.others_on(a, 1), 1, "b is here, a does not count itself");
-        assert_eq!(bus.others_on(c, 2), 0);
+        assert_eq!(bus.others_on(a, crate::fields::FieldKey::world(1)), 1, "b is here, a does not count itself");
+        assert_eq!(bus.others_on(c, crate::fields::FieldKey::world(2)), 0);
         assert_eq!(bus.subscribers(), 3);
-        assert_eq!(bus.map_of(a), Some(1));
+        assert_eq!(bus.map_of(a), Some(crate::fields::FieldKey::world(1)));
         bus.leave_field(a);
         assert_eq!(bus.map_of(a), None);
-        assert_eq!(bus.others_on(b, 1), 0);
+        assert_eq!(bus.others_on(b, crate::fields::FieldKey::world(1)), 0);
     }
 
     /// A session that has parted must not be resurrected by a late `enter_field` from
@@ -1074,10 +1078,10 @@ mod tests {
         let bus = Bus::new();
         let a = bus.join();
         let gone = bus.join();
-        bus.enter_field(a, presence(200, 1));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(1)));
         bus.part(gone);
 
-        assert!(bus.enter_field(gone, presence(201, 1)).is_empty());
+        assert!(bus.enter_field(gone, presence(201, crate::fields::FieldKey::world(1))).is_empty());
         assert!(bus.drain(a).is_empty(), "no arrival from a connection that is gone");
         assert_eq!(bus.subscribers(), 1);
     }
@@ -1092,12 +1096,12 @@ mod tests {
 
         let bus = Arc::new(Bus::new());
         let watcher = bus.join();
-        bus.enter_field(watcher, presence(200, 7));
+        bus.enter_field(watcher, presence(200, crate::fields::FieldKey::world(7)));
 
         let publishers: Vec<SubscriberId> = (0..4)
             .map(|n| {
                 let id = bus.join();
-                bus.enter_field(id, presence(300 + n, 7));
+                bus.enter_field(id, presence(300 + n, crate::fields::FieldKey::world(7)));
                 id
             })
             .collect();
@@ -1111,7 +1115,7 @@ mod tests {
                 let bus = bus.clone();
                 std::thread::spawn(move || {
                     for n in 0..25 {
-                        bus.publish(id, 7, reply(0x02B2, &format!("swing {n}")), None);
+                        bus.publish(id, crate::fields::FieldKey::world(7), reply(0x02B2, &format!("swing {n}")), None);
                     }
                 })
             })
@@ -1136,18 +1140,18 @@ mod tests {
         let b = bus.join();
         let elsewhere = bus.join();
         let nowhere = bus.join();
-        bus.enter_field(a, presence(200, 1));
-        bus.enter_field(b, presence(201, 1));
-        bus.enter_field(elsewhere, presence(202, 2));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(b, presence(201, crate::fields::FieldKey::world(1)));
+        bus.enter_field(elsewhere, presence(202, crate::fields::FieldKey::world(2)));
         for id in [a, b, elsewhere] {
             let _ = bus.drain(id);
         }
-        assert_eq!(bus.publish_to_map(1, reply(0x046F, "fade")), 2, "two on map 1, counted");
+        assert_eq!(bus.publish_to_map(crate::fields::FieldKey::world(1), reply(0x046F, "fade")), 2, "two on map 1, counted");
         assert_eq!(bus.drain(a).len(), 1);
         assert_eq!(bus.drain(b).len(), 1, "the poster is not excluded - there is none");
         assert!(bus.drain(elsewhere).is_empty(), "map 2 hears nothing");
         assert!(bus.drain(nowhere).is_empty(), "a connection in no field hears nothing");
-        assert_eq!(bus.publish_to_map(3, reply(0x046F, "fade")), 0, "an empty map is ordinary");
+        assert_eq!(bus.publish_to_map(crate::fields::FieldKey::world(3), reply(0x046F, "fade")), 0, "an empty map is ordinary");
     }
 
     // ---------------------------------------------------------------------------
@@ -1183,9 +1187,9 @@ mod tests {
         let killer = bus.join();
         let helper = bus.join();
         let bystander = bus.join();
-        bus.enter_field(killer, presence(200, 1));
-        bus.enter_field(helper, presence(201, 1));
-        bus.enter_field(bystander, presence(202, 1));
+        bus.enter_field(killer, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(helper, presence(201, crate::fields::FieldKey::world(1)));
+        bus.enter_field(bystander, presence(202, crate::fields::FieldKey::world(1)));
 
         assert!(bus.send_to_character(201, exp(37, "kill share")), "someone was listening");
 
@@ -1202,8 +1206,8 @@ mod tests {
         let bus = Bus::new();
         let killer = bus.join();
         let elsewhere = bus.join();
-        bus.enter_field(killer, presence(200, 1));
-        bus.enter_field(elsewhere, presence(201, 999));
+        bus.enter_field(killer, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(elsewhere, presence(201, crate::fields::FieldKey::world(999)));
 
         assert!(bus.send_to_character(201, exp(12, "kill share")));
         assert_eq!(amounts(&bus.drain_events(elsewhere)), vec![12]);
@@ -1218,8 +1222,8 @@ mod tests {
         let bus = Bus::new();
         let a = bus.join();
         let b = bus.join();
-        bus.enter_field(a, presence(200, 1));
-        bus.enter_field(b, presence(201, 1));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(b, presence(201, crate::fields::FieldKey::world(1)));
         let _ = bus.drain(a);
         let _ = bus.drain(b);
 
@@ -1244,16 +1248,16 @@ mod tests {
         let bus = Bus::new();
         let other = bus.join();
         let walker = bus.join();
-        bus.enter_field(other, presence(200, 1));
-        bus.enter_field(walker, presence(201, 1));
+        bus.enter_field(other, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(walker, presence(201, crate::fields::FieldKey::world(1)));
         let _ = bus.drain(walker);
 
         // Both channels have something pending for the walker on map 1.
-        bus.publish(other, 1, reply(0x02B2, "a swing on map 1"), None);
+        bus.publish(other, crate::fields::FieldKey::world(1), reply(0x02B2, "a swing on map 1"), None);
         assert!(bus.send_to_character(201, exp(80, "kill share")));
 
         // ...and then the walker takes a portal before draining either.
-        let seen = bus.enter_field(walker, presence(201, 2));
+        let seen = bus.enter_field(walker, presence(201, crate::fields::FieldKey::world(2)));
         assert!(seen.is_empty(), "map 2 is empty");
 
         assert!(bus.drain(walker).is_empty(), "the packet named an object map 2 has not");
@@ -1272,11 +1276,11 @@ mod tests {
         let bus = Bus::new();
         let killer = bus.join();
         let helper = bus.join();
-        bus.enter_field(killer, presence(200, 1));
-        bus.enter_field(helper, presence(201, 1));
+        bus.enter_field(killer, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(helper, presence(201, crate::fields::FieldKey::world(1)));
         let _ = bus.drain(helper);
 
-        bus.enter_field(helper, presence(201, 2));
+        bus.enter_field(helper, presence(201, crate::fields::FieldKey::world(2)));
         let _ = bus.drain(helper);
 
         assert!(bus.send_to_character(201, exp(80, "kill share")), "still a live character");
@@ -1291,8 +1295,8 @@ mod tests {
         let bus = Bus::new();
         let a = bus.join();
         let leaver = bus.join();
-        bus.enter_field(a, presence(200, 1));
-        bus.enter_field(leaver, presence(201, 1));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(leaver, presence(201, crate::fields::FieldKey::world(1)));
 
         assert!(bus.send_to_character(201, exp(80, "kill share")));
         bus.part(leaver);
@@ -1313,8 +1317,8 @@ mod tests {
         let bus = Bus::new();
         let a = bus.join();
         let quitter = bus.join();
-        bus.enter_field(a, presence(200, 1));
-        bus.enter_field(quitter, presence(201, 1));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(quitter, presence(201, crate::fields::FieldKey::world(1)));
 
         assert!(bus.send_to_character(201, exp(80, "earned before leaving")));
         bus.leave_field(quitter);
@@ -1340,11 +1344,11 @@ mod tests {
         let bus = Bus::new();
         let watcher = bus.join();
         let other = bus.join();
-        bus.enter_field(watcher, presence(200, 1));
-        bus.enter_field(other, presence(201, 1));
+        bus.enter_field(watcher, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(other, presence(201, crate::fields::FieldKey::world(1)));
         let _ = bus.drain(watcher);
 
-        bus.publish(other, 1, reply(0x02B2, "a swing"), None);
+        bus.publish(other, crate::fields::FieldKey::world(1), reply(0x02B2, "a swing"), None);
         assert!(bus.send_to_character(200, exp(15, "kill share")));
 
         // Packets first: the event must survive it.
@@ -1352,7 +1356,7 @@ mod tests {
         assert_eq!(amounts(&bus.drain_events(watcher)), vec![15]);
 
         // Now the other order.
-        bus.publish(other, 1, reply(0x02B2, "another swing"), None);
+        bus.publish(other, crate::fields::FieldKey::world(1), reply(0x02B2, "another swing"), None);
         assert!(bus.send_to_character(200, exp(16, "kill share")));
         assert_eq!(amounts(&bus.drain_events(watcher)), vec![16]);
         assert_eq!(whats(&bus.drain(watcher)), vec!["another swing"]);
@@ -1366,8 +1370,8 @@ mod tests {
         let bus = Bus::new();
         let a = bus.join();
         let earner = bus.join();
-        bus.enter_field(a, presence(200, 1));
-        bus.enter_field(earner, presence(201, 1));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(earner, presence(201, crate::fields::FieldKey::world(1)));
 
         for n in 1..=4u64 {
             assert!(bus.send_to_character(201, exp(n * 10, "kill share")));
@@ -1385,8 +1389,8 @@ mod tests {
         let bus = Bus::new();
         let a = bus.join();
         let earner = bus.join();
-        bus.enter_field(a, presence(200, 1));
-        bus.enter_field(earner, presence(201, 1));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(earner, presence(201, crate::fields::FieldKey::world(1)));
 
         for _ in 0..3 {
             assert!(bus.send_to_character(201, exp(25, "kill share")));
@@ -1402,11 +1406,11 @@ mod tests {
         let bus = Bus::new();
         let a = bus.join();
         let waiting = bus.join();
-        bus.enter_field(a, presence(200, 1));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(1)));
 
         assert!(!bus.send_to_character(201, exp(80, "for a character not in a field")));
 
-        let _ = bus.enter_field(waiting, presence(201, 1));
+        let _ = bus.enter_field(waiting, presence(201, crate::fields::FieldKey::world(1)));
         assert!(bus.drain_events(waiting).is_empty(), "no backlog from before it arrived");
         // ...and now it is reachable.
         assert!(bus.send_to_character(201, exp(80, "kill share")));
@@ -1431,8 +1435,8 @@ mod tests {
         let bus = Bus::new();
         let a = bus.join();
         let earner = bus.join();
-        bus.enter_field(a, presence(200, 1));
-        bus.enter_field(earner, presence(201, 1));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(earner, presence(201, crate::fields::FieldKey::world(1)));
 
         assert!(bus.send_to_character(
             201,
@@ -1454,16 +1458,16 @@ mod tests {
         let killer = bus.join();
         let winner = bus.join();
         let bystander = bus.join();
-        bus.enter_field(killer, presence(200, 7));
-        bus.enter_field(winner, presence(201, 7));
-        bus.enter_field(bystander, presence(202, 7));
+        bus.enter_field(killer, presence(200, crate::fields::FieldKey::world(7)));
+        bus.enter_field(winner, presence(201, crate::fields::FieldKey::world(7)));
+        bus.enter_field(bystander, presence(202, crate::fields::FieldKey::world(7)));
         // Clear the arrival mail so what follows is only what this test posted.
         bus.drain(killer);
         bus.drain(winner);
         bus.drain(bystander);
 
         let drop = Reply { opcode: 0x046E, body: vec![9], what: "a drop for 201".into() };
-        assert!(bus.publish_to_character(201, 7, drop.clone()), "201 is on map 7");
+        assert!(bus.publish_to_character(201, crate::fields::FieldKey::world(7), drop.clone()), "201 is on map 7");
 
         assert_eq!(bus.drain(winner).len(), 1, "the top damager gets it");
         assert!(bus.drain(bystander).is_empty(), "and nobody else on the map does");
@@ -1482,26 +1486,26 @@ mod tests {
         let bus = Bus::new();
         let a = bus.join();
         let b = bus.join();
-        bus.enter_field(a, presence(200, 7));
-        bus.enter_field(b, presence(201, 7));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(7)));
+        bus.enter_field(b, presence(201, crate::fields::FieldKey::world(7)));
         bus.drain(a);
         bus.drain(b);
 
         // 201 walks through a portal to map 9 before the mob finishes dying.
-        bus.enter_field(b, presence(201, 9));
+        bus.enter_field(b, presence(201, crate::fields::FieldKey::world(9)));
         bus.drain(a);
         bus.drain(b);
 
         let drop = Reply { opcode: 0x046E, body: vec![9], what: "a drop on map 7".into() };
         assert!(
-            !bus.publish_to_character(201, 7, drop.clone()),
+            !bus.publish_to_character(201, crate::fields::FieldKey::world(7), drop.clone()),
             "the character is not on map 7 any more, so this must report undelivered"
         );
         assert!(bus.drain(b).is_empty(), "and must post nothing");
 
         // The control: addressed to where they actually are, it arrives. Without this the
         // test above would pass on a function that never delivers anything.
-        assert!(bus.publish_to_character(201, 9, drop), "on their real map it lands");
+        assert!(bus.publish_to_character(201, crate::fields::FieldKey::world(9), drop), "on their real map it lands");
         assert_eq!(bus.drain(b).len(), 1);
     }
 
@@ -1510,12 +1514,12 @@ mod tests {
     fn drops_addressed_to_one_character_are_never_coalesced() {
         let bus = Bus::new();
         let a = bus.join();
-        bus.enter_field(a, presence(200, 7));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(7)));
         bus.drain(a);
 
         for n in 0..3u8 {
             let r = Reply { opcode: 0x046E, body: vec![n], what: format!("drop {n}") };
-            assert!(bus.publish_to_character(200, 7, r));
+            assert!(bus.publish_to_character(200, crate::fields::FieldKey::world(7), r));
         }
         let out = bus.drain(a);
         assert_eq!(out.len(), 3, "three drops, not one: {out:?}");
@@ -1529,9 +1533,9 @@ mod tests {
     fn a_character_nobody_is_playing_reports_undelivered() {
         let bus = Bus::new();
         let a = bus.join();
-        bus.enter_field(a, presence(200, 7));
+        bus.enter_field(a, presence(200, crate::fields::FieldKey::world(7)));
         let r = Reply { opcode: 0x046E, body: vec![1], what: "nobody".into() };
-        assert!(!bus.publish_to_character(999, 7, r));
+        assert!(!bus.publish_to_character(999, crate::fields::FieldKey::world(7), r));
     }
 
 }

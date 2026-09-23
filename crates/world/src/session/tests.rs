@@ -690,7 +690,7 @@ fn a_drop_leaves_the_bag_and_lands_on_the_floor() {
         .map(|i| i.item.item_id)
         .collect();
     assert!(bagged.is_empty(), "the sword really left the bag");
-    assert_eq!(s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.len()), 1, "and it is on the floor");
+    assert_eq!(s.fields.with_drops(crate::fields::FieldKey::world(net::opcode::START_MAP_ID), |d| d.len()), 1, "and it is on the floor");
 }
 
 /// The Use tab's wire number, from the store's own enum rather than a literal - `net::inventory`
@@ -743,7 +743,7 @@ fn dropping_part_of_a_stack_sends_mode_1_and_keeps_the_rest() {
         .map(|i| i.item.kind.quantity())
         .collect();
     assert_eq!(left, vec![3], "three stay in the bag");
-    assert_eq!(s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.len()), 1);
+    assert_eq!(s.fields.with_drops(crate::fields::FieldKey::world(net::opcode::START_MAP_ID), |d| d.len()), 1);
 }
 
 /// Dropping the **whole** stack still sends mode 3, because the slot really is empty.
@@ -785,7 +785,7 @@ fn asking_to_drop_more_than_the_slot_holds_drops_what_is_there() {
         0,
         "the whole slot left"
     );
-    assert_eq!(s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.len()), 1);
+    assert_eq!(s.fields.with_drops(crate::fields::FieldKey::world(net::opcode::START_MAP_ID), |d| d.len()), 1);
 }
 
 /// The pick-up reads the drop id at **offset 13**, the offset one run measured.
@@ -796,7 +796,7 @@ fn asking_to_drop_more_than_the_slot_holds_drops_what_is_there() {
 #[test]
 fn the_pick_up_handler_reads_the_drop_id_at_the_measured_offset() {
     let (mut s, store, id) = gm_session();
-    let map = net::opcode::START_MAP_ID;
+    let map = crate::fields::FieldKey::world(net::opcode::START_MAP_ID);
     s.handle(&gm_chat("!item 1302000"));
     s.last_position = Some((520, 395));
     s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, 1, 0, 1));
@@ -1458,14 +1458,14 @@ fn a_kill_drops_the_mobs_own_table_and_the_global_one() {
     // A drop needs somewhere to land; without it the server declines rather than guessing.
     s.last_position = Some((520, 395));
 
-    let out = s.drops_from_kill(2, 2000, None, 204, net::opcode::START_MAP_ID);
+    let out = s.drops_from_kill(2, 2000, None, 204, crate::fields::FieldKey::world(net::opcode::START_MAP_ID));
 
     assert_eq!(out.len(), 3, "mesos, the shell, and the event item: {out:?}");
     assert!(
         out.iter().all(|r| r.opcode == net::drops::DROP_ENTER_FIELD),
         "a mob drop sends ONLY 0x046E - a 0x0070 would refuse an inventory request the          player never made"
     );
-    assert_eq!(s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.len()), 3, "and all three are on the floor");
+    assert_eq!(s.fields.with_drops(crate::fields::FieldKey::world(net::opcode::START_MAP_ID), |d| d.len()), 3, "and all three are on the floor");
 }
 
 /// **Drops fall where the mob died, not at the player's feet**, and several are staggered.
@@ -1482,9 +1482,9 @@ fn drops_land_on_the_mob_and_are_staggered_apart() {
          2 | 1302000 | 100 | 1 | 1 | 3 | Sword
 ",
     );
-    let map = net::opcode::START_MAP_ID;
+    let map = crate::fields::FieldKey::world(net::opcode::START_MAP_ID);
     let mut mobs = std::collections::HashMap::new();
-    mobs.insert(map, vec![net::mob::FieldMob::new(2000, 2, 100, 395, 1, 30)]);
+    mobs.insert(map.map, vec![net::mob::FieldMob::new(2000, 2, 100, 395, 1, 30)]);
     s.config = Arc::new(Config { drops, mobs, send_mobs: true, ..(*s.config).clone() });
 
     // Bring the field up and let the mob wander away from its spawn point.
@@ -1520,8 +1520,8 @@ fn a_mob_that_never_moved_drops_at_the_player() {
     s.config = Arc::new(Config { drops, ..(*s.config).clone() });
     s.last_position = Some((777, 395));
 
-    s.drops_from_kill(2, 2000, None, 204, net::opcode::START_MAP_ID);
-    let d = s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.on_field(net::opcode::START_MAP_ID).cloned().collect::<Vec<_>>()).into_iter().next().unwrap();
+    s.drops_from_kill(2, 2000, None, 204, crate::fields::FieldKey::world(net::opcode::START_MAP_ID));
+    let d = s.fields.with_drops(crate::fields::FieldKey::world(net::opcode::START_MAP_ID), |d| d.on_field(crate::fields::FieldKey::world(net::opcode::START_MAP_ID)).cloned().collect::<Vec<_>>()).into_iter().next().unwrap();
     assert_eq!(d.x, 777);
 }
 
@@ -1532,9 +1532,9 @@ fn a_mob_that_never_moved_drops_at_the_player() {
 #[test]
 fn a_dead_mob_respawns_when_its_timer_is_due() {
     let (mut s, _, _) = gm_session();
-    let map = net::opcode::START_MAP_ID;
+    let map = crate::fields::FieldKey::world(net::opcode::START_MAP_ID);
     let mut mobs = std::collections::HashMap::new();
-    mobs.insert(map, vec![net::mob::FieldMob::new(2000, 2, 500, 395, 1, 30)]);
+    mobs.insert(map.map, vec![net::mob::FieldMob::new(2000, 2, 500, 395, 1, 30)]);
     s.config = Arc::new(Config { mobs, send_mobs: true, ..(*s.config).clone() });
     let cfg = s.config.clone();
 
@@ -1571,7 +1571,7 @@ fn an_unknown_mob_still_rolls_the_global_table() {
     s.config = Arc::new(Config { drops, ..(*s.config).clone() });
     s.last_position = Some((520, 395));
 
-    assert_eq!(s.drops_from_kill(999_999, 2000, None, 204, 1).len(), 1);
+    assert_eq!(s.drops_from_kill(999_999, 2000, None, 204, crate::fields::FieldKey::world(1)).len(), 1);
 }
 
 /// **With no known position a kill drops nothing, and says so.**
@@ -1587,10 +1587,10 @@ fn a_kill_with_no_known_position_drops_nothing_but_still_answers() {
     s.config = Arc::new(Config { drops, ..(*s.config).clone() });
     s.last_position = None;
 
-    let out = s.drops_from_kill(2, 2000, None, 204, 1);
+    let out = s.drops_from_kill(2, 2000, None, 204, crate::fields::FieldKey::world(1));
     assert!(!out.is_empty(), "it must answer");
     assert!(out.iter().all(|r| r.opcode != net::drops::DROP_ENTER_FIELD), "and drop nothing");
-    assert_eq!(s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.len()), 0);
+    assert_eq!(s.fields.with_drops(crate::fields::FieldKey::world(net::opcode::START_MAP_ID), |d| d.len()), 0);
 }
 
 /// With no drop table at all, a kill is silent - not a panic and not a notice.
@@ -1598,7 +1598,7 @@ fn a_kill_with_no_known_position_drops_nothing_but_still_answers() {
 fn a_kill_with_no_table_drops_nothing_quietly() {
     let (mut s, _, _) = gm_session();
     s.last_position = Some((1, 1));
-    assert!(s.drops_from_kill(2, 2000, None, 204, 1).is_empty());
+    assert!(s.drops_from_kill(2, 2000, None, 204, crate::fields::FieldKey::world(1)).is_empty());
 }
 
 /// With the shop off, a shopkeeper **talks** instead of ending the session.
@@ -4689,7 +4689,7 @@ fn the_meso_rate_multiplies_a_drop() {
     );
     s.config = Arc::new(Config { drops, ..(*s.config).clone() });
     s.last_position = Some((520, 395));
-    let map = net::opcode::START_MAP_ID;
+    let map = crate::fields::FieldKey::world(net::opcode::START_MAP_ID);
 
     s.handle(&gm_chat("!setrates 1 3 1 1 30"));
     s.drops_from_kill(2, 2000, Some((500, 395)), 204, map);
@@ -4778,7 +4778,7 @@ fn the_drop_rate_multiplies_the_chance() {
 ");
     s.config = Arc::new(Config { drops, ..(*s.config).clone() });
     s.last_position = Some((520, 395));
-    let map = net::opcode::START_MAP_ID;
+    let map = crate::fields::FieldKey::world(net::opcode::START_MAP_ID);
 
     // 5000 % 10000 = 5000, which is above 10% (1000 bp) and below 100%.
     let entry = &s.config.drops.for_mob(2)[0];
@@ -5838,7 +5838,7 @@ fn a_meso_move_that_cannot_be_afforded_is_refused_and_still_answered() {
 #[test]
 fn a_pick_up_the_bag_refuses_still_clears_the_clients_latch() {
     let (mut s, store, id) = gm_session();
-    let map = s.claimed_character().unwrap().map_id;
+    let map = crate::fields::FieldKey::world(s.claimed_character().unwrap().map_id);
 
     // Fill the equip bag to its last slot.
     let slots = net::opcode::DEFAULT_INVENTORY_SLOTS;
@@ -5892,7 +5892,7 @@ fn a_pick_up_the_bag_refuses_still_clears_the_clients_latch() {
 #[test]
 fn a_full_equip_bag_does_not_stop_a_use_item_being_picked_up() {
     let (mut s, store, id) = gm_session();
-    let map = s.claimed_character().unwrap().map_id;
+    let map = crate::fields::FieldKey::world(s.claimed_character().unwrap().map_id);
     let slots = net::opcode::DEFAULT_INVENTORY_SLOTS;
     for _ in 0..slots {
         store.add_item(id, store::InventoryType::Equip, &store::Item::equip(1302000), 1).unwrap();
@@ -8351,7 +8351,7 @@ fn a_dark_marble_drops_in_the_test_field_and_nowhere_else() {
     s.last_position = Some((520, 395));
 
     // In its own field: the marble is there, once, without any drop table saying so.
-    let out = s.drops_from_kill(b.test_field.mobs[1], 2000, None, 204, b.test_field.map_id);
+    let out = s.drops_from_kill(b.test_field.mobs[1], 2000, None, 204, crate::fields::FieldKey::world(b.test_field.map_id));
     assert_eq!(out.len(), 1, "exactly the marble, and exactly one of it: {out:?}");
     assert!(
         out[0].what.contains(&b.chain.marble_item.to_string()),
@@ -8360,7 +8360,7 @@ fn a_dark_marble_drops_in_the_test_field_and_nowhere_else() {
     );
 
     // The same mob on Precipice of Darkness, which is where it also lives. **[L]**
-    let out = s.drops_from_kill(b.test_field.mobs[1], 2001, None, 204, 10006160);
+    let out = s.drops_from_kill(b.test_field.mobs[1], 2001, None, 204, crate::fields::FieldKey::world(10006160));
     assert!(out.is_empty(), "an ordinary field must not pay a test's proof: {out:?}");
 
     // And a scraped 6% row cannot smuggle one out either: the filter runs on the ROLL, so a
@@ -8370,10 +8370,10 @@ fn a_dark_marble_drops_in_the_test_field_and_nowhere_else() {
         b.test_field.mobs[1], b.chain.marble_item
     ));
     s.config = Arc::new(Config { drops, ..(*s.config).clone() });
-    let out = s.drops_from_kill(b.test_field.mobs[1], 2002, None, 204, 10006160);
+    let out = s.drops_from_kill(b.test_field.mobs[1], 2002, None, 204, crate::fields::FieldKey::world(10006160));
     assert!(out.is_empty(), "a 100% table row is still refused off the field: {out:?}");
     // On the field, the table row and the guarantee do not stack.
-    let out = s.drops_from_kill(b.test_field.mobs[1], 2003, None, 204, b.test_field.map_id);
+    let out = s.drops_from_kill(b.test_field.mobs[1], 2003, None, 204, crate::fields::FieldKey::world(b.test_field.map_id));
     assert_eq!(out.len(), 1, "one marble, not two: {out:?}");
 }
 
@@ -8631,8 +8631,8 @@ fn shared_channel(
     let config =
         Arc::new(Config { send_mobs: true, mobs, ..Config::default() });
     let fields = Arc::new(crate::fields::Fields::new());
-    fields.seed(SHARED_MAP, &config, 0);
-    fields.due_respawns(SHARED_MAP, &config, 999_999);
+    fields.seed(crate::fields::FieldKey::world(SHARED_MAP), &config, 0);
+    fields.due_respawns(crate::fields::FieldKey::world(SHARED_MAP), &config, 999_999);
     (store, config, fields, account)
 }
 
@@ -8674,7 +8674,7 @@ fn unhex_body(s: &str) -> Vec<u8> {
 #[test]
 fn only_the_first_arrival_is_granted_control_and_the_second_is_a_spectator() {
     let (store, config, fields, account) = shared_channel(4, 30);
-    let alive = fields.mob_count(SHARED_MAP);
+    let alive = fields.mob_count(crate::fields::FieldKey::world(SHARED_MAP));
     assert!(alive >= 2, "the fixture needs several mobs, not {alive}");
 
     let (mut first, _) = join_channel(&store, &config, &fields, account, "Wanderer");
@@ -8715,9 +8715,9 @@ fn only_the_first_arrival_is_granted_control_and_the_second_is_a_spectator() {
 fn a_respawned_mob_reaches_the_other_player_but_its_grant_does_not() {
     let (store, config, fields, account) = shared_channel(1, 30);
     // Kill the one mob so its point is booked to refill while both players stand there.
-    let victim = fields.mobs_on(SHARED_MAP)[0].spawn.object_id;
-    fields.hurt(SHARED_MAP, victim, 999, 200, &config, 0);
-    assert_eq!(fields.mob_count(SHARED_MAP), 0);
+    let victim = fields.mobs_on(crate::fields::FieldKey::world(SHARED_MAP))[0].spawn.object_id;
+    fields.hurt(crate::fields::FieldKey::world(SHARED_MAP), victim, 999, 200, &config, 0);
+    assert_eq!(fields.mob_count(crate::fields::FieldKey::world(SHARED_MAP)), 0);
 
     let (mut ticker, _) = join_channel(&store, &config, &fields, account, "Ticker");
     let (mut watcher, _) = join_channel(&store, &config, &fields, account, "Watcher");
@@ -8770,7 +8770,7 @@ const CAPTURED_MOB_MOVE_2000: &str = "d0070000010000ff00000000000000000000000000
 #[test]
 fn a_non_controllers_mob_move_is_refused_and_the_controllers_is_rebroadcast() {
     let (store, config, fields, account) = shared_channel(1, 30);
-    assert_eq!(fields.mobs_on(SHARED_MAP)[0].spawn.object_id, 2000, "the fixture's mob");
+    assert_eq!(fields.mobs_on(crate::fields::FieldKey::world(SHARED_MAP))[0].spawn.object_id, 2000, "the fixture's mob");
 
     let (mut controller, _) = join_channel(&store, &config, &fields, account, "Controller");
     let (mut spectator, _) = join_channel(&store, &config, &fields, account, "Spectator");
@@ -8786,7 +8786,7 @@ fn a_non_controllers_mob_move_is_refused_and_the_controllers_is_rebroadcast() {
     let refused = spectator.handle(&packet);
     assert!(refused.is_empty(), "no ack for a mob this connection does not control: {refused:?}");
     assert_eq!(
-        fields.mob_position(SHARED_MAP, 2000),
+        fields.mob_position(crate::fields::FieldKey::world(SHARED_MAP), 2000),
         None,
         "and the position a drop lands on must not have been written"
     );
@@ -8799,7 +8799,7 @@ fn a_non_controllers_mob_move_is_refused_and_the_controllers_is_rebroadcast() {
     let ack = controller.handle(&packet);
     assert_eq!(count_of(&ack, net::mobmove::MOB_CTRL_ACK), 1, "the ack: {ack:?}");
     assert_eq!(
-        fields.mob_position(SHARED_MAP, 2000),
+        fields.mob_position(crate::fields::FieldKey::world(SHARED_MAP), 2000),
         Some((456, 395)),
         "the END of the reported path. (424, 395) is its HEAD - where the mob was when the \
          walk began - and storing that is the drop-placement bug crate::dropsite measures. \
@@ -8847,8 +8847,8 @@ fn channel_with_mob_2002(hp: u64) -> (Arc<Store>, Arc<Config>, Arc<crate::fields
         ..Config::default()
     });
     let fields = Arc::new(crate::fields::Fields::new());
-    fields.seed(SHARED_MAP, &config, 0);
-    fields.due_respawns(SHARED_MAP, &config, 999_999);
+    fields.seed(crate::fields::FieldKey::world(SHARED_MAP), &config, 0);
+    fields.due_respawns(crate::fields::FieldKey::world(SHARED_MAP), &config, 999_999);
     (store, config, fields, account)
 }
 
@@ -8876,7 +8876,7 @@ fn hitting_a_mob_takes_control_and_releases_the_old_holder() {
     let _ = owner.tick(1);
 
     assert_eq!(
-        fields.controllers().controller_of(SHARED_MAP, 2002),
+        fields.controllers().controller_of(crate::fields::FieldKey::world(SHARED_MAP), 2002),
         Some(owner.subscriber.get()),
         "the control: the owner walked in first and holds it"
     );
@@ -8887,7 +8887,7 @@ fn hitting_a_mob_takes_control_and_releases_the_old_holder() {
     assert_eq!(grants.len(), 1, "the attacker is handed the mob: {out:?}");
     assert_eq!(grants[0].body[0], net::mobmove::CONTROL_NORMAL, "granted, not released");
     assert_eq!(
-        fields.controllers().controller_of(SHARED_MAP, 2002),
+        fields.controllers().controller_of(crate::fields::FieldKey::world(SHARED_MAP), 2002),
         Some(other.subscriber.get()),
         "one holder at every instant, and it is the attacker"
     );
@@ -8967,7 +8967,7 @@ fn a_mobs_damage_and_death_reach_the_other_players_screen_unchanged() {
         "a grant must never ride along with a broadcast"
     );
     assert_eq!(
-        fields.controllers().controller_of(SHARED_MAP, 2002),
+        fields.controllers().controller_of(crate::fields::FieldKey::world(SHARED_MAP), 2002),
         None,
         "and the dead mob's entry is forgotten at the death, not left for the next reconcile"
     );
@@ -8994,8 +8994,8 @@ fn the_drops_go_to_the_top_damager_and_not_to_whoever_landed_the_last_hit() {
 
     // 90 of the 100, credited to the helper. `LiveMob::credit` caps at what landed, so this is
     // the same ranking the EXP split and its white/yellow line already pay out on.
-    fields.hurt(SHARED_MAP, 2002, 90, helper_id, &config, 0);
-    assert_eq!(fields.mob_hp(SHARED_MAP, 2002), Some(10));
+    fields.hurt(crate::fields::FieldKey::world(SHARED_MAP), 2002, 90, helper_id, &config, 0);
+    assert_eq!(fields.mob_hp(crate::fields::FieldKey::world(SHARED_MAP), 2002), Some(10));
 
     let kill = killer.handle(&melee_packet());
     assert!(
@@ -9021,7 +9021,7 @@ fn the_drops_go_to_the_top_damager_and_not_to_whoever_landed_the_last_hit() {
     // The floor agrees with the packet, which is what `LiveDrop::may_be_taken_by` enforces - a
     // drop the helper can see and the killer can take would be the same bug wearing a hat.
     let owners: Vec<u32> =
-        fields.with_drops(SHARED_MAP, |d| d.on_field(SHARED_MAP).map(|x| x.owner_id).collect());
+        fields.with_drops(crate::fields::FieldKey::world(SHARED_MAP), |d| d.on_field(crate::fields::FieldKey::world(SHARED_MAP)).map(|x| x.owner_id).collect());
     assert_eq!(owners, vec![helper_id], "killer {killer_id} owns nothing here");
 }
 
@@ -9047,10 +9047,10 @@ fn an_expired_drop_fades_for_its_owner_and_for_the_session_that_swept_it() {
     let _ = sweeper.handle(&NO_PACKET);
     let _ = owner.handle(&NO_PACKET);
 
-    let (drop_id, _) = fields.with_drops(SHARED_MAP, |d| {
+    let (drop_id, _) = fields.with_drops(crate::fields::FieldKey::world(SHARED_MAP), |d| {
         d.drop_from_mob(crate::drops::DropFromMob {
             from_mob: true,
-            map_id: SHARED_MAP,
+            map_id: crate::fields::FieldKey::world(SHARED_MAP),
             owner_id,
             item: store::Item::bundle(4_000_001, 1),
             inv_type: store::InventoryType::Etc,
@@ -9071,7 +9071,7 @@ fn an_expired_drop_fades_for_its_owner_and_for_the_session_that_swept_it() {
         0,
         "the sweep posts to mailboxes, and this tick's mail was collected before it ran: {swept:?}"
     );
-    assert_eq!(fields.with_drops(SHARED_MAP, |d| d.len()), 0, "but it IS gone from the floor");
+    assert_eq!(fields.with_drops(crate::fields::FieldKey::world(SHARED_MAP), |d| d.len()), 0, "but it IS gone from the floor");
     let next = sweeper.tick(crate::drops::DROP_LIFETIME_MS + 1_500);
     assert_eq!(
         count_of(&next, net::drops::DROP_LEAVE_FIELD),
@@ -9104,10 +9104,10 @@ fn walking_into_a_field_does_not_re_send_another_players_drops() {
     owner.on_field_entered();
     passer_by.on_field_entered();
 
-    fields.with_drops(SHARED_MAP, |d| {
+    fields.with_drops(crate::fields::FieldKey::world(SHARED_MAP), |d| {
         d.drop_from_mob(crate::drops::DropFromMob {
             from_mob: true,
-            map_id: SHARED_MAP,
+            map_id: crate::fields::FieldKey::world(SHARED_MAP),
             owner_id,
             item: store::Item::bundle(4_000_001, 1),
             inv_type: store::InventoryType::Etc,
@@ -9631,7 +9631,7 @@ fn someone_joining_late_is_told_where_the_others_are_now() {
 #[test]
 fn a_departing_controller_hands_its_mobs_to_whoever_is_left() {
     let (store, config, fields, account) = shared_channel(4, 30);
-    let alive = fields.mob_count(SHARED_MAP);
+    let alive = fields.mob_count(crate::fields::FieldKey::world(SHARED_MAP));
     let (mut leaver, _) = join_channel(&store, &config, &fields, account, "Leaver");
     let (mut stayer, _) = join_channel(&store, &config, &fields, account, "Stayer");
     leaver.on_field_entered();
@@ -9651,7 +9651,7 @@ fn a_departing_controller_hands_its_mobs_to_whoever_is_left() {
         "nothing goes to the LEAVER - level 0 is the only revoke and it DESPAWNS the mob"
     );
     assert_eq!(fields.controllers().held_by(leaver.subscriber.get()), 0, "the claims are gone");
-    assert_eq!(fields.mob_count(SHARED_MAP), alive, "and the mobs themselves are untouched");
+    assert_eq!(fields.mob_count(crate::fields::FieldKey::world(SHARED_MAP)), alive, "and the mobs themselves are untouched");
     assert_eq!(
         fields.controllers().held_by(stayer.subscriber.get()),
         alive,
@@ -9688,10 +9688,10 @@ fn a_handed_over_mob_is_granted_where_it_is_standing() {
     leaver.on_field_entered();
     stayer.on_field_entered();
 
-    let object_id = fields.mobs_on(SHARED_MAP)[0].spawn.object_id;
-    let spawn_x = fields.mobs_on(SHARED_MAP)[0].spawn.x;
+    let object_id = fields.mobs_on(crate::fields::FieldKey::world(SHARED_MAP))[0].spawn.object_id;
+    let spawn_x = fields.mobs_on(crate::fields::FieldKey::world(SHARED_MAP))[0].spawn.x;
     let walked_to = (spawn_x + 300, 395);
-    fields.note_position(SHARED_MAP, object_id, walked_to);
+    fields.note_position(crate::fields::FieldKey::world(SHARED_MAP), object_id, walked_to);
 
     leaver.on_log_out();
     let grants: Vec<Reply> = stayer
@@ -9705,7 +9705,7 @@ fn a_handed_over_mob_is_granted_where_it_is_standing() {
     // bodies rather than picking an offset out: an offset would have to be re-derived here and
     // that is a second claim about the packet layout to get wrong.
     let expected_here = net::mobmove::mob_change_controller(
-        &fields.mobs_on(SHARED_MAP)[0].as_seen(),
+        &fields.mobs_on(crate::fields::FieldKey::world(SHARED_MAP))[0].as_seen(),
         net::mobmove::CONTROL_NORMAL,
     );
     assert_eq!(grants[0].body, expected_here, "granted where it is standing");
@@ -9713,7 +9713,7 @@ fn a_handed_over_mob_is_granted_where_it_is_standing() {
     // The control that gives the assertion above its teeth: the spawn-point body is a
     // DIFFERENT packet, so this test would fail if the handover sent that instead.
     let spawn_body = net::mobmove::mob_change_controller(
-        &fields.mobs_on(SHARED_MAP)[0].spawn,
+        &fields.mobs_on(crate::fields::FieldKey::world(SHARED_MAP))[0].spawn,
         net::mobmove::CONTROL_NORMAL,
     );
     assert_ne!(expected_here, spawn_body, "the mob really has moved away from its spawn point");
@@ -9730,7 +9730,7 @@ fn a_handed_over_mob_is_granted_where_it_is_standing() {
 #[test]
 fn a_crashed_connection_hands_its_mobs_over_rather_than_stranding_them() {
     let (store, config, fields, account) = shared_channel(3, 30);
-    let alive = fields.mob_count(SHARED_MAP);
+    let alive = fields.mob_count(crate::fields::FieldKey::world(SHARED_MAP));
     let (mut stayer, _) = join_channel(&store, &config, &fields, account, "Stayer");
 
     {
@@ -9767,14 +9767,14 @@ fn a_crashed_connection_hands_its_mobs_over_rather_than_stranding_them() {
 #[test]
 fn the_last_player_out_frees_the_mobs_for_the_next_arrival() {
     let (store, config, fields, account) = shared_channel(2, 30);
-    let alive = fields.mob_count(SHARED_MAP);
+    let alive = fields.mob_count(crate::fields::FieldKey::world(SHARED_MAP));
     let (mut only, _) = join_channel(&store, &config, &fields, account, "Only");
     only.on_field_entered();
     assert_eq!(fields.controllers().held_by(only.subscriber.get()), alive);
 
     only.on_log_out();
     assert_eq!(fields.controllers().held_by(only.subscriber.get()), 0, "nobody to hand them to");
-    assert_eq!(fields.mob_count(SHARED_MAP), alive, "the mobs are still alive on the map");
+    assert_eq!(fields.mob_count(crate::fields::FieldKey::world(SHARED_MAP)), alive, "the mobs are still alive on the map");
 
     let (mut next, _) = join_channel(&store, &config, &fields, account, "Next");
     let welcome = next.on_field_entered();
@@ -9794,7 +9794,7 @@ fn the_last_player_out_frees_the_mobs_for_the_next_arrival() {
 #[test]
 fn coming_back_to_a_map_this_connection_controls_re_sends_every_grant() {
     let (store, config, fields, account) = shared_channel(4, 30);
-    let alive = fields.mob_count(SHARED_MAP);
+    let alive = fields.mob_count(crate::fields::FieldKey::world(SHARED_MAP));
     let (mut only, _) = join_channel(&store, &config, &fields, account, "Solo");
 
     let first = only.on_field_entered();
@@ -10301,8 +10301,8 @@ fn adv_channel(hp: u64, mob_max_mp: u32) -> Option<(Arc<Store>, Arc<Config>, Arc
         ..Config::default()
     });
     let fields = Arc::new(crate::fields::Fields::new());
-    fields.seed(SHARED_MAP, &config, 0);
-    fields.due_respawns(SHARED_MAP, &config, 999_999);
+    fields.seed(crate::fields::FieldKey::world(SHARED_MAP), &config, 0);
+    fields.due_respawns(crate::fields::FieldKey::world(SHARED_MAP), &config, 999_999);
     Some((store, config, fields, account))
 }
 
@@ -10483,10 +10483,10 @@ fn power_guard_reflects_its_share_onto_the_mob() {
     let (mut s, _id) = adv_join(&store, &config, &fields, account, 121, &[(1_211_005, 1)]);
     s.on_skill_use(&skill_use_body(1_211_005, 1));
     assert!(s.holds(net::jobbuffs::CTS_POWER_GUARD));
-    assert_eq!(fields.mob_hp(SHARED_MAP, 2002), Some(500), "the control");
+    assert_eq!(fields.mob_hp(crate::fields::FieldKey::world(SHARED_MAP), 2002), Some(500), "the control");
     let out = s.on_user_hit(&drake_hit(200, 2002));
     assert_eq!(hp_of(&s), 1000 - 160, "20% of the hit never lands");
-    assert_eq!(fields.mob_hp(SHARED_MAP, 2002), Some(460), "and the 40 goes to the mob");
+    assert_eq!(fields.mob_hp(crate::fields::FieldKey::world(SHARED_MAP), 2002), Some(460), "and the 40 goes to the mob");
     assert!(
         out.iter().any(|r| r.what.starts_with("mob 2002 took 40")),
         "the mob's bar is told through deal_to_mob: {out:?}"
@@ -10496,7 +10496,7 @@ fn power_guard_reflects_its_share_onto_the_mob() {
     let before = hp_of(&s);
     s.on_user_hit(&drake_hit(200, 7777));
     assert_eq!(hp_of(&s), before - 160);
-    assert_eq!(fields.mob_hp(SHARED_MAP, 2002), Some(460));
+    assert_eq!(fields.mob_hp(crate::fields::FieldKey::world(SHARED_MAP), 2002), Some(460));
 }
 
 // ---------------------------------------------------------------------------------------
@@ -10936,18 +10936,18 @@ fn a_drop_lands_where_the_mob_finished_its_path_not_where_it_started() {
     let ack = controller.handle(&packet);
     assert_eq!(count_of(&ack, net::mobmove::MOB_CTRL_ACK), 1, "the report was believed");
 
-    assert_eq!(fields.mobs_on(SHARED_MAP)[0].spawn.x, 100, "the spawn point, a decoy");
-    assert_eq!(fields.mob_site(SHARED_MAP, 2000), Some((456, 395)));
+    assert_eq!(fields.mobs_on(crate::fields::FieldKey::world(SHARED_MAP))[0].spawn.x, 100, "the spawn point, a decoy");
+    assert_eq!(fields.mob_site(crate::fields::FieldKey::world(SHARED_MAP), 2000), Some((456, 395)));
 
     controller.last_position = Some((1500, 395));
-    let out = controller.deal_to_mob(SHARED_MAP, 2000, 9_999, chr_id);
+    let out = controller.deal_to_mob(crate::fields::FieldKey::world(SHARED_MAP), 2000, 9_999, chr_id);
     assert!(
         out.iter().any(|r| r.opcode == net::drops::DROP_ENTER_FIELD),
         "the kill must actually have dropped something, or every number below is vacuous: {out:?}"
     );
 
     let xs: Vec<i16> =
-        fields.with_drops(SHARED_MAP, |d| d.on_field(SHARED_MAP).map(|x| x.x).collect());
+        fields.with_drops(crate::fields::FieldKey::world(SHARED_MAP), |d| d.on_field(crate::fields::FieldKey::world(SHARED_MAP)).map(|x| x.x).collect());
     assert_eq!(xs.len(), 1);
     assert_eq!(
         xs[0], 456,
@@ -10956,8 +10956,8 @@ fn a_drop_lands_where_the_mob_finished_its_path_not_where_it_started() {
 
     // The arc's ORIGIN too. An item flying out of empty space 32 px behind the corpse is
     // exactly as wrong on screen as one landing there, and it is a separate field.
-    let src = fields.with_drops(SHARED_MAP, |d| {
-        d.on_field(SHARED_MAP).map(|x| (x.source_x, x.source_y)).next().unwrap()
+    let src = fields.with_drops(crate::fields::FieldKey::world(SHARED_MAP), |d| {
+        d.on_field(crate::fields::FieldKey::world(SHARED_MAP)).map(|x| (x.source_x, x.source_y)).next().unwrap()
     });
     assert_eq!(src, (456, 395), "an arc starting behind the corpse is the bug on screen");
 }
@@ -11466,7 +11466,7 @@ fn a_sack_summons_a_mob_and_grants_this_client_control_of_it() {
     assert_eq!(out[grant].body[0], net::mobmove::CONTROL_NORMAL);
     assert!(out[grant].what.contains("summoned"), "{}", out[grant].what);
     // The registry agrees, and a second claim by anyone is refused.
-    assert!(!s.fields.controllers().claim_one(s.claimed_character().unwrap().map_id, object_id, 99));
+    assert!(!s.fields.controllers().claim_one(crate::fields::FieldKey::world(s.claimed_character().unwrap().map_id), object_id, 99));
 
     // **The summoning animation, then the reset that makes the mob hittable.** The owner,
     // 2026-09-12: "it is also missing the summon effect that is played for all players."
@@ -12537,11 +12537,18 @@ fn a_double_click_on_the_husky_summons_it_and_a_second_puts_it_away() {
     // A field entry sends the pet again, because the client rebuilt its pools.
     let chr = s.claimed_character().unwrap();
     let again = s.pet_entry_replies(&chr);
-    assert_eq!(again.len(), 2, "the 0x0277 AND the post-summon item write - without the second the pet spawns sad and inert (2026-09-17)");
-    assert_eq!(again[0].opcode, net::pet::PET_ACTIVATED);
-    assert_eq!(again[1].opcode, net::inventory::INVENTORY_OPERATION, "the item refresh CPet re-reads its state from");
-    assert!(again[1].what.contains("active=1"), "and it says the pet is out");
-    assert_eq!(again[1].body[7], net::inventory::MODE_SET_QUIET, "quiet on field entry too - the cell is not new");
+    // Three since 2026-09-21: the item, the `0x0277`, the item again. The FIRST write is what
+    // `CPet` is built from - without it the client caches closeness 0 and the second write
+    // makes it print "Closeness has increased (+N)" on every map change. The SECOND is the
+    // re-read without which the pet spawns sad and inert (2026-09-17) and never vacuums
+    // (2026-09-18). Both are on the owner's screen, in opposite directions.
+    assert_eq!(again.len(), 3, "the item, the 0x0277, the item again");
+    assert_eq!(again[0].opcode, net::inventory::INVENTORY_OPERATION, "the item BEFORE the summon");
+    assert_eq!(again[1].opcode, net::pet::PET_ACTIVATED);
+    assert_eq!(again[2].opcode, net::inventory::INVENTORY_OPERATION, "the item refresh CPet re-reads its state from");
+    assert!(again[0].what.contains("active=1") && again[2].what.contains("active=1"), "and both say the pet is out");
+    assert_eq!(again[0].body, again[2].body, "the two writes must be the same bytes - a difference is what the client prints");
+    assert_eq!(again[2].body[7], net::inventory::MODE_SET_QUIET, "quiet on field entry too - the cell is not new");
     // And the record's own pet body now says active - the bag's row, which carries the pet
     // id the active byte is keyed on since 2026-09-16.
     let blob = s.item_blob(&bag_pet(&store, id, 5_000_006));
@@ -12781,7 +12788,7 @@ fn a_successful_pet_command_earns_closeness_and_levels_the_pet_up() {
 #[test]
 fn the_pets_0x0205_loot_request_takes_a_mob_drop() {
     let (mut s, store, id) = gm_session();
-    let map = net::opcode::START_MAP_ID;
+    let map = crate::fields::FieldKey::world(net::opcode::START_MAP_ID);
     store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
     s.last_position = Some((520, 395));
     let (mob_drop, _) = s.fields.with_drops(map, |d| {
@@ -13295,7 +13302,7 @@ fn two_pets_keep_their_own_vitals_across_a_relogin_and_only_one_is_out() {
 #[test]
 fn a_summoned_pet_picks_up_a_mob_drop_but_not_a_players_own_drop() {
     let (mut s, store, id) = gm_session();
-    let map = net::opcode::START_MAP_ID;
+    let map = crate::fields::FieldKey::world(net::opcode::START_MAP_ID);
     store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
     s.last_position = Some((520, 395));
 
@@ -13485,9 +13492,9 @@ fn a_summoned_pet_walks_for_the_map_and_answers_its_command_words() {
 #[test]
 fn a_wooden_box_stands_on_entry_breaks_on_the_fourth_hit_drops_and_comes_back() {
     let (mut s, _store, _id) = claimed_session();
-    let map = net::opcode::START_MAP_ID;
+    let map = crate::fields::FieldKey::world(net::opcode::START_MAP_ID);
     let mut reactors = std::collections::HashMap::new();
-    reactors.insert(map, vec![crate::config::ReactorSpawn {
+    reactors.insert(map.map, vec![crate::config::ReactorSpawn {
         object_id: crate::config::REACTOR_OBJECT_ID_BASE,
         template_id: 1,
         x: 610,
@@ -13782,4 +13789,970 @@ fn no_quest_answers_its_accept_or_turn_in_with_its_own_opening_lines() {
     );
     assert!(audited > 300, "the client ships 322 quests; {audited} audited");
     assert_eq!(turned_in_with_quiz, 11, "the quiz nodes on path 1: Rain's seven, Stan, I'm Bored 1, Flying Medicine, Animal Fossils (the other seven ask nodes are openings, which the client shows itself)");
+}
+
+
+// ==========================================================================================
+// Crafting - `0x02F6` in, `0x0398` out. `session/craft.rs`, `research/crafting-2026-09-21.md`
+// ==========================================================================================
+
+/// The Smithing recipe quest 80011 asks for: five `4010000` into one `4010100`, 100 mesos,
+/// 3 mastery. Key `1000` is `(level 1 + profession 0 * 10) * 1000 + index 0` - the client's
+/// own formula, which is the one thing a craft request carries.
+fn smithing_recipe() -> crate::crafting::Recipe {
+    crate::crafting::Recipe {
+        key: 1_000,
+        profession: 0,
+        craft_level: 1,
+        process_time_ms: 3_000,
+        meso: 100,
+        additive: (0, 0),
+        ingredients: vec![(4_010_000, 5)],
+        result: (4_010_100, 1),
+        result_exp: 3,
+    }
+}
+
+/// A claimed session that knows one recipe, with the materials and the mesos for it.
+fn crafting_session() -> (Session, Arc<Store>, u32) {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    store.set_gm("maplecw", true).unwrap();
+    let chr = net::opcode::Character { name: "Wisp".to_string(), ..Default::default() };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    let mut recipes = crate::crafting::Recipes::new();
+    recipes.insert(1_000, smithing_recipe());
+    let config = Arc::new(Config { recipes, ..Config::default() });
+    let mut s = Session::new(store.clone(), config);
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    s.claim_for_character(id);
+    store
+        .add_item(id, store::InventoryType::Etc, &store::Item::bundle(4_010_000, 5), 200)
+        .unwrap();
+    store.set_mesos(id, 1_000).unwrap();
+    (s, store, id)
+}
+
+/// The `0x02F6` body for "begin this craft".
+fn craft_begin(profession: u32, key: u32, additive: bool, count: u32) -> Vec<u8> {
+    let mut b = net::craft::CLIENT_CRAFT_REQUEST.to_le_bytes().to_vec();
+    b.extend_from_slice(&0u32.to_le_bytes());
+    b.extend_from_slice(&profession.to_le_bytes());
+    b.extend_from_slice(&key.to_le_bytes());
+    b.push(u8::from(additive));
+    b.extend_from_slice(&count.to_le_bytes());
+    b
+}
+
+/// The `0x02F6` body for a mode with no fields: 3 completes, 1 cancels.
+fn craft_mode(mode: u32) -> Vec<u8> {
+    let mut b = net::craft::CLIENT_CRAFT_REQUEST.to_le_bytes().to_vec();
+    b.extend_from_slice(&mode.to_le_bytes());
+    b
+}
+
+/// The `(mode, result)` of a `0x0398`. A mode-5 or mode-6 answer has no result.
+fn craft_answer(out: &[Reply]) -> (u32, Option<u32>) {
+    let r = out
+        .iter()
+        .find(|r| r.opcode == net::craft::CRAFT_RESULT)
+        .unwrap_or_else(|| panic!("no 0x0398 in {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>()));
+    let mode = u32::from_le_bytes([r.body[0], r.body[1], r.body[2], r.body[3]]);
+    let result = (r.body.len() >= 8)
+        .then(|| u32::from_le_bytes([r.body[4], r.body[5], r.body[6], r.body[7]]));
+    (mode, result)
+}
+
+/// **A craft is two packets, and NOTHING is taken on the first.** The begin only decides
+/// whether the client may play its animation; the complete is what moves items.
+#[test]
+fn a_craft_takes_its_materials_on_the_complete_and_never_on_the_begin() {
+    let (mut s, store, id) = crafting_session();
+    store.learn_profession(id, 0).unwrap();
+
+    let out = s.handle(&craft_begin(0, 1_000, false, 1));
+    assert_eq!(craft_answer(&out), (4, Some(0)), "mode 4 result 0 - the bar may start");
+    assert!(
+        !out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION),
+        "the begin moves nothing: {:?}",
+        out.iter().map(|r| &r.what).collect::<Vec<_>>()
+    );
+    assert_eq!(store.mesos(id).unwrap(), 1_000, "and charges nothing");
+    assert_eq!(
+        store.bag(id).unwrap().items_in(store::InventoryType::Etc).count(),
+        1,
+        "the five ore are untouched"
+    );
+
+    let out = s.handle(&craft_mode(3));
+    assert_eq!(craft_answer(&out), (7, Some(0)), "mode 7 result 0 - it was made");
+    assert_eq!(store.mesos(id).unwrap(), 900, "100 mesos paid");
+    let etc: Vec<(u32, u16)> = store
+        .bag(id)
+        .unwrap()
+        .items_in(store::InventoryType::Etc)
+        .map(|i| (i.item.item_id, i.item.kind.quantity()))
+        .collect();
+    assert_eq!(etc, vec![(4_010_100, 1)], "the ore is gone and the plate is here: {etc:?}");
+    // The mastery, and the ONE packet that carries it: the level and the exp share a u32.
+    assert_eq!(store.profession(id, 0).unwrap(), (1, 3));
+    let skill = out
+        .iter()
+        .find(|r| r.opcode == net::skills::CHANGE_SKILL_RECORD_RESULT)
+        .expect("a 0x0081 for the mastery");
+    // clearLatch, showEffect, pad, count=1, then id / packed level / masterLevel / expiry
+    assert_eq!(&skill.body[0..5], &[1, 0, 0, 1, 0]);
+    assert_eq!(u32::from_le_bytes([skill.body[5], skill.body[6], skill.body[7], skill.body[8]]), 92_000_000);
+    assert_eq!(
+        u32::from_le_bytes([skill.body[9], skill.body[10], skill.body[11], skill.body[12]]),
+        net::craft::packed_mastery(1, 3),
+        "level in the top byte, mastery below - NOT a bare 1"
+    );
+    assert!(
+        out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE && notice_text(r).contains("Smithing's mastery increased. (+3)")),
+        "{:?}",
+        out.iter().map(|r| &r.what).collect::<Vec<_>>()
+    );
+    // The record the next field entry builds carries the same packed number, which is how
+    // the tab is still open after a map change.
+    let skills = store.skills(id).unwrap();
+    assert_eq!(skills.len(), 1);
+    assert_eq!((skills[0].id, skills[0].level), (92_000_000, net::craft::packed_mastery(1, 3)));
+}
+
+/// Every refusal the client has a sentence for, and the one code that must NOT reset its
+/// window. A refused begin leaves the materials where they are.
+#[test]
+fn the_refusals_use_the_clients_own_result_codes() {
+    let (mut s, store, id) = crafting_session();
+
+    // Not learnt: "Your skill level is not high enough to craft this item."
+    assert_eq!(craft_answer(&s.handle(&craft_begin(0, 1_000, false, 1))), (4, Some(6)));
+    store.learn_profession(id, 0).unwrap();
+
+    // A key nobody has: "An error occurred. Please try again."
+    assert_eq!(craft_answer(&s.handle(&craft_begin(0, 4_242, false, 1))), (4, Some(2)));
+    // The right key under the wrong tab is the same answer.
+    assert_eq!(craft_answer(&s.handle(&craft_begin(3, 1_000, false, 1))), (4, Some(2)));
+
+    // No mesos: "You do not have enough mesos to craft this item."
+    store.set_mesos(id, 10).unwrap();
+    assert_eq!(craft_answer(&s.handle(&craft_begin(0, 1_000, false, 1))), (4, Some(7)));
+    store.set_mesos(id, 1_000).unwrap();
+
+    // Short of ore: "You do not have enough materials to craft this item."
+    let slot = store.bag_items(id, store::InventoryType::Etc).unwrap()[0].slot;
+    store.remove_item(id, store::InventoryType::Etc, slot, Some(3)).unwrap();
+    assert_eq!(craft_answer(&s.handle(&craft_begin(0, 1_000, false, 1))), (4, Some(3)));
+    store
+        .add_item(id, store::InventoryType::Etc, &store::Item::bundle(4_010_000, 3), 200)
+        .unwrap();
+
+    // A complete with no begin behind it makes nothing: the pair is the whole gate, and
+    // nothing authenticates, so a hand-built mode 3 is free to send.
+    let out = s.handle(&craft_mode(3));
+    assert_eq!(craft_answer(&out), (7, Some(2)));
+    assert!(store.bag(id).unwrap().items_in(store::InventoryType::Etc).all(|i| i.item.item_id == 4_010_000));
+
+    // A second begin while one is running is code 5 - the ONE code the client does not
+    // reset its window on.
+    assert_eq!(craft_answer(&s.handle(&craft_begin(0, 1_000, false, 1))), (4, Some(0)));
+    assert_eq!(craft_answer(&s.handle(&craft_begin(0, 1_000, false, 1))), (4, Some(5)));
+    // Cancel puts it back to idle, and then the complete has nothing to finish.
+    assert_eq!(craft_answer(&s.handle(&craft_mode(1))), (5, None));
+    assert_eq!(craft_answer(&s.handle(&craft_mode(3))), (7, Some(2)));
+    assert_eq!(store.mesos(id).unwrap(), 1_000, "not one meso moved across all of that");
+
+    // A mode nobody has decoded is acknowledged rather than dropped: an unanswered 0x02F6
+    // leaves the client's request latch set and it never crafts again.
+    assert_eq!(craft_answer(&s.handle(&craft_mode(9))), (6, None));
+}
+
+/// **The character level caps the profession**, and the overflow is discarded rather than
+/// banked - the client's own sentence is *"To level up %s further, your character must be
+/// level %d or higher"* at `(level + 1) * 5`.
+#[test]
+fn mastery_parks_at_the_character_level_cap() {
+    let (mut s, store, id) = crafting_session();
+    store.learn_profession(id, 0).unwrap();
+    // A level-1 character: the cap is profession level 1, so the bar fills and stops.
+    store.set_profession(id, 0, 1, 48).unwrap();
+    store
+        .add_item(id, store::InventoryType::Etc, &store::Item::bundle(4_010_000, 5), 200)
+        .unwrap();
+    s.handle(&craft_begin(0, 1_000, false, 1));
+    let out = s.handle(&craft_mode(3));
+    assert_eq!(craft_answer(&out), (7, Some(0)), "the craft still happens");
+    assert_eq!(
+        store.profession(id, 0).unwrap(),
+        (1, crate::crafting::mastery_exp_needed(1)),
+        "parked at 100% of level 1"
+    );
+    assert!(
+        out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE && notice_text(r).contains("capped at level 1 until your character reaches level 10")),
+        "the cap is said out loud: {:?}",
+        out.iter().map(|r| &r.what).collect::<Vec<_>>()
+    );
+}
+
+/// **The quest turn-in is what opens the tab.** The owner, 2026-09-21: *"After these quest
+/// completions, they should unlock the appropriate crafting menu within the client."*
+#[test]
+fn the_starter_quest_learns_the_profession_and_pays_its_mastery() {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Wisp".to_string(), ..Default::default() };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    // Quest 80008, as `gm-handbook/questlines.txt` has it: Silas Irons teaches Smithing and
+    // pays one mastery.
+    let mut quests = std::collections::HashMap::new();
+    quests.insert(
+        80_008u32,
+        crate::config::Quest {
+            name: "Silas Irons in Need of an Apprentice".to_string(),
+            complete_exp: 171,
+            complete_skills: vec![(92_000_000, 1)],
+            ..Default::default()
+        },
+    );
+    let config = Arc::new(Config { quests, ..Config::default() });
+    let mut s = Session::new(store.clone(), config);
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    s.claim_for_character(id);
+    store.start_quest(id, 80_008).unwrap();
+
+    let out = s.record_quest_complete(80_008, 0);
+    assert_eq!(store.profession(id, 0).unwrap(), (1, 1), "learnt at level 1, one mastery paid");
+    assert!(
+        out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE && notice_text(r).contains("You have learnt Smithing")),
+        "{:?}",
+        out.iter().map(|r| &r.what).collect::<Vec<_>>()
+    );
+    // The skill the client unlocks the tab on, packed.
+    let learnt: Vec<(u32, u32)> = store.skills(id).unwrap().iter().map(|k| (k.id, k.level)).collect();
+    assert_eq!(learnt, vec![(92_000_000, net::craft::packed_mastery(1, 1))]);
+
+    // **A second turn-in does not reset a levelled profession.** The store's guard is asked
+    // and its answer is used - the Heena rule.
+    store.set_profession(id, 0, 6, 500).unwrap();
+    store.start_quest(id, 80_008).unwrap();
+    s.record_quest_complete(80_008, 0);
+    assert_eq!(store.profession(id, 0).unwrap().0, 6, "still level 6");
+}
+
+/// `!craft` opens a tab without the quest, lists what is open, and closes one again.
+#[test]
+fn the_craft_command_opens_and_closes_a_tab() {
+    let (mut s, store, id) = crafting_session();
+    let out = s.handle(&gm_chat("!craft tailoring 4 100"));
+    assert!(notice_text(out.last().unwrap()).contains("Set to level 4 (mastery 100): Tailoring"), "{}", notice_text(out.last().unwrap()));
+    assert_eq!(store.profession(id, 2).unwrap(), (4, 100));
+    let skill = out.iter().find(|r| r.opcode == net::skills::CHANGE_SKILL_RECORD_RESULT).expect("a 0x0081");
+    assert_eq!(
+        u32::from_le_bytes([skill.body[9], skill.body[10], skill.body[11], skill.body[12]]),
+        net::craft::packed_mastery(4, 100)
+    );
+
+    let out = s.handle(&gm_chat("!craft"));
+    assert!(notice_text(&out[0]).contains("Tailoring level 4 (100/521)"), "{}", notice_text(&out[0]));
+
+    let out = s.handle(&gm_chat("!craft all 10"));
+    assert!(notice_text(out.last().unwrap()).contains("Arcforge"), "{}", notice_text(out.last().unwrap()));
+    assert_eq!(store.crafting(id).unwrap().len(), 6);
+
+    let out = s.handle(&gm_chat("!craft 2 0"));
+    assert!(notice_text(out.last().unwrap()).contains("Closed: Tailoring"), "{}", notice_text(out.last().unwrap()));
+    assert_eq!(store.profession(id, 2).unwrap(), (0, 0));
+    assert!(out.iter().any(|r| r.opcode == net::skills::CHANGE_SKILL_RECORD_RESULT), "the client is told it is gone");
+
+    let out = s.handle(&gm_chat("!craft baking 3"));
+    assert!(notice_text(&out[0]).contains("is not a profession"), "{}", notice_text(&out[0]));
+}
+
+
+/// **A crafting quest finished BEFORE this server read `Act.1.skill` still opens its tab.**
+///
+/// The owner, 2026-09-21, on a level-12 character whose Woodcrafting tab still read *"Vicious in
+/// Henesys is looking for an apprentice"*: *"the UI shows this even after the user has
+/// completed the pre-requisite quest."* The claim reconciles it, before the login `SetField`,
+/// so the record itself carries the skill.
+#[test]
+fn a_crafting_quest_completed_before_today_is_backfilled_at_the_claim() {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Wisp".to_string(), ..Default::default() };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    let mut quests = std::collections::HashMap::new();
+    quests.insert(
+        80_017u32,
+        crate::config::Quest {
+            name: "Vicious in Need of an Apprentice".to_string(),
+            complete_skills: vec![(92_030_000, 1)],
+            ..Default::default()
+        },
+    );
+    // An in-progress one must NOT count - only a finished quest teaches anything.
+    quests.insert(
+        80_008u32,
+        crate::config::Quest {
+            name: "Silas Irons in Need of an Apprentice".to_string(),
+            complete_skills: vec![(92_000_000, 1)],
+            ..Default::default()
+        },
+    );
+    let config = Arc::new(Config { quests, ..Config::default() });
+    // The world as it was: the quest is finished, and nothing ever granted the profession.
+    store.start_quest(id, 80_017).unwrap();
+    store.complete_quest(id, 80_017).unwrap();
+    store.start_quest(id, 80_008).unwrap();
+    assert!(store.crafting(id).unwrap().is_empty());
+
+    let mut s = Session::new(store.clone(), config);
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    s.claim_for_character(id);
+
+    assert_eq!(store.profession(id, 3).unwrap(), (1, 0), "Woodcrafting learnt, bar empty");
+    assert_eq!(store.profession(id, 0).unwrap(), (0, 0), "the unfinished quest taught nothing");
+    // The record the client builds its tabs from carries it, so the tab is open on the first
+    // screen rather than after a packet.
+    let skills = store.skills(id).unwrap();
+    assert_eq!(skills.iter().map(|k| (k.id, k.level)).collect::<Vec<_>>(), vec![(92_030_000, net::craft::packed_mastery(1, 0))]);
+
+    // **Idempotent**: a second login neither re-learns nor re-pays. A login that quietly
+    // added mastery would be a farm.
+    store.set_profession(id, 3, 5, 300).unwrap();
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    let mut s2 = Session::new(store.clone(), s.config.clone());
+    s2.claim_for_character(id);
+    assert_eq!(store.profession(id, 3).unwrap(), (5, 300));
+}
+
+
+/// **The pet's item goes out BEFORE the field-entry summon as well as after it, so no
+/// "Closeness has increased (+N)" line is invented on a map change.**
+///
+/// The owner, 2026-09-21: *"Whenever I change maps, if the pet has some sort of closeness, a
+/// message of +1 closeness still erroneously show up bottom right on the screen, despite not
+/// actually adding any closeness."* The number is the closeness itself - Lucy's was 1, read
+/// out of the `0x0070` body in `world-ch0.log` - and the client is reporting a rise from 0:
+/// `FUN_141ec4f60` prints string `0x1AC` with the difference between the pet's cached
+/// closeness and the one it re-reads from the Cash item. A field entry clears the client's
+/// bag, so the pet was being built with no item to read.
+///
+/// **Both writes matter and they fix different bugs**: the one before the summon is what the
+/// pet is built from (this bug), the one after is the re-read that makes the vacuum work
+/// (2026-09-18, on the owner's screen).
+#[test]
+fn the_field_entry_sends_the_pets_item_before_the_summon_as_well_as_after() {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Wisp".to_string(), ..Default::default() };
+    let id = store.create_character(account, 0, &chr).unwrap().id;
+    store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+    store.create_migration(account, id, 0, 0).unwrap();
+    let mut s = Session::new(store.clone(), Arc::new(Config::default()));
+    s.claim_for_character(id);
+    s.on_pet_activate(&hex("509a18140100"));
+    let pet_id = pet_of(&store, id, 5_000_006);
+    // A pet with closeness to report - the case the owner saw. Level 2, closeness 1, like Lucy.
+    store.set_pet_vitals(pet_id, 2, 1, 100).unwrap();
+
+    let entered = s.on_field_entered();
+    let pet_batch: Vec<(u16, &str)> = entered
+        .iter()
+        .filter(|r| r.opcode == net::pet::PET_ACTIVATED || r.what.contains("re-sent as pet"))
+        .map(|r| (r.opcode, r.what.as_str()))
+        .collect();
+    assert_eq!(pet_batch.len(), 3, "item, summon, item: {pet_batch:?}");
+    assert_eq!(pet_batch[0].0, net::inventory::INVENTORY_OPERATION, "the item is FIRST, so CPet is built knowing its closeness");
+    assert_eq!(pet_batch[1].0, net::pet::PET_ACTIVATED);
+    assert_eq!(pet_batch[2].0, net::inventory::INVENTORY_OPERATION, "and again after, which is the vacuum re-read");
+
+    // Both carry the same closeness. A difference between them is exactly what the client
+    // would print, so this is the assertion that matters rather than the order alone.
+    let closeness_of = |r: &Reply| -> u16 {
+        // The blob starts at the item type byte; `pet_item_with_state` puts closeness 40
+        // bytes in (1 + 4 + 1 + 8 + 8 + 4 + 1 + 13 + 1), and the mode-5 header is 11 bytes
+        // with a cash serial present.
+        let blob = r.body.windows(5).position(|w| w == [3, 0x46, 0x4b, 0x4c, 0x00]).expect("the pet blob");
+        let at = blob + 1 + 4 + 1 + 8 + 8 + 4 + 1 + 13 + 1;
+        u16::from_le_bytes([r.body[at], r.body[at + 1]])
+    };
+    let first = entered.iter().find(|r| r.what.contains("re-sent as pet")).unwrap();
+    let last = entered.iter().filter(|r| r.what.contains("re-sent as pet")).last().unwrap();
+    assert_eq!(closeness_of(first), 1, "the closeness the store holds");
+    assert_eq!(closeness_of(last), closeness_of(first), "the two writes must not disagree");
+}
+
+
+// ==========================================================================================
+// The friend list - `0x0193` in, `0x00A7` out. `session/friends.rs`,
+// `research/friends-2026-09-21.md`
+// ==========================================================================================
+
+/// The `0x0193` body the client's add button builds: `u8 1, str name, str group, str, u8`.
+/// Byte for byte the shape captured at `world-ch0.log` 01:35:06.649.
+fn friend_add_body(name: &str, group: &str) -> Vec<u8> {
+    let mut b = net::friends::CLIENT_FRIEND_REQUEST.to_le_bytes().to_vec();
+    b.push(1);
+    b.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    b.extend_from_slice(name.as_bytes());
+    b.extend_from_slice(&(group.len() as u16).to_le_bytes());
+    b.extend_from_slice(group.as_bytes());
+    b.extend_from_slice(&0u16.to_le_bytes());
+    b.push(1);
+    b
+}
+
+/// The `{id, name}` rows out of a `0x00A7` sub-op 0x19.
+fn friend_rows(out: &[Reply]) -> Vec<(u32, String)> {
+    let r = out
+        .iter()
+        .find(|r| r.opcode == net::friends::FRIEND_RESULT && r.body[0] == 0x19)
+        .unwrap_or_else(|| panic!("no friend list in {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>()));
+    let count = u32::from_le_bytes([r.body[1], r.body[2], r.body[3], r.body[4]]) as usize;
+    let mut at = 5;
+    let mut rows = Vec::new();
+    for _ in 0..count {
+        let id = u32::from_le_bytes([r.body[at], r.body[at + 1], r.body[at + 2], r.body[at + 3]]);
+        let len = u16::from_le_bytes([r.body[at + 4], r.body[at + 5]]) as usize;
+        rows.push((id, String::from_utf8(r.body[at + 6..at + 6 + len].to_vec()).unwrap()));
+        at += 6 + len;
+    }
+    rows
+}
+
+/// **The rows the window actually draws**: `(id, name, flag)` out of a `0x00A7` sub-op `0x15`,
+/// read at the offsets `FUN_142dec8f0` reads them at.
+fn friend_records(out: &[Reply]) -> Vec<(u32, String, u8)> {
+    let r = out
+        .iter()
+        .find(|r| r.opcode == net::friends::FRIEND_RESULT && r.body[0] == 0x15)
+        .unwrap_or_else(|| panic!("no friend records in {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>()));
+    let count = u32::from_le_bytes([r.body[1], r.body[2], r.body[3], r.body[4]]) as usize;
+    let entry = net::friends::FRIEND_ENTRY_LEN;
+    assert_eq!(r.body.len(), 5 + count * entry, "the client reads count * 0x149 in one call");
+    (0..count)
+        .map(|i| {
+            let rec = &r.body[5 + i * entry..5 + (i + 1) * entry];
+            let id = u32::from_le_bytes([rec[0], rec[1], rec[2], rec[3]]);
+            let name = rec[4..0x11].split(|b| *b == 0).next().unwrap();
+            (id, String::from_utf8(name.to_vec()).unwrap(), rec[0x11])
+        })
+        .collect()
+}
+
+/// The sentence-only replies are one byte, and this is which one.
+fn friend_notices(out: &[Reply]) -> Vec<u8> {
+    out.iter()
+        .filter(|r| r.opcode == net::friends::FRIEND_RESULT && r.body.len() == 1)
+        .map(|r| r.body[0])
+        .collect()
+}
+
+/// Two sessions of two characters on one channel, both claimed and in the field.
+fn two_friends() -> (Session, u32, Session, u32, Arc<Store>) {
+    let (store, config, fields, account) = shared_channel(0, 30);
+    let (mut wisp, wisp_id) = join_channel(&store, &config, &fields, account, "Wisp");
+    let other = store.create_account("player", "correct horse battery").unwrap();
+    let (mut tester, tester_id) = join_channel(&store, &config, &fields, other, "Tester2");
+    wisp.on_field_entered();
+    tester.on_field_entered();
+    wisp.collect_mail();
+    tester.collect_mail();
+    (wisp, wisp_id, tester, tester_id, store)
+}
+
+/// **The whole thing the owner reported.** Tester2 adds the owner: Tester2 is told the request went,
+/// The owner is told on their own screen, and the rows are written - two directed ones, so each
+/// side's list says something different about the same friendship.
+#[test]
+fn a_friend_request_is_answered_recorded_and_said_out_loud_on_both_screens() {
+    let (mut wisp, wisp_id, mut tester, tester_id, store) = two_friends();
+
+    let out = tester.handle(&friend_add_body("Wisp", "Default Group"));
+    // The client's own line, sub-op 0x1B, carrying the name it will print.
+    let sent = out
+        .iter()
+        .find(|r| r.opcode == net::friends::FRIEND_RESULT && r.body[0] == 0x1B)
+        .expect("the \"request sent\" reply");
+    assert_eq!(&sent.body[1..3], &4u16.to_le_bytes());
+    assert_eq!(&sent.body[3..7], b"Wisp");
+    // **Tester2's window stays empty while they wait**, and that is deliberate: the flag byte
+    // a record carries has no "I asked them" value, and the one value that would show the row
+    // - `FLAG_REQUEST` - is what makes the client raise a balloon. Only the answer puts the owner
+    // in this list.
+    assert_eq!(friend_rows(&out), vec![]);
+    assert_eq!(friend_records(&out), vec![]);
+    assert_eq!(
+        store.friends(tester_id).unwrap()[0].state,
+        store::friends::FriendState::Requested
+    );
+    assert_eq!(
+        store.friends(wisp_id).unwrap()[0].state,
+        store::friends::FriendState::Pending,
+        "The owner's row is the one that owes an answer"
+    );
+
+    // **The owner's screen: the client's own popup**, not a chat line. The owner, 2026-09-22: *"there
+    // should not be any chat commands ... one similar pop up just like the party
+    // invitation"*. Sub-op 0x1A, balloon kind 0x0E, "Friend request from Tester2".
+    let seen = wisp.collect_mail();
+    assert_eq!(friend_records(&seen), vec![], "a request is an invitation, not a row");
+    let popup = seen
+        .iter()
+        .find(|r| r.opcode == net::friends::FRIEND_RESULT && r.body[0] == 0x1A)
+        .expect("the friend-request balloon");
+    assert_eq!(popup.body[1], 0, "flag 0 raises balloon kind 0x0E, whose Yes is sub-op 2");
+    // The u32 the balloon keeps and echoes back, then the one it looks up locally.
+    assert_eq!(&popup.body[2..6], &tester_id.to_le_bytes());
+    assert_eq!(&popup.body[6..10], &tester_id.to_le_bytes());
+    assert_eq!(&popup.body[10..12], &7u16.to_le_bytes());
+    assert_eq!(&popup.body[12..19], b"Tester2");
+    // **And then the 329 bytes whose absence killed the client on 2026-09-22.** The arm reads
+    // seven fields - 28 bytes, which is exactly what this packet used to be - and then a whole
+    // record, so a body that ends here is refused with `0x009E` reason `0x26`.
+    assert_eq!(
+        popup.body.len(),
+        31 + net::friends::FRIEND_ENTRY_LEN,
+        "the popup must carry a friend record: {}",
+        popup.what
+    );
+    let record = &popup.body[31..];
+    assert_eq!(&record[0..4], &tester_id.to_le_bytes());
+    assert_eq!(&record[4..11], b"Tester2");
+    assert_eq!(record[0x11], net::friends::FLAG_REQUEST, "this byte is what pops the balloon");
+    assert!(
+        !seen.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE && notice_text(r).contains("!friend")),
+        "no chat command is offered"
+    );
+    // The same field entry twice does not raise it again - the request is still pending, and
+    // a balloon per map change is not what the client does.
+    assert!(!wisp.on_field_entered().iter().any(|r| r.opcode == net::friends::FRIEND_RESULT && r.body[0] == 0x1A));
+
+    // **The owner presses Yes**: 0x0193 sub-op 2, echoing what the balloon held.
+    let mut yes = net::friends::CLIENT_FRIEND_REQUEST.to_le_bytes().to_vec();
+    yes.push(net::friends::REQUEST_ACCEPT);
+    yes.extend_from_slice(&tester_id.to_le_bytes());
+    let out = wisp.handle(&yes);
+    // **The system colour, not a plain chat line.** The owner: *"can we send it as a red system
+    // message?"* `0x00AC` type 5 ends in the same printer and the same kind (0xb) as the
+    // client's own "%s has declined the friend request."
+    let said = out
+        .iter()
+        .find(|r| r.opcode == net::broadcast::BROADCAST_MSG)
+        .unwrap_or_else(|| panic!("{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>()));
+    assert_eq!(said.body[0], net::broadcast::SYSTEM_LINE);
+    assert_eq!(&said.body[3..], b"Tester2 is now your friend.");
+    for who in [wisp_id, tester_id] {
+        assert_eq!(store.friends(who).unwrap()[0].state, store::friends::FriendState::Accepted);
+    }
+    // Tester2's window gains the owner without them doing anything - and the record says they are
+    // online, on this channel, because they are.
+    let told = tester.collect_mail();
+    assert_eq!(friend_rows(&told), vec![(wisp_id, "Wisp".to_string())]);
+    assert_eq!(
+        friend_records(&told),
+        vec![(wisp_id, "Wisp".to_string(), net::friends::FLAG_ONLINE)]
+    );
+
+    // And the list survives a map change, because the client rebuilds its friend manager
+    // with its pools.
+    let again = wisp.on_field_entered();
+    assert_eq!(friend_rows(&again), vec![(tester_id, "Tester2".to_string())]);
+    assert_eq!(
+        friend_records(&again),
+        vec![(tester_id, "Tester2".to_string(), net::friends::FLAG_ONLINE)]
+    );
+    // **The name cache goes out BEFORE the records**, so a cache that names a row cannot be
+    // older than the row. (It is a preference: `0x19` clears its own map, not the record
+    // array - the first version of this test said otherwise.)
+    let order: Vec<u8> = again
+        .iter()
+        .filter(|r| r.opcode == net::friends::FRIEND_RESULT)
+        .map(|r| r.body[0])
+        .collect();
+    assert_eq!(order, vec![0x19, 0x15]);
+}
+
+/// **A friend logging in tells the other side, and logging out tells them again.**
+///
+/// The owner, 2026-09-22: *"when Tester2 logs in after the owner, the owner was not informed of the fact that
+/// Tester2 has logged in"*, and *"once the owner logs off, the buddy list also remains showing the owner
+/// is still online."* Both were the same gap - the list was only re-sent on the friend's own
+/// field entry.
+#[test]
+fn a_friend_logging_in_and_out_reaches_the_other_sides_window() {
+    let (store, config, fields, account) = shared_channel(0, 30);
+    let (mut wisp, wisp_id) = join_channel(&store, &config, &fields, account, "Wisp");
+    let other = store.create_account("player", "correct horse battery").unwrap();
+    let (mut tester, tester_id) = join_channel(&store, &config, &fields, other, "Tester2");
+    wisp.on_field_entered();
+    tester.on_field_entered();
+    // Friends already, so the presence notices have somewhere to go.
+    store.request_friend(tester_id, wisp_id, "Default Group").unwrap();
+    store.answer_friend_request(wisp_id, tester_id, true).unwrap();
+    wisp.collect_mail();
+    tester.collect_mail();
+
+    // **Tester2 logs out.** The owner is told, quietly - the row greys, no line is said.
+    drop(tester);
+    let seen = wisp.collect_mail();
+    let off = seen
+        .iter()
+        .find(|r| r.opcode == net::friends::FRIEND_RESULT && r.body[0] == 0x2D)
+        .unwrap_or_else(|| panic!("{:?}", seen.iter().map(|r| &r.what).collect::<Vec<_>>()));
+    assert_eq!(&off.body[1..5], &tester_id.to_le_bytes());
+    assert_eq!(off.body[9] as u32, net::friends::STATUS_OFFLINE);
+    assert_eq!(off.body[15], 0, "a logout is not announced out loud");
+    // And the list came WITH it, with the row marked offline - that is what greys it.
+    assert_eq!(
+        friend_records(&seen),
+        vec![(tester_id, "Tester2".to_string(), net::friends::FLAG_OFFLINE)]
+    );
+    // The list goes FIRST: sent after the 0x2D it would overwrite the status word the client
+    // compares against, and the next login would announce nothing.
+    let order: Vec<u8> = seen
+        .iter()
+        .filter(|r| r.opcode == net::friends::FRIEND_RESULT)
+        .map(|r| r.body[0])
+        .collect();
+    assert_eq!(order, vec![0x19, 0x15, 0x2D]);
+
+    // **Tester2 logs back in** - the same character, claimed by a new session.
+    store.create_migration(other, tester_id, 0, 0).unwrap();
+    let mut tester = Session::joining(store.clone(), config.clone(), fields.clone());
+    tester.claim_for_character(tester_id);
+    tester.on_field_entered();
+    let seen = wisp.collect_mail();
+    let on = seen
+        .iter()
+        .find(|r| r.opcode == net::friends::FRIEND_RESULT && r.body[0] == 0x2D)
+        .unwrap_or_else(|| panic!("{:?}", seen.iter().map(|r| &r.what).collect::<Vec<_>>()));
+    assert_eq!(on.body[9] as u32, net::friends::STATUS_ONLINE);
+    assert_eq!(&on.body[10..14], &0u32.to_le_bytes(), "channel 0");
+    assert_eq!(on.body[14], 0, "matched on the character id, so no detail block");
+    assert_eq!(on.body[15], 1, "and this is the one that says it");
+    assert_eq!(
+        friend_records(&seen),
+        vec![(tester_id, "Tester2".to_string(), net::friends::FLAG_ONLINE)]
+    );
+}
+
+/// **The group list is a REPORT, and answering it is an infinite loop.**
+///
+/// Measured on 2026-09-22, on the owner's screen and in their log: `world-ch0.log` reached **42 MB**
+/// in one sitting, **32 566** round trips of `0x0193` sub-op `0x14` -> `0x00A7` `0x19` + `0x15`
+/// -> sub-op `0x14`, one per millisecond. Every list reply ends in a window refresh and a
+/// refreshed window hands its group names back, so answering that with a list closes the ring.
+/// The owner: *"the owner's client started lagging a lot"*, *"opening the buddy list crashes/freezes"*.
+#[test]
+fn the_clients_group_names_are_a_report_and_are_never_answered() {
+    let (mut wisp, _wisp_id, mut tester, _tester_id, _store) = two_friends();
+    tester.handle(&friend_add_body("Wisp", "Default Group"));
+    wisp.collect_mail();
+
+    // The body the owner's client actually sent, 32 566 times: sub-op 0x14, one group.
+    let mut groups = net::friends::CLIENT_FRIEND_REQUEST.to_le_bytes().to_vec();
+    groups.push(net::friends::REQUEST_GROUPS);
+    groups.extend_from_slice(&1u32.to_le_bytes());
+    groups.push(1);
+    groups.extend_from_slice(&13u16.to_le_bytes());
+    groups.extend_from_slice(b"Default Group");
+    let out = wisp.handle(&groups);
+    assert!(
+        out.is_empty(),
+        "a group report must be answered with NOTHING - anything the window refreshes on loops: {:?}",
+        out.iter().map(|r| &r.what).collect::<Vec<_>>()
+    );
+    // And specifically not with a list, which is what caused it.
+    assert!(!out.iter().any(|r| r.opcode == net::friends::FRIEND_RESULT));
+}
+
+/// **A friend request nobody answers is cancelled, and both sides are told.**
+///
+/// The owner, 2026-09-22: *"it should have a timeout if not accepted within a certain amount of
+/// time."* The clock starts when the balloon is raised, not when the request was made.
+#[test]
+fn an_unanswered_friend_request_times_out_and_tells_both_sides() {
+    let (mut wisp, wisp_id, mut tester, tester_id, store) = two_friends();
+    tester.handle(&friend_add_body("Wisp", "Default Group"));
+    let seen = wisp.collect_mail();
+    assert!(seen.iter().any(|r| r.opcode == net::friends::FRIEND_RESULT && r.body[0] == 0x1A));
+    tester.collect_mail();
+
+    // One tick short of the timeout changes nothing: the offer is still on screen.
+    let nearly = crate::session::friends::FRIEND_REQUEST_TIMEOUT_MS - 1;
+    assert!(!wisp
+        .tick(nearly)
+        .iter()
+        .any(|r| r.opcode == net::friends::FRIEND_RESULT && r.body[0] == 0x2A));
+    assert_eq!(store.friends(wisp_id).unwrap()[0].state, store::friends::FriendState::Pending);
+
+    // And one tick past it cancels. 0x2A is "The request to add a Friend has been canceled."
+    let out = wisp.tick(crate::session::friends::FRIEND_REQUEST_TIMEOUT_MS);
+    assert!(
+        out.iter().any(|r| r.opcode == net::friends::FRIEND_RESULT && r.body == vec![0x2A]),
+        "{:?}",
+        out.iter().map(|r| &r.what).collect::<Vec<_>>()
+    );
+    assert_eq!(friend_records(&out), vec![], "and the list is re-sent, empty");
+    assert!(store.friends(wisp_id).unwrap().is_empty(), "both rows go, not just one");
+    assert!(store.friends(tester_id).unwrap().is_empty());
+    // The asker is told too, or they wait forever on a request that no longer exists.
+    assert!(tester
+        .collect_mail()
+        .iter()
+        .any(|r| r.opcode == net::friends::FRIEND_RESULT && r.body == vec![0x2A]));
+
+    // **It does not fire twice**, and a tick long after changes nothing more.
+    let out = wisp.tick(crate::session::friends::FRIEND_REQUEST_TIMEOUT_MS * 10);
+    assert!(!out.iter().any(|r| r.opcode == net::friends::FRIEND_RESULT));
+}
+
+/// **An answered request never times out**, even though the tick that would have fired it runs.
+#[test]
+fn answering_a_friend_request_stops_its_timeout() {
+    let (mut wisp, wisp_id, mut tester, tester_id, store) = two_friends();
+    tester.handle(&friend_add_body("Wisp", "Default Group"));
+    wisp.collect_mail();
+
+    let mut yes = net::friends::CLIENT_FRIEND_REQUEST.to_le_bytes().to_vec();
+    yes.push(net::friends::REQUEST_ACCEPT);
+    yes.extend_from_slice(&tester_id.to_le_bytes());
+    wisp.handle(&yes);
+    tester.collect_mail();
+
+    // Well past the timeout: the friendship is untouched and nothing is cancelled.
+    let out = wisp.tick(crate::session::friends::FRIEND_REQUEST_TIMEOUT_MS * 3);
+    assert!(!out.iter().any(|r| r.opcode == net::friends::FRIEND_RESULT && r.body == vec![0x2A]));
+    for who in [wisp_id, tester_id] {
+        assert_eq!(store.friends(who).unwrap()[0].state, store::friends::FriendState::Accepted);
+    }
+}
+
+/// **The popup's No (sub-op 6) refuses, and the asker gets the client's own sentence.**
+#[test]
+fn the_friend_popups_no_refuses_and_tells_the_asker() {
+    let (mut wisp, wisp_id, mut tester, tester_id, store) = two_friends();
+    tester.handle(&friend_add_body("Wisp", "Default Group"));
+    assert!(wisp.collect_mail().iter().any(|r| r.opcode == net::friends::FRIEND_RESULT && r.body[0] == 0x1A));
+
+    let mut no = net::friends::CLIENT_FRIEND_REQUEST.to_le_bytes().to_vec();
+    no.push(net::friends::REQUEST_REFUSE);
+    no.extend_from_slice(&tester_id.to_le_bytes());
+    no.push(0);
+    let out = wisp.handle(&no);
+    assert!(friend_rows(&out).is_empty(), "the owner's list is empty again");
+    assert!(store.friends(wisp_id).unwrap().is_empty());
+    assert!(store.friends(tester_id).unwrap().is_empty(), "the asker's row goes too");
+    // "%s has declined the friend request." - sub-op 0x32, carrying the refuser's name.
+    let told = tester.collect_mail();
+    let declined = told
+        .iter()
+        .find(|r| r.opcode == net::friends::FRIEND_RESULT && r.body[0] == 0x32)
+        .expect("the decline sentence");
+    assert_eq!(&declined.body[1..3], &4u16.to_le_bytes());
+    assert_eq!(&declined.body[3..7], b"Wisp");
+
+    // An answer with nothing waiting settles nothing and is still answered.
+    let out = wisp.handle(&no);
+    assert!(out.iter().any(|r| r.opcode == net::friends::FRIEND_RESULT));
+    assert!(store.friends(wisp_id).unwrap().is_empty());
+}
+
+/// Every refusal is the client's own sentence, and **nothing is written on any of them.**
+#[test]
+fn every_friend_refusal_is_the_clients_own_sentence_and_writes_nothing() {
+    let (mut wisp, wisp_id, mut tester, tester_id, store) = two_friends();
+
+    // Nobody by that name -> 0x23 "That character is not registered."
+    let out = tester.handle(&friend_add_body("Nobody", "Default Group"));
+    assert_eq!(friend_notices(&out), vec![0x23]);
+    assert!(store.friends(tester_id).unwrap().is_empty());
+
+    // Yourself -> 0x21 "You can't enter yourself as your buddy."
+    assert_eq!(friend_notices(&tester.handle(&friend_add_body("Tester2", "G"))), vec![0x21]);
+    assert!(store.friends(tester_id).unwrap().is_empty());
+
+    // Asked once: the second ask is 0x1F "Account buddy request already sent."
+    tester.handle(&friend_add_body("Wisp", "Default Group"));
+    assert_eq!(friend_notices(&tester.handle(&friend_add_body("Wisp", "G"))), vec![0x1F]);
+    assert_eq!(store.friends(tester_id).unwrap().len(), 1, "still one row");
+
+    // The owner, who owes the answer, asking back is NOT a refusal: it settles both rows.
+    let out = wisp.handle(&friend_add_body("Tester2", "Default Group"));
+    assert!(friend_notices(&out).is_empty(), "{:?}", friend_notices(&out));
+    assert_eq!(store.friends(wisp_id).unwrap()[0].state, store::friends::FriendState::Accepted);
+
+    // Now already friends -> 0x1E "That character is already registered as your buddy."
+    assert_eq!(friend_notices(&tester.handle(&friend_add_body("Wisp", "G"))), vec![0x1E]);
+}
+
+/// **An undecoded sub-op changes nothing and is still answered.** Which of the client's
+/// `2`/`3`, `4`/`5`, `6`/`7` pairs is accept or refuse is not known; guessing would accept
+/// requests the player refused.
+#[test]
+fn an_undecoded_friend_sub_op_is_answered_and_changes_nothing() {
+    let (mut wisp, wisp_id, mut tester, _tester_id, store) = two_friends();
+    tester.handle(&friend_add_body("Wisp", "Default Group"));
+    wisp.collect_mail();
+
+    // 2, 3, 6 and 7 are the popup's own buttons and are handled; these are the friend
+    // WINDOW's other operations, which are not built.
+    for sub_op in [4u8, 5, 0x0B, 0x12, 0x13] {
+        let mut b = net::friends::CLIENT_FRIEND_REQUEST.to_le_bytes().to_vec();
+        b.push(sub_op);
+        b.extend_from_slice(&_tester_id.to_le_bytes());
+        b.extend_from_slice(&0u16.to_le_bytes()); // a string / flag, whichever the shape wants
+        let out = wisp.handle(&b);
+        // Answered - the friend window is an exclusive-request window and an unanswered
+        // request latches it.
+        assert!(
+            out.iter().any(|r| r.opcode == net::friends::FRIEND_RESULT),
+            "sub-op {sub_op} went unanswered"
+        );
+        assert_eq!(
+            store.friends(wisp_id).unwrap()[0].state,
+            store::friends::FriendState::Pending,
+            "sub-op {sub_op} must not settle anything"
+        );
+    }
+
+    // The group names the client hands back are logged and stored as nothing - and NOT
+    // answered, which has its own test beside this one: a list reply here loops.
+    let mut groups = net::friends::CLIENT_FRIEND_REQUEST.to_le_bytes().to_vec();
+    groups.push(0x14);
+    groups.extend_from_slice(&1u32.to_le_bytes());
+    groups.push(0);
+    groups.extend_from_slice(&13u16.to_le_bytes());
+    groups.extend_from_slice(b"Default Group");
+    assert!(wisp.handle(&groups).is_empty());
+    assert_eq!(store.friends(wisp_id).unwrap().len(), 1);
+}
+
+
+// ==========================================================================================
+// The trade window - `0x0575` mode 4. `session/trade.rs`, `research/trade-2026-09-09.md`
+// ==========================================================================================
+
+/// The `0x017E` bodies the client builds, in the shapes captured in `world-ch0.log`.
+fn miniroom(mode: u32, rest: &[u32]) -> Vec<u8> {
+    let mut b = net::trade::CLIENT_MINIROOM.to_le_bytes().to_vec();
+    b.extend_from_slice(&mode.to_le_bytes());
+    for v in rest {
+        b.extend_from_slice(&v.to_le_bytes());
+    }
+    if mode == 3 {
+        b.extend_from_slice(&[0, 0]); // the accept's two trailing bytes
+    }
+    b
+}
+
+/// The `(mySlot, members)` of a `0x0575` mode 4, read back off the wire the way the client
+/// reads it: capacity, mySlot, then members until a byte with bit 7 set.
+fn room_open_members(r: &Reply) -> (u8, u8, Vec<(u8, u32, String)>) {
+    assert_eq!(r.opcode, net::trade::MINIROOM_RESULT);
+    assert_eq!(u32::from_le_bytes([r.body[0], r.body[1], r.body[2], r.body[3]]), 4, "mode 4");
+    assert_eq!(u32::from_le_bytes([r.body[4], r.body[5], r.body[6], r.body[7]]), 0, "A = 0 opens a room");
+    assert_eq!(u32::from_le_bytes([r.body[8], r.body[9], r.body[10], r.body[11]]), 1, "roomType 1 = trade");
+    let capacity = r.body[16];
+    let my_slot = r.body[17];
+    let mut at = 18;
+    let mut members = Vec::new();
+    while r.body[at] & 0x80 == 0 {
+        let slot = r.body[at];
+        at += 1;
+        // The avatar look is `opcode::avatar_look`: 195 bytes plus five per worn item, and
+        // these characters wear nothing.
+        at += 195;
+        let id = u32::from_le_bytes([r.body[at], r.body[at + 1], r.body[at + 2], r.body[at + 3]]);
+        at += 4;
+        let len = u16::from_le_bytes([r.body[at], r.body[at + 1]]) as usize;
+        at += 2;
+        let name = String::from_utf8(r.body[at..at + len].to_vec()).unwrap();
+        at += len + 2; // the name, then the u16 nobody has identified
+        members.push((slot, id, name));
+    }
+    assert_eq!(r.body[at], net::trade::MEMBER_LIST_END, "the list ends on a negative byte");
+    assert_eq!(at + 1, r.body.len(), "and nothing follows it");
+    (capacity, my_slot, members)
+}
+
+/// **The bug the owner reported.** Tester2 opens a trade and invites the owner; the owner accepts; **both**
+/// get a mode 4 that opens the window, each with its own `mySlot` and both seats listed.
+#[test]
+fn accepting_a_trade_opens_a_window_on_both_screens() {
+    let (store, config, fields, account) = shared_channel(0, 30);
+    let (mut host, host_id) = join_channel(&store, &config, &fields, account, "Tester2");
+    let other = store.create_account("player", "correct horse battery").unwrap();
+    let (mut guest, guest_id) = join_channel(&store, &config, &fields, other, "Wisp");
+    host.on_field_entered();
+    guest.on_field_entered();
+    host.collect_mail();
+    guest.collect_mail();
+
+    // Create, then invite - the two packets the client sends 8 ms apart.
+    assert!(host.handle(&miniroom(0, &[net::trade::ROOM_TYPE_TRADE])).is_empty(), "the create sends nothing");
+    host.handle(&miniroom(5, &[guest_id]));
+    let invite = guest
+        .collect_mail()
+        .into_iter()
+        .find(|r| r.opcode == net::trade::MINIROOM_RESULT)
+        .expect("the invite popup");
+    assert_eq!(u32::from_le_bytes([invite.body[0], invite.body[1], invite.body[2], invite.body[3]]), 5);
+    // The ticket the client will echo back is the inviter's character id.
+    let ticket = u32::from_le_bytes(invite.body[invite.body.len() - 4..].try_into().unwrap());
+    assert_eq!(ticket, host_id);
+
+    // Accept: the accepter's own reply, and the host's copy over the bus.
+    let mine = guest.handle(&miniroom(3, &[ticket]));
+    let (capacity, my_slot, members) = room_open_members(
+        mine.iter().find(|r| r.opcode == net::trade::MINIROOM_RESULT).expect("my trade window"),
+    );
+    assert_eq!((capacity, my_slot), (net::trade::TRADE_CAPACITY, 1), "the accepter is slot 1");
+    assert_eq!(
+        members,
+        vec![(0, host_id, "Tester2".to_string()), (1, guest_id, "Wisp".to_string())]
+    );
+
+    let theirs = host.collect_mail();
+    let (capacity, my_slot, members) = room_open_members(
+        theirs.iter().find(|r| r.opcode == net::trade::MINIROOM_RESULT).expect("the host's trade window"),
+    );
+    assert_eq!((capacity, my_slot), (net::trade::TRADE_CAPACITY, 0), "the host is slot 0");
+    assert_eq!(
+        members,
+        vec![(0, host_id, "Tester2".to_string()), (1, guest_id, "Wisp".to_string())],
+        "both sides are told about both seats"
+    );
+
+    // A second accept of the same ticket finds the room full and sends nothing, rather than
+    // opening a third window into a two-seat room.
+    assert!(guest.handle(&miniroom(3, &[ticket])).is_empty());
+}
+
+/// A ticket nobody opened a room for is answered with nothing - and a declined room is gone,
+/// so accepting it afterwards is that same case.
+#[test]
+fn a_trade_accept_without_a_room_opens_nothing() {
+    let (store, config, fields, account) = shared_channel(0, 30);
+    let (mut host, host_id) = join_channel(&store, &config, &fields, account, "Tester2");
+    let other = store.create_account("player", "correct horse battery").unwrap();
+    let (mut guest, guest_id) = join_channel(&store, &config, &fields, other, "Wisp");
+    host.on_field_entered();
+    guest.on_field_entered();
+    host.collect_mail();
+    guest.collect_mail();
+
+    // No create: the accept has nothing to join.
+    assert!(guest.handle(&miniroom(3, &[host_id])).is_empty());
+
+    // Create, invite, decline - then the same ticket accepted is still nothing.
+    host.handle(&miniroom(0, &[net::trade::ROOM_TYPE_TRADE]));
+    host.handle(&miniroom(5, &[guest_id]));
+    guest.collect_mail();
+    guest.handle(&miniroom(6, &[host_id, 4]));
+    assert!(guest.handle(&miniroom(3, &[host_id])).is_empty(), "a declined room is gone");
+    assert!(host.collect_mail().iter().all(|r| r.opcode != net::trade::MINIROOM_RESULT));
 }

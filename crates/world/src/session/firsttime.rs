@@ -56,7 +56,7 @@ impl Session {
         let members: Vec<u32> = party.as_ref().map(|p| p.members.clone()).unwrap_or_default();
         let online: std::collections::HashSet<u32> = self.bus().online_characters().into_iter().collect();
         let here: std::collections::HashSet<u32> =
-            self.bus().characters_on(firsttime::ENTRY_MAP, &members).into_iter().collect();
+            self.bus().characters_on(crate::fields::FieldKey::world(firsttime::ENTRY_MAP), &members).into_iter().collect();
         let store = self.store.clone();
         let gate = firsttime::check(chr.id, party.as_ref(), |id| {
             store.character_brief(id).ok().flatten().map(|b| firsttime::Candidate {

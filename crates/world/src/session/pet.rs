@@ -125,7 +125,7 @@ impl Session {
             body: out,
             what: format!("PetMove: {}'s pet walked; the path forwarded to the map", chr.name),
         };
-        self.bus().publish(self.subscriber, chr.map_id, reply, None);
+        self.bus().publish(self.subscriber, self.field_of(&chr), reply, None);
         Vec::new()
     }
 
@@ -182,7 +182,7 @@ impl Session {
         // The owner always gets its own pet's answer (the return below); the map gets it too
         // unless pets are owner-local. `Config::broadcast_pets`.
         if self.config.broadcast_pets {
-            self.bus().publish(self.subscriber, chr.map_id, reply.clone(), None);
+            self.bus().publish(self.subscriber, self.field_of(&chr), reply.clone(), None);
         }
         let mut out = vec![reply];
         out.extend(earned);
@@ -247,7 +247,7 @@ impl Session {
             // was there if `broadcast_pets` is on, so only then do they need the removal; the
             // companion list is cleared regardless, since it is free and keeps arrivals clean.
             if self.config.broadcast_pets {
-                self.bus().publish(self.subscriber, chr.map_id, gone.clone(), None);
+                self.bus().publish(self.subscriber, self.field_of(&chr), gone.clone(), None);
             }
             self.bus().set_companions(self.subscriber, Vec::new());
             // Put away in the store too, or the next login would summon it again.
@@ -273,7 +273,7 @@ impl Session {
         // The summon goes to the map and the pet travels with the owner to whoever arrives
         // after; with pets owner-local (`Config::broadcast_pets` off) neither happens.
         if self.config.broadcast_pets {
-            self.bus().publish(self.subscriber, chr.map_id, up.clone(), None);
+            self.bus().publish(self.subscriber, self.field_of(&chr), up.clone(), None);
             self.bus().set_companions(self.subscriber, vec![up.clone()]);
         }
         out.push(up);
@@ -320,6 +320,32 @@ impl Session {
         // `pet_settle_replies`. Armed here, on every field entry that has a pet out.
         self.pet_settle_pending = true;
         vec![
+            // **The item BEFORE the summon, so the pet is built knowing its own closeness.**
+            //
+            // The owner, 2026-09-21: *"Whenever I change maps, if the pet has some sort of
+            // closeness, a message of +1 closeness still erroneously show up bottom right on
+            // the screen, despite not actually adding any closeness."* Lucy's closeness is
+            // **1** (read out of the `0x0070` body in `world-ch0.log`, 01:13:05.886), and the
+            // number in the message is the closeness, not a constant - the client is
+            // reporting a rise from 0 to 1, honestly.
+            //
+            // The printer is `FUN_141ec4f60(pet)`, reached from the local user's full refresh
+            // `FUN_142899d40`: it reads the pet's cached closeness, reloads the pet from its
+            // Cash item (`FUN_141ec20f0`), reads it again and prints string `0x1AC`
+            // *"%s's Closeness has increased (+%d)"* with the difference (`0x1AD` for a fall).
+            // **[L]** for the two strings and the subtraction. So any item write that raises
+            // the closeness the client holds prints a line - there is no quiet path.
+            //
+            // A field entry clears the client's bag, which is why `restore_bag_and_mesos`
+            // exists at all. So the pet was being created with **no item to read** - cached
+            // closeness 0 - and the post-summon write below then took it to 1. Sending the
+            // same item first puts it in the bag before `CPet` is built, so the reload finds
+            // the value it already has and the difference is zero. **[I]** on `CPet` reading
+            // the item at construction; what is measured is that only ONE line appears per
+            // map change, and the first-move re-summon (`pet_settle_replies`) is silent -
+            // which is only true if a pet built while its item is in the bag starts with the
+            // right number.
+            self.pet_item_refresh(chr, active, true),
             Reply {
                 opcode: net::pet::PET_ACTIVATED,
                 body: net::pet::pet_activated(chr.id, &pet),
@@ -339,6 +365,11 @@ impl Session {
             // (`on_pet_activate`) and a feed (`on_use_pet_food`) both fix it. The item is in the
             // SetField bag restore too, but that write lands before the pet is active and does
             // not trigger the re-read. So the field entry sends the same refresh those two do.
+            //
+            // **Kept even though the write above is the same packet.** The one before the
+            // summon is what the pet is BUILT from; this one is what makes it re-read after
+            // it is active, and that re-read is the vacuum fix the owner confirmed on 2026-09-18.
+            // Dropping either is a regression of a different bug.
             self.pet_item_refresh(chr, active, true),
         ]
     }
@@ -488,7 +519,7 @@ impl Session {
             what: format!("PetActionCommand: {}'s pet eats ({item_id}, sent as food id 0: the animation without the auto-feed balloon) - type 2", chr.name),
         };
         if self.config.broadcast_pets {
-            self.bus().publish(self.subscriber, chr.map_id, ate.clone(), None);
+            self.bus().publish(self.subscriber, self.field_of(&chr), ate.clone(), None);
         }
         out.push(ate);
         if level > st.level {
@@ -507,7 +538,7 @@ impl Session {
         if self.config.broadcast_pets {
             self.bus().publish(
                 self.subscriber,
-                chr.map_id,
+                self.field_of(&chr),
                 Reply {
                     opcode: net::stats::USER_EFFECT_REMOTE,
                     body: net::pet::pet_level_up_remote(chr.id),
@@ -568,7 +599,7 @@ impl Session {
             what: format!("PetActivated: {} went home hungry (fullness 0)", self.pet_name(Some(active.pet_id), active.item_id)),
         };
         if self.config.broadcast_pets {
-            self.bus().publish(self.subscriber, chr.map_id, gone.clone(), None);
+            self.bus().publish(self.subscriber, self.field_of(&chr), gone.clone(), None);
         }
         self.bus().set_companions(self.subscriber, Vec::new());
         let mut out = self.notice(format!("{} is starving and went back home.", self.pet_name(Some(active.pet_id), active.item_id)));
@@ -743,7 +774,7 @@ impl Session {
                 what: format!("PetNameChanged: {}'s pet is now called {name:?}", chr.name),
             };
             if self.config.broadcast_pets {
-                self.bus().publish(self.subscriber, chr.map_id, renamed.clone(), None);
+                self.bus().publish(self.subscriber, self.field_of(&chr), renamed.clone(), None);
                 // Whoever arrives next is handed the pet under its new name.
                 let pet = self.field_pet(&chr, pet);
                 self.bus().set_companions(

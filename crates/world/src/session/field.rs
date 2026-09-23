@@ -127,7 +127,7 @@ impl Session {
         // So what goes out here is whatever is alive RIGHT NOW, at its current position -
         // which for a returning player is where the mobs actually wandered to, not their
         // spawn points. `crate::fields`.
-        self.fields.seed(chr.map_id, &self.config, self.clock_ms);
+        self.fields.seed(self.field_of(&chr), &self.config, self.clock_ms);
         // **Who controls what, decided before a single packet is built.**
         //
         // This loop used to push a `MOB_CHANGE_CONTROLLER` for **every** mob to **every**
@@ -151,11 +151,11 @@ impl Session {
         // **Lock order.** `mobs_on` returns owned data and its guard is gone before the
         // registry is touched - `crate::fields::Fields` says why that rule exists.
         let me = self.subscriber.get();
-        let live_mobs = self.fields.mobs_on(chr.map_id);
+        let live_mobs = self.fields.mobs_on(self.field_of(&chr));
         let alive: Vec<u32> = live_mobs.iter().map(|m| m.spawn.object_id).collect();
-        self.fields.controllers().release_map(chr.map_id, me);
-        let ghosts = self.fields.controllers().reconcile(chr.map_id, &alive);
-        let mine = self.fields.controllers().claim_uncontrolled(chr.map_id, me, &alive);
+        self.fields.controllers().release_map(self.field_of(&chr), me);
+        let ghosts = self.fields.controllers().reconcile(self.field_of(&chr), &alive);
+        let mine = self.fields.controllers().claim_uncontrolled(self.field_of(&chr), me, &alive);
         crate::server::log(&format!(
             "   map {} has {} mob(s); this connection now controls {}{}",
             chr.map_id,
@@ -168,7 +168,7 @@ impl Session {
             }
         ));
         // The breakable boxes, before the mobs: scenery first. session/reactor.rs.
-        out.extend(self.reactor_entry_replies(chr.map_id));
+        out.extend(self.reactor_entry_replies(self.field_of(&chr)));
         for live in live_mobs {
             let mut mob = live.as_seen();
             // Already on the field when you walked in - no spawn effect. The owner: *"if the
@@ -230,7 +230,7 @@ impl Session {
         // `crate::mobshare::may_see_drop` is the predicate and `drops.rs` applies it; the only
         // question here is who counts as "us", and `Session::party_for` answers it from the
         // channel's real membership instead of assuming everyone is alone.
-        let (map, now) = (chr.map_id, self.clock_ms);
+        let (map, now) = (self.field_of(&chr), self.clock_ms);
         let party = self.party_for(chr.id);
         let who = chr.id;
         out.extend(self.fields.with_drops(map, |d| d.field_entry(map, now, who, &party)));
@@ -460,7 +460,7 @@ impl Session {
         //
         // Named map, not `hand_over_all_mobs`, so a walk between two maps cannot touch a
         // third one this connection was never on.
-        let leaving = chr.map_id;
+        let leaving = self.field_of(chr);
         self.hand_over_mobs(leaving);
         chr.map_id = map;
         chr.portal = portal;

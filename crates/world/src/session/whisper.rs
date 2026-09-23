@@ -25,8 +25,15 @@ impl Session {
             let d = l.directory.lock().unwrap_or_else(|e| e.into_inner());
             d.find_by_name(&req.target).map(|(id, e)| (id, e.name.clone(), Some(e.channel)))
         });
+        // **Without a hub, this channel still knows its own players**, and not asking it is
+        // what made a find for somebody standing on the same map answer "not online on any
+        // channel" (the owner, 2026-09-22). The store gives the id; the bus says whether they are
+        // playing here.
         let target = via_directory.or_else(|| {
-            self.store.character_id_by_name(&req.target).ok().flatten().map(|id| (id, req.target.clone(), None))
+            self.store.character_id_by_name(&req.target).ok().flatten().map(|id| {
+                let here = self.bus().character_online(id).then_some(self.config.channel_id);
+                (id, req.target.clone(), here)
+            })
         });
 
         match req.kind {
@@ -71,24 +78,47 @@ impl Session {
                     ),
                 }]
             }
-            // /find: answered in words rather than with mode 0x09, whose u8 field's meaning
-            // has not been read. `net::whisper`.
-            _ => match &target {
-                Some((_, name, Some(channel))) => {
-                    let where_ = if *channel == self.config.channel_id {
-                        "this channel".to_string()
-                    } else {
-                        format!("channel {}", channel + 1)
-                    };
-                    self.notice(format!("{name} is on {where_}."))
-                }
-                Some((_, name, None)) => self.notice(format!("{name} is not online on any channel.")),
-                None => vec![Reply {
+            // **/find, and the buddy window's location check (kind 0x44).**
+            //
+            // The owner, 2026-09-22: *"please do not send a message for that, as those information
+            // should only show in the UI where 'Checking location' is."* So **nothing here
+            // writes a chat line**: mode `0x09` is the arm that fills that status line, and
+            // the client formats it itself as `"<name> - <place>"`. `net::whisper::place`.
+            _ => {
+                let (place, value, said) = match &target {
+                    // On this channel: hand over the MAP ID and let the client name it, which
+                    // is what it does with its own `streetName` lookup.
+                    Some((id, _, Some(channel))) if *channel == self.config.channel_id => {
+                        let map = self
+                            .bus()
+                            .everyone_here()
+                            .into_iter()
+                            .find_map(|(who, field)| (who == *id).then_some(field.map))
+                            .unwrap_or(0);
+                        (net::whisper::place::MAP, map, format!("map {map}"))
+                    }
+                    // Another channel: the client names the channel.
+                    Some((_, _, Some(channel))) => {
+                        (net::whisper::place::CHANNEL, *channel, format!("channel {}", channel + 1))
+                    }
+                    // Offline, or no such character. Answered - an unanswered find leaves
+                    // "Checking location" on screen forever - but with no place, so the
+                    // window stops waiting and the chat log stays clean.
+                    _ => (net::whisper::place::NOWHERE, 0, "nowhere - not online".to_string()),
+                };
+                let name = target.as_ref().map(|(_, n, _)| n.clone()).unwrap_or_else(|| req.target.clone());
+                crate::server::log(&format!(
+                    "   whisper: {} asked where '{}' is -> {said}",
+                    chr.name, req.target
+                ));
+                vec![Reply {
                     opcode: net::whisper::WHISPER,
-                    body: net::whisper::whisper_sent(&req.target, false),
-                    what: format!("Whisper 0x01B3 mode 0x0A: /find '{}' - no such character; 'Could not find'", req.target),
-                }],
-            },
+                    body: net::whisper::whisper_found(&name, place, value),
+                    what: format!(
+                        "Whisper 0x01B3 mode 0x09: '{name}' is at {said} - the window draws it beside the name, not in chat"
+                    ),
+                }]
+            }
         }
     }
 }

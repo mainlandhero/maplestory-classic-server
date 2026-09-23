@@ -175,6 +175,7 @@ impl Session {
             "resetap" => self.gm_reset_ap(),
             "resetsp" => self.gm_reset_sp(),
             "learn" => self.gm_learn(arg),
+            "craft" => self.gm_craft(arg),
             // Re-read `data/npc-dialogue.txt` without restarting. See `gm_npc_reload`.
             "npcreload" => self.gm_npc_reload(arg),
             // Account administration from inside the game. The owner, 2026-09-05. The codes are
@@ -187,6 +188,107 @@ impl Session {
         }
     }
 
+
+    /// `!craft [profession] [level] [mastery]` - open a Crafting Journal tab without doing
+    /// the quest.
+    ///
+    /// The tab unlocks on nothing but the profession skill's level, so this writes the row
+    /// the starter quest would have written. `!craft` with no arguments lists what the
+    /// character has; `!craft all 10` opens every tab at the cap; `!craft tailoring 0`
+    /// closes one again.
+    ///
+    /// **The character-level gate is NOT applied here.** `!craft` is a test instrument and
+    /// The owner's test characters are level 10 - the cap is what a *craft* obeys
+    /// (`crate::crafting::mastery_level_cap`), and a GM setting a level outright is saying
+    /// what they mean. The acknowledgement says so rather than leaving it to be discovered.
+    pub(super) fn gm_craft(&mut self, arg: &str) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else {
+            return self.gm_ack("!craft REFUSED: no character is claimed on this connection.".to_string());
+        };
+        let mut fields = arg.split_whitespace();
+        let Some(which) = fields.next() else {
+            let held = self.store.crafting(chr.id).unwrap_or_default();
+            if held.is_empty() {
+                return self.gm_ack(format!(
+                    "No crafting professions learnt. !craft <profession> [level] [mastery] - profession is 0..5 or one of {}.",
+                    crate::crafting::PROFESSION_NAMES.join(", ")
+                ));
+            }
+            let list: Vec<String> = held
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{} level {} ({}/{})",
+                        crate::crafting::profession_name(p.profession),
+                        p.level,
+                        p.exp,
+                        crate::crafting::mastery_exp_needed(p.level)
+                    )
+                })
+                .collect();
+            return self.gm_ack(format!("Crafting: {}.", list.join(", ")));
+        };
+        let level: u32 = fields.next().and_then(|v| v.parse().ok()).unwrap_or(1);
+        let mastery: u32 = fields.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+        if level > net::craft::MAX_PROFESSION_LEVEL {
+            return self.gm_ack(format!(
+                "!craft: {level} is past the maximum of {}. A profession stops there.",
+                net::craft::MAX_PROFESSION_LEVEL
+            ));
+        }
+        let professions: Vec<u8> = if which.eq_ignore_ascii_case("all") {
+            (0..6).collect()
+        } else {
+            match crate::crafting::profession_from_word(which) {
+                Some(p) => vec![p],
+                None => {
+                    return self.gm_ack(format!(
+                        "!craft: {which:?} is not a profession. Try 0..5, \"all\", or one of {}.",
+                        crate::crafting::PROFESSION_NAMES.join(", ")
+                    ))
+                }
+            }
+        };
+        let mut out = Vec::new();
+        let mut done = Vec::new();
+        for profession in professions {
+            if self.store.set_profession(chr.id, profession, level, mastery).is_err() {
+                continue;
+            }
+            done.push(crate::crafting::profession_name(profession));
+            // Level 0 closed the tab: tell the client the skill is gone rather than leaving
+            // the old number on a record it will re-read at the next field entry.
+            out.push(if level == 0 {
+                let id = net::craft::profession_skill(profession).unwrap_or(0);
+                Reply {
+                    opcode: net::skills::CHANGE_SKILL_RECORD_RESULT,
+                    body: net::skills::change_skill_record_result(
+                        true,
+                        false,
+                        &[net::skills::SkillChange::Forget { id }],
+                    ),
+                    what: format!("ChangeSkillRecordResult: {id} forgotten - !craft closed the tab"),
+                }
+            } else {
+                self.craft_skill_reply_for_gm(profession, level, mastery)
+            });
+        }
+        let cap = crate::crafting::mastery_level_cap(u32::from(chr.level));
+        let note = if level > cap {
+            format!(
+                " Note: crafting will not raise it past level {cap} until your character is level {}.",
+                (cap + 1) * 5
+            )
+        } else {
+            String::new()
+        };
+        out.extend(self.gm_ack(if level == 0 {
+            format!("Closed: {}.", done.join(", "))
+        } else {
+            format!("Set to level {level} (mastery {mastery}): {}.{note}", done.join(", "))
+        }));
+        out
+    }
 
     /// `!job <id>` - set the character's job, and nothing else.
     ///
@@ -1404,7 +1506,9 @@ impl Session {
             Some(link) => link.find(wanted).map(|(_, e)| (e.channel, e.map, e.name)),
             None => self.bus().everyone_here().into_iter().find_map(|(id, map)| {
                 let c = self.store.character_brief(id).ok().flatten()?;
-                c.name.eq_ignore_ascii_case(wanted).then(|| (self.config.channel_id, map, c.name))
+                // `!track` reports the MAP a player is on, not which copy of it - an
+                // instance is not somewhere a GM can be told to walk to.
+                c.name.eq_ignore_ascii_case(wanted).then(|| (self.config.channel_id, map.map, c.name))
             }),
         };
         let scope = if crate::link::installed().is_some() { "" } else { " (this channel only - no world hub is linked)" };

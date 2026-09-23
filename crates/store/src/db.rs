@@ -290,6 +290,11 @@ impl Store {
         crate::gifts::create_tables(&conn)?;
         crate::inventory::rename_item_ids(&conn)?;
         crate::skills::create_tables(&conn)?;
+        // The six crafting professions. Their level/mastery pair is packed into one skill
+        // `level` on the wire and kept as two honest integers here - `store::crafting`.
+        crate::crafting::create_tables(&conn)?;
+        // Who is on whose friend list - `store::friends`. Two directed rows per friendship.
+        crate::friends::create_tables(&conn)?;
         // The spent half of a skill point. A whole new table, so `CREATE TABLE IF NOT EXISTS`
         // is enough - see `skillpoints::create_tables` for what that means for a character who
         // already has skills learned.

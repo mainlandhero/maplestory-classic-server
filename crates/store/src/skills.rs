@@ -58,7 +58,26 @@ impl Store {
                 expires_at: row.get::<_, i64>(3)? as u64,
             })
         })?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
+        let mut out: Vec<net::skills::Skill> = rows.collect::<rusqlite::Result<_>>()?;
+        drop(stmt);
+        // **The six crafting professions ride on this list.** They are ordinary skills to the
+        // client (`92000000`..`92050000`) and the tab unlocks on nothing but their level, so
+        // every packet that carries skills has to carry them - the character record, and
+        // `0x0081`. Their `level` field is `(level << 24) | masteryExp`
+        // (`net::craft::packed_mastery`), which is why they are not stored in
+        // `character_skills` at all: see `store::crafting`.
+        //
+        // Appended, not merged: the ids are larger than every real skill in this client, so
+        // the list stays in id order and a record built twice is still byte-identical.
+        for p in crate::crafting::crafting_rows(&conn, character_id)? {
+            out.push(net::skills::Skill {
+                id: p.skill_id(),
+                level: p.packed_level(),
+                master_level: 0,
+                expires_at: net::skills::SKILL_NEVER_EXPIRES,
+            });
+        }
+        Ok(out)
     }
 
     /// One skill's level, or 0 if the character has never raised it.

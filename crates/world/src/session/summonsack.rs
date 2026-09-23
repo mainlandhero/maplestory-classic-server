@@ -126,7 +126,7 @@ impl Session {
             return unlock();
         }
 
-        let map = chr.map_id;
+        let map = self.field_of(&chr);
         let mut out = Vec::new();
         for template_id in &sack.mobs {
             let hp = self

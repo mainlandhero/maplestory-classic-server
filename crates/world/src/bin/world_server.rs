@@ -123,6 +123,7 @@ fn main() -> ExitCode {
     let mut scrolls_path = PathBuf::from("gm-handbook/scrolls.txt");
     let mut sacks_path = PathBuf::from("gm-handbook/summonsacks.txt");
     let mut chairs_path = PathBuf::from("gm-handbook/chairs.txt");
+    let mut recipes_path = PathBuf::from("gm-handbook/craftrecipes.txt");
     let mut mob_templates_path = PathBuf::from("gm-handbook/mobtemplates.txt");
     let mut npc_strings_path = PathBuf::from("gm-handbook/npcstrings.txt");
     let mut pet_commands_path = PathBuf::from("gm-handbook/petcommands.txt");
@@ -254,6 +255,7 @@ fn main() -> ExitCode {
             "--scrolls" => value().map(|v| scrolls_path = PathBuf::from(v)),
             "--summon-sacks" => value().map(|v| sacks_path = PathBuf::from(v)),
             "--chairs" => value().map(|v| chairs_path = PathBuf::from(v)),
+            "--craftrecipes" => value().map(|v| recipes_path = PathBuf::from(v)),
             "--mob-templates" => value().map(|v| mob_templates_path = PathBuf::from(v)),
             "--npc-strings" => value().map(|v| npc_strings_path = PathBuf::from(v)),
             "--pet-commands" => value().map(|v| pet_commands_path = PathBuf::from(v)),
@@ -502,6 +504,20 @@ fn main() -> ExitCode {
             "maplecw-world: no chair table from {} - sitting will not change idle recovery. Regenerate with: python tools/dump_chairs.py",
             chairs_path.display()
         );
+    }
+
+    // The crafting recipes. Empty is legal and every craft is then refused with the client's
+    // own "This function is currently unavailable" - said out loud here, because a Crafting
+    // Journal whose CRAFT button does nothing reads as a broken feature rather than as a
+    // missing table.
+    config.recipes = world::crafting::load_recipes(&recipes_path);
+    if config.recipes.is_empty() {
+        eprintln!(
+            "maplecw-world: no crafting recipes from {} - every craft will be refused. Regenerate with: python tools/dump_craftrecipe.py",
+            recipes_path.display()
+        );
+    } else {
+        println!("maplecw-world: {} crafting recipe(s)", config.recipes.len());
     }
 
     // **The generated base, read once.** It is not re-read by `!npcreload`, on purpose:

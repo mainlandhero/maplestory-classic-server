@@ -107,7 +107,7 @@ impl Session {
             Ok(i) => i,
             Err(e) => return self.refuse_drop(m, &format!("the store would not release it: {e}")),
         };
-        let (map, now) = (chr.map_id, self.clock_ms);
+        let (map, now) = (self.field_of(&chr), self.clock_ms);
         let placed = self.fields.with_drops(map, |d| {
             d.drop_item(DropFromBag {
                 map_id: map,
@@ -222,7 +222,7 @@ impl Session {
                 )
             }
         };
-        let (map, now) = (chr.map_id, self.clock_ms);
+        let (map, now) = (self.field_of(&chr), self.clock_ms);
         let placed = self.fields.with_drops(map, |d| {
             d.drop_money(crate::drops::DropMoneyOnGround {
                 map_id: map,
@@ -298,7 +298,7 @@ impl Session {
     /// drop - a solo drop belongs to one owner - holds no such object id and its client
     /// ignores the leave, exactly as it ignores a movement packet for an id its pool never
     /// had. So publishing to the whole field is safe and needs no per-drop audience list.
-    fn take_leaves_to_field(&self, map: u32, outcome: &crate::drops::PickUp) -> Vec<Reply> {
+    fn take_leaves_to_field(&self, map: crate::fields::FieldKey, outcome: &crate::drops::PickUp) -> Vec<Reply> {
         let leaves = outcome.replies();
         for leave in &leaves {
             self.bus().publish(self.subscriber, map, leave.clone(), None);
@@ -316,7 +316,7 @@ impl Session {
     /// the map, is the whole amount to the picker. Integer arithmetic, so the picker's 70%
     /// rounds down and a 1-meso drop pays the picker 0 and the members 0 - and a member's
     /// zero share is not mailed, since it would draw nothing.
-    fn party_meso_split(&self, total: u32, from_mob: bool, picker: u32, map: u32) -> (u32, String) {
+    fn party_meso_split(&self, total: u32, from_mob: bool, picker: u32, map: crate::fields::FieldKey) -> (u32, String) {
         if !from_mob || total == 0 {
             return (total, String::new());
         }
@@ -403,7 +403,7 @@ impl Session {
             ));
         };
 
-        let map = chr.map_id;
+        let map = self.field_of(&chr);
         // **Read the object id where it is.** It was searched for, across every byte offset,
         // because the layout was unknown; one run measured it at offset 13 and the search can
         // go. The body is `u8 0 | u32 tick | u32 0 | i16 x | i16 y | u32 dropObjectId | ...`,

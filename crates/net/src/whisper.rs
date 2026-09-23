@@ -70,10 +70,34 @@ pub mod kind {
 
 /// The reply's mode byte.
 pub mod mode {
+    /// **Where somebody is**: `str name, u8 place, u32 value`. See [`whisper_found`].
+    pub const FOUND: u8 = 0x09;
     /// The sender's result: `u8 0, str target, u8 found`.
     pub const SENT: u8 = 0x0A;
     /// A whisper arrives - see the module docs for the body.
     pub const RECEIVE: u8 = 0x12;
+}
+
+/// The `u8` in a [`mode::FOUND`] reply: what `value` means, and what the client writes.
+///
+/// Decoded 2026-09-22 off `FUN_1418486b0` case 9, whose four arms each resolve a different
+/// kind of place and then format it with string `0x03EB`, **`"%s - %s"`** - which is exactly
+/// the shape of *"the owner - Checking location"* in the buddy window. **[L]**
+pub mod place {
+    /// `value` is a **map id**; the client looks its street and map name up itself. **[L]**
+    /// (`FUN_141815360`, then the `streetName` property.)
+    pub const MAP: u8 = 1;
+    /// String `0x0DE2` *"Cash Shop"*; `value` unused. **[L]**
+    pub const CASH_SHOP: u8 = 2;
+    /// `value` is a **channel**, resolved by `FUN_142cb92f0`. **[L]**
+    pub const CHANNEL: u8 = 3;
+    /// String `0x0DE3` *"Maple Auction"*. **[L]**
+    pub const MAPLE_AUCTION: u8 = 5;
+    /// **No place.** Not an arm of the switch, so the client formats an empty second half
+    /// rather than drawing anything - which is how this server answers a find for somebody
+    /// who is not online without putting a line in the chat log. **[I]** on what that looks
+    /// like on screen; it is deliberate, and plan step 12 asks.
+    pub const NOWHERE: u8 = 0;
 }
 
 /// A parsed [`CLIENT_WHISPER`].
@@ -121,6 +145,35 @@ pub fn whisper_receive(from_name: &str, from_id: u32, from_account: u32, from_ch
     w.str(""); //                1408dcca7
     w.u32(0); //                 1408dcd11
     w.u32(0); //                 1408da0b6  hasItem: 0, nothing follows
+    w.into_vec()
+}
+
+/// **Where somebody is**: mode `0x09`, the answer the buddy window's location check wants.
+///
+/// The owner, 2026-09-22: *"It keeps saying the owner is not online on any channel when the owner is right
+/// there. Also please do not send a message for that, as those information should only show
+/// in the UI where 'Checking location' is."*
+///
+/// Both halves of that are this packet. The window sends `0x017B` kind `0x44` and waits; this
+/// server used to answer with a **chat line it wrote itself**, which is why the wording was
+/// wrong *and* why it appeared in the log instead of the window. Mode `0x09` is the arm that
+/// fills the status line: `str name, u8 place, u32 value`, formatted with `"%s - %s"`.
+///
+/// ```
+/// use net::whisper::{whisper_found, place};
+/// let b = whisper_found("Wisp", place::MAP, 104040000);
+/// assert_eq!(b[0], 0x09);
+/// assert_eq!(&b[1..3], &4u16.to_le_bytes());
+/// assert_eq!(&b[3..7], b"Wisp");
+/// assert_eq!(b[7], place::MAP);
+/// assert_eq!(&b[8..12], &104040000u32.to_le_bytes());
+/// ```
+pub fn whisper_found(name: &str, place: u8, value: u32) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(mode::FOUND);
+    w.str(name); //              141849833
+    w.u8(place); //              14184983c
+    w.u32(value); //             141849848
     w.into_vec()
 }
 

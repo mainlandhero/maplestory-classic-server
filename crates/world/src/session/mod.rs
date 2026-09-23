@@ -266,7 +266,7 @@ pub struct Session {
     clock_ms: u64,
     /// Summoned mobs whose summoning animation is still playing: `(due_ms, map, objectId)`.
     /// [`Session::tick`] sends each its `0x03E8` when due. `session/summonsack.rs`.
-    pending_suspend_resets: Vec<(u64, u32, u32)>,
+    pending_suspend_resets: Vec<(u64, crate::fields::FieldKey, u32)>,
     /// The NPC whose shop is open, and the rows **exactly as they went on the wire**.
     ///
     /// The client hands back only a `row_key`, so the rows have to be kept to turn one back
@@ -748,7 +748,7 @@ impl Session {
         // idle lines and nothing else; if the sweep sat after it, a run with chatter
         // disabled would leave items on the floor forever and the bug would look like the
         // drop table rather than the switch.
-        let here = self.claimed_character().map(|c| c.map_id).unwrap_or(0);
+        let here = self.claimed_character().map(|c| self.field_of(&c)).unwrap_or_default();
         out.extend(self.fields.with_drops(here, |d| d.sweep(here, now_ms)));
         // Refill spawn points whose WZ timer has come due. Before the chatter switch for the
         // same reason the sweep is: `chatter_off` turns off NPC idle lines and nothing else,
@@ -1279,6 +1279,34 @@ impl Session {
     /// this point `claimed` is populated for a well-formed hello. The store has no
     /// lookup by character id alone, but a claim carries the account and world, and a
     /// character id is unique within those.
+    /// **Which field this character is standing in** - the map, and which copy of it.
+    ///
+    /// `instance` is 0 everywhere except inside a party quest, where it is the id of the run
+    /// the character is on. Derived rather than cached: `is_quest_map` is a range check and
+    /// runs first, so the registry lock is only taken on the seven quest fields, and there
+    /// is no cached copy to go stale when somebody is warped out by the timer or by leaving
+    /// the party.
+    pub(super) fn field_of(&self, chr: &net::opcode::Character) -> crate::fields::FieldKey {
+        if !crate::firsttime::is_quest_map(chr.map_id) {
+            return crate::fields::FieldKey::world(chr.map_id);
+        }
+        match crate::firsttime::instance_of(chr.id) {
+            Some(run) => crate::fields::FieldKey::instanced(chr.map_id, run.id),
+            // On a quest map but in no run - a GM who walked in with !map, or somebody whose
+            // run ended under them. The shared copy of the field is the honest answer.
+            None => crate::fields::FieldKey::world(chr.map_id),
+        }
+    }
+
+    /// [`Session::field_of`] for the claimed character. Prefer `field_of` where the caller
+    /// already holds one: this re-reads the character from the store.
+    pub(super) fn field(&self) -> crate::fields::FieldKey {
+        match self.claimed_character() {
+            Some(chr) => self.field_of(&chr),
+            None => crate::fields::FieldKey::default(),
+        }
+    }
+
     fn claimed_character(&self) -> Option<net::opcode::Character> {
         let claimed = self.claimed.as_ref()?;
         let mut chr = self
