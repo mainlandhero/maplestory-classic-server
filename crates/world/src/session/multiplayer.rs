@@ -1116,7 +1116,22 @@ mod tests {
         assert_eq!(map_of(&leader, ids[0]), crate::firsttime::ENTRY_MAP);
         assert_eq!(map_of(&member, ids[1]), crate::firsttime::ENTRY_MAP);
 
-        // 5. Everyone at 21: the leader goes, and the member follows on their own tick.
+        // 5. Everyone at 21, but the member has wandered out of Kerning City: refused by
+        //    name, and nobody moves. This is the half the unit tests cannot reach - it is
+        //    the bus's presence table feeding `online`/`here`.
+        low.level = 21;
+        store.save_character_progress(&low).unwrap();
+        let mut wandered = store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == ids[1]).unwrap();
+        member.go_to_map(&mut wandered, 40, 0, "wandering off".to_string());
+        let _ = leader.handle(&click(900));
+        let out = leader.handle(&yes());
+        assert!(said(&out).contains("Kerning City"), "away: {}", said(&out));
+        assert_eq!(map_of(&leader, ids[0]), crate::firsttime::ENTRY_MAP, "nobody moved");
+        // Back they come.
+        member.go_to_map(&mut wandered, crate::firsttime::ENTRY_MAP, 0, "back".to_string());
+        member.on_field_entered();
+
+        // 6. Everyone at 21 and together: the leader goes, and the member follows.
         low.level = 21;
         store.save_character_progress(&low).unwrap();
         let _ = leader.handle(&click(900));
