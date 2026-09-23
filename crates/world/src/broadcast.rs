@@ -194,6 +194,15 @@ pub enum Event {
     /// client's `0x007C`, and is the only one that can say what their new balance is.
     PartyMesos { amount: u32, picker: u32 },
 
+    /// **Go to `map`** - the party quest pulling a member in with its leader.
+    ///
+    /// `crate::firsttime`: the leader speaks to Lakelis and passes the gate, but only a
+    /// member's OWN session can build that member's `SetField`, because only it holds their
+    /// record and their client. So the warp crosses as a fact - "you are going there, and
+    /// this is why" - exactly as EXP and a party buff do, rather than as bytes somebody
+    /// else assembled on their behalf.
+    PartyQuestEnter { map: u32, why: String },
+
     /// A **party buff** `caster` just put on themselves reaches this character too:
     /// `skill_id` at `level`, cast while both stood on one field.
     ///
@@ -216,6 +225,13 @@ pub enum Event {
     /// Administrator's box now rather than at their next field entry. Carries nothing - the
     /// row in `store::gifts` is the gift, and the receiving session reads it.
     GiftDrop,
+
+    /// **Somebody's friend list changed** - they were asked, answered, or removed.
+    ///
+    /// Carries nothing: the receiving session reads its own rows out of the store and builds
+    /// its own `0x00A7`, for the same reason `GiftDrop` carries nothing. Only that session
+    /// can say what its client should now draw. `world::session::friends`.
+    FriendRequest,
 }
 
 /// One queued packet and whether a newer one may replace it.
@@ -564,6 +580,11 @@ impl Bus {
             .map(|p| p.character)
             .collect();
         characters.iter().copied().filter(|c| here.contains(c)).collect()
+    }
+
+    /// [`Bus::send_to_character`], named for the call sites that read better that way.
+    pub fn publish_event_to_character(&self, character: u32, event: Event) -> bool {
+        self.send_to_character(character, event)
     }
 
     pub fn send_to_character(&self, character: u32, event: Event) -> bool {
@@ -1147,6 +1168,8 @@ mod tests {
                 Event::PartyHeal { caster, .. } => panic!("not an EXP share: heal from {caster}"),
                 Event::PartyMesos { picker, .. } => panic!("not an EXP share: mesos from {picker}"),
                 Event::GiftDrop => panic!("not an EXP share: a gift drop"),
+                Event::PartyQuestEnter { map, .. } => panic!("not an EXP share: a warp to {map}"),
+            Event::FriendRequest => panic!("not an EXP share: a friend request"),
             })
             .collect()
     }

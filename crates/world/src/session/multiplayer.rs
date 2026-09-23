@@ -117,6 +117,9 @@ impl Session {
                 crate::broadcast::Event::PartyBuff { skill_id, level, caster } => {
                     out.extend(self.receive_party_buff(skill_id, level, caster));
                 }
+                crate::broadcast::Event::PartyQuestEnter { map, why } => {
+                    out.extend(self.enter_party_quest(map, &why));
+                }
                 crate::broadcast::Event::FriendRequest => {
                     // Their list changed: redraw it, and say out loud anything that is now
                     // waiting on this player. session/friends.rs.
@@ -1008,6 +1011,127 @@ mod tests {
             seen.iter().filter(|r| is_hp(r)).any(|r| about(r) == ids[1]),
             "once the spawn has gone out the HP follows: {seen:?}"
         );
+    }
+
+    /// **The "First Time Together" gate, and the party landing on stage 1 together.**
+    ///
+    /// The owner, 2026-09-22: *"The entry fails if the person talking is not a party leader, if
+    /// the person is not in a party with all members that are level 21 or above, is not in
+    /// a party of at least two players... Once the entry requirement is fulfilled, all party
+    /// members will be teleported into Stage 1."*
+    ///
+    /// Two sessions in Kerning City. A solo leader is refused; a member who is not the
+    /// leader is refused; an under-levelled party is refused and **nobody moves**; and once
+    /// the party is two members both at 21, the Yes puts the leader AND the member on
+    /// `80000000` - the member through `Event::PartyQuestEnter`, on their own next tick.
+    #[test]
+    fn lakelis_gates_the_party_quest_and_pulls_the_whole_party_into_stage_one() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut ids = Vec::new();
+        for name in ["Leader", "Member"] {
+            let chr = net::opcode::Character {
+                name: name.to_string(),
+                map_id: crate::firsttime::ENTRY_MAP,
+                level: 21,
+                ..Default::default()
+            };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.set_character_map(id, crate::firsttime::ENTRY_MAP).unwrap();
+            store.create_migration(account, id, 0, 0).unwrap();
+            ids.push(id);
+        }
+        let mut cfg = (*config).clone();
+        cfg.npcs.insert(
+            crate::firsttime::ENTRY_MAP,
+            vec![net::opcode::FieldNpc { object_id: 900, template_id: crate::firsttime::LAKELIS, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 }],
+        );
+        cfg.fields.insert(crate::firsttime::ENTRY_MAP);
+        cfg.fields.insert(crate::firsttime::STAGE_1);
+        let config = Arc::new(cfg);
+        let mut leader = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut member = Session::joining(store.clone(), config, fields);
+        leader.claim_for_character(ids[0]);
+        member.claim_for_character(ids[1]);
+        leader.on_field_entered();
+        member.on_field_entered();
+
+        let click = |object_id: u32| {
+            let mut b = net::script::CLIENT_NPC_CLICK.to_le_bytes().to_vec();
+            b.extend_from_slice(&object_id.to_le_bytes());
+            b.extend_from_slice(&0i16.to_le_bytes());
+            b.extend_from_slice(&0i16.to_le_bytes());
+            b.extend_from_slice(&u32::MAX.to_le_bytes());
+            b
+        };
+        // The yes/no body: u32 handle, u8 messageType, u32 echo, u16 empty text, u8 action.
+        let yes = || {
+            let mut b = net::script::CLIENT_SCRIPT_REPLY.to_le_bytes().to_vec();
+            b.extend_from_slice(&0u32.to_le_bytes());
+            b.push(0);
+            b.extend_from_slice(&0u32.to_le_bytes());
+            b.extend_from_slice(&0u16.to_le_bytes());
+            b.push(net::script::SCRIPT_ACTION_YES as u8);
+            b
+        };
+        let map_of = |s: &Session, id: u32| {
+            s.store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().map_id
+        };
+        let said = |out: &[Reply]| {
+            out.iter()
+                .find(|r| r.opcode == net::script::SCRIPT_MESSAGE)
+                .map(|r| String::from_utf8_lossy(&r.body).to_string())
+                .unwrap_or_default()
+        };
+
+        // 1. Clicking their opens their line as a yes/no.
+        let out = leader.handle(&click(900));
+        assert!(said(&out).contains("great teamwork"), "their own line: {}", said(&out));
+
+        // 2. Alone: refused, and nobody moves. A player on their own is in NO party rather
+        //    than in a party of one, so this is the NoParty line - `firsttime::check`'s unit
+        //    tests cover the party-of-one case, which needs members to have left.
+        let out = leader.handle(&yes());
+        assert!(said(&out).contains("not for one adventurer"), "alone: {}", said(&out));
+        assert_eq!(map_of(&leader, ids[0]), crate::firsttime::ENTRY_MAP, "nobody moved");
+
+        // 3. In a party, but asked by the member rather than the leader.
+        let created = leader.run_party_request(ids[0], crate::party::Request::Create { name: "P".into() });
+        let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        let _ = leader.run_party_request(ids[0], crate::party::Request::Invite { target: ids[1] });
+        let _ = member.tick(1_000);
+        let _ = member.run_party_request(ids[1], crate::party::Request::Accept { party });
+        let _ = member.handle(&click(900));
+        let out = member.handle(&yes());
+        assert!(said(&out).contains("leader"), "not the leader: {}", said(&out));
+        assert_eq!(map_of(&member, ids[1]), crate::firsttime::ENTRY_MAP, "and still nobody moved");
+
+        // 4. One member under 21: refused, named, and nobody moves.
+        let mut low = store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == ids[1]).unwrap();
+        low.level = 20;
+        store.save_character_progress(&low).unwrap();
+        let _ = leader.handle(&click(900));
+        let out = leader.handle(&yes());
+        assert!(said(&out).contains("Member") && said(&out).contains("21"), "under-levelled: {}", said(&out));
+        assert_eq!(map_of(&leader, ids[0]), crate::firsttime::ENTRY_MAP);
+        assert_eq!(map_of(&member, ids[1]), crate::firsttime::ENTRY_MAP);
+
+        // 5. Everyone at 21: the leader goes, and the member follows on their own tick.
+        low.level = 21;
+        store.save_character_progress(&low).unwrap();
+        let _ = leader.handle(&click(900));
+        let out = leader.handle(&yes());
+        assert!(out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "the leader warps: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+        assert_eq!(map_of(&leader, ids[0]), crate::firsttime::STAGE_1, "leader on stage 1");
+        assert_eq!(map_of(&member, ids[1]), crate::firsttime::ENTRY_MAP, "the member has not ticked yet");
+        let pulled = member.tick(2_000);
+        assert!(pulled.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "the member is pulled in: {:?}", pulled.iter().map(|r| &r.what).collect::<Vec<_>>());
+        assert_eq!(map_of(&member, ids[1]), crate::firsttime::STAGE_1, "both on stage 1");
+
+        // And the run is registered as one instance holding both of them.
+        let inst = crate::firsttime::instance_of(ids[0]).expect("an instance is open");
+        assert_eq!(crate::firsttime::instance_of(ids[1]).map(|i| i.id), Some(inst.id), "one instance, both members");
+        assert!(crate::firsttime::close(inst.id));
     }
 
     /// **A party buff reaches every member on the caster's field, and nobody else.**

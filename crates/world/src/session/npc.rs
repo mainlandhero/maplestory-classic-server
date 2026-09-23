@@ -542,6 +542,11 @@ impl Session {
             }
         }
 
+        // **`Act.1.skill` - the crafting professions.** Before the experience line, so the
+        // "you have learnt Tailoring" sentence sits with the items it was earned beside.
+        // `session/craft.rs`.
+        out.extend(self.grant_quest_skills(quest_id));
+
         // Last, so the experience line lands under the item lines the way a turn-in reads.
         // White: a quest reward is yours, not a share of somebody else's kill.
         //
@@ -904,6 +909,11 @@ impl Session {
         // skins, and a pointer at the Cash Shop for a
         // player without either. session/salon.rs.
         if let Some(replies) = self.open_salon_for(template) {
+            return replies;
+        }
+
+        // **Lakelis and the party quest**, in Kerning City only. crate::firsttime.
+        if let Some(replies) = self.open_first_time_together(template) {
             return replies;
         }
 
@@ -2458,6 +2468,9 @@ impl Session {
         // find no quest id, and drop the conversation with NO PACKET SENT - and they would go
         // silent on the first Yes. (Phil's guide used to sit here for the same reason; it is
         // a type-6 menu now and is answered above, beside the taxi's.)
+        if convo.path == crate::firsttime::ASK_PATH {
+            return self.first_time_together_answer(reply.action);
+        }
         if convo.path == crate::shanks::ASK_PATH {
             return self.shanks_reply(reply.action);
         }

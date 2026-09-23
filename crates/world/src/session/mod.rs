@@ -32,7 +32,7 @@ use crate::config::Config;
 /// Pruned 2026-09-06 on the owner's instruction: the per-kind rate setters, `!migsweep`,
 /// `!npcfx`, `!buff`, `!unbuff`, `!buy`, `!locker` and `!kit` are gone.
 const GM_COMMANDS: &str =
-    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !setrates <exp> <meso> <drop> <quest> <party%>, !rates, !job <jobId>, !npcecho [dx], !nx [amount], !lp [amount], !meso [amount], !resetap, !resetsp, !learn [level] | !learn <skillId> <level>, !npcreload [templateId], !hair <hairId>, !face <faceId>, !giftdrop <player> <itemId> [count] [message], !giftall <itemId> [count] [message], !registrationcode, !recoverycode <email|username>, !online, !track <character>, !help";
+    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !setrates <exp> <meso> <drop> <quest> <party%>, !rates, !job <jobId>, !npcecho [dx], !nx [amount], !lp [amount], !meso [amount], !resetap, !resetsp, !learn [level] | !learn <skillId> <level>, !craft [profession] [level] [mastery], !npcreload [templateId], !hair <hairId>, !face <faceId>, !giftdrop <player> <itemId> [count] [message], !giftall <itemId> [count] [message], !registrationcode, !recoverycode <email|username>, !online, !track <character>, !help";
 
 /// What a player who is not a GM is shown by `!help`, and all they may run. The owner,
 /// 2026-09-06: *"A player should only be shown commands that they are allowed to execute."*
@@ -211,6 +211,19 @@ pub struct Session {
     // number is still drawn. See `session::field::on_field_entered`.
     /// The NPC conversation in progress, if any.
     conversation: Option<Conversation>,
+    /// Requesters whose friend popup this session has already raised - `session/friends.rs`.
+    ///
+    /// A pending request lives in the store until it is answered, so without this every map
+    /// change would raise the balloon again for something the player has already left
+    /// unanswered. Per session, so a relog does offer it again.
+    friend_popups_raised: std::collections::HashSet<u32>,
+    /// The craft this session accepted and is waiting to finish - `session/craft.rs`.
+    ///
+    /// **A craft is two packets**: the window asks to begin, animates the recipe's own
+    /// `ProcessTimeMS`, then asks to finish. Nothing is taken until the second, and the
+    /// second is refused outright when this is `None`, so a `0x02F6 mode 3` on its own
+    /// cannot conjure an item.
+    pending_craft: Option<craft::PendingCraft>,
     /// **Is the client showing the Cash Shop rather than the field?**
     ///
     /// The owner, 2026-08-26: *"we should fix NPC idle chatter when player is in cash shop."* The
@@ -537,6 +550,7 @@ impl Drop for Session {
 }
 
 mod ability;
+mod firsttime;
 mod buff;
 mod chair;
 mod beautycoupon;
@@ -544,9 +558,11 @@ mod salon;
 mod cashitem;
 mod charinfo;
 mod fame;
+mod friends;
 mod cashshop;
 mod giftdrop;
 mod combat;
+mod craft;
 mod consume;
 mod field;
 mod gm;
@@ -621,6 +637,8 @@ impl Session {
             mp_eater_ready_ms: 0,
             skill_ready_ms: std::collections::HashMap::new(),
             last_position: None,
+            friend_popups_raised: std::collections::HashSet::new(),
+            pending_craft: None,
             log_name: None,
             last_move_action: None,
             active_pet: None,
@@ -946,6 +964,17 @@ impl Session {
             // one report and were measured 14-50 px behind while running, and 50 px is twice
             // the width of the client's pick-up box. The end is exact when standing still,
             // which is the case a drag out of the inventory window is.
+            // The Crafting Journal. Two packets per item - see session/craft.rs - and every
+            // mode is answered, including the ones this server does not model: the client
+            // latches its request flag on send and never crafts again until it is cleared.
+            // The friend window. Every sub-op is answered, including the ones this server
+            // does not model yet - see session/friends.rs.
+            net::friends::CLIENT_FRIEND_REQUEST => {
+                return self.on_friend_request(body.get(2..).unwrap_or(&[]))
+            }
+            net::craft::CLIENT_CRAFT_REQUEST => {
+                return self.on_craft_request(body.get(2..).unwrap_or(&[]))
+            }
             net::skills::CLIENT_USER_SKILL_UP_REQUEST => {
                 return self.on_skill_up(body.get(2..).unwrap_or(&[]))
             }
@@ -1436,6 +1465,11 @@ impl Session {
         // settled and before the login SetField is built, so that record's Cash item already
         // says `active = 1` and the first field entry re-summons it. session/pet.rs.
         self.restore_active_pet();
+        // **A crafting quest finished before this server read `Act.1.skill` still counts.**
+        // Here for the same reason the pet is: after the claim, before the login `SetField`,
+        // so the record that builds the Crafting Journal's tabs already carries the skill.
+        // `session/craft.rs`.
+        self.reconcile_crafting_quests();
         format!("{attested_note} || {outcome}")
     }
 
