@@ -1144,9 +1144,10 @@ mod tests {
         assert_eq!(map_of(&member, ids[1]), crate::firsttime::STAGE_1, "both on stage 1");
 
         // And the run is registered as one instance holding both of them.
-        let inst = crate::firsttime::instance_of(ids[0]).expect("an instance is open");
-        assert_eq!(crate::firsttime::instance_of(ids[1]).map(|i| i.id), Some(inst.id), "one instance, both members");
-        assert!(crate::firsttime::close(inst.id));
+        let inst = leader.fields.runs().instance_of(ids[0]).expect("an instance is open");
+        let other = leader.fields.runs().instance_of(ids[1]);
+        assert_eq!(other.map(|i| i.id), Some(inst.id), "one instance, both members");
+        assert!(leader.fields.runs().close(inst.id));
     }
 
     /// **A level-up redraws the party window for everyone.**
@@ -1262,9 +1263,9 @@ mod tests {
             firsttime::EXIT_MAP,
             vec![net::opcode::FieldNpc { object_id: 911, template_id: firsttime::NELLA, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 }],
         );
-        let mut s = Session::joining(store.clone(), Arc::new(cfg), fields);
+        let mut s = Session::joining(store.clone(), Arc::new(cfg), fields.clone());
         s.claim_for_character(id);
-        let inst = firsttime::open(9_001, vec![id], store::Store::unix_now());
+        let inst = fields.runs().open(9_001, vec![id], store::Store::unix_now());
 
         let click = |object_id: u32| {
             let mut b = net::script::CLIENT_NPC_CLICK.to_le_bytes().to_vec();
@@ -1299,7 +1300,7 @@ mod tests {
         let out = s.handle(&yes());
         assert!(out.iter().any(|r| r.opcode == net::opcode::SET_FIELD));
         assert_eq!(map_now(&s), firsttime::EXIT_MAP, "out to the Exit");
-        assert_eq!(firsttime::instance_of(id), None, "and out of the run");
+        assert_eq!(fields.runs().instance_of(id), None, "and out of the run");
 
         // 3. Nella on the Exit map sends them to Kerning City.
         let out = s.handle(&click(911));
@@ -1307,26 +1308,26 @@ mod tests {
         assert!(said.contains("Kerning City"), "{said}");
         let _ = s.handle(&yes());
         assert_eq!(map_now(&s), firsttime::TOWN_MAP, "home");
-        assert!(firsttime::close(inst.id) || true);
+        assert!(fields.runs().close(inst.id) || true);
 
         // 4. **Leaving the party takes you out**, with no Nella involved. Back into a run,
         //    on a stage, then ejected.
         let mut back = store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
         s.go_to_map(&mut back, firsttime::STAGE_1, 0, "back in".to_string());
-        let inst = firsttime::open(9_002, vec![id], store::Store::unix_now());
-        assert_eq!(firsttime::instance_of(id).map(|i| i.id), Some(inst.id));
+        let inst = fields.runs().open(9_002, vec![id], store::Store::unix_now());
+        assert_eq!(fields.runs().instance_of(id).map(|i| i.id), Some(inst.id));
         let _ = s.eject_from_party_quest(id, "they left the party");
         assert_eq!(map_now(&s), firsttime::EXIT_MAP, "the leaver lands on the Exit");
-        assert_eq!(firsttime::instance_of(id), None);
+        assert_eq!(fields.runs().instance_of(id), None);
 
         // 5. **The clock running out** ejects whoever is still inside.
         let mut back = store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
         s.go_to_map(&mut back, firsttime::STAGE_1, 0, "back in again".to_string());
-        let expiring = firsttime::open(9_003, vec![id], store::Store::unix_now() - i64::from(firsttime::TIME_LIMIT_S));
+        let expiring = fields.runs().open(9_003, vec![id], store::Store::unix_now() - i64::from(firsttime::TIME_LIMIT_S));
         assert!(expiring.is_over(store::Store::unix_now()));
         let _ = s.party_quest_timer_tick();
         assert_eq!(map_now(&s), firsttime::EXIT_MAP, "time up, out to the Exit");
-        assert_eq!(firsttime::instance_of(id), None, "and the run is forgotten");
+        assert_eq!(fields.runs().instance_of(id), None, "and the run is forgotten");
     }
 
     /// **Two parties on one party-quest map cannot see each other, and their mobs are
@@ -1362,8 +1363,8 @@ mod tests {
             sessions.push(s);
         }
         // Two runs: A1+A2, and B1+B2.
-        let run_a = firsttime::open(5_001, vec![ids[0], ids[1]], store::Store::unix_now());
-        let run_b = firsttime::open(5_002, vec![ids[2], ids[3]], store::Store::unix_now());
+        let run_a = fields.runs().open(5_001, vec![ids[0], ids[1]], store::Store::unix_now());
+        let run_b = fields.runs().open(5_002, vec![ids[2], ids[3]], store::Store::unix_now());
         assert_ne!(run_a.id, run_b.id);
 
         for s in sessions.iter_mut() {
@@ -1403,7 +1404,116 @@ mod tests {
         assert_eq!(fields.mob_count(key(&sessions[0])), 0, "A's is dead");
         assert_eq!(fields.mob_count(key(&sessions[2])), 1, "B's is untouched - separate pools");
 
-        assert!(firsttime::close(run_a.id) && firsttime::close(run_b.id));
+        let closed_a = fields.runs().close(run_a.id);
+        let closed_b = fields.runs().close(run_b.id);
+        assert!(closed_a && closed_b);
+    }
+
+    /// **A stage clear belongs to one run.** The owner, 2026-09-23: *"just because one party
+    /// instance cleared, doesn't mean that all party instances cleared. The PQ stage clears
+    /// should be per instance, and never shared."*
+    ///
+    /// Three characters on stage 1: A1 and A2 in one run, B1 in another. A1 clicks Cloto.
+    /// Claims, each with its control: A1 gets the three effects (banner, fanfare, gate); A2 -
+    /// same run, same map - hears all three; B1 hears none. B1's `next00` stays shut and says
+    /// so; A1's opens onto stage 2. A2 re-entering gets the gate again (it starts closed on
+    /// every entry); B1 re-entering does not.
+    #[test]
+    fn a_stage_clear_opens_one_runs_portal_and_no_other_runs() {
+        use crate::firsttime;
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut cfg = (*config).clone();
+        cfg.fields.insert(firsttime::STAGE_1);
+        cfg.fields.insert(firsttime::STAGE_1 + 100);
+        cfg.npcs.insert(
+            firsttime::STAGE_1,
+            vec![net::opcode::FieldNpc { object_id: 920, template_id: firsttime::CLOTO, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 }],
+        );
+        let config = Arc::new(cfg);
+
+        let mut ids = Vec::new();
+        let mut sessions = Vec::new();
+        for name in ["Alfa", "Alto", "Bravo"] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: firsttime::STAGE_1, level: 21, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.set_character_map(id, firsttime::STAGE_1).unwrap();
+            store.create_migration(account, id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(id);
+            ids.push(id);
+            sessions.push(s);
+        }
+        let run_a = fields.runs().open(5_101, vec![ids[0], ids[1]], store::Store::unix_now());
+        let run_b = fields.runs().open(5_102, vec![ids[2]], store::Store::unix_now());
+        for s in sessions.iter_mut() {
+            let entry = s.on_field_entered();
+            assert!(
+                !entry.iter().any(|r| r.opcode == net::fieldeffect::FIELD_EFFECT),
+                "nothing is cleared yet, so no gate on entry"
+            );
+        }
+        for s in sessions.iter_mut() {
+            let _ = s.tick(1_000);
+        }
+
+        let effects = |out: &[Reply]| -> Vec<u8> {
+            out.iter().filter(|r| r.opcode == net::fieldeffect::FIELD_EFFECT).map(|r| r.body[0]).collect()
+        };
+        let all_three = vec![
+            net::fieldeffect::TYPE_SCREEN,
+            net::fieldeffect::TYPE_SOUND,
+            net::fieldeffect::TYPE_OBJECT_STATE,
+        ];
+
+        // A1 clicks Cloto.
+        let mut click = net::script::CLIENT_NPC_CLICK.to_le_bytes().to_vec();
+        click.extend_from_slice(&920u32.to_le_bytes());
+        click.extend_from_slice(&0i16.to_le_bytes());
+        click.extend_from_slice(&0i16.to_le_bytes());
+        click.extend_from_slice(&u32::MAX.to_le_bytes());
+        let out = sessions[0].handle(&click);
+        assert_eq!(effects(&out), all_three, "A1 sees the banner, hears the fanfare, and the gate opens");
+        assert!(out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE), "and Cloto answers the click");
+        assert_eq!(effects(&sessions[1].tick(2_000)), all_three, "A2 - same run - gets all three");
+        assert_eq!(effects(&sessions[2].tick(2_000)), Vec::<u8>::new(), "B1 - other run, same map - gets nothing");
+        let a1 = fields.runs().is_cleared(ids[0], firsttime::STAGE_1);
+        let a2 = fields.runs().is_cleared(ids[1], firsttime::STAGE_1);
+        assert!(a1 && a2);
+        assert!(!fields.runs().is_cleared(ids[2], firsttime::STAGE_1), "B's stage 1 is still shut");
+
+        // A second click is not a second clear.
+        let again = sessions[0].handle(&click);
+        assert!(effects(&again).is_empty(), "already cleared: no second banner and no second gate");
+
+        // The portal.
+        let press = |name: &str| {
+            let mut b = net::portalscript::CLIENT_PORTAL_SCRIPT.to_le_bytes().to_vec();
+            b.push(0);
+            b.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            b.extend_from_slice(name.as_bytes());
+            b.extend_from_slice(&714i16.to_le_bytes());
+            b.extend_from_slice(&106i16.to_le_bytes());
+            b
+        };
+        let map_of = |id: u32| store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().map_id;
+        let b_out = sessions[2].handle(&press(firsttime::NEXT_PORTAL));
+        assert!(!b_out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "B's portal is shut");
+        assert!(!b_out.is_empty(), "and the press is still answered");
+        assert_eq!(map_of(ids[2]), firsttime::STAGE_1);
+
+        // A2 re-enters stage 1 (the gate starts closed on every entry) and is shown it open;
+        // B1 re-entering is not.
+        assert_eq!(effects(&sessions[1].on_field_entered()), vec![net::fieldeffect::TYPE_OBJECT_STATE]);
+        assert!(effects(&sessions[2].on_field_entered()).is_empty());
+
+        let a_out = sessions[0].handle(&press(firsttime::NEXT_PORTAL));
+        assert!(a_out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "A's portal is open");
+        assert_eq!(map_of(ids[0]), firsttime::STAGE_1 + 100, "onto stage 2");
+
+        let closed_a = fields.runs().close(run_a.id);
+        let closed_b = fields.runs().close(run_b.id);
+        assert!(closed_a && closed_b);
     }
 
     /// **A party buff reaches every member on the caster's field, and nobody else.**

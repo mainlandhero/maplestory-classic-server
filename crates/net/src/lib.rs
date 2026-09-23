@@ -39,6 +39,7 @@ pub mod codec;
 pub mod combat;
 pub mod craft;
 pub mod dropmoney;
+pub mod fieldeffect;
 pub mod drops;
 pub mod equipgender;
 pub mod error;

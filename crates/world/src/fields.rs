@@ -363,6 +363,8 @@ pub struct Fields {
     /// "never renumber from a small number" rule `store::FIRST_CHARACTER_ID` carries. That
     /// is why `Fields` implements `Default` by hand.
     parties: Mutex<crate::party::Parties>,
+    /// This channel's party-quest runs. See [`crate::firsttime::Runs`].
+    runs: Mutex<crate::firsttime::Runs>,
 }
 
 impl Default for Fields {
@@ -378,6 +380,7 @@ impl Fields {
             bus: crate::broadcast::Bus::new(),
             controllers: crate::mobshare::Controllers::new(),
             parties: Mutex::new(crate::party::Parties::new()),
+            runs: Mutex::new(crate::firsttime::Runs::default()),
         }
     }
 
@@ -399,6 +402,12 @@ impl Fields {
     /// `Fields`, `Bus` or a session.
     pub fn parties(&self) -> std::sync::MutexGuard<'_, crate::party::Parties> {
         self.parties.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// This channel's party-quest runs. **Bind what you read to a local before locking
+    /// anything else** - a guard held across a second `runs()` in one expression deadlocks.
+    pub fn runs(&self) -> std::sync::MutexGuard<'_, crate::firsttime::Runs> {
+        self.runs.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Register a map's spawn points the first time anyone sets foot on it.

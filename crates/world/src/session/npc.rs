@@ -917,6 +917,12 @@ impl Session {
             return replies;
         }
 
+        // **Cloto**, on stages 1 to 5: TEMPORARILY clears the stage on a click, for this run
+        // only. session/firsttime.rs.
+        if let Some(replies) = self.open_cloto(template) {
+            return replies;
+        }
+
         // **Nella**, in any of the seven quest fields: the way out, and home from the Exit.
         if let Some(replies) = self.open_nella(template) {
             return replies;

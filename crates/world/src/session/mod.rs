@@ -1290,7 +1290,8 @@ impl Session {
         if !crate::firsttime::is_quest_map(chr.map_id) {
             return crate::fields::FieldKey::world(chr.map_id);
         }
-        match crate::firsttime::instance_of(chr.id) {
+        let run = self.fields.runs().instance_of(chr.id);
+        match run {
             Some(run) => crate::fields::FieldKey::instanced(chr.map_id, run.id),
             // On a quest map but in no run - a GM who walked in with !map, or somebody whose
             // run ended under them. The shared copy of the field is the honest answer.
@@ -1299,7 +1300,8 @@ impl Session {
     }
 
     /// [`Session::field_of`] for the claimed character. Prefer `field_of` where the caller
-    /// already holds one: this re-reads the character from the store.
+    /// already holds one: this re-reads the character from the store. Tests only today.
+    #[cfg(test)]
     pub(super) fn field(&self) -> crate::fields::FieldKey {
         match self.claimed_character() {
             Some(chr) => self.field_of(&chr),

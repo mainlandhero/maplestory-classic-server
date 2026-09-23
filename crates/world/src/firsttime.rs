@@ -16,11 +16,12 @@
 //!
 //! # What this module is and is not
 //!
-//! It is the gate: who may start, what Lakelis says when they may not, and the allocation
-//! of a per-party instance id. It is **not** the stages - nothing here clears a stage, opens
-//! `PQ_01_nextstage_portal` or spawns a mob, and the instance id it hands out is not yet
-//! honoured by the mob pools or the broadcast bus. Entering today puts the party on stage 1
-//! of a shared field. `research/first-time-together-pq.md` §5 has the rest of the list.
+//! It is the gate: who may start, what Lakelis says when they may not, the per-channel
+//! registry of runs ([`Runs`]), and each run's cleared stages. The instance id a run gets is
+//! the `instance` half of `crate::fields::FieldKey`, so mobs, drops and broadcasts are the
+//! run's own. It is **not** the stage rules: a stage is cleared today by clicking Cloto
+//! ([`CLOTO`], TEMPORARY), not by coupons, ropes or platforms -
+//! `research/first-time-together-pq.md` §4 has those.
 
 use crate::party::{CharacterId, Party, PartyId};
 
@@ -41,6 +42,15 @@ pub const MIN_PARTY: usize = 2;
 /// Four, as both the owner and the client say.
 pub const MAX_PARTY: usize = 4;
 
+/// **TEMPORARY - the minimum Lakelis actually enforces while instancing is being tested.**
+///
+/// The owner, 2026-09-23: *"I would like to do a temporary test to make sure the instancing works.
+/// Please temporarily allow party of 1s to enter via Lakelis in Kerning City."* The rule is
+/// still [`MIN_PARTY`], and [`check`] still enforces it and its tests still pin it; only the
+/// session's call goes through [`check_min`] with this instead. **Put it back to
+/// `MIN_PARTY` when the test is over** - `STATUS.md` lists it as a temporary switch.
+pub const ENTRY_MIN_PARTY: usize = 1;
+
 /// **How long a party has.** The owner, 2026-09-22: *"the party quest lacked a timer, since it
 /// has to be finished within the time limit or its members will be kicked out into the exit
 /// map."* Then a screenshot of the widget itself, reading **29:32** a few seconds into a
@@ -54,6 +64,29 @@ pub const LIGATOR: u32 = 800_000;
 /// The coupon a Ligator drops, one per kill. `data/drops.txt` carries the rate and
 /// `droptables.rs` has the test that keeps it at 100%.
 pub const COUPON: u32 = 4_001_001;
+
+/// Cloto - on stages 1 to 5 (`80000000`..`80000400`), and nowhere else [L]
+/// (`gm-handbook/npcs.txt`). The stage NPC.
+///
+/// **TEMPORARY behaviour.** The owner, 2026-09-23: *"Lakelis in every stage when clicked on should
+/// send the "stage clear" opcode and enable the portal to go to the next stage."* The NPC on
+/// every stage is Cloto, not Lakelis (who stands only in Kerning City), so this is them. For
+/// the test they clear the stage on a click; the real rules (coupons, ropes, platforms) are
+/// `research/first-time-together-pq.md` §4 and are not built.
+pub const CLOTO: u32 = 800_001;
+
+/// What Cloto says as they clear a stage, during the temporary test.
+pub const CLOTO_CLEARED: &str =
+    "Stage cleared! The portal is open - go through it to reach the next stage.";
+/// What they say when this party has already cleared the stage they stand on.
+pub const CLOTO_ALREADY: &str = "This stage is already cleared. The portal is open.";
+/// What the `next00` portal says while this party's stage is still closed.
+pub const PORTAL_CLOSED: &str = "The portal is not open yet. Clear the stage first.";
+
+/// Arrival portal on every stage - each `next00`'s `tn` [L].
+pub const ARRIVAL_PORTAL: &str = "st00";
+/// The forward portal on stages 1 to 5.
+pub const NEXT_PORTAL: &str = "next00";
 
 /// Nella - in every one of the seven fields, including the Exit. The way out.
 pub const NELLA: u32 = 800_002;
@@ -179,6 +212,17 @@ impl Candidate {
 pub fn check(
     who: CharacterId,
     party: Option<&Party>,
+    levels: impl FnMut(CharacterId) -> Option<Candidate>,
+) -> Result<Vec<Candidate>, Refusal> {
+    check_min(MIN_PARTY, who, party, levels)
+}
+
+/// [`check`] with the minimum party size given. Exists for [`ENTRY_MIN_PARTY`], the
+/// temporary solo test, so the rule itself does not have to move to allow it.
+pub fn check_min(
+    min_party: usize,
+    who: CharacterId,
+    party: Option<&Party>,
     mut levels: impl FnMut(CharacterId) -> Option<Candidate>,
 ) -> Result<Vec<Candidate>, Refusal> {
     let Some(party) = party else { return Err(Refusal::NoParty) };
@@ -186,7 +230,7 @@ pub fn check(
         return Err(Refusal::NotLeader);
     }
     let size = party.members.len();
-    if size < MIN_PARTY {
+    if size < min_party {
         return Err(Refusal::TooSmall { size });
     }
     if size > MAX_PARTY {
@@ -228,6 +272,10 @@ pub struct Instance {
     /// the moment that one connection opened, so two members would hold two different
     /// deadlines for the same run. `store::Store::unix_now`.
     pub deadline_unix: i64,
+    /// **The stages THIS run has cleared**, by map id. Per instance and never shared - the owner,
+    /// 2026-09-23: *"just because one party instance cleared, doesn't mean that all party
+    /// instances cleared."* It lives on the instance, so there is nowhere else for it to be.
+    pub cleared: Vec<u32>,
 }
 
 impl Instance {
@@ -242,58 +290,102 @@ impl Instance {
     }
 }
 
-static NEXT_INSTANCE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
-static LIVE: std::sync::Mutex<Vec<Instance>> = std::sync::Mutex::new(Vec::new());
-
-/// Open a new instance for `party`. Any instance that party already had is dropped first,
-/// so a re-entry cannot leave the old one behind holding the old member list.
-pub fn open(party: PartyId, members: Vec<CharacterId>, now_unix: i64) -> Instance {
-    let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
-    live.retain(|i| i.party != party);
-    let inst = Instance {
-        id: NEXT_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        party,
-        members,
-        deadline_unix: now_unix + i64::from(TIME_LIMIT_S),
-    };
-    live.push(inst.clone());
-    inst
+/// **This channel's running quests.** Owned by `crate::fields::Fields` (`Fields::runs`),
+/// beside the party registry, so it is exactly as wide as a channel.
+///
+/// It was a process-wide `static` until 2026-09-23, and that was found by the test harness:
+/// tests run in parallel in one process, every session test's characters start at id 200 in
+/// its own in-memory store, and every session tick expires runs against the real clock - so
+/// four tests each holding "character 200" in a run saw and swept each other's runs. The
+/// three that existed had been passing on timing. A channel's runs belong to the channel,
+/// and giving each `Fields` its own is what makes a test's world its own.
+#[derive(Debug)]
+pub struct Runs {
+    next_id: u32,
+    live: Vec<Instance>,
 }
 
-/// **Take every instance whose clock has run out**, removing them as they are handed over so
-/// two sessions ticking at once cannot both expire the same run and warp its members twice.
-pub fn take_expired(now_unix: i64) -> Vec<Instance> {
-    let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
-    let (over, still) = live.drain(..).partition::<Vec<_>, _>(|i| i.is_over(now_unix));
-    *live = still;
-    over
-}
-
-/// Drop one character out of their run - they left the party, or walked out through Nella.
-/// Returns the instance they were in. An instance with nobody left is forgotten.
-pub fn drop_member(character: CharacterId) -> Option<Instance> {
-    let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
-    let at = live.iter().position(|i| i.members.contains(&character))?;
-    let was = live[at].clone();
-    live[at].members.retain(|&m| m != character);
-    if live[at].members.is_empty() {
-        live.remove(at);
+impl Default for Runs {
+    /// Instance ids start at 1: 0 is `FieldKey`'s shared world and must never name a run.
+    fn default() -> Self {
+        Self { next_id: 1, live: Vec::new() }
     }
-    Some(was)
 }
 
-/// The instance `character` is running, if any.
-pub fn instance_of(character: CharacterId) -> Option<Instance> {
-    let live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
-    live.iter().find(|i| i.members.contains(&character)).cloned()
+impl Runs {
+    /// Open a new instance for `party`. Any instance that party already had is dropped
+    /// first, so a re-entry cannot leave the old one behind holding the old member list.
+    pub fn open(&mut self, party: PartyId, members: Vec<CharacterId>, now_unix: i64) -> Instance {
+        self.live.retain(|i| i.party != party);
+        let inst = Instance {
+            id: self.next_id,
+            party,
+            members,
+            deadline_unix: now_unix + i64::from(TIME_LIMIT_S),
+            cleared: Vec::new(),
+        };
+        self.next_id += 1;
+        self.live.push(inst.clone());
+        inst
+    }
+
+    /// **Take every instance whose clock has run out**, removing them as they are handed
+    /// over so two sessions ticking at once cannot both expire the same run and warp its
+    /// members twice.
+    pub fn take_expired(&mut self, now_unix: i64) -> Vec<Instance> {
+        let (over, still) = self.live.drain(..).partition::<Vec<_>, _>(|i| i.is_over(now_unix));
+        self.live = still;
+        over
+    }
+
+    /// Drop one character out of their run - they left the party, or walked out through
+    /// Nella. Returns the instance they were in. An instance with nobody left is forgotten.
+    pub fn drop_member(&mut self, character: CharacterId) -> Option<Instance> {
+        let at = self.live.iter().position(|i| i.members.contains(&character))?;
+        let was = self.live[at].clone();
+        self.live[at].members.retain(|&m| m != character);
+        if self.live[at].members.is_empty() {
+            self.live.remove(at);
+        }
+        Some(was)
+    }
+
+    /// The instance `character` is running, if any.
+    pub fn instance_of(&self, character: CharacterId) -> Option<Instance> {
+        self.live.iter().find(|i| i.members.contains(&character)).cloned()
+    }
+
+    /// Forget an instance. Returns whether one went.
+    pub fn close(&mut self, id: u32) -> bool {
+        let before = self.live.len();
+        self.live.retain(|i| i.id != id);
+        self.live.len() != before
+    }
+
+    /// **Clear `stage` for the run `character` is in.** `Some(true)` when this call cleared
+    /// it, `Some(false)` when that run had already cleared it, `None` when `character` is in
+    /// no run or `stage` is not a stage with a way forward. Only the one run changes.
+    pub fn clear_stage(&mut self, character: CharacterId, stage: u32) -> Option<bool> {
+        next_stage(stage)?;
+        let run = self.live.iter_mut().find(|i| i.members.contains(&character))?;
+        if run.cleared.contains(&stage) {
+            return Some(false);
+        }
+        run.cleared.push(stage);
+        Some(true)
+    }
+
+    /// Whether the run `character` is in has cleared `stage`. `false` for no run at all.
+    pub fn is_cleared(&self, character: CharacterId, stage: u32) -> bool {
+        self.live.iter().any(|i| i.members.contains(&character) && i.cleared.contains(&stage))
+    }
 }
 
-/// Forget an instance - used when the last member leaves. Returns whether one went.
-pub fn close(id: u32) -> bool {
-    let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
-    let before = live.len();
-    live.retain(|i| i.id != id);
-    live.len() != before
+/// Where a stage's `next00` leads: stage 1 to 5 go one on, and the last stage (`80000400`)
+/// goes to `<Bonus>` (`80000500`). `None` for the Bonus, the Exit, and anything else -
+/// neither has a forward portal [L].
+pub fn next_stage(stage: u32) -> Option<u32> {
+    (is_quest_map(stage) && stage < 80_000_500).then_some(stage + 100)
 }
 
 /// Whether `map` is one of the seven quest fields.
@@ -411,20 +503,22 @@ mod tests {
     /// An instance is per RUN, not per party, and a re-entry replaces the old one.
     #[test]
     fn an_instance_is_per_run_and_a_re_entry_replaces_the_old_one() {
-        let first = open(7_001, vec![11, 12], 1_000);
-        let second = open(7_001, vec![11, 12], 1_000);
+        let mut runs = Runs::default();
+        let first = runs.open(7_001, vec![11, 12], 1_000);
+        let second = runs.open(7_001, vec![11, 12], 1_000);
         assert_ne!(first.id, second.id, "a second run is a different field");
-        assert_eq!(instance_of(11).map(|i| i.id), Some(second.id), "only the newer one is live");
-        assert!(close(second.id));
-        assert_eq!(instance_of(11), None);
-        assert!(!close(second.id), "closing twice is not an error but changes nothing");
+        assert_eq!(runs.instance_of(11).map(|i| i.id), Some(second.id), "only the newer one is live");
+        assert!(runs.close(second.id));
+        assert_eq!(runs.instance_of(11), None);
+        assert!(!runs.close(second.id), "closing twice is not an error but changes nothing");
     }
 
     /// **The clock is a wall clock and it runs out.** The owner, 2026-09-22: members are kicked
     /// to the exit map when the limit passes.
     #[test]
     fn an_instance_runs_out_and_is_handed_over_exactly_once() {
-        let inst = open(7_100, vec![21, 22], 10_000);
+        let mut runs = Runs::default();
+        let inst = runs.open(7_100, vec![21, 22], 10_000);
         assert_eq!(inst.deadline_unix, 10_000 + i64::from(TIME_LIMIT_S));
         assert_eq!(inst.remaining_s(10_000), TIME_LIMIT_S);
         assert_eq!(inst.remaining_s(10_000 + 60), TIME_LIMIT_S - 60);
@@ -433,25 +527,75 @@ mod tests {
         assert_eq!(inst.remaining_s(inst.deadline_unix + 999), 0, "saturates rather than wrapping");
 
         // Nothing is over yet, so nothing is taken.
-        assert!(take_expired(10_000).iter().all(|i| i.id != inst.id));
+        assert!(runs.take_expired(10_000).iter().all(|i| i.id != inst.id));
         // Past the deadline it comes out ONCE - a second tick, from the other member's
         // session, must not warp anybody a second time.
-        let over = take_expired(inst.deadline_unix);
+        let over = runs.take_expired(inst.deadline_unix);
         assert_eq!(over.iter().filter(|i| i.id == inst.id).count(), 1);
-        assert!(take_expired(inst.deadline_unix).iter().all(|i| i.id != inst.id));
-        assert_eq!(instance_of(21), None, "and it is gone from the registry");
+        assert!(runs.take_expired(inst.deadline_unix).iter().all(|i| i.id != inst.id));
+        assert_eq!(runs.instance_of(21), None, "and it is gone from the registry");
     }
 
     /// A member who leaves is dropped from the run; the last one out closes it.
     #[test]
     fn dropping_members_empties_and_then_forgets_the_instance() {
-        let inst = open(7_200, vec![31, 32], 10_000);
-        assert_eq!(drop_member(31).map(|i| i.id), Some(inst.id));
-        assert_eq!(instance_of(31), None, "they are out");
-        assert_eq!(instance_of(32).map(|i| i.id), Some(inst.id), "the other one is still in");
-        assert_eq!(drop_member(32).map(|i| i.id), Some(inst.id));
-        assert_eq!(instance_of(32), None);
-        assert_eq!(drop_member(32), None, "nobody left, and the run is forgotten");
+        let mut runs = Runs::default();
+        let inst = runs.open(7_200, vec![31, 32], 10_000);
+        assert_eq!(runs.drop_member(31).map(|i| i.id), Some(inst.id));
+        assert_eq!(runs.instance_of(31), None, "they are out");
+        assert_eq!(runs.instance_of(32).map(|i| i.id), Some(inst.id), "the other one is still in");
+        assert_eq!(runs.drop_member(32).map(|i| i.id), Some(inst.id));
+        assert_eq!(runs.instance_of(32), None);
+        assert_eq!(runs.drop_member(32), None, "nobody left, and the run is forgotten");
+    }
+
+    /// **A clear belongs to one run.** The owner, 2026-09-23: *"just because one party instance
+    /// cleared, doesn't mean that all party instances cleared."* Two runs on the same stage;
+    /// clearing one leaves the other closed, and a second clear is reported as not new.
+    #[test]
+    fn a_stage_clear_belongs_to_one_run_and_no_other() {
+        let mut runs = Runs::default();
+        let a = runs.open(7_300, vec![41], 10_000);
+        let b = runs.open(7_301, vec![42], 10_000);
+        assert_ne!(a.id, b.id);
+        assert!(!runs.is_cleared(41, STAGE_1) && !runs.is_cleared(42, STAGE_1));
+
+        assert_eq!(runs.clear_stage(41, STAGE_1), Some(true));
+        assert!(runs.is_cleared(41, STAGE_1));
+        assert!(!runs.is_cleared(42, STAGE_1), "the other run's stage 1 is still closed");
+        assert!(!runs.is_cleared(41, STAGE_1 + 100), "and so is this run's next stage");
+        assert_eq!(runs.clear_stage(41, STAGE_1), Some(false), "already cleared is not new");
+
+        assert_eq!(runs.clear_stage(99_999, STAGE_1), None, "not in a run");
+        assert_eq!(runs.clear_stage(42, 80_000_500), None, "the Bonus has no way forward");
+        runs.close(a.id);
+        runs.close(b.id);
+    }
+
+    /// Stage 1 to 5 go one on, the last stage goes to the Bonus, and nothing leaves the
+    /// Bonus or the Exit by `next00`.
+    #[test]
+    fn next00_walks_the_stages_in_order() {
+        assert_eq!(next_stage(80_000_000), Some(80_000_100));
+        assert_eq!(next_stage(80_000_300), Some(80_000_400));
+        assert_eq!(next_stage(80_000_400), Some(80_000_500));
+        assert_eq!(next_stage(80_000_500), None);
+        assert_eq!(next_stage(EXIT_MAP), None);
+        assert_eq!(next_stage(ENTRY_MAP), None);
+    }
+
+    /// **The temporary solo switch moves the session's minimum, not the rule.** `check` still
+    /// refuses a party of one; `check_min` with the entry minimum lets it through.
+    #[test]
+    fn the_solo_test_switch_does_not_move_the_rule() {
+        let solo = party(1, &[1]);
+        assert_eq!(check(1, Some(&solo), at(30)), Err(Refusal::TooSmall { size: 1 }));
+        let entered = check_min(ENTRY_MIN_PARTY, 1, Some(&solo), at(30));
+        if ENTRY_MIN_PARTY <= 1 {
+            assert!(entered.is_ok(), "{entered:?}");
+        } else {
+            assert_eq!(entered, Err(Refusal::TooSmall { size: 1 }));
+        }
     }
 
     /// The seven quest fields, and nothing either side of them.

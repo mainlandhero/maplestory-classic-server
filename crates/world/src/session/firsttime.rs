@@ -58,7 +58,8 @@ impl Session {
         let here: std::collections::HashSet<u32> =
             self.bus().characters_on(crate::fields::FieldKey::world(firsttime::ENTRY_MAP), &members).into_iter().collect();
         let store = self.store.clone();
-        let gate = firsttime::check(chr.id, party.as_ref(), |id| {
+        // `ENTRY_MIN_PARTY`, not `MIN_PARTY`: the TEMPORARY solo test (firsttime.rs).
+        let gate = firsttime::check_min(firsttime::ENTRY_MIN_PARTY, chr.id, party.as_ref(), |id| {
             store.character_brief(id).ok().flatten().map(|b| firsttime::Candidate {
                 character: id,
                 name: b.name,
@@ -82,7 +83,7 @@ impl Session {
             }
         };
         let Some(party) = party else { return Vec::new() };
-        let instance = firsttime::open(
+        let instance = self.fields.runs().open(
             party.id,
             members.iter().map(|m| m.character).collect(),
             store::Store::unix_now(),
@@ -136,7 +137,8 @@ impl Session {
         if !firsttime::is_quest_map(chr.map_id) {
             return Vec::new();
         }
-        let Some(inst) = firsttime::instance_of(chr.id) else { return Vec::new() };
+        let run = self.fields.runs().instance_of(chr.id);
+        let Some(inst) = run else { return Vec::new() };
         let left = inst.remaining_s(store::Store::unix_now());
         vec![Reply {
             opcode: net::clock::FIELD_CLOCK,
@@ -154,7 +156,7 @@ impl Session {
     /// Everyone still in it is sent to the Exit map - this session directly if it is one of
     /// them, the rest through `Event::PartyQuestEnter`.
     pub(super) fn party_quest_timer_tick(&mut self) -> Vec<Reply> {
-        let over = firsttime::take_expired(store::Store::unix_now());
+        let over = self.fields.runs().take_expired(store::Store::unix_now());
         if over.is_empty() {
             return Vec::new();
         }
@@ -189,7 +191,7 @@ impl Session {
     /// that left will also be immediately brought to the party exit."*
     pub(super) fn leave_party_quest(&mut self, why: &str) -> Vec<Reply> {
         let Some(mut chr) = self.claimed_character() else { return Vec::new() };
-        firsttime::drop_member(chr.id);
+        let _ = self.fields.runs().drop_member(chr.id);
         if !firsttime::is_quest_map(chr.map_id) || chr.map_id == firsttime::EXIT_MAP {
             // Not inside, or already standing at the Exit: dropping them from the run is the
             // whole effect. Warping someone who is in Kerning City would be a bug with a
@@ -212,13 +214,14 @@ impl Session {
     /// the leaver is somebody else, for the usual reason - only their session can build
     /// their `SetField`. Does nothing for a character who was not in a run.
     pub(super) fn eject_from_party_quest(&mut self, who: u32, why: &str) -> Vec<Reply> {
-        if firsttime::instance_of(who).is_none() {
+        let run = self.fields.runs().instance_of(who);
+        if run.is_none() {
             return Vec::new();
         }
         if self.claimed_character().map(|c| c.id) == Some(who) {
             return self.leave_party_quest(why);
         }
-        firsttime::drop_member(who);
+        let _ = self.fields.runs().drop_member(who);
         self.bus().publish_event_to_character(
             who,
             crate::broadcast::Event::PartyQuestEnter { map: firsttime::EXIT_MAP, why: why.to_string() },
@@ -262,9 +265,129 @@ impl Session {
             crate::server::log(&format!("   first time together: {} ({}) leaves the Exit for Kerning City", chr.name, chr.id));
             // Already out of the run by the time they reach the Exit, but a member who
             // logged back in there may not be; dropping again is harmless.
-            firsttime::drop_member(chr.id);
+            let _ = self.fields.runs().drop_member(chr.id);
             return self.go_to_map(&mut chr, firsttime::TOWN_MAP, 0, "First Time Together: Nella sends them home".to_string());
         }
         self.leave_party_quest("Nella showed them out")
+    }
+
+    /// **Cloto clears the stage they stand on - TEMPORARY, for the instancing test.** The owner,
+    /// 2026-09-23: clicking the stage NPC should *"send the "stage clear" opcode and enable
+    /// the portal to go to the next stage"*, and *"the PQ stage clears should be per
+    /// instance, and never shared."*
+    ///
+    /// The clear is recorded on this run's instance (`firsttime::Runs::clear_stage`), and the three
+    /// effects go to this screen directly and to **this field key** on the bus - which is
+    /// `(map, instance)`, so another party on the same stage gets nothing and its gate stays
+    /// shut. `None` outside a run, so a GM who walked in with `!map` falls through to them
+    /// ordinary dialogue.
+    pub(super) fn open_cloto(&mut self, template: u32) -> Option<Vec<Reply>> {
+        let chr = self.claimed_character()?;
+        if template != firsttime::CLOTO {
+            return None;
+        }
+        let fresh = self.fields.runs().clear_stage(chr.id, chr.map_id);
+        let fresh = fresh?;
+        self.conversation = None;
+        let run = self.fields.runs().instance_of(chr.id).map(|i| i.id).unwrap_or(0);
+        let say = |line: &str, what: String| Reply {
+            opcode: net::script::SCRIPT_MESSAGE,
+            body: net::script::npc_say(template, line, false, false),
+            what,
+        };
+        if !fresh {
+            return Some(vec![say(
+                firsttime::CLOTO_ALREADY,
+                format!("ScriptMessage Say from Cloto: map {} already cleared by instance {run}", chr.map_id),
+            )]);
+        }
+        let key = self.field_of(&chr);
+        crate::server::log(&format!(
+            "   first time together: {} ({}) cleared map {} for instance {run} (TEMPORARY: Cloto clears on click); \
+             effects to field {key} only",
+            chr.name, chr.id, chr.map_id
+        ));
+        let effects = [
+            (net::fieldeffect::screen(net::fieldeffect::SCREEN_PARTY_CLEAR), "screen quest/party/clear"),
+            (net::fieldeffect::sound(net::fieldeffect::SOUND_PARTY_CLEAR, 100), "sound Party1/Clear"),
+            (net::fieldeffect::object_state(net::fieldeffect::OBJECT_GATE), "object state gate - the portal opens"),
+        ];
+        let mut out = Vec::new();
+        for (body, what) in effects {
+            let reply = Reply {
+                opcode: net::fieldeffect::FIELD_EFFECT,
+                body,
+                what: format!("FieldEffect {what}: stage {} cleared, instance {run}", chr.map_id),
+            };
+            self.bus().publish(self.subscriber, key, reply.clone(), None);
+            out.push(reply);
+        }
+        out.push(say(
+            firsttime::CLOTO_CLEARED,
+            format!("ScriptMessage Say from Cloto: map {} cleared for instance {run}", chr.map_id),
+        ));
+        Some(out)
+    }
+
+    /// **A cleared stage's gate, for whoever arrives after the clear.** The gate object is
+    /// part of the map and starts closed on every field entry, so a member who walks in
+    /// later - or comes back through Nella's side of things - would see it shut over a portal
+    /// that works. Sent once per entry: the object-state arm advances the object, so it must
+    /// never be sent twice to one screen (`net::fieldeffect`).
+    pub(super) fn party_quest_gate(&mut self) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let cleared = self.fields.runs().is_cleared(chr.id, chr.map_id);
+        if !cleared {
+            return Vec::new();
+        }
+        vec![Reply {
+            opcode: net::fieldeffect::FIELD_EFFECT,
+            body: net::fieldeffect::object_state(net::fieldeffect::OBJECT_GATE),
+            what: format!(
+                "FieldEffect object state gate to character {}: map {} was already cleared by this run",
+                chr.id, chr.map_id
+            ),
+        }]
+    }
+
+    /// **`next00` - `PQ_01_nextstage_portal`.** Open when this run has cleared the stage,
+    /// closed otherwise; `None` for any other portal or a character in no run, so the
+    /// ordinary script-portal path answers those.
+    ///
+    /// One member at a time, the way the classic quest works: each player walks through
+    /// themselves. The arrival is the next stage's `st00`, which is what each `next00` names
+    /// as its `tn` [L].
+    pub(super) fn party_quest_portal(&mut self, portal: &str) -> Option<Vec<Reply>> {
+        let mut chr = self.claimed_character()?;
+        if portal != firsttime::NEXT_PORTAL {
+            return None;
+        }
+        let run = self.fields.runs().instance_of(chr.id);
+        let run = run?;
+        let next = firsttime::next_stage(chr.map_id)?;
+        if !run.cleared.contains(&chr.map_id) {
+            crate::server::log(&format!(
+                "   first time together: {} ({}) pressed next00 on map {} before this run cleared it",
+                chr.name, chr.id, chr.map_id
+            ));
+            let mut out = crate::mesodrop::unlock_unhandled_latching_request(
+                net::portalscript::CLIENT_PORTAL_SCRIPT,
+            );
+            out.extend(self.notice(firsttime::PORTAL_CLOSED.to_string()));
+            return Some(out);
+        }
+        let arrival = self
+            .config
+            .portal_index
+            .get(&(next, firsttime::ARRIVAL_PORTAL.to_string()))
+            .copied()
+            .unwrap_or(0);
+        let from = chr.map_id;
+        Some(self.go_to_map(
+            &mut chr,
+            next,
+            arrival,
+            format!("First Time Together: next00 from cleared stage {from}"),
+        ))
     }
 }
