@@ -1409,6 +1409,129 @@ mod tests {
         assert!(closed_a && closed_b);
     }
 
+    /// **Cloto will not clear a stage until the whole run is standing on it.** The owner,
+    /// 2026-09-23: *"Do not clear a stage unless everyone is on same map that the stage is
+    /// about to be cleared of."*
+    ///
+    /// A1 and A2 in one run; A2 is on stage 2. A1's click is refused by name and clears
+    /// nothing - no effect to A1, none on the bus, the run still uncleared. The control:
+    /// once A2 walks onto stage 1 the same click clears it. And a member who DISCONNECTS
+    /// stops holding the stage up, because they leave the run.
+    #[test]
+    fn cloto_waits_for_the_whole_run_to_be_on_her_stage() {
+        use crate::firsttime;
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut cfg = (*config).clone();
+        cfg.fields.insert(firsttime::STAGE_1);
+        cfg.fields.insert(firsttime::STAGE_1 + 100);
+        cfg.npcs.insert(
+            firsttime::STAGE_1,
+            vec![net::opcode::FieldNpc { object_id: 920, template_id: firsttime::CLOTO, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 }],
+        );
+        let config = Arc::new(cfg);
+        let mut ids = Vec::new();
+        let mut sessions = Vec::new();
+        for (name, map) in [("Alfa", firsttime::STAGE_1), ("Alto", firsttime::STAGE_1 + 100), ("Arco", firsttime::STAGE_1)] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: map, level: 21, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.set_character_map(id, map).unwrap();
+            store.create_migration(account, id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(id);
+            ids.push(id);
+            sessions.push(s);
+        }
+        // Alfa and Alto in one run; Arco in it too, for the disconnect half.
+        let run = fields.runs().open(5_201, ids.clone(), store::Store::unix_now());
+        for s in sessions.iter_mut() {
+            let _ = s.on_field_entered();
+        }
+        for s in sessions.iter_mut() {
+            let _ = s.tick(1_000);
+        }
+        let effects = |out: &[Reply]| out.iter().filter(|r| r.opcode == net::fieldeffect::FIELD_EFFECT).count();
+        let said = |out: &[Reply]| {
+            out.iter().filter(|r| r.opcode == net::script::SCRIPT_MESSAGE).map(|r| String::from_utf8_lossy(&r.body).to_string()).collect::<String>()
+        };
+        let mut click = net::script::CLIENT_NPC_CLICK.to_le_bytes().to_vec();
+        click.extend_from_slice(&920u32.to_le_bytes());
+        click.extend_from_slice(&0i16.to_le_bytes());
+        click.extend_from_slice(&0i16.to_le_bytes());
+        click.extend_from_slice(&u32::MAX.to_le_bytes());
+
+        // Alto is on stage 2: refused, by name, and nothing cleared or sent.
+        let out = sessions[0].handle(&click);
+        assert_eq!(effects(&out), 0, "no banner, no gate");
+        assert!(said(&out).contains("Alto"), "the missing member is named: {}", said(&out));
+        assert!(!said(&out).contains("Arco"), "a member who IS here is not: {}", said(&out));
+        assert_eq!(effects(&sessions[2].tick(2_000)), 0, "and nothing reached the bus");
+        let cleared = fields.runs().is_cleared(ids[0], firsttime::STAGE_1);
+        assert!(!cleared, "the stage is still shut");
+
+        // Alto DISCONNECTS on stage 2. They leave the run, so they no longer hold it up.
+        let alto = sessions.remove(1);
+        drop(alto);
+        let still = fields.runs().instance_of(ids[1]);
+        assert_eq!(still, None, "a dropped connection leaves the run");
+
+        // The control: with everyone left in the run on stage 1, the same click clears.
+        let out = sessions[0].handle(&click);
+        assert_eq!(effects(&out), 3, "banner, fanfare, gate: {}", said(&out));
+        let cleared = fields.runs().is_cleared(ids[0], firsttime::STAGE_1);
+        assert!(cleared);
+        let closed = fields.runs().close(run.id);
+        assert!(closed);
+    }
+
+    /// **A disconnect never logs back in onto a stage.** The owner, 2026-09-23: *"they should
+    /// log-in onto the Exit map to be returned to Kerning City. Disconnected players should
+    /// never be logged back into to any of the PQ stages."*
+    ///
+    /// Every stage, 1 to Bonus, is sent to the Exit - checked through the real login path
+    /// (a claim, then the hello's `SetField`) and on the saved record. The Exit itself logs
+    /// in where it is, and so does an ordinary map: the control that the redirect is not
+    /// simply "every login goes to the Exit".
+    #[test]
+    fn a_login_onto_any_party_quest_stage_lands_on_the_exit() {
+        use crate::firsttime;
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut cfg = (*config).clone();
+        for m in (0..=6).map(|n| firsttime::STAGE_1 + n * 100) {
+            cfg.fields.insert(m);
+        }
+        cfg.fields.insert(firsttime::TOWN_MAP);
+        let config = Arc::new(cfg);
+        let stages: Vec<u32> = (0..=5).map(|n| firsttime::STAGE_1 + n * 100).collect();
+        let cases = stages
+            .iter()
+            .map(|&m| (m, firsttime::EXIT_MAP))
+            .chain([(firsttime::EXIT_MAP, firsttime::EXIT_MAP), (firsttime::TOWN_MAP, firsttime::TOWN_MAP)]);
+        for (n, (saved, expect)) in cases.enumerate() {
+            let name = format!("Login{n}");
+            let chr = net::opcode::Character { name: name.clone(), map_id: saved, level: 21, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.set_character_map(id, saved).unwrap();
+            // In a run too, as a disconnect mid-quest would leave them after a crash of the
+            // SESSION but not of the server: the login must take them out of it.
+            let run = fields.runs().open(6_000 + n as u32, vec![id], store::Store::unix_now());
+            store.create_migration(account, id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(id);
+            let out = s.handle(&crate::session::CLIENT_MIGRATION_HELLO.to_le_bytes());
+            let set = out.iter().find(|r| r.opcode == net::opcode::SET_FIELD).expect("the login SetField");
+            assert!(set.what.contains(&format!("carrying map {expect} ")), "saved on {saved}: {}", set.what);
+            let now = store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().map_id;
+            assert_eq!(now, expect, "saved on {saved}, and the record says so too");
+            if saved != expect {
+                let inside = fields.runs().instance_of(id);
+                assert_eq!(inside, None, "and out of the run");
+            }
+            let _ = fields.runs().close(run.id);
+        }
+    }
+
     /// **A stage clear belongs to one run.** The owner, 2026-09-23: *"just because one party
     /// instance cleared, doesn't mean that all party instances cleared. The PQ stage clears
     /// should be per instance, and never shared."*

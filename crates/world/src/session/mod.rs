@@ -531,6 +531,8 @@ impl Drop for Session {
         if !self.handing_over {
             self.leave_party_on_disconnect();
         }
+        // Out of any party-quest run, a channel change included. session/firsttime.rs.
+        self.leave_party_quest_on_disconnect();
         // The hub's directory: this character no longer plays on this channel. Before
         // `part`, which is the local equivalent. `session/worldlink.rs`.
         self.announce_offline_to_link();
@@ -1200,6 +1202,9 @@ impl Session {
             }
             _ => return Vec::new(),
         }
+        // Never log in onto a party-quest stage: the Exit instead. Before the record is
+        // read, so the SetField below carries it. session/firsttime.rs.
+        self.keep_out_of_party_quest_on_login();
         // Always answer. An unanswered packet freezes the client's whole UI - every
         // button, including the quit prompt - and reads on screen as a crash. So a
         // character we cannot load falls back to the minimal record rather than silence.
