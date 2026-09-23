@@ -211,12 +211,22 @@ pub struct Session {
     // number is still drawn. See `session::field::on_field_entered`.
     /// The NPC conversation in progress, if any.
     conversation: Option<Conversation>,
-    /// Requesters whose friend popup this session has already raised - `session/friends.rs`.
+    /// Requesters whose friend popup this session has raised, and **when** - the `now_ms` of
+    /// the tick the balloon went up on. `session/friends.rs`.
     ///
-    /// A pending request lives in the store until it is answered, so without this every map
-    /// change would raise the balloon again for something the player has already left
-    /// unanswered. Per session, so a relog does offer it again.
-    friend_popups_raised: std::collections::HashSet<u32>,
+    /// It is a map rather than a set for two jobs at once. A pending request lives in the
+    /// store until it is answered, so without it every map change would raise the balloon
+    /// again for something the player has already left unanswered; and the timestamp is what
+    /// [`Session::friend_timeout_tick`] measures the offer against. Per session, so a relog
+    /// offers it again with a fresh clock.
+    friend_popups_raised: std::collections::HashMap<u32, u64>,
+    /// Whether this session has told its friends it is online yet - `session/friends.rs`.
+    ///
+    /// **Not done at claim**, which is the obvious place and the wrong one: presence is
+    /// registered when the character enters a field, so a notice sent at claim would tell
+    /// everyone this character is offline. It goes out on the FIRST field entry instead, and
+    /// this flag is what keeps it from firing again on every portal.
+    announced_presence: bool,
     /// The craft this session accepted and is waiting to finish - `session/craft.rs`.
     ///
     /// **A craft is two packets**: the window asks to begin, animates the recipe's own
@@ -525,6 +535,12 @@ impl Drop for Session {
         // `part`, which is the local equivalent. `session/worldlink.rs`.
         self.announce_offline_to_link();
         self.fields.bus().part(self.subscriber);
+        // **And their friends' windows.** After `part`, deliberately: the friends redraw their
+        // list from the roster, and this connection has to be out of it before they ask or
+        // they will be told this character is still online. `session/friends.rs`.
+        if !self.handing_over {
+            self.notify_friends_of_presence(false);
+        }
         // **And its mobs go back, or they stop moving for everybody.**
         //
         // A connection that dies without logging out - the socket drops, the client crashes,
@@ -637,7 +653,8 @@ impl Session {
             mp_eater_ready_ms: 0,
             skill_ready_ms: std::collections::HashMap::new(),
             last_position: None,
-            friend_popups_raised: std::collections::HashSet::new(),
+            friend_popups_raised: std::collections::HashMap::new(),
+            announced_presence: false,
             pending_craft: None,
             log_name: None,
             last_move_action: None,
@@ -754,12 +771,18 @@ impl Session {
         // changed HP broadcasts the value it just saved. Nothing comes back to this
         // connection; the packets go out over the bus. `crate::session::party::party_hp_tick`.
         self.party_hp_tick();
+        // The party quest's clock. Before the buffs for no reason beyond a stable order.
+        out.extend(self.party_quest_timer_tick());
         // Buffs whose time is up. After regen so a `0x007C` and a `0x007E` in the same
         // tick arrive in the order the client draws them.
         out.extend(self.buff_tick(now_ms));
         out.extend(self.dragon_blood_tick(now_ms));
         // The summoned pet's fullness, one down every five minutes. session/pet.rs.
         out.extend(self.pet_hunger_tick(now_ms));
+        // A friend request nobody answered. Before the chatter switch, because an unanswered
+        // invitation expiring is not idle chatter and a run with `chatter_off` should still
+        // do it. `session/friends.rs`.
+        out.extend(self.friend_timeout_tick(now_ms));
         if self.config.chatter_off {
             return out;
         }

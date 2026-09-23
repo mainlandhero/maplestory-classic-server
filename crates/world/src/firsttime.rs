@@ -41,6 +41,27 @@ pub const MIN_PARTY: usize = 2;
 /// Four, as both the owner and the client say.
 pub const MAX_PARTY: usize = 4;
 
+/// **How long a party has.** The owner, 2026-09-22: *"the party quest lacked a timer, since it
+/// has to be finished within the time limit or its members will be kicked out into the exit
+/// map."* Then a screenshot of the widget itself, reading **29:32** a few seconds into a
+/// run: the limit is **thirty minutes**, and the client draws it as Min/Sec under the words
+/// "Time Left". That screenshot is also what confirms the widget is the type-2 countdown
+/// (`net::clock::clock_seconds`) rather than the map's own clock.
+pub const TIME_LIMIT_S: u32 = 1_800;
+
+/// Nella - in every one of the seven fields, including the Exit. The way out.
+pub const NELLA: u32 = 800_002;
+/// The conversation path Nella's yes/no is parked under.
+pub const NELLA_PATH: &str = "firsttime.nella";
+/// Kerning City, where Nella sends someone standing on the Exit map.
+pub const TOWN_MAP: u32 = ENTRY_MAP;
+
+/// What Nella asks, inside the quest.
+pub const NELLA_LEAVE: &str =
+    "If you want to leave this place, come talk to me. Shall I send you out?";
+/// What Nella asks on the Exit map.
+pub const NELLA_TOWN: &str = "Shall I send you back to Kerning City?";
+
 /// The conversation path Lakelis' yes/no is parked under.
 pub const ASK_PATH: &str = "firsttime.ask";
 
@@ -197,6 +218,22 @@ pub struct Instance {
     pub id: u32,
     pub party: PartyId,
     pub members: Vec<CharacterId>,
+    /// Unix seconds. **A wall clock, deliberately**: `Session::tick`'s `now_ms` counts from
+    /// the moment that one connection opened, so two members would hold two different
+    /// deadlines for the same run. `store::Store::unix_now`.
+    pub deadline_unix: i64,
+}
+
+impl Instance {
+    /// Seconds left, saturating at zero.
+    pub fn remaining_s(&self, now_unix: i64) -> u32 {
+        u32::try_from((self.deadline_unix - now_unix).max(0)).unwrap_or(0)
+    }
+
+    /// Whether the clock has run out.
+    pub fn is_over(&self, now_unix: i64) -> bool {
+        now_unix >= self.deadline_unix
+    }
 }
 
 static NEXT_INSTANCE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
@@ -204,16 +241,39 @@ static LIVE: std::sync::Mutex<Vec<Instance>> = std::sync::Mutex::new(Vec::new())
 
 /// Open a new instance for `party`. Any instance that party already had is dropped first,
 /// so a re-entry cannot leave the old one behind holding the old member list.
-pub fn open(party: PartyId, members: Vec<CharacterId>) -> Instance {
+pub fn open(party: PartyId, members: Vec<CharacterId>, now_unix: i64) -> Instance {
     let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
     live.retain(|i| i.party != party);
     let inst = Instance {
         id: NEXT_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         party,
         members,
+        deadline_unix: now_unix + i64::from(TIME_LIMIT_S),
     };
     live.push(inst.clone());
     inst
+}
+
+/// **Take every instance whose clock has run out**, removing them as they are handed over so
+/// two sessions ticking at once cannot both expire the same run and warp its members twice.
+pub fn take_expired(now_unix: i64) -> Vec<Instance> {
+    let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    let (over, still) = live.drain(..).partition::<Vec<_>, _>(|i| i.is_over(now_unix));
+    *live = still;
+    over
+}
+
+/// Drop one character out of their run - they left the party, or walked out through Nella.
+/// Returns the instance they were in. An instance with nobody left is forgotten.
+pub fn drop_member(character: CharacterId) -> Option<Instance> {
+    let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    let at = live.iter().position(|i| i.members.contains(&character))?;
+    let was = live[at].clone();
+    live[at].members.retain(|&m| m != character);
+    if live[at].members.is_empty() {
+        live.remove(at);
+    }
+    Some(was)
 }
 
 /// The instance `character` is running, if any.
@@ -345,13 +405,47 @@ mod tests {
     /// An instance is per RUN, not per party, and a re-entry replaces the old one.
     #[test]
     fn an_instance_is_per_run_and_a_re_entry_replaces_the_old_one() {
-        let first = open(7_001, vec![11, 12]);
-        let second = open(7_001, vec![11, 12]);
+        let first = open(7_001, vec![11, 12], 1_000);
+        let second = open(7_001, vec![11, 12], 1_000);
         assert_ne!(first.id, second.id, "a second run is a different field");
         assert_eq!(instance_of(11).map(|i| i.id), Some(second.id), "only the newer one is live");
         assert!(close(second.id));
         assert_eq!(instance_of(11), None);
         assert!(!close(second.id), "closing twice is not an error but changes nothing");
+    }
+
+    /// **The clock is a wall clock and it runs out.** The owner, 2026-09-22: members are kicked
+    /// to the exit map when the limit passes.
+    #[test]
+    fn an_instance_runs_out_and_is_handed_over_exactly_once() {
+        let inst = open(7_100, vec![21, 22], 10_000);
+        assert_eq!(inst.deadline_unix, 10_000 + i64::from(TIME_LIMIT_S));
+        assert_eq!(inst.remaining_s(10_000), TIME_LIMIT_S);
+        assert_eq!(inst.remaining_s(10_000 + 60), TIME_LIMIT_S - 60);
+        assert!(!inst.is_over(inst.deadline_unix - 1));
+        assert!(inst.is_over(inst.deadline_unix));
+        assert_eq!(inst.remaining_s(inst.deadline_unix + 999), 0, "saturates rather than wrapping");
+
+        // Nothing is over yet, so nothing is taken.
+        assert!(take_expired(10_000).iter().all(|i| i.id != inst.id));
+        // Past the deadline it comes out ONCE - a second tick, from the other member's
+        // session, must not warp anybody a second time.
+        let over = take_expired(inst.deadline_unix);
+        assert_eq!(over.iter().filter(|i| i.id == inst.id).count(), 1);
+        assert!(take_expired(inst.deadline_unix).iter().all(|i| i.id != inst.id));
+        assert_eq!(instance_of(21), None, "and it is gone from the registry");
+    }
+
+    /// A member who leaves is dropped from the run; the last one out closes it.
+    #[test]
+    fn dropping_members_empties_and_then_forgets_the_instance() {
+        let inst = open(7_200, vec![31, 32], 10_000);
+        assert_eq!(drop_member(31).map(|i| i.id), Some(inst.id));
+        assert_eq!(instance_of(31), None, "they are out");
+        assert_eq!(instance_of(32).map(|i| i.id), Some(inst.id), "the other one is still in");
+        assert_eq!(drop_member(32).map(|i| i.id), Some(inst.id));
+        assert_eq!(instance_of(32), None);
+        assert_eq!(drop_member(32), None, "nobody left, and the run is forgotten");
     }
 
     /// The seven quest fields, and nothing either side of them.

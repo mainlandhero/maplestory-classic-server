@@ -453,6 +453,10 @@ impl super::Session {
                         };
                         self.deliver(member, actor, reply, &mut out);
                     }
+                    // **And out of the party quest.** A run belongs to a party; somebody who
+                    // is no longer in it is no longer in the run. session/firsttime.rs.
+                    let ejected = self.eject_from_party_quest(*who, "they left the party");
+                    out.extend(ejected);
                 }
                 // The leader left, so the party is gone. `0x10` with `still_exists` false and
                 // `char_id` = the leader who quit: the leader reads "you disbanded", everyone
@@ -460,6 +464,11 @@ impl super::Session {
                 // who was in it at the end, this connection included.
                 Effect::Disbanded { party, members } => {
                     let leader = actor; // the disband is driven by the leader's own Leave
+                    // The party is gone, so nobody is in its run any more.
+                    for member in members.clone() {
+                        let ejected = self.eject_from_party_quest(member, "the party disbanded");
+                        out.extend(ejected);
+                    }
                     for member in members {
                         let reply = Reply {
                             opcode: net::party::PARTY_RESULT,

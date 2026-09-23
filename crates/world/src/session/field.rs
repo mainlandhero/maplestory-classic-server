@@ -235,6 +235,8 @@ impl Session {
         let who = chr.id;
         out.extend(self.fields.with_drops(map, |d| d.field_entry(map, now, who, &party)));
         out.extend(self.restore_bag_and_mesos());
+        // The party quest's countdown, if this entry is into one. session/firsttime.rs.
+        out.extend(self.party_quest_clock());
 
         // **A character who was already dead when they arrived gets the dialog here.**
         //
@@ -390,6 +392,10 @@ impl Session {
             Err(e) => out.extend(self.notice(format!("Could not read your mesos: {e}"))),
         }
         out.extend(self.quest_helper_recount(chr.id));
+        // The friend list, and a line for every request that arrived while this character was
+        // away. The client rebuilds its friend manager on a field entry the same way it
+        // rebuilds its pools, so the list has to be re-sent. `session/friends.rs`.
+        out.extend(self.friend_entry_replies());
         // A gift queued while this character was away: its box opens on the first move.
         self.arm_gift_drop();
         out
