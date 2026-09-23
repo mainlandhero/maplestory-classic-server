@@ -119,7 +119,6 @@ mod tests {
         assert_eq!(&b[1..], &1_800u32.to_le_bytes());
         assert_eq!(clock_seconds(0), vec![CLOCK_TYPE_SECONDS, 0, 0, 0, 0], "zero is a value, not a stop");
     }
-    use super::*;
 
     /// **Four bytes, type first, then hour, minute, second** - the order the handler reads
     /// them into `esi`, `edi`, `ebx` and passes on. A swapped pair would draw a plausible

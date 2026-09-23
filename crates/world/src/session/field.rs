@@ -237,6 +237,8 @@ impl Session {
         out.extend(self.restore_bag_and_mesos());
         // The party quest's countdown, if this entry is into one. session/firsttime.rs.
         out.extend(self.party_quest_clock());
+        // And its gate, if this run already cleared the stage being entered.
+        out.extend(self.party_quest_gate());
 
         // **A character who was already dead when they arrived gets the dialog here.**
         //
@@ -896,6 +898,10 @@ impl Session {
             ));
             return unlock();
         };
+        // First Time Together's `next00`, which opens per run. session/firsttime.rs.
+        if let Some(replies) = self.party_quest_portal(&req.portal_name) {
+            return replies;
+        }
         let Some(mut chr) = self.claimed_character() else { return unlock() };
         match self.resolve_named_portal(&chr, None, &req.portal_name) {
             Some((target, arrival, note)) => {
