@@ -151,6 +151,99 @@ pub fn invite_len(inviter_name: &str) -> usize {
     22 + inviter_name.len()
 }
 
+// ---------------------------------------------------------------------------------------
+// 0x0575 mode 4 - the packet that OPENS the trade window
+// ---------------------------------------------------------------------------------------
+
+/// Mode 4 with `A == 0`: **create the room window and fill it.**
+///
+/// The owner, 2026-09-22: *"Tester2 just sent the owner a trade request, but after the owner accepts it, the
+/// Trade window did not open."* It did not because this packet did not exist:
+/// `research/trade-2026-09-09.md` §3 left mode 4's payload undecoded, since it runs through a
+/// virtual call on whichever miniroom class the room type selects. That call is now read.
+///
+/// # The body, from the two functions that consume it
+///
+/// `FUN_141C3D980` (the mode switch) and `FUN_141C3ED00` (the payload), both **[L]**:
+///
+/// ```text
+/// u32 mode = 4
+/// u32 A    = 0          non-zero is a notice code instead, and the body stops at 12 bytes
+/// u32 B    = roomType   1 -> new(0x1678) + FUN_142146D90, the TRADE dialog
+/// u32                   -> room+0x308, read only when A == 0
+/// u8  capacity          -> room+0x2fc: the loop bound over the member slots (FUN_141c3cef0
+///                          walks 0..capacity), so 2 for a trade
+/// u8  mySlot            -> room+0x2f8: which slot the RECIPIENT is, indexed by FUN_141c3d0f0
+/// repeat until a byte with bit 7 set, or >= 8:
+///     u8   slot
+///     ...  avatar look  the vtable slot +0x1C8 for the trade class is FUN_141C423D0, and its
+///                       ONLY packet read is FUN_1402ee8d0 - the same avatar decoder
+///                       `0x0224` uses, i.e. `opcode::avatar_look`
+///     u32  characterId  -> member[slot]+0
+///     str  name         -> member[slot]+8
+///     u16               -> member[slot]+0x10
+/// u8  0xFF              ends the list
+/// ```
+///
+/// # The one thing still unread, and what it costs
+///
+/// After the member loop the handler makes a final virtual call on a UI singleton -
+/// `(*DAT_143aa8520)[0x188]`, resolved through the vtable that
+/// `FUN_14177fe00` installs (`0x1433D31C8`) to `FUN_142bf2540`, which
+/// `tools/reads.py 0x142bf2540 4` reports as reading **nothing**. **[D]**, because the slot
+/// arithmetic lands in a region shared with the class's second vtable. If that resolution is
+/// wrong the body is short by whatever it does read, and a short body is how `0x02AD` killed
+/// a client - so plan step 13 watches for a fault right after Accept rather than assuming.
+pub const ROOM_OPEN_MODE: u32 = 4;
+
+/// `A` for "open a room". Any other value makes the client draw a notice and read no further.
+pub const ROOM_OPEN_CREATE: u32 = 0;
+
+/// A trade has two seats. This is the `capacity` byte, and the loop bound the client walks.
+pub const TRADE_CAPACITY: u8 = 2;
+
+/// The member list ends on a byte the client reads as negative (`test al,al / js`).
+pub const MEMBER_LIST_END: u8 = 0xFF;
+
+/// One seat of a trade window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoomMember {
+    /// 0 or 1 for a trade. A slot `>= 8` ends the list as surely as [`MEMBER_LIST_END`].
+    pub slot: u8,
+    pub character_id: u32,
+    pub name: String,
+    /// [`crate::opcode::avatar_look`] of that character - the same bytes `0x0224` carries.
+    pub look: Vec<u8>,
+}
+
+/// Build the room-open body. `my_slot` is **the slot of the player this copy is sent to**,
+/// so the two sides of one trade get two different packets.
+pub fn room_open(my_slot: u8, capacity: u8, members: &[RoomMember]) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(ROOM_OPEN_MODE);
+    w.u32(ROOM_OPEN_CREATE);
+    w.u32(ROOM_TYPE_TRADE);
+    w.u32(0); //            -> room+0x308; nothing this server sends is read back out of it
+    w.u8(capacity); //      -> room+0x2fc
+    w.u8(my_slot); //       -> room+0x2f8
+    for m in members {
+        w.u8(m.slot);
+        w.bytes(&m.look);
+        w.u32(m.character_id);
+        w.str(&m.name);
+        w.u16(0); //        -> member+0x10, whose reader is not identified
+    }
+    w.u8(MEMBER_LIST_END);
+    w.into_vec()
+}
+
+/// What [`room_open`] will produce, without building it.
+pub fn room_open_len(members: &[RoomMember]) -> usize {
+    // 12 for the three mode words, 4 for the one that lands in room+0x308, then the two
+    // flag bytes, the members, and the terminator.
+    18 + members.iter().map(|m| 1 + m.look.len() + 4 + 2 + m.name.len() + 2).sum::<usize>() + 1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

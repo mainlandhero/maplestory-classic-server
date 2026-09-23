@@ -145,7 +145,7 @@ impl Session {
         // reason: a shopper is not on the map, and a mob whose controller is looking at the
         // Cash Shop is a mob nobody is moving. Field entry re-claims on the way back, so this
         // costs the shopper nothing and unfreezes everybody else's screen while it browses.
-        self.hand_over_mobs(chr.map_id);
+        self.hand_over_mobs(self.field_of(&chr));
         let (quests, _) = self.quest_book(chr.id);
         let skills = self.store.skills(chr.id).unwrap_or_default();
         let mut out = vec![Reply {

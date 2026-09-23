@@ -800,7 +800,7 @@ mod tests {
     use crate::broadcast::{Bus, Presence};
     use crate::session::Reply;
 
-    fn presence(character: u32, map: u32) -> Presence {
+    fn presence(character: u32, map: crate::fields::FieldKey) -> Presence {
         Presence {
             character,
             map,
@@ -832,13 +832,13 @@ mod tests {
         let bus = Bus::new();
         let watcher = bus.join();
         let attacker = bus.join();
-        bus.enter_field(watcher, presence(200, 104_040_000));
-        bus.enter_field(attacker, presence(201, 104_040_000));
+        bus.enter_field(watcher, presence(200, crate::fields::FieldKey::world(104_040_000)));
+        bus.enter_field(attacker, presence(201, crate::fields::FieldKey::world(104_040_000)));
         let _ = bus.drain(watcher);
         let _ = bus.drain(attacker);
 
         let sent = swing(201);
-        bus.publish(attacker, 104_040_000, sent.clone(), None);
+        bus.publish(attacker, crate::fields::FieldKey::world(104_040_000), sent.clone(), None);
 
         let mail = bus.drain(watcher);
         assert_eq!(mail.len(), 1, "the watcher should be told: {mail:?}");
@@ -863,19 +863,19 @@ mod tests {
         let bus = Bus::new();
         let watcher = bus.join();
         let attacker = bus.join();
-        bus.enter_field(watcher, presence(200, 7));
-        bus.enter_field(attacker, presence(201, 7));
+        bus.enter_field(watcher, presence(200, crate::fields::FieldKey::world(7)));
+        bus.enter_field(attacker, presence(201, crate::fields::FieldKey::world(7)));
         let _ = bus.drain(watcher);
 
         for _ in 0..3 {
-            bus.publish(attacker, 7, swing(201), None);
+            bus.publish(attacker, crate::fields::FieldKey::world(7), swing(201), None);
         }
         assert_eq!(bus.drain(watcher).len(), 3, "two swings are two events");
 
         // The same three with the movement key, to show the coalescing is real and is
         // exactly what `None` is avoiding.
         for _ in 0..3 {
-            bus.publish(attacker, 7, swing(201), Some(201));
+            bus.publish(attacker, crate::fields::FieldKey::world(7), swing(201), Some(201));
         }
         assert_eq!(
             bus.drain(watcher).len(),
@@ -894,11 +894,11 @@ mod tests {
         let elsewhere = bus.join();
         let waiting = bus.join();
         let attacker = bus.join();
-        bus.enter_field(elsewhere, presence(200, 100_000_000));
-        bus.enter_field(attacker, presence(201, 104_040_000));
+        bus.enter_field(elsewhere, presence(200, crate::fields::FieldKey::world(100_000_000)));
+        bus.enter_field(attacker, presence(201, crate::fields::FieldKey::world(104_040_000)));
         let _ = bus.drain(elsewhere);
 
-        bus.publish(attacker, 104_040_000, swing(201), None);
+        bus.publish(attacker, crate::fields::FieldKey::world(104_040_000), swing(201), None);
 
         assert!(bus.drain(elsewhere).is_empty(), "a different map is a different field");
         assert!(bus.drain(waiting).is_empty(), "no field, no mail");

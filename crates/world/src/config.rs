@@ -342,6 +342,14 @@ pub struct Config {
     /// stays at its flat base. `gm-handbook/` is generated and gitignored, so a clean checkout
     /// has no table until `python tools/dump_chairs.py` runs. `world::chairs`.
     pub chairs: HashMap<u32, crate::chairs::Chair>,
+    /// Every crafting recipe, keyed by the client's own recipe key, from
+    /// `gm-handbook/craftrecipes.txt`.
+    ///
+    /// Empty is legal and is answered with "This function is currently unavailable" rather
+    /// than with a craft that silently does nothing - `world::crafting`. `gm-handbook/` is
+    /// generated and gitignored, so a clean checkout has no table until
+    /// `python tools/dump_craftrecipe.py` runs.
+    pub recipes: crate::crafting::Recipes,
     /// Every NPC template's name, spoken dialogue and idle chatter, keyed by template id.
     ///
     /// **Behind a lock, so `!npcreload` reaches connections that are already open.** Every
@@ -1511,6 +1519,17 @@ pub struct Quest {
     pub complete_rewards: Vec<RewardItem>,
     /// `Act.1.exp` - experience for turning it in. Quest 1001's is 2.
     pub complete_exp: u64,
+    /// `Act.1.skill.<n>` - `(skillId, exp)`, what turning it in teaches.
+    ///
+    /// **18 rows in this client, all six crafting professions, three quests each.** The
+    /// starter quest of each profession grants `(9200x000, 1)` and its two follow-ups
+    /// `(.., 20)` and `(.., 50)`: the id is the profession, and `exp` is **mastery**, not
+    /// skill points. `store::crafting` keeps the level and the mastery; `world::crafting`
+    /// has the curve. Quest 80008's is `(92000000, 1)` - Silas Irons making a Blacksmith.
+    ///
+    /// A non-profession skill here would be a shape this server has never seen; it is
+    /// carried rather than dropped so the handler can say so out loud.
+    pub complete_skills: Vec<(u32, u32)>,
     /// The conversation, keyed by the `Say` path with the line index removed.
     ///
     /// `"0"` is the opening conversation and `"1"` the completion one; `"0.yes"`,
@@ -1617,6 +1636,20 @@ fn act_item_index(dotted: &str) -> Option<usize> {
     dotted.split('.').nth(2)?.parse().ok()
 }
 
+/// The `<n>` out of `1.skill.<n>.id` / `1.skill.<n>.exp`, and `None` for anything else.
+///
+/// **State 1 only.** Every one of this client's 18 skill acts is a turn-in, and a state this
+/// server does not model is ignored rather than guessed at - the same rule [`act_state`]
+/// applies to items.
+fn act_skill_index(dotted: &str) -> Option<usize> {
+    let mut parts = dotted.split('.');
+    if parts.next()? != "1" || parts.next()? != "skill" {
+        return None;
+    }
+    let n: usize = parts.next()?.parse().ok()?;
+    matches!(parts.next()?, "id" | "exp").then_some(n)
+}
+
 /// The `<state>` out of `<state>.item.<n>.id`, for the two states this server reads.
 ///
 /// `0` is what accepting does and `1` is what completing does. Anything else is a state the
@@ -1690,6 +1723,8 @@ fn read_quest_rows(text: &str, out: &mut HashMap<u32, Quest>, mode: Overlay) -> 
     // quest -> item index -> a half-built (id, count), stitched after the read because the two
     // halves are separate rows and the file does not promise an order.
     let mut act_items: HashMap<(u32, u8), BTreeMap<usize, HalfItem>> = HashMap::new();
+    // quest -> skill index -> a half-built (skillId, mastery exp). `Act.1.skill.<n>`.
+    let mut act_skills: HashMap<u32, BTreeMap<usize, HalfItem>> = HashMap::new();
     let mut touched: std::collections::HashSet<u32> = std::collections::HashSet::new();
 
     for row in text.lines() {
@@ -1754,6 +1789,18 @@ fn read_quest_rows(text: &str, out: &mut HashMap<u32, Quest>, mode: Overlay) -> 
             }
             "Act" if dotted == "1.exp" && (fill || quest.complete_exp == 0) => {
                 quest.complete_exp = value.parse().unwrap_or(0);
+            }
+            // `Act.1.skill.<n>.id` and `.exp`, stitched like the items below: the two halves
+            // are separate rows and the file does not promise an order.
+            "Act" if act_skill_index(dotted).is_some() => {
+                if let Some(n) = act_skill_index(dotted) {
+                    let half = act_skills.entry(qid).or_default().entry(n).or_default();
+                    if dotted.ends_with(".id") {
+                        half.id = value.parse().ok();
+                    } else if dotted.ends_with(".exp") {
+                        half.count = value.parse().ok();
+                    }
+                }
             }
             // Authored keys. Neither exists in the WZ - see the fields they set.
             "Act" if dotted.ends_with(".hp") => {
@@ -1820,6 +1867,22 @@ fn read_quest_rows(text: &str, out: &mut HashMap<u32, Quest>, mode: Overlay) -> 
                         quest.complete_rewards.push(reward);
                     }
                 }
+            }
+        }
+    }
+
+    // The skill acts, stitched the same way and with the same overlay rule: an overlay only
+    // fills a hole, so a client-shipped grant is never replaced by an authored one.
+    for (qid, indexed) in act_skills {
+        let quest = out.entry(qid).or_default();
+        if !(mode == Overlay::No || quest.complete_skills.is_empty()) {
+            continue;
+        }
+        for (_, half) in indexed {
+            // `exp` absent is 0 mastery, not "skip the grant": a quest could teach a
+            // profession without paying any mastery, and the id is the part that matters.
+            if let Some(id) = half.id {
+                quest.complete_skills.push((id, half.count.unwrap_or(0).max(0) as u32));
             }
         }
     }
@@ -2449,6 +2512,7 @@ impl Default for Config {
             look_change_reenter: false,
             charinfo_look_items: true,
             chairs: HashMap::new(),
+            recipes: crate::crafting::Recipes::new(),
             portals: HashMap::new(),
             portal_index: HashMap::new(),
             portal_positions: HashMap::new(),

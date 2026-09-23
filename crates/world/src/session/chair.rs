@@ -50,7 +50,7 @@ impl Session {
             ),
         });
         if let Some(chr) = self.claimed_character() {
-            self.publish_chair(chr.id, chr.map_id, Some(sit.item_id));
+            self.publish_chair(chr.id, self.field_of(&chr), Some(sit.item_id));
         }
         match self.config.chairs.get(&sit.item_id) {
             Some(chair) => {
@@ -116,7 +116,7 @@ impl Session {
                             ),
                         });
                     }
-                    self.publish_chair(chr.id, chr.map_id, None);
+                    self.publish_chair(chr.id, self.field_of(&chr), None);
                 }
                 crate::server::log(&format!(
                     "   chair: stood up - release sent, recovery bonus ends{}",
@@ -167,7 +167,7 @@ impl Session {
                     // a bystander holding a stale position for the sitter would stand itself
                     // up. Whether `0x02AD` renders a map seat correctly for bystanders is
                     // unmeasured, and is left as it was rather than guessed at.
-                    self.publish_chair(chr.id, chr.map_id, Some(u32::from(seat)));
+                    self.publish_chair(chr.id, self.field_of(&chr), Some(u32::from(seat)));
                     crate::server::log(&format!(
                         "   chair: 0x00DA seat index {seat} - a MAP chair. Sent 0x0252 to the \
                          player (the dispatcher that can address them) and 0x02AD to the map."
@@ -191,7 +191,7 @@ impl Session {
     ///
     /// `Some(chr)` supersedes on the character id, so a second sit replaces the first in the
     /// queue rather than stacking behind it.
-    fn publish_chair(&mut self, character: u32, map: u32, chair: Option<u32>) {
+    fn publish_chair(&mut self, character: u32, map: crate::fields::FieldKey, chair: Option<u32>) {
         // **This packet killed Tester2's client on 2026-09-09, and it is on because the BODY
         // was wrong, not the idea.** The owner: *"the chair appearance across different clients is
         // an important part of the game."*

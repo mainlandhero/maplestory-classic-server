@@ -160,7 +160,7 @@ impl Session {
     /// **Nothing is sent to the leaver.** `CONTROL_RELEASE` is the client's only revoke and it
     /// *despawns*, so a farewell grant would delete the mob on the screen being left - and
     /// that client has already torn its mob pool down anyway.
-    pub(super) fn hand_over_mobs(&mut self, map: u32) {
+    pub(super) fn hand_over_mobs(&mut self, map: crate::fields::FieldKey) {
         let me = self.subscriber.get();
         let Some(heir) = self.fields.bus().successor_on(map, self.subscriber) else {
             // Nobody left to drive them. Free the claims so the next arrival can take them;
@@ -344,7 +344,7 @@ impl Session {
     fn presence(&self, chr: &net::opcode::Character) -> crate::broadcast::Presence {
         crate::broadcast::Presence {
             character: chr.id,
-            map: chr.map_id,
+            map: self.field_of(chr),
             spawn: Reply {
                 opcode: net::userpool::USER_ENTER_FIELD,
                 body: net::userpool::user_enter_field(chr, self.remote_at()),
@@ -692,7 +692,7 @@ mod tests {
         (store, config, Arc::new(Fields::new()))
     }
 
-    fn presence(character: u32, map: u32) -> Presence {
+    fn presence(character: u32, map: crate::fields::FieldKey) -> Presence {
         Presence {
             character,
             map,
@@ -1329,6 +1329,83 @@ mod tests {
         assert_eq!(firsttime::instance_of(id), None, "and the run is forgotten");
     }
 
+    /// **Two parties on one party-quest map cannot see each other, and their mobs are
+    /// separate pools.** The owner, 2026-09-22: *"every party's PQ instance will be independent.
+    /// Other parties can be in the same map in the same channel, but however people from
+    /// other parties will deliberately not see other parties on the same map because the
+    /// server does not relay that information. All mobs are also instanced per party."*
+    ///
+    /// Four characters, two parties, all four on `80000000`. The control is the pair in the
+    /// SAME run: without it this test would pass on a server that simply never relays
+    /// anything at all.
+    #[test]
+    fn two_parties_on_one_quest_map_neither_see_each_other_nor_share_mobs() {
+        use crate::firsttime;
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut cfg = (*config).clone();
+        cfg.fields.insert(firsttime::STAGE_1);
+        // One spawn point, so "separate pools" is a number rather than an impression.
+        cfg.mobs.insert(firsttime::STAGE_1, vec![net::mob::FieldMob::new(2000, 800_000, 100, 395, 1, 30)]);
+        let config = Arc::new(cfg);
+
+        let mut ids = Vec::new();
+        let mut sessions = Vec::new();
+        for name in ["Alfa", "Alto", "Bravo", "Bongo"] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: firsttime::STAGE_1, level: 21, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.set_character_map(id, firsttime::STAGE_1).unwrap();
+            store.create_migration(account, id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(id);
+            ids.push(id);
+            sessions.push(s);
+        }
+        // Two runs: A1+A2, and B1+B2.
+        let run_a = firsttime::open(5_001, vec![ids[0], ids[1]], store::Store::unix_now());
+        let run_b = firsttime::open(5_002, vec![ids[2], ids[3]], store::Store::unix_now());
+        assert_ne!(run_a.id, run_b.id);
+
+        for s in sessions.iter_mut() {
+            let _ = s.on_field_entered();
+        }
+        // Drain, so what follows is only what the entries caused.
+        for s in sessions.iter_mut() {
+            let _ = s.tick(1_000);
+        }
+
+        // **The keys differ, and that is the mechanism.**
+        let key = |s: &Session| s.field();
+        assert_eq!(key(&sessions[0]), key(&sessions[1]), "one run, one field");
+        assert_eq!(key(&sessions[2]), key(&sessions[3]), "and the same for the other");
+        assert_ne!(key(&sessions[0]), key(&sessions[2]), "two runs, two fields");
+        assert_eq!(key(&sessions[0]).map, firsttime::STAGE_1, "both on the same MAP, though");
+        assert_eq!(key(&sessions[2]).map, firsttime::STAGE_1);
+
+        // **A1 moves. A2 hears it; B1 and B2 do not.**
+        let spoke = Reply { opcode: 0x02B0, body: vec![1, 2, 3], what: "A1 moved".into() };
+        sessions[0].bus().publish(sessions[0].subscriber, key(&sessions[0]), spoke, None);
+        let heard = |s: &mut Session, t: u64| s.tick(t).iter().any(|r| r.what == "A1 moved");
+        assert!(heard(&mut sessions[1], 2_000), "the partner in the same run hears it");
+        assert!(!heard(&mut sessions[2], 2_000), "the other party does not");
+        assert!(!heard(&mut sessions[3], 2_000), "nor their partner");
+
+        // **The mobs are separate pools.** One spawn point per instance, so killing A's mob
+        // must not touch B's.
+        fields.seed(key(&sessions[0]), &sessions[0].config, 0);
+        fields.seed(key(&sessions[2]), &sessions[2].config, 0);
+        let _ = fields.due_respawns(key(&sessions[0]), &sessions[0].config, 999_999);
+        let _ = fields.due_respawns(key(&sessions[2]), &sessions[2].config, 999_999);
+        assert_eq!(fields.mob_count(key(&sessions[0])), 1, "A has its own Ligator");
+        assert_eq!(fields.mob_count(key(&sessions[2])), 1, "B has its own");
+        let a_mob = fields.mobs_on(key(&sessions[0]))[0].spawn.object_id;
+        fields.hurt(key(&sessions[0]), a_mob, 9_999, ids[0], &sessions[0].config, 0);
+        assert_eq!(fields.mob_count(key(&sessions[0])), 0, "A's is dead");
+        assert_eq!(fields.mob_count(key(&sessions[2])), 1, "B's is untouched - separate pools");
+
+        assert!(firsttime::close(run_a.id) && firsttime::close(run_b.id));
+    }
+
     /// **A party buff reaches every member on the caster's field, and nobody else.**
     ///
     /// The owner, 2026-09-06: *"party buffs should apply to everyone in the party who is in the
@@ -1512,9 +1589,9 @@ mod tests {
         let fields = Arc::new(Fields::new());
         let account = store.create_account("maplecw", "correct horse battery").unwrap();
         store.set_gm("maplecw", true).unwrap();
-        let map = 104_040_000;
+        let map = crate::fields::FieldKey::world(104_040_000);
         let make = |name: &str| {
-            let chr = net::opcode::Character { name: name.to_string(), map_id: map, ..Default::default() };
+            let chr = net::opcode::Character { name: name.to_string(), map_id: map.map, ..Default::default() };
             let made = store.create_character(account, 0, &chr).unwrap();
             store.create_migration(account, made.id, 0, 0).unwrap();
             let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
@@ -2753,13 +2830,13 @@ ffd7010000a401000000000000ffff06d200000043ffe50100000000000000000000ffff061e0000
         let mut watcher = Session::joining(store.clone(), config.clone(), fields.clone());
         let mover = Session::joining(store, config, fields.clone());
 
-        fields.bus().enter_field(watcher.subscriber, presence(200, 7));
-        fields.bus().enter_field(mover.subscriber, presence(201, 7));
+        fields.bus().enter_field(watcher.subscriber, presence(200, crate::fields::FieldKey::world(7)));
+        fields.bus().enter_field(mover.subscriber, presence(201, crate::fields::FieldKey::world(7)));
         assert_eq!(watcher.collect_mail().len(), 1, "the arrival of 201");
 
         fields.bus().publish(
             mover.subscriber,
-            7,
+            crate::fields::FieldKey::world(7),
             Reply { opcode: 0x02B0, body: vec![1], what: "201 walked".into() },
             Some(201),
         );
@@ -2779,13 +2856,13 @@ ffd7010000a401000000000000ffff06d200000043ffe50100000000000000000000ffff061e0000
         let (store, config, fields) = channel();
         let mut watcher = Session::joining(store.clone(), config.clone(), fields.clone());
         let mover = Session::joining(store, config, fields.clone());
-        fields.bus().enter_field(watcher.subscriber, presence(200, 7));
-        fields.bus().enter_field(mover.subscriber, presence(201, 7));
+        fields.bus().enter_field(watcher.subscriber, presence(200, crate::fields::FieldKey::world(7)));
+        fields.bus().enter_field(mover.subscriber, presence(201, crate::fields::FieldKey::world(7)));
         let _ = watcher.collect_mail();
 
         fields.bus().publish(
             mover.subscriber,
-            7,
+            crate::fields::FieldKey::world(7),
             Reply { opcode: 0x02B0, body: vec![1], what: "201 walked".into() },
             Some(201),
         );
@@ -2806,11 +2883,11 @@ ffd7010000a401000000000000ffff06d200000043ffe50100000000000000000000ffff061e0000
     fn a_dropped_session_hands_back_its_mailbox_and_says_goodbye() {
         let (store, config, fields) = channel();
         let mut watcher = Session::joining(store.clone(), config.clone(), fields.clone());
-        fields.bus().enter_field(watcher.subscriber, presence(200, 7));
+        fields.bus().enter_field(watcher.subscriber, presence(200, crate::fields::FieldKey::world(7)));
 
         {
             let leaver = Session::joining(store, config, fields.clone());
-            fields.bus().enter_field(leaver.subscriber, presence(201, 7));
+            fields.bus().enter_field(leaver.subscriber, presence(201, crate::fields::FieldKey::world(7)));
             assert_eq!(fields.bus().subscribers(), 2);
             assert_eq!(watcher.collect_mail().len(), 1, "the arrival of 201");
         }
@@ -2829,11 +2906,11 @@ ffd7010000a401000000000000ffff06d200000043ffe50100000000000000000000ffff061e0000
 fn logging_out_leaves_the_field_and_the_later_drop_says_nothing_more() {
         let (store, config, fields) = channel();
         let mut watcher = Session::joining(store.clone(), config.clone(), fields.clone());
-        fields.bus().enter_field(watcher.subscriber, presence(200, 7));
+        fields.bus().enter_field(watcher.subscriber, presence(200, crate::fields::FieldKey::world(7)));
 
         {
             let mut leaver = Session::joining(store, config, fields.clone());
-            fields.bus().enter_field(leaver.subscriber, presence(201, 7));
+            fields.bus().enter_field(leaver.subscriber, presence(201, crate::fields::FieldKey::world(7)));
             let _ = watcher.collect_mail();
             leaver.leave_the_field();
         }
@@ -3077,7 +3154,7 @@ fn logging_out_leaves_the_field_and_the_later_drop_says_nothing_more() {
         // a later publish on map 1 must not reach them.
         fields.bus().publish(
             stayer.subscriber,
-            1,
+            crate::fields::FieldKey::world(1),
             Reply { opcode: 0x02B0, body: vec![1], what: "the stayer waved".into() },
             None,
         );
@@ -3221,7 +3298,7 @@ fn logging_out_leaves_the_field_and_the_later_drop_says_nothing_more() {
             let ghost = Session::joining(store.clone(), config.clone(), fields.clone());
             let id = ghost.subscriber.get();
             // Claim three of map 7's mobs the way field entry does.
-            let claimed = fields.controllers().claim_uncontrolled(7, id, &[2000, 2001, 2002]);
+            let claimed = fields.controllers().claim_uncontrolled(crate::fields::FieldKey::world(7), id, &[2000, 2001, 2002]);
             assert_eq!(claimed.len(), 3, "the control: this session really holds them");
             assert_eq!(held(id), 3);
             id
@@ -3237,7 +3314,7 @@ fn logging_out_leaves_the_field_and_the_later_drop_says_nothing_more() {
         // And the mobs are genuinely free: the next connection can claim them, which is the
         // property that actually matters on screen.
         let next = Session::joining(store, config, fields.clone());
-        let got = fields.controllers().claim_uncontrolled(7, next.subscriber.get(), &[2000, 2001, 2002]);
+        let got = fields.controllers().claim_uncontrolled(crate::fields::FieldKey::world(7), next.subscriber.get(), &[2000, 2001, 2002]);
         assert_eq!(got.len(), 3, "the next player takes over all three: {got:?}");
     }
 
@@ -3262,7 +3339,7 @@ fn logging_out_leaves_the_field_and_the_later_drop_says_nothing_more() {
         s.on_field_entered();
 
         let sub = s.subscriber.get();
-        fields.controllers().claim_uncontrolled(1, sub, &[3000, 3001]);
+        fields.controllers().claim_uncontrolled(crate::fields::FieldKey::world(1), sub, &[3000, 3001]);
         assert_eq!(fields.controllers().held_by(sub), 2, "the control: two claimed");
 
         s.on_cash_shop_request(&[]);
@@ -3303,10 +3380,10 @@ fn logging_out_leaves_the_field_and_the_later_drop_says_nothing_more() {
 
         // A meso drop owned by the picker, placed straight into the shared field so the test
         // is about pick-up visibility and not about combat's distribution walk.
-        let (drop_id, _enter) = fields.with_drops(104_040_000, |d| {
+        let (drop_id, _enter) = fields.with_drops(crate::fields::FieldKey::world(104_040_000), |d| {
             d.drop_from_mob(crate::drops::DropFromMob {
                 from_mob: true,
-                map_id: 104_040_000,
+                map_id: crate::fields::FieldKey::world(104_040_000),
                 owner_id: ids[0],
                 item: store::Item::bundle(0, 0),
                 inv_type: store::InventoryType::Etc,
@@ -3346,7 +3423,7 @@ fn logging_out_leaves_the_field_and_the_later_drop_says_nothing_more() {
             "a drop already taken cannot be taken again: {again:?}"
         );
         assert_eq!(
-            fields.with_drops(104_040_000, |d| d.get(drop_id).is_some()),
+            fields.with_drops(crate::fields::FieldKey::world(104_040_000), |d| d.get(drop_id).is_some()),
             false,
             "the drop is gone from the shared field"
         );
@@ -3382,10 +3459,10 @@ fn logging_out_leaves_the_field_and_the_later_drop_says_nothing_more() {
         let _ = owner.tick(1_000);
         let _ = watcher.tick(1_000);
 
-        let (party_drop, _) = fields.with_drops(104_040_000, |d| {
+        let (party_drop, _) = fields.with_drops(crate::fields::FieldKey::world(104_040_000), |d| {
             d.drop_from_mob(crate::drops::DropFromMob {
                 from_mob: true,
-                map_id: 104_040_000,
+                map_id: crate::fields::FieldKey::world(104_040_000),
                 owner_id: ids[0],
                 item: store::Item::bundle(4_000_000, 1),
                 inv_type: store::InventoryType::Etc,
@@ -3399,9 +3476,9 @@ fn logging_out_leaves_the_field_and_the_later_drop_says_nothing_more() {
             })
         });
         let public_drop = fields
-            .with_drops(104_040_000, |d| {
+            .with_drops(crate::fields::FieldKey::world(104_040_000), |d| {
                 d.drop_money(crate::drops::DropMoneyOnGround {
-                    map_id: 104_040_000,
+                    map_id: crate::fields::FieldKey::world(104_040_000),
                     character_id: ids[0],
                     meso: 50,
                     x: 0,
@@ -3412,14 +3489,14 @@ fn logging_out_leaves_the_field_and_the_later_drop_says_nothing_more() {
                 })
             })
             .object_id;
-        assert_eq!(fields.with_drops(104_040_000, |d| d.len()), 2);
+        assert_eq!(fields.with_drops(crate::fields::FieldKey::world(104_040_000), |d| d.len()), 2);
 
         // Only the watcher ticks past the lifetime: its sweep is the one that removes them.
         // `tick` collects mail BEFORE it sweeps, so the fades it posted to its own mailbox come
         // out on the tick after.
         let late = 1_000 + crate::drops::DROP_LIFETIME_MS + 1;
         let _ = watcher.tick(late);
-        assert_eq!(fields.with_drops(104_040_000, |d| d.len()), 0, "the watcher's sweep removed both");
+        assert_eq!(fields.with_drops(crate::fields::FieldKey::world(104_040_000), |d| d.len()), 0, "the watcher's sweep removed both");
         let mail = watcher.tick(late + 50);
         let fades = |mail: &[Reply]| -> Vec<u32> {
             mail.iter()

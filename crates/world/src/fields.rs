@@ -276,10 +276,61 @@ impl LiveReactor {
 /// works until a map with a lot of mobs comes along.
 pub const SUMMON_OBJECT_ID_BASE: u32 = 100_000;
 
-/// Every map on this channel.
+/// **Which field a call is about: the map, and which copy of it.**
+///
+/// `instance` is `0` for the ordinary world - one shared field per map, which is what every
+/// map outside a party quest is. A non-zero instance is a private copy: its own mobs, its
+/// own drops, its own reactors, and its own set of people who can see each other.
+///
+/// # Why this is a type and not a `u32`
+///
+/// The owner, 2026-09-22: *"every party's PQ instance will be independent. Other parties can be
+/// in the same map in the same channel, but however people from other parties will
+/// deliberately not see other parties on the same map because the server does not relay
+/// that information. All mobs are also instanced per party."*
+///
+/// The obvious cheaper change was to keep `map: u32` everywhere and pass a synthetic id for
+/// an instance. That was rejected: a call site that kept passing the plain map id would
+/// still compile, and the bug it produced - one party seeing another's mobs, or a broadcast
+/// crossing between instances - is silent, intermittent and invisible to every existing
+/// test. Making it a distinct type turns each of those into a compile error instead, which
+/// is the only instrument here that cannot miss one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
+pub struct FieldKey {
+    pub map: u32,
+    pub instance: u32,
+}
+
+impl FieldKey {
+    /// The ordinary shared field for `map`.
+    pub const fn world(map: u32) -> Self {
+        Self { map, instance: 0 }
+    }
+
+    /// One private copy of `map`.
+    pub const fn instanced(map: u32, instance: u32) -> Self {
+        Self { map, instance }
+    }
+
+    /// Whether this is a private copy rather than the shared world.
+    pub const fn is_instanced(&self) -> bool {
+        self.instance != 0
+    }
+}
+
+impl std::fmt::Display for FieldKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.instance {
+            0 => write!(f, "{}", self.map),
+            n => write!(f, "{}#{n}", self.map),
+        }
+    }
+}
+
+/// Every map on this channel, and every private copy of one.
 #[derive(Debug)]
 pub struct Fields {
-    maps: Mutex<HashMap<u32, FieldState>>,
+    maps: Mutex<HashMap<FieldKey, FieldState>>,
     /// Who is connected, and what each of them is owed.
     ///
     /// Hung here rather than threaded separately for one reason: this `Arc` is
@@ -355,16 +406,16 @@ impl Fields {
     /// **Every point starts due rather than alive**, so the field fills in over the next few
     /// seconds instead of arriving complete. Entering a second time does nothing - the field
     /// belongs to the channel and keeps running whether or not anyone is looking at it.
-    pub fn seed(&self, map: u32, config: &Config, now_ms: u64) {
+    pub fn seed(&self, key: FieldKey, config: &Config, now_ms: u64) {
         let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
-        let field = maps.entry(map).or_default();
+        let field = maps.entry(key).or_default();
         if field.seeded {
             return;
         }
         field.seeded = true;
         // The reactors stand from the first entry, whatever the mob switch says: they are
         // scenery with a drop table, not monsters.
-        if let Some(spawns) = config.reactors.get(&map) {
+        if let Some(spawns) = config.reactors.get(&key.map) {
             for spawn in spawns {
                 field.reactors.insert(spawn.object_id, LiveReactor::fresh(spawn));
             }
@@ -373,7 +424,7 @@ impl Fields {
         if !config.send_mobs {
             return;
         }
-        let Some(points) = config.mobs.get(&map) else { return };
+        let Some(points) = config.mobs.get(&key.map) else { return };
         let alive = crate::config::spawn_capacity(points.len(), 1);
         let alive = match config.mob_limit {
             Some(n) => alive.min(n),
@@ -381,10 +432,10 @@ impl Fields {
         };
         // Seeded from the map and the clock so two fresh spawns of the same field do not
         // lay the mobs out identically, and so a test can reproduce one exactly.
-        let seed = (map as u64) << 32 ^ now_ms.wrapping_mul(0x9E37_79B9);
+        let seed = (key.map as u64) << 32 ^ now_ms.wrapping_mul(0x9E37_79B9);
         field.rng = seed;
         for mob in crate::config::share_balanced(points, alive, seed) {
-            let wz = config.mob_respawn_s.get(&(map, mob.object_id)).copied().unwrap_or(0);
+            let wz = config.mob_respawn_s.get(&(key.map, mob.object_id)).copied().unwrap_or(0);
             if let Some(delay) = crate::config::respawn_delay_ms(wz) {
                 field.pending.push((now_ms.saturating_add(delay), Refill::Point(mob.object_id)));
             }
@@ -414,14 +465,14 @@ impl Fields {
     /// the alternatives write gate fields this server does not fill.
     pub fn summon_mob(
         &self,
-        map: u32,
+        key: FieldKey,
         template_id: u32,
         at: (i16, i16),
         fh: i16,
         hp: u64,
     ) -> LiveMob {
         let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
-        let field = maps.entry(map).or_default();
+        let field = maps.entry(key).or_default();
         let mut id = if field.next_summon_id == 0 {
             SUMMON_OBJECT_ID_BASE
         } else {
@@ -448,17 +499,17 @@ impl Fields {
     /// Every mob currently alive on a map, at its current position - what an arriving player
     /// must be sent.
     /// Every reactor standing on `map` now - the broken ones are not standing.
-    pub fn reactors_on(&self, map: u32) -> Vec<LiveReactor> {
+    pub fn reactors_on(&self, key: FieldKey) -> Vec<LiveReactor> {
         let maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
-        maps.get(&map).map(|f| f.reactors.values().cloned().collect()).unwrap_or_default()
+        maps.get(&key).map(|f| f.reactors.values().cloned().collect()).unwrap_or_default()
     }
 
     /// A hit on a standing reactor: the state advances by one. On the hit that reaches the
     /// broken state the reactor leaves the standing set and is scheduled to come back
     /// `respawn_s` later. `None` when no reactor by that id is standing on the map.
-    pub fn hit_reactor(&self, map: u32, object_id: u32, now_ms: u64) -> Option<ReactorHitOutcome> {
+    pub fn hit_reactor(&self, key: FieldKey, object_id: u32, now_ms: u64) -> Option<ReactorHitOutcome> {
         let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
-        let field = maps.get_mut(&map)?;
+        let field = maps.get_mut(&key)?;
         let live = field.reactors.get_mut(&object_id)?;
         live.seen.state = live.seen.state.saturating_add(1);
         let broken = live.seen.state >= live.broken_state;
@@ -480,9 +531,9 @@ impl Fields {
 
     /// Broken reactors whose time has come: put back standing, state 0, and returned so the
     /// caller can announce them. Drains the due entries; the not-yet-due stay.
-    pub fn due_reactor_respawns(&self, map: u32, now_ms: u64) -> Vec<LiveReactor> {
+    pub fn due_reactor_respawns(&self, key: FieldKey, now_ms: u64) -> Vec<LiveReactor> {
         let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(field) = maps.get_mut(&map) else { return Vec::new() };
+        let Some(field) = maps.get_mut(&key) else { return Vec::new() };
         let (due, later): (Vec<_>, Vec<_>) = field.reactor_pending.drain(..).partition(|(t, _)| *t <= now_ms);
         field.reactor_pending = later;
         let mut out = Vec::new();
@@ -497,24 +548,24 @@ impl Fields {
         out
     }
 
-    pub fn mobs_on(&self, map: u32) -> Vec<LiveMob> {
+    pub fn mobs_on(&self, key: FieldKey) -> Vec<LiveMob> {
         let maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
-        maps.get(&map).map(|f| f.mobs.values().cloned().collect()).unwrap_or_default()
+        maps.get(&key).map(|f| f.mobs.values().cloned().collect()).unwrap_or_default()
     }
 
     /// Move a mob, **without asking who said so**.
     ///
     /// The raw write. Used by tests and by anything server-authoritative; the wire path is
     /// [`Fields::note_position_from`] and it is the one that enforces the controller rule.
-    pub fn note_position(&self, map: u32, object_id: u32, at: (i16, i16)) {
-        self.note_position_and_floor(map, object_id, at, None);
+    pub fn note_position(&self, key: FieldKey, object_id: u32, at: (i16, i16)) {
+        self.note_position_and_floor(key, object_id, at, None);
     }
 
     /// [`Fields::note_position`] with the foothold the path named under that position.
     /// `None` leaves whatever floor was last known - the spawn's, if none was ever reported.
-    pub fn note_position_and_floor(&self, map: u32, object_id: u32, at: (i16, i16), fh: Option<i16>) {
+    pub fn note_position_and_floor(&self, key: FieldKey, object_id: u32, at: (i16, i16), fh: Option<i16>) {
         let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(m) = maps.entry(map).or_default().mobs.get_mut(&object_id) {
+        if let Some(m) = maps.entry(key).or_default().mobs.get_mut(&object_id) {
             m.at = Some(at);
             if fh.is_some() {
                 m.at_fh = fh;
@@ -547,24 +598,24 @@ impl Fields {
     /// about not inventing a cycle.
     pub fn note_position_from(
         &self,
-        map: u32,
+        key: FieldKey,
         object_id: u32,
         at: (i16, i16),
         fh: Option<i16>,
         reporting: crate::mobshare::SessionId,
     ) -> bool {
-        let controller = self.controllers.controller_of(map, object_id);
+        let controller = self.controllers.controller_of(key, object_id);
         if !crate::mobshare::may_report_movement(controller, reporting) {
             return false;
         }
-        self.note_position_and_floor(map, object_id, at, fh);
+        self.note_position_and_floor(key, object_id, at, fh);
         true
     }
 
     /// A mob's remaining HP, or `None` if it is not alive on that map.
-    pub fn mob_hp(&self, map: u32, object_id: u32) -> Option<u64> {
+    pub fn mob_hp(&self, key: FieldKey, object_id: u32) -> Option<u64> {
         let maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
-        maps.get(&map)?.mobs.get(&object_id).map(|m| m.hp)
+        maps.get(&key)?.mobs.get(&object_id).map(|m| m.hp)
     }
 
     /// Where a mob has **reported** being. `None` means it has never sent a `0x02FF`.
@@ -574,9 +625,9 @@ impl Fields {
     /// asserting this answers `None` afterwards; a fallback in here would make those tests
     /// pass whatever the guard did. For "where is this mob, for a drop to land on", use
     /// [`Fields::mob_site`].
-    pub fn mob_position(&self, map: u32, object_id: u32) -> Option<(i16, i16)> {
+    pub fn mob_position(&self, key: FieldKey, object_id: u32) -> Option<(i16, i16)> {
         let maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
-        maps.get(&map)?.mobs.get(&object_id).and_then(|m| m.at)
+        maps.get(&key)?.mobs.get(&object_id).and_then(|m| m.at)
     }
 
     /// **Where a mob is, for a drop to land on**: its reported position, else its spawn
@@ -593,23 +644,23 @@ impl Fields {
     ///
     /// [`LiveMob::as_seen`] has always done exactly this fold for the packet it builds. This
     /// is the same rule for the question the drop path asks, rather than a second one.
-    pub fn mob_site(&self, map: u32, object_id: u32) -> Option<(i16, i16)> {
+    pub fn mob_site(&self, key: FieldKey, object_id: u32) -> Option<(i16, i16)> {
         let maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
-        let m = maps.get(&map)?.mobs.get(&object_id)?;
+        let m = maps.get(&key)?.mobs.get(&object_id)?;
         Some(m.at.unwrap_or((m.spawn.x, m.spawn.y)))
     }
 
     /// A mob's template id, for its drop table.
-    pub fn mob_template(&self, map: u32, object_id: u32) -> Option<u32> {
+    pub fn mob_template(&self, key: FieldKey, object_id: u32) -> Option<u32> {
         let maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
-        maps.get(&map)?.mobs.get(&object_id).map(|m| m.spawn.template_id)
+        maps.get(&key)?.mobs.get(&object_id).map(|m| m.spawn.template_id)
     }
 
     /// Apply damage. Returns the HP left, or `None` if it died - in which case the spawn
     /// point is booked to refill and the mob is gone from the field.
     pub fn hurt(
         &self,
-        map: u32,
+        key: FieldKey,
         object_id: u32,
         damage: u64,
         by: u32,
@@ -617,7 +668,7 @@ impl Fields {
         now_ms: u64,
     ) -> Hurt {
         let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
-        let field = maps.entry(map).or_default();
+        let field = maps.entry(key).or_default();
         let Some(m) = field.mobs.get_mut(&object_id) else { return Hurt::Alive(0) };
         // Credit BEFORE subtracting: the cap is "damage that landed", and after the subtract
         // there is nothing left to measure it against.
@@ -633,10 +684,10 @@ impl Fields {
         // random map mob up in its place, so the gate is explicit here.
         let is_spawn_point = config
             .mobs
-            .get(&map)
+            .get(&key.map)
             .is_some_and(|list| list.iter().any(|m| m.object_id == object_id));
         if is_spawn_point {
-            let wz = config.mob_respawn_s.get(&(map, object_id)).copied().unwrap_or(0);
+            let wz = config.mob_respawn_s.get(&(key.map, object_id)).copied().unwrap_or(0);
             if let Some(delay) = crate::config::respawn_delay_ms(wz) {
                 // A timed point keeps its own place and clock; an ordinary one refills the map.
                 let what = if wz > 0 { Refill::Point(object_id) } else { Refill::Anywhere };
@@ -650,9 +701,9 @@ impl Fields {
     ///
     /// Drives both the first fill of a field and every refill after a kill - see the module
     /// docs on why those are the same mechanism.
-    pub fn due_respawns(&self, map: u32, config: &Config, now_ms: u64) -> Vec<LiveMob> {
+    pub fn due_respawns(&self, key: FieldKey, config: &Config, now_ms: u64) -> Vec<LiveMob> {
         let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
-        let field = maps.entry(map).or_default();
+        let field = maps.entry(key).or_default();
         if field.pending.is_empty() {
             return Vec::new();
         }
@@ -678,14 +729,14 @@ impl Fields {
                         .collect();
                     let free: Vec<u32> = config
                         .mobs
-                        .get(&map)
+                        .get(&key.map)
                         .map(|list| {
                             list.iter()
                                 .map(|m| m.object_id)
                                 .filter(|id| !field.mobs.contains_key(id))
                                 .filter(|id| !reserved.contains(id))
                                 .filter(|id| {
-                                    config.mob_respawn_s.get(&(map, *id)).copied().unwrap_or(0) == 0
+                                    config.mob_respawn_s.get(&(key.map, *id)).copied().unwrap_or(0) == 0
                                 })
                                 .collect()
                         })
@@ -705,7 +756,7 @@ impl Fields {
             };
             let Some(spawn) = config
                 .mobs
-                .get(&map)
+                .get(&key.map)
                 .and_then(|list| list.iter().find(|m| m.object_id == object_id))
             else {
                 continue;
@@ -747,10 +798,10 @@ impl Fields {
     /// **The map lock is released before anything is posted.** The bus lock is a leaf, so
     /// nesting them would not deadlock today - it would merely make a cycle possible for the
     /// next person, which is the same rule the `controllers` field carries.
-    pub fn with_drops<T>(&self, map: u32, f: impl FnOnce(&mut crate::drops::DropTable) -> T) -> T {
+    pub fn with_drops<T>(&self, key: FieldKey, f: impl FnOnce(&mut crate::drops::DropTable) -> T) -> T {
         let (out, mail) = {
             let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
-            let table = &mut maps.entry(map).or_default().drops;
+            let table = &mut maps.entry(key).or_default().drops;
             let out = f(table);
             (out, table.take_addressed())
         };
@@ -765,15 +816,15 @@ impl Fields {
     }
 
     /// How many mobs are alive on a map. For tests and the log.
-    pub fn mob_count(&self, map: u32) -> usize {
+    pub fn mob_count(&self, key: FieldKey) -> usize {
         let maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
-        maps.get(&map).map(|f| f.mobs.len()).unwrap_or(0)
+        maps.get(&key).map(|f| f.mobs.len()).unwrap_or(0)
     }
 
     /// How many spawn points are waiting to refill.
-    pub fn pending_count(&self, map: u32) -> usize {
+    pub fn pending_count(&self, key: FieldKey) -> usize {
         let maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
-        maps.get(&map).map(|f| f.pending.len()).unwrap_or(0)
+        maps.get(&key).map(|f| f.pending.len()).unwrap_or(0)
     }
 }
 
@@ -865,13 +916,13 @@ mod tests {
     fn a_field_is_empty_until_the_timer_fires() {
         let f = Fields::new();
         let c = config_with_one_map();
-        f.seed(7, &c, 0);
-        assert_eq!(f.mob_count(7), 0, "nothing is alive the instant you walk in");
-        assert!(f.pending_count(7) > 0, "but the spawn points are booked");
+        f.seed(crate::fields::FieldKey::world(7), &c, 0);
+        assert_eq!(f.mob_count(crate::fields::FieldKey::world(7)), 0, "nothing is alive the instant you walk in");
+        assert!(f.pending_count(crate::fields::FieldKey::world(7)) > 0, "but the spawn points are booked");
 
-        let arrived = f.due_respawns(7, &c, crate::config::DEFAULT_RESPAWN_MS);
+        let arrived = f.due_respawns(crate::fields::FieldKey::world(7), &c, crate::config::DEFAULT_RESPAWN_MS);
         assert!(!arrived.is_empty(), "and they arrive when due");
-        assert_eq!(f.mob_count(7), arrived.len());
+        assert_eq!(f.mob_count(crate::fields::FieldKey::world(7)), arrived.len());
     }
 
     /// Entering twice does not double the field - it belongs to the channel, not the visit.
@@ -879,10 +930,10 @@ mod tests {
     fn seeding_a_field_twice_does_nothing_the_second_time() {
         let f = Fields::new();
         let c = config_with_one_map();
-        f.seed(7, &c, 0);
-        let booked = f.pending_count(7);
-        f.seed(7, &c, 0);
-        assert_eq!(f.pending_count(7), booked);
+        f.seed(crate::fields::FieldKey::world(7), &c, 0);
+        let booked = f.pending_count(crate::fields::FieldKey::world(7));
+        f.seed(crate::fields::FieldKey::world(7), &c, 0);
+        assert_eq!(f.pending_count(crate::fields::FieldKey::world(7)), booked);
     }
 
     /// **Mobs keep their position when the player leaves.** The field is not rebuilt on
@@ -891,21 +942,21 @@ mod tests {
     fn a_mob_keeps_its_position_across_a_visit() {
         let f = Fields::new();
         let c = config_with_one_map();
-        f.seed(7, &c, 0);
-        f.due_respawns(7, &c, 999_999);
+        f.seed(crate::fields::FieldKey::world(7), &c, 0);
+        f.due_respawns(crate::fields::FieldKey::world(7), &c, 999_999);
 
-        let ids: Vec<u32> = f.mobs_on(7).iter().map(|m| m.spawn.object_id).collect();
+        let ids: Vec<u32> = f.mobs_on(crate::fields::FieldKey::world(7)).iter().map(|m| m.spawn.object_id).collect();
         assert!(ids.len() >= 2, "need two live mobs for this test: {ids:?}");
         let (moved_id, still_id) = (ids[0], ids[1]);
-        let still_home = f.mobs_on(7).iter().find(|m| m.spawn.object_id == still_id).unwrap().spawn.x;
-        f.note_position(7, moved_id, (742, 395));
+        let still_home = f.mobs_on(crate::fields::FieldKey::world(7)).iter().find(|m| m.spawn.object_id == still_id).unwrap().spawn.x;
+        f.note_position(crate::fields::FieldKey::world(7), moved_id, (742, 395));
         // The player leaves and comes back: nothing resets, because nothing is per-session.
-        let seen = f.mobs_on(7);
+        let seen = f.mobs_on(crate::fields::FieldKey::world(7));
         let moved = seen.iter().find(|m| m.spawn.object_id == moved_id).expect("still alive");
         assert_eq!(moved.at, Some((742, 395)));
         assert_eq!(moved.as_seen().x, 742, "and it is SENT at that position");
 
-        let still = f.mobs_on(7).iter().find(|m| m.spawn.object_id == still_id).unwrap().as_seen();
+        let still = f.mobs_on(crate::fields::FieldKey::world(7)).iter().find(|m| m.spawn.object_id == still_id).unwrap().as_seen();
         assert_eq!(still.x, still_home, "one that never moved is still at its spawn point");
     }
 
@@ -913,22 +964,22 @@ mod tests {
     fn killing_a_mob_removes_it_and_books_a_refill() {
         let f = Fields::new();
         let c = config_with_one_map();
-        f.seed(7, &c, 0);
-        f.due_respawns(7, &c, 999_999);
-        let alive = f.mob_count(7);
+        f.seed(crate::fields::FieldKey::world(7), &c, 0);
+        f.due_respawns(crate::fields::FieldKey::world(7), &c, 999_999);
+        let alive = f.mob_count(crate::fields::FieldKey::world(7));
         assert!(alive >= 1);
-        let victim = f.mobs_on(7)[0].spawn.object_id;
+        let victim = f.mobs_on(crate::fields::FieldKey::world(7))[0].spawn.object_id;
 
-        assert_eq!(f.hurt(7, victim, 10, 204, &c, 1_000), Hurt::Alive(20), "wounded, not dead");
-        assert!(matches!(f.hurt(7, victim, 100, 204, &c, 1_000), Hurt::Died(_)), "dead");
-        assert_eq!(f.mob_count(7), alive - 1);
-        assert_eq!(f.pending_count(7), 1, "and its point is booked to refill");
+        assert_eq!(f.hurt(crate::fields::FieldKey::world(7), victim, 10, 204, &c, 1_000), Hurt::Alive(20), "wounded, not dead");
+        assert!(matches!(f.hurt(crate::fields::FieldKey::world(7), victim, 100, 204, &c, 1_000), Hurt::Died(_)), "dead");
+        assert_eq!(f.mob_count(crate::fields::FieldKey::world(7)), alive - 1);
+        assert_eq!(f.pending_count(crate::fields::FieldKey::world(7)), 1, "and its point is booked to refill");
 
-        let back = f.due_respawns(7, &c, 1_000 + crate::config::DEFAULT_RESPAWN_MS);
+        let back = f.due_respawns(crate::fields::FieldKey::world(7), &c, 1_000 + crate::config::DEFAULT_RESPAWN_MS);
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].hp, 30, "at full HP");
         assert_eq!(back[0].at, None, "and at a spawn point, not where it died");
-        assert_eq!(f.mob_count(7), alive, "one death, one refill - the cap is kept");
+        assert_eq!(f.mob_count(crate::fields::FieldKey::world(7)), alive, "one death, one refill - the cap is kept");
     }
 
     /// **A kill refills the map, not the point.** The owner, 2026-09-13: *"once the mob is dead, a
@@ -941,18 +992,18 @@ mod tests {
     fn a_kill_refills_a_random_free_point_rather_than_the_one_that_emptied() {
         let f = Fields::new();
         let c = config_with_one_map();
-        f.seed(7, &c, 0);
-        f.due_respawns(7, &c, 999_999);
-        let cap = f.mob_count(7);
+        f.seed(crate::fields::FieldKey::world(7), &c, 0);
+        f.due_respawns(crate::fields::FieldKey::world(7), &c, 999_999);
+        let cap = f.mob_count(crate::fields::FieldKey::world(7));
         assert_eq!(cap, 3, "75% of four points");
 
         let mut elsewhere = 0;
         let mut t = 1_000_000u64;
         for _ in 0..40 {
-            let standing: Vec<u32> = f.mobs_on(7).iter().map(|m| m.spawn.object_id).collect();
+            let standing: Vec<u32> = f.mobs_on(crate::fields::FieldKey::world(7)).iter().map(|m| m.spawn.object_id).collect();
             let victim = standing[0];
-            assert!(matches!(f.hurt(7, victim, 1_000, 204, &c, t), Hurt::Died(_)));
-            let back = f.due_respawns(7, &c, t + crate::config::DEFAULT_RESPAWN_MS);
+            assert!(matches!(f.hurt(crate::fields::FieldKey::world(7), victim, 1_000, 204, &c, t), Hurt::Died(_)));
+            let back = f.due_respawns(crate::fields::FieldKey::world(7), &c, t + crate::config::DEFAULT_RESPAWN_MS);
             assert_eq!(back.len(), 1, "one death, one refill");
             let came = back[0].spawn.object_id;
             let others: Vec<u32> = standing.iter().copied().filter(|id| *id != victim).collect();
@@ -960,7 +1011,7 @@ mod tests {
             if came != victim {
                 elsewhere += 1;
             }
-            assert_eq!(f.mob_count(7), cap, "the cap holds");
+            assert_eq!(f.mob_count(crate::fields::FieldKey::world(7)), cap, "the cap holds");
             t += 100_000;
         }
         assert!(elsewhere > 0, "in 40 kills the refill never left the victim's point - the draw is not random");
@@ -977,11 +1028,11 @@ mod tests {
         mobs.insert(7u32, vec![net::mob::FieldMob::new(2000, 2, 100, 395, 1, 30)]);
         let mut c = Config { mobs, send_mobs: true, ..Config::default() };
         c.mob_respawn_s.insert((7, 2000), 60); // a minute, at point 2000
-        f.seed(7, &c, 0);
-        assert_eq!(f.due_respawns(7, &c, 999_999).len(), 1, "the one point stands");
-        assert!(matches!(f.hurt(7, 2000, 1_000, 204, &c, 1_000_000), Hurt::Died(_)));
-        assert!(f.due_respawns(7, &c, 1_000_000 + crate::config::DEFAULT_RESPAWN_MS).is_empty(), "not at the field rate");
-        let back = f.due_respawns(7, &c, 1_000_000 + 60_000);
+        f.seed(crate::fields::FieldKey::world(7), &c, 0);
+        assert_eq!(f.due_respawns(crate::fields::FieldKey::world(7), &c, 999_999).len(), 1, "the one point stands");
+        assert!(matches!(f.hurt(crate::fields::FieldKey::world(7), 2000, 1_000, 204, &c, 1_000_000), Hurt::Died(_)));
+        assert!(f.due_respawns(crate::fields::FieldKey::world(7), &c, 1_000_000 + crate::config::DEFAULT_RESPAWN_MS).is_empty(), "not at the field rate");
+        let back = f.due_respawns(crate::fields::FieldKey::world(7), &c, 1_000_000 + 60_000);
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].spawn.object_id, 2000, "at its own point");
     }
@@ -992,12 +1043,12 @@ mod tests {
     fn a_summoned_mobs_death_does_not_book_a_refill() {
         let f = Fields::new();
         let c = config_with_one_map();
-        f.seed(7, &c, 0);
-        f.due_respawns(7, &c, 999_999);
-        let sack = f.summon_mob(7, 2, (500, 395), 1, 10);
-        assert_eq!(f.pending_count(7), 0);
-        assert!(matches!(f.hurt(7, sack.spawn.object_id, 1_000, 204, &c, 5_000), Hurt::Died(_)));
-        assert_eq!(f.pending_count(7), 0, "nothing booked for a mob with no point");
+        f.seed(crate::fields::FieldKey::world(7), &c, 0);
+        f.due_respawns(crate::fields::FieldKey::world(7), &c, 999_999);
+        let sack = f.summon_mob(crate::fields::FieldKey::world(7), 2, (500, 395), 1, 10);
+        assert_eq!(f.pending_count(crate::fields::FieldKey::world(7)), 0);
+        assert!(matches!(f.hurt(crate::fields::FieldKey::world(7), sack.spawn.object_id, 1_000, 204, &c, 5_000), Hurt::Died(_)));
+        assert_eq!(f.pending_count(crate::fields::FieldKey::world(7)), 0, "nothing booked for a mob with no point");
     }
 
     /// Two maps do not share anything.
@@ -1005,19 +1056,19 @@ mod tests {
     fn fields_are_keyed_by_map() {
         let f = Fields::new();
         let c = config_with_one_map();
-        f.seed(7, &c, 0);
-        f.due_respawns(7, &c, 999_999);
-        assert!(f.mob_count(7) > 0);
-        assert_eq!(f.mob_count(8), 0, "another map shares nothing");
+        f.seed(crate::fields::FieldKey::world(7), &c, 0);
+        f.due_respawns(crate::fields::FieldKey::world(7), &c, 999_999);
+        assert!(f.mob_count(crate::fields::FieldKey::world(7)) > 0);
+        assert_eq!(f.mob_count(crate::fields::FieldKey::world(8)), 0, "another map shares nothing");
     }
 
     /// The drop table is per map and per channel too, so a second player sees the floor.
     #[test]
     fn drops_are_per_map_and_shared() {
         let f = Fields::new();
-        f.with_drops(7, |d| assert_eq!(d.len(), 0));
-        assert_eq!(f.with_drops(7, |d| d.len()), 0);
-        assert_eq!(f.with_drops(8, |d| d.len()), 0);
+        f.with_drops(crate::fields::FieldKey::world(7), |d| assert_eq!(d.len(), 0));
+        assert_eq!(f.with_drops(crate::fields::FieldKey::world(7), |d| d.len()), 0);
+        assert_eq!(f.with_drops(crate::fields::FieldKey::world(8), |d| d.len()), 0);
     }
 
     /// **Only the controller may move a mob, enforced at the row.**
@@ -1031,24 +1082,24 @@ mod tests {
         const STRANGER: crate::mobshare::SessionId = 2;
         let f = Fields::new();
         let c = config_with_one_map();
-        f.seed(7, &c, 0);
-        f.due_respawns(7, &c, 999_999);
-        let id = f.mobs_on(7)[0].spawn.object_id;
+        f.seed(crate::fields::FieldKey::world(7), &c, 0);
+        f.due_respawns(crate::fields::FieldKey::world(7), &c, 999_999);
+        let id = f.mobs_on(crate::fields::FieldKey::world(7))[0].spawn.object_id;
 
         // Nobody controls it yet. A mob with no controller cannot legitimately be reporting -
         // the client's move sender is only reached once a 0x03D2 has switched slot 8 on.
-        assert!(!f.note_position_from(7, id, (500, 395), None, CONTROLLER), "orphaned, so refused");
-        assert_eq!(f.mob_position(7, id), None);
+        assert!(!f.note_position_from(crate::fields::FieldKey::world(7), id, (500, 395), None, CONTROLLER), "orphaned, so refused");
+        assert_eq!(f.mob_position(crate::fields::FieldKey::world(7), id), None);
 
-        f.controllers().claim_uncontrolled(7, CONTROLLER, &[id]);
+        f.controllers().claim_uncontrolled(crate::fields::FieldKey::world(7), CONTROLLER, &[id]);
         assert!(
-            !f.note_position_from(7, id, (900, 395), None, STRANGER),
+            !f.note_position_from(crate::fields::FieldKey::world(7), id, (900, 395), None, STRANGER),
             "a second connection's report must not move the mob a third one is simulating"
         );
-        assert_eq!(f.mob_position(7, id), None, "and must not have written the position");
+        assert_eq!(f.mob_position(crate::fields::FieldKey::world(7), id), None, "and must not have written the position");
 
-        assert!(f.note_position_from(7, id, (500, 395), None, CONTROLLER), "the holder is believed");
-        assert_eq!(f.mob_position(7, id), Some((500, 395)));
+        assert!(f.note_position_from(crate::fields::FieldKey::world(7), id, (500, 395), None, CONTROLLER), "the holder is believed");
+        assert_eq!(f.mob_position(crate::fields::FieldKey::world(7), id), Some((500, 395)));
     }
 
     /// **`mob_site` falls back to the spawn point; `mob_position` never does.**
@@ -1062,25 +1113,25 @@ mod tests {
         const CONTROLLER: crate::mobshare::SessionId = 1;
         let f = Fields::new();
         let c = config_with_one_map();
-        f.seed(7, &c, 0);
-        f.due_respawns(7, &c, 999_999);
-        let spawn = f.mobs_on(7)[0].spawn;
+        f.seed(crate::fields::FieldKey::world(7), &c, 0);
+        f.due_respawns(crate::fields::FieldKey::world(7), &c, 999_999);
+        let spawn = f.mobs_on(crate::fields::FieldKey::world(7))[0].spawn;
         let id = spawn.object_id;
         let home = (spawn.x, spawn.y);
 
-        assert_eq!(f.mob_position(7, id), None, "it has never sent a 0x02FF");
-        assert_eq!(f.mob_site(7, id), Some(home), "and it is standing on its spawn point");
+        assert_eq!(f.mob_position(crate::fields::FieldKey::world(7), id), None, "it has never sent a 0x02FF");
+        assert_eq!(f.mob_site(crate::fields::FieldKey::world(7), id), Some(home), "and it is standing on its spawn point");
         assert_ne!(home, (0, 0), "a spawn point of (0,0) would make this vacuous");
 
         // Once it reports, the report wins - the spawn point is a fallback, not a floor.
-        f.controllers().claim_uncontrolled(7, CONTROLLER, &[id]);
-        assert!(f.note_position_from(7, id, (742, 395), None, CONTROLLER));
-        assert_eq!(f.mob_site(7, id), Some((742, 395)));
-        assert_ne!(f.mob_site(7, id), Some(home), "it really moved away from home");
+        f.controllers().claim_uncontrolled(crate::fields::FieldKey::world(7), CONTROLLER, &[id]);
+        assert!(f.note_position_from(crate::fields::FieldKey::world(7), id, (742, 395), None, CONTROLLER));
+        assert_eq!(f.mob_site(crate::fields::FieldKey::world(7), id), Some((742, 395)));
+        assert_ne!(f.mob_site(crate::fields::FieldKey::world(7), id), Some(home), "it really moved away from home");
 
         // A mob that is not on the map has no site at all, and the caller must not invent one.
-        assert_eq!(f.mob_site(7, 999_999), None);
-        assert_eq!(f.mob_site(999, id), None);
+        assert_eq!(f.mob_site(crate::fields::FieldKey::world(7), 999_999), None);
+        assert_eq!(f.mob_site(crate::fields::FieldKey::world(999), id), None);
     }
 
     /// **`with_drops` delivers what the table addressed to a map - to everyone on it.**
@@ -1102,7 +1153,7 @@ mod tests {
             body: Vec::new(),
             what: what.to_string(),
         };
-        for (id, chr, map) in [(owner, 200u32, 7u32), (bystander, 201, 7), (elsewhere, 202, 8)] {
+        for (id, chr, map) in [(owner, 200u32, crate::fields::FieldKey::world(7)), (bystander, 201, crate::fields::FieldKey::world(7)), (elsewhere, 202, crate::fields::FieldKey::world(8))] {
             f.bus().enter_field(
                 id,
                 Presence {
@@ -1118,10 +1169,10 @@ mod tests {
         let _ = f.bus().drain(bystander);
         let _ = f.bus().drain(elsewhere);
 
-        f.with_drops(7, |d| {
+        f.with_drops(crate::fields::FieldKey::world(7), |d| {
             d.drop_from_mob(crate::drops::DropFromMob {
                 from_mob: true,
-                map_id: 7,
+                map_id: crate::fields::FieldKey::world(7),
                 owner_id: 200,
                 item: store::Item::bundle(4_000_001, 1),
                 inv_type: store::InventoryType::Etc,
@@ -1136,9 +1187,9 @@ mod tests {
         });
 
         // The bystander sweeps, which is exactly the case that used to steal the fade.
-        let handed_back = f.with_drops(7, |d| d.sweep(7, crate::drops::DROP_LIFETIME_MS + 1));
+        let handed_back = f.with_drops(crate::fields::FieldKey::world(7), |d| d.sweep(crate::fields::FieldKey::world(7), crate::drops::DROP_LIFETIME_MS + 1));
         assert!(handed_back.is_empty(), "the sweeper is handed nothing: {handed_back:?}");
-        assert_eq!(f.with_drops(7, |d| d.len()), 0, "and the drop really is gone");
+        assert_eq!(f.with_drops(crate::fields::FieldKey::world(7), |d| d.len()), 0, "and the drop really is gone");
 
         assert_eq!(f.bus().drain(owner).len(), 1, "the owner is told their item faded");
         assert_eq!(f.bus().drain(bystander).len(), 1, "and so is everyone else on the map - a client that never held the id ignores it");

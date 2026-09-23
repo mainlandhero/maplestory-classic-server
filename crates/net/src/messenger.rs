@@ -23,7 +23,10 @@
 //!
 //! ```text
 //! 0   open          u8 hasName, [str name]           FUN_141183010 (new), FUN_141182e70
-//! 3   chat          str text                         FUN_141188700 (the chatinput box)
+//! 1   leave         u32 messengerId                  the inline one at 1411865d1, and
+//!                                                    FUN_141183150, found by byte scan
+//! 3   chat          str text                         FUN_141188700 (the chatinput box),
+//!                                                    and FUN_141183200, found by byte scan
 //! 5   invite        str name                         FUN_141183310 (resolves 'already in room')
 //! 7   ?             u32                              FUN_14180b750
 //! 8   decline       u32 messengerId, str name        FUN_1411838e0 - sent by the invitee's
@@ -34,15 +37,40 @@
 //! messenger id the dialog was given. **Mode 3 is a typed line** and **mode 1 is the window
 //! being closed**, both captured 2026-09-22.
 //!
-//! # There is no typing indicator, and it is not a missing feature
+//! # There is no typing indicator, and here is how that was measured
 //!
-//! The owner, 2026-09-22: *"I believe in the UI when someone is typing, there's an indicator."*
-//! The client has **eight** `0x01FD` builders (`research/msexe-send-opcodes.txt` 1305-1312)
-//! and the mode each one writes is a literal read off the instruction that stores it: 0, 1,
-//! 3, 5, 7, 8 and two more 8s. That set accounts for every mode ever captured, so the
-//! enumeration is verified rather than assumed - and **none of them says "typing"**. The
-//! client never tells the server that a box has focus, so no indicator can be driven from
-//! here whatever the window may draw for the local player.
+//! The owner, 2026-09-22: *"The problem is that there's no typing indicator when a user is typing
+//! a message."* There is not, and no server can put one there. **Three instruments, three
+//! directions, and the first version of this answer was not one of them.**
+//!
+//! It used to read: "the client has eight `0x01FD` builders
+//! (`research/msexe-send-opcodes.txt` 1305-1312) and none of them says typing". That is a
+//! **miss in the census**, and the census's own header says in capitals that a miss in it is
+//! not evidence - it resolved 1881 of 1894 call sites and undercounts `0x017E` by 14. So the
+//! claim was retired and re-measured:
+//!
+//! 1. **`python tools/builder_scan.py 0x1fd`** - a byte scan for every immediate load of the
+//!    opcode into `edx` followed by a call to the constructor, which needs neither the census
+//!    nor Ghidra. Its control re-finds **38 of 38** census sites for `0x017E` before it will
+//!    report anything. It finds **12** call sites, four of which the census does not name:
+//!    two are false pairings inside `0x017E` code (reported with their +89 distance, which is
+//!    the tell), and **two are real builders the census missed** - `141183150` writes mode
+//!    **1** and `141183200` mode **3**, second copies of the leave and the chat line. So the
+//!    modes this client can send are `{0, 0, 1, 1, 3, 3, 5, 7, 8, 8}` and **none is
+//!    "typing"**. Blind spot, named: an opcode reaching `edx` from a register or memory is
+//!    invisible to this scan.
+//! 2. **`UI_000.wz/MapleChat.img`** has 34 distinct node names. The window has a background,
+//!    six buttons, a chat input, a scroll bar, a name tag, avatar offsets, a user-info grid
+//!    and `layer:newchat_enabled`/`_disabled` - the *unread* lamp for a minimised window.
+//!    There is **no typing state and no canvas for one**, and `CLAUDE.md`'s note that much of
+//!    this client's wording is bitmaps rather than strings cuts the right way here: a baked
+//!    indicator would still have to be a canvas in this image.
+//! 3. **The string table** - all 6165 entries, decrypted with `tools/dump_stringids.py` -
+//!    contains no "typing", "is writing" or "entering a message".
+//!
+//! A feature needs a packet to carry it, art to draw it and words to say it; this client has
+//! none of the three. What it does have is mode 3, which carries the finished line, and that
+//! works.
 //!
 //! # The reply: `0x00A3`, `FUN_141183ec0` (`research/msexe-gamestage-cases.txt`)
 //!

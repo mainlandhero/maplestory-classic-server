@@ -232,7 +232,7 @@ mod tests {
     use super::*;
     use crate::broadcast::Presence;
 
-    fn presence(character: u32, map: u32) -> Presence {
+    fn presence(character: u32, map: crate::fields::FieldKey) -> Presence {
         Presence {
             character,
             map,
@@ -321,8 +321,8 @@ mod tests {
         let bus = Bus::new();
         let leveller = bus.join();
         let observer = bus.join();
-        bus.enter_field(leveller, presence(200, 104_040_000));
-        bus.enter_field(observer, presence(201, 104_040_000));
+        bus.enter_field(leveller, presence(200, crate::fields::FieldKey::world(104_040_000)));
+        bus.enter_field(observer, presence(201, crate::fields::FieldKey::world(104_040_000)));
         // Drop the two arrival spawns so what follows is only what this test published.
         let _ = bus.drain(leveller);
         let _ = bus.drain(observer);
@@ -348,9 +348,9 @@ mod tests {
         let leveller = bus.join();
         let same_map = bus.join();
         let far_away = bus.join();
-        bus.enter_field(leveller, presence(200, 104_040_000));
-        bus.enter_field(same_map, presence(201, 104_040_000));
-        bus.enter_field(far_away, presence(202, 100_000_000));
+        bus.enter_field(leveller, presence(200, crate::fields::FieldKey::world(104_040_000)));
+        bus.enter_field(same_map, presence(201, crate::fields::FieldKey::world(104_040_000)));
+        bus.enter_field(far_away, presence(202, crate::fields::FieldKey::world(100_000_000)));
         for who in [leveller, same_map, far_away] {
             let _ = bus.drain(who);
         }
@@ -368,8 +368,8 @@ mod tests {
         let bus = Bus::new();
         let leveller = bus.join();
         let observer = bus.join();
-        bus.enter_field(leveller, presence(200, 1));
-        bus.enter_field(observer, presence(201, 1));
+        bus.enter_field(leveller, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(observer, presence(201, crate::fields::FieldKey::world(1)));
         let _ = bus.drain(observer);
 
         publish_level_up(&bus, leveller, 200);
@@ -385,8 +385,8 @@ mod tests {
         let bus = Bus::new();
         let leveller = bus.join();
         let elsewhere = bus.join();
-        bus.enter_field(leveller, presence(200, 1));
-        bus.enter_field(elsewhere, presence(201, 2));
+        bus.enter_field(leveller, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(elsewhere, presence(201, crate::fields::FieldKey::world(2)));
         let _ = bus.drain(elsewhere);
 
         assert_eq!(publish_level_up(&bus, leveller, 200), 0);
@@ -403,8 +403,8 @@ mod tests {
         let bus = Bus::new();
         let on_the_map = bus.join();
         let between_fields = bus.join();
-        bus.enter_field(on_the_map, presence(200, 1));
-        bus.enter_field(between_fields, presence(201, 1));
+        bus.enter_field(on_the_map, presence(200, crate::fields::FieldKey::world(1)));
+        bus.enter_field(between_fields, presence(201, crate::fields::FieldKey::world(1)));
         bus.leave_field(between_fields);
         let _ = bus.drain(on_the_map);
 
@@ -415,7 +415,7 @@ mod tests {
         // being inert: from a connection that IS in a field, the same call lands.
         assert_eq!(publish_level_up(&bus, on_the_map, 200), 0, "nobody else is left here");
         let watcher = bus.join();
-        bus.enter_field(watcher, presence(202, 1));
+        bus.enter_field(watcher, presence(202, crate::fields::FieldKey::world(1)));
         let _ = bus.drain(watcher);
         assert_eq!(publish_level_up(&bus, on_the_map, 200), 1);
         assert_eq!(bus.drain(watcher).len(), 1);
@@ -427,11 +427,11 @@ mod tests {
     fn every_other_player_on_the_map_gets_one_copy() {
         let bus = Bus::new();
         let leveller = bus.join();
-        bus.enter_field(leveller, presence(200, 7));
+        bus.enter_field(leveller, presence(200, crate::fields::FieldKey::world(7)));
         let watchers: Vec<_> = (0..3)
             .map(|n| {
                 let id = bus.join();
-                bus.enter_field(id, presence(201 + n, 7));
+                bus.enter_field(id, presence(201 + n, crate::fields::FieldKey::world(7)));
                 id
             })
             .collect();

@@ -243,7 +243,7 @@ pub type SessionId = u64;
 #[derive(Debug, Default)]
 pub struct Controllers {
     /// `map -> object id -> the connection that controls it`.
-    inner: Mutex<HashMap<u32, HashMap<u32, SessionId>>>,
+    inner: Mutex<HashMap<crate::fields::FieldKey, HashMap<u32, SessionId>>>,
 }
 
 impl Controllers {
@@ -262,12 +262,12 @@ impl Controllers {
     /// in a stable order run to run.
     pub fn claim_uncontrolled(
         &self,
-        map: u32,
+        key: crate::fields::FieldKey,
         session: SessionId,
         candidates: &[u32],
     ) -> Vec<u32> {
         let mut inner = self.lock();
-        let held = inner.entry(map).or_default();
+        let held = inner.entry(key).or_default();
         let mut claimed = Vec::new();
         for object_id in candidates {
             if held.contains_key(object_id) {
@@ -281,7 +281,7 @@ impl Controllers {
 
     /// **Drop every entry on `map` for a mob that is not in `alive`.** Returns how many.
     ///
-    /// `alive` must be **every** object id currently on that map - `Fields::mobs_on(map)`.
+    /// `alive` must be **every** object id currently on that map - `Fields::mobs_on(key)`.
     /// Belt and braces beside [`Controllers::forget`]: a registry that can only be corrected
     /// by a call at the exact moment of death goes stale the first time a death path changes,
     /// and a stale entry is a mob nobody will ever claim, which reads on screen as one
@@ -298,9 +298,9 @@ impl Controllers {
     ///
     /// A non-zero return is itself a finding: it means a `forget` was missed on some death
     /// path. Log it rather than discarding it.
-    pub fn reconcile(&self, map: u32, alive: &[u32]) -> usize {
+    pub fn reconcile(&self, key: crate::fields::FieldKey, alive: &[u32]) -> usize {
         let mut inner = self.lock();
-        let Some(held) = inner.get_mut(&map) else { return 0 };
+        let Some(held) = inner.get_mut(&key) else { return 0 };
         let before = held.len();
         held.retain(|object_id, _| alive.contains(object_id));
         before - held.len()
@@ -315,9 +315,9 @@ impl Controllers {
     /// Separate from [`Controllers::claim_uncontrolled`] because a respawn has no `alive`
     /// list to reconcile against: the mob was inserted by `Fields::due_respawns` a moment ago
     /// and reconciling here against a stale snapshot would delete it again.
-    pub fn claim_one(&self, map: u32, object_id: u32, session: SessionId) -> bool {
+    pub fn claim_one(&self, key: crate::fields::FieldKey, object_id: u32, session: SessionId) -> bool {
         let mut inner = self.lock();
-        let held = inner.entry(map).or_default();
+        let held = inner.entry(key).or_default();
         match held.get(&object_id) {
             Some(other) => *other == session,
             None => {
@@ -328,8 +328,8 @@ impl Controllers {
     }
 
     /// Who controls this mob, if anyone.
-    pub fn controller_of(&self, map: u32, object_id: u32) -> Option<SessionId> {
-        self.lock().get(&map).and_then(|m| m.get(&object_id)).copied()
+    pub fn controller_of(&self, key: crate::fields::FieldKey, object_id: u32) -> Option<SessionId> {
+        self.lock().get(&key).and_then(|m| m.get(&object_id)).copied()
     }
 
     /// **Does `session` control this mob?**
@@ -337,16 +337,16 @@ impl Controllers {
     /// The gate on an inbound `0x02FF`. A report from a connection that is not the controller
     /// must not move the mob and must not be acknowledged: acknowledging it would pump a
     /// second simulation, which is the divergence this module removes.
-    pub fn controls(&self, map: u32, object_id: u32, session: SessionId) -> bool {
-        self.controller_of(map, object_id) == Some(session)
+    pub fn controls(&self, key: crate::fields::FieldKey, object_id: u32, session: SessionId) -> bool {
+        self.controller_of(key, object_id) == Some(session)
     }
 
     /// The mob is gone - it died, or left the field.
     ///
     /// Not required for correctness ([`Controllers::claim_uncontrolled`] reconciles) but
     /// called at the death anyway, so the count in a log line means what it says.
-    pub fn forget(&self, map: u32, object_id: u32) {
-        if let Some(held) = self.lock().get_mut(&map) {
+    pub fn forget(&self, key: crate::fields::FieldKey, object_id: u32) {
+        if let Some(held) = self.lock().get_mut(&key) {
             held.remove(&object_id);
         }
     }
@@ -360,9 +360,9 @@ impl Controllers {
     /// what killed it.
     ///
     /// Sorted so a handover is reproducible and a test can name the order.
-    pub fn maps_held_by(&self, session: SessionId) -> Vec<u32> {
+    pub fn maps_held_by(&self, session: SessionId) -> Vec<crate::fields::FieldKey> {
         let inner = self.lock();
-        let mut maps: Vec<u32> = inner
+        let mut maps: Vec<crate::fields::FieldKey> = inner
             .iter()
             .filter(|(_, held)| held.values().any(|who| *who == session))
             .map(|(map, _)| *map)
@@ -468,12 +468,12 @@ impl Controllers {
     /// already holds it, which is the common case in a fight and must cost no packet.
     pub fn hand_over_one(
         &self,
-        map: u32,
+        key: crate::fields::FieldKey,
         object_id: u32,
         to: SessionId,
     ) -> Option<Option<SessionId>> {
         let mut inner = self.lock();
-        let held = inner.entry(map).or_default();
+        let held = inner.entry(key).or_default();
         match held.get(&object_id).copied() {
             Some(who) if who == to => None,
             previous => {
@@ -483,12 +483,12 @@ impl Controllers {
         }
     }
 
-    pub fn hand_over(&self, map: u32, from: SessionId, to: SessionId) -> Vec<u32> {
+    pub fn hand_over(&self, key: crate::fields::FieldKey, from: SessionId, to: SessionId) -> Vec<u32> {
         if from == to {
             return Vec::new();
         }
         let mut inner = self.lock();
-        let Some(held) = inner.get_mut(&map) else { return Vec::new() };
+        let Some(held) = inner.get_mut(&key) else { return Vec::new() };
         let mut moved: Vec<u32> = held
             .iter()
             .filter(|(_, who)| **who == from)
@@ -502,9 +502,9 @@ impl Controllers {
         moved
     }
 
-    pub fn release_map(&self, map: u32, session: SessionId) -> usize {
+    pub fn release_map(&self, key: crate::fields::FieldKey, session: SessionId) -> usize {
         let mut inner = self.lock();
-        let Some(held) = inner.get_mut(&map) else { return 0 };
+        let Some(held) = inner.get_mut(&key) else { return 0 };
         let before = held.len();
         held.retain(|_, who| *who != session);
         before - held.len()
@@ -532,7 +532,7 @@ impl Controllers {
     /// A poisoned registry is not a reason to kill a channel: what is behind the lock is a
     /// map of integers, and the worst a panicking claimer can leave is a half-inserted entry,
     /// which is still a well-formed entry. Same call `Fields` and `Bus` already make.
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<u32, HashMap<u32, SessionId>>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<crate::fields::FieldKey, HashMap<u32, SessionId>>> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
@@ -837,7 +837,7 @@ mod tests {
 
     const A: SessionId = 1;
     const B: SessionId = 2;
-    const MAP: u32 = 104_040_000;
+    const MAP: crate::fields::FieldKey = crate::fields::FieldKey::world(104_040_000);
 
     fn share(character: u32, dealt: u64, total: u64, majority: bool) -> DamageShare {
         DamageShare { character, dealt, total, majority }
@@ -908,15 +908,15 @@ mod tests {
         let c = Controllers::default();
         c.claim_uncontrolled(MAP, A, &[2000, 2001, 2002]);
         c.claim_uncontrolled(MAP, B, &[2003]);
-        c.claim_uncontrolled(999, A, &[9000]);
+        c.claim_uncontrolled(crate::fields::FieldKey::world(999), A, &[9000]);
 
         assert_eq!(c.hand_over(MAP, A, B), vec![2000, 2001, 2002], "sorted, so a test can name them");
         assert_eq!(c.held_by(A), 1, "only the other map is left");
         assert_eq!(c.controller_of(MAP, 2003), Some(B), "B's own mob was not disturbed");
-        assert_eq!(c.controller_of(999, 9000), Some(A), "and neither was the map next door");
+        assert_eq!(c.controller_of(crate::fields::FieldKey::world(999), 9000), Some(A), "and neither was the map next door");
 
         assert!(c.hand_over(MAP, A, B).is_empty(), "a second call moves nothing");
-        assert!(c.hand_over(7777, A, B).is_empty(), "a map nobody is on moves nothing");
+        assert!(c.hand_over(crate::fields::FieldKey::world(7777), A, B).is_empty(), "a map nobody is on moves nothing");
     }
 
     /// **Handing to yourself is a no-op**, and it has to return an empty list rather than the
@@ -937,11 +937,11 @@ mod tests {
     #[test]
     fn maps_held_by_names_every_map_this_session_is_driving() {
         let c = Controllers::default();
-        c.claim_uncontrolled(30, A, &[2000]);
-        c.claim_uncontrolled(10, A, &[2001]);
-        c.claim_uncontrolled(20, B, &[2002]);
-        assert_eq!(c.maps_held_by(A), vec![10, 30], "sorted, and B's map is not one of them");
-        assert_eq!(c.maps_held_by(B), vec![20]);
+        c.claim_uncontrolled(crate::fields::FieldKey::world(30), A, &[2000]);
+        c.claim_uncontrolled(crate::fields::FieldKey::world(10), A, &[2001]);
+        c.claim_uncontrolled(crate::fields::FieldKey::world(20), B, &[2002]);
+        assert_eq!(c.maps_held_by(A), vec![crate::fields::FieldKey::world(10), crate::fields::FieldKey::world(30)], "sorted, and B's map is not one of them");
+        assert_eq!(c.maps_held_by(B), vec![crate::fields::FieldKey::world(20)]);
         assert!(c.maps_held_by(99).is_empty(), "a session that drives nothing names no maps");
 
         c.release_all(A);
@@ -954,12 +954,12 @@ mod tests {
     fn releasing_one_map_leaves_the_same_session_holding_another() {
         let c = Controllers::new();
         c.claim_uncontrolled(MAP, A, &[2000]);
-        c.claim_uncontrolled(100_000_000, A, &[2000]);
+        c.claim_uncontrolled(crate::fields::FieldKey::world(100_000_000), A, &[2000]);
 
         assert_eq!(c.release_map(MAP, A), 1);
         assert_eq!(c.controller_of(MAP, 2000), None);
-        assert_eq!(c.controller_of(100_000_000, 2000), Some(A), "a third map is not touched");
-        assert_eq!(c.release_map(999, A), 0, "a map nobody is on frees nothing");
+        assert_eq!(c.controller_of(crate::fields::FieldKey::world(100_000_000), 2000), Some(A), "a third map is not touched");
+        assert_eq!(c.release_map(crate::fields::FieldKey::world(999), A), 0, "a map nobody is on frees nothing");
     }
 
     /// **The registry is reconciled against the truth, not merely corrected at the death.**
@@ -979,7 +979,7 @@ mod tests {
             c.claim_uncontrolled(MAP, B, &[2000, 2002]).is_empty(),
             "the two survivors are still A's"
         );
-        assert_eq!(c.reconcile(999, &[]), 0, "a map nobody is on reconciles to nothing");
+        assert_eq!(c.reconcile(crate::fields::FieldKey::world(999), &[]), 0, "a map nobody is on reconciles to nothing");
     }
 
     /// **Claiming is additive and cannot take a mob from anyone**, which is why the
@@ -1011,7 +1011,7 @@ mod tests {
         assert_eq!(c.controller_of(MAP, 2000), None);
         assert_eq!(c.controller_of(MAP, 2001), Some(A));
         c.forget(MAP, 2000); // idempotent
-        c.forget(999, 2000); // an unknown map is not a panic
+        c.forget(crate::fields::FieldKey::world(999), 2000); // an unknown map is not a panic
         assert_eq!(c.len(), 1);
     }
 
@@ -1031,10 +1031,10 @@ mod tests {
     fn control_is_keyed_by_map() {
         let c = Controllers::new();
         c.claim_uncontrolled(MAP, A, &[2000]);
-        assert_eq!(c.controller_of(100_000_000, 2000), None);
-        assert_eq!(c.claim_uncontrolled(100_000_000, B, &[2000]), vec![2000]);
+        assert_eq!(c.controller_of(crate::fields::FieldKey::world(100_000_000), 2000), None);
+        assert_eq!(c.claim_uncontrolled(crate::fields::FieldKey::world(100_000_000), B, &[2000]), vec![2000]);
         assert_eq!(c.controller_of(MAP, 2000), Some(A));
-        assert_eq!(c.controller_of(100_000_000, 2000), Some(B));
+        assert_eq!(c.controller_of(crate::fields::FieldKey::world(100_000_000), 2000), Some(B));
     }
 
     /// **The race, run rather than argued.** Four threads claim the same twenty mobs. The

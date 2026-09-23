@@ -28,6 +28,8 @@ pub mod cash;
 pub mod character;
 pub mod claims;
 pub mod codes;
+pub mod crafting;
+pub mod friends;
 /// One claim per perk per UTC day - the gate behind the Maple Administrator's three
 /// quality-of-life options. See its module docs for why the answer is a transition.
 pub mod dailyperks;

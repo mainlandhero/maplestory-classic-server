@@ -28,7 +28,7 @@ const STATE_LENGTH_MS: u32 = 0;
 
 impl Session {
     /// One `0x0484` per reactor standing on `map`, in object-id order.
-    pub(super) fn reactor_entry_replies(&mut self, map: u32) -> Vec<Reply> {
+    pub(super) fn reactor_entry_replies(&mut self, map: crate::fields::FieldKey) -> Vec<Reply> {
         let mut live = self.fields.reactors_on(map);
         live.sort_by_key(|r| r.seen.object_id);
         live.into_iter()
@@ -57,7 +57,7 @@ impl Session {
             return Vec::new();
         };
         let Some(chr) = self.claimed_character() else { return Vec::new() };
-        let map = chr.map_id;
+        let map = self.field_of(&chr);
         let Some(outcome) = self.fields.hit_reactor(map, hit.object_id, self.clock_ms) else {
             crate::server::log(&format!(
                 "   reactor: hit on object id {} on map {map}, which has no standing reactor by that id (broken and waiting, or not ours) - nothing done",
@@ -124,7 +124,7 @@ impl Session {
             let stagger = (i as i16 - n / 2) * 20;
             let x = outcome.x.saturating_add(stagger);
             let fallback = if self.config.footholds.is_empty() { (x, outcome.y) } else { (outcome.x, outcome.y) };
-            let landing = self.config.footholds.landing(map, x, outcome.y);
+            let landing = self.config.footholds.landing(map.map, x, outcome.y);
             let (x, y) = landing.map(|l| (l.x, l.y)).unwrap_or(fallback);
             let (item, inv_type, meso) = if r.is_mesos() {
                 let amount = meso_rate.apply(u64::from(r.quantity)).min(u64::from(u32::MAX)) as u32;
@@ -168,7 +168,7 @@ impl Session {
 
     /// Reactors whose `reactorTime` has run out since they broke: `0x0485` for the broken
     /// object, `0x0484` for the fresh one - the same id, state 0 - to everyone on the map.
-    pub(super) fn spawn_due_reactors(&mut self, map: u32, now_ms: u64) -> Vec<Reply> {
+    pub(super) fn spawn_due_reactors(&mut self, map: crate::fields::FieldKey, now_ms: u64) -> Vec<Reply> {
         let mut out = Vec::new();
         for r in self.fields.due_reactor_respawns(map, now_ms) {
             let leave = Reply {
