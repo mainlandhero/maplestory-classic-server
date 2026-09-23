@@ -201,6 +201,47 @@ impl super::Session {
         }]
     }
 
+    /// **The party window after a level-up.** The owner, 2026-09-22: *"When a party member levels
+    /// up, the level up does not reflect in the party list."*
+    ///
+    /// `party_block` has always read the levels correctly - it takes this connection's own
+    /// live character for its own seat and the store's row for everyone else - so the row
+    /// was never wrong when it was BUILT. It was simply never rebuilt: the `0x0D` push went
+    /// out on joins, leaves, leader and rights changes, and a level is none of those, so
+    /// every other client kept drawing the number it was handed when the member joined.
+    ///
+    /// Sent to the **whole party including the leveller**, because the `0x007C` that carries
+    /// the new level updates the character's own stats and not their row in the party
+    /// window. Built once here rather than per recipient: the block describes the party, not
+    /// the reader, and this connection is the only one that can see its own new level
+    /// without re-reading the store.
+    pub(super) fn party_window_after_level_up(&mut self) -> Vec<Reply> {
+        let Some(me) = self.claimed_character().map(|c| c.id) else { return Vec::new() };
+        let Some(party) = self.fields.parties().party_id_of(me) else { return Vec::new() };
+        let Some(block) = self.party_block(party) else { return Vec::new() };
+        let body = net::party::party_state(Some(&block));
+        let what = |who: String| {
+            format!("PartyResult PARTY_STATE (0x0D) to {who}: character {me} levelled, so party {party}'s rows are re-sent")
+        };
+        let mut told = 0;
+        for member in self.recipients_for(party, None) {
+            if member == me {
+                continue;
+            }
+            if self.deliver_anywhere(member, Reply {
+                opcode: net::party::PARTY_RESULT,
+                body: body.clone(),
+                what: what(format!("character {member}")),
+            }) {
+                told += 1;
+            }
+        }
+        if told > 0 {
+            crate::server::log(&format!("   party: character {me} levelled - party {party}'s window re-sent to {told} other member(s)"));
+        }
+        vec![Reply { opcode: net::party::PARTY_RESULT, body, what: what("themselves".to_string()) }]
+    }
+
     /// The packets for one applied request - the refusal, or the effects.
     pub(super) fn party_outcome_replies(
         &mut self,

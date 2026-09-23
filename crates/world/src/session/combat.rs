@@ -1718,6 +1718,10 @@ impl Session {
                 chr.name, chr.id, chr.level
             ));
         }
+        // **The party window carries a level too.** Beside the level-up effect and for the
+        // same reason: this is the one funnel every source of levelling goes through.
+        // `session::party::party_window_after_level_up`.
+        let party_rows = if a.levels > 0 { self.party_window_after_level_up() } else { Vec::new() };
         let mut out = vec![Reply {
             opcode: net::stats::STAT_CHANGED,
             body: change.build(),
@@ -1762,6 +1766,9 @@ impl Session {
                 if to_chat { "CHAT LOG (type 6)" } else { "screen message area" }
             ),
         });
+        // After the stat change, so the client has the new level before its party row
+        // restates it.
+        out.extend(party_rows);
         out
     }
 
