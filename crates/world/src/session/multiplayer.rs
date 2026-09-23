@@ -1235,6 +1235,100 @@ mod tests {
         );
     }
 
+    /// **The quest's clock, Nella, and leaving the party.** The owner, 2026-09-22.
+    ///
+    /// Four claims: entering sends the type-2 countdown (never type 1, which would throw on
+    /// these clock-less maps); Nella inside offers the way out and Yes lands them on the
+    /// Exit; Nella on the Exit sends them to Kerning City; and a member who leaves the party
+    /// is taken out of the quest without touching Nella at all.
+    #[test]
+    fn the_party_quest_counts_down_and_nella_shows_people_out() {
+        use crate::firsttime;
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Runner".to_string(), map_id: firsttime::STAGE_1, level: 21, ..Default::default() };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        store.set_character_map(id, firsttime::STAGE_1).unwrap();
+        store.create_migration(account, id, 0, 0).unwrap();
+        let mut cfg = (*config).clone();
+        for m in [firsttime::STAGE_1, firsttime::EXIT_MAP, firsttime::TOWN_MAP] {
+            cfg.fields.insert(m);
+        }
+        cfg.npcs.insert(
+            firsttime::STAGE_1,
+            vec![net::opcode::FieldNpc { object_id: 910, template_id: firsttime::NELLA, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 }],
+        );
+        cfg.npcs.insert(
+            firsttime::EXIT_MAP,
+            vec![net::opcode::FieldNpc { object_id: 911, template_id: firsttime::NELLA, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 }],
+        );
+        let mut s = Session::joining(store.clone(), Arc::new(cfg), fields);
+        s.claim_for_character(id);
+        let inst = firsttime::open(9_001, vec![id], store::Store::unix_now());
+
+        let click = |object_id: u32| {
+            let mut b = net::script::CLIENT_NPC_CLICK.to_le_bytes().to_vec();
+            b.extend_from_slice(&object_id.to_le_bytes());
+            b.extend_from_slice(&0i16.to_le_bytes());
+            b.extend_from_slice(&0i16.to_le_bytes());
+            b.extend_from_slice(&u32::MAX.to_le_bytes());
+            b
+        };
+        let yes = || {
+            let mut b = net::script::CLIENT_SCRIPT_REPLY.to_le_bytes().to_vec();
+            b.extend_from_slice(&0u32.to_le_bytes());
+            b.push(0);
+            b.extend_from_slice(&0u32.to_le_bytes());
+            b.extend_from_slice(&0u16.to_le_bytes());
+            b.push(net::script::SCRIPT_ACTION_YES as u8);
+            b
+        };
+        let map_now = |s: &Session| s.store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().map_id;
+
+        // 1. Entering sends the countdown, as type 2 and with the limit on it.
+        let entry = s.on_field_entered();
+        let clock = entry.iter().find(|r| r.opcode == net::clock::FIELD_CLOCK).expect("the countdown");
+        assert_eq!(clock.body[0], net::clock::CLOCK_TYPE_SECONDS, "type 2 - type 1 would throw here");
+        let left = u32::from_le_bytes(clock.body[1..5].try_into().unwrap());
+        assert!(left > firsttime::TIME_LIMIT_S - 5 && left <= firsttime::TIME_LIMIT_S, "{left}s of {}", firsttime::TIME_LIMIT_S);
+
+        // 2. Nella inside asks, and Yes puts them on the Exit map.
+        let out = s.handle(&click(910));
+        let said = out.iter().find(|r| r.opcode == net::script::SCRIPT_MESSAGE).map(|r| String::from_utf8_lossy(&r.body).to_string()).unwrap_or_default();
+        assert!(said.contains("leave this place"), "{said}");
+        let out = s.handle(&yes());
+        assert!(out.iter().any(|r| r.opcode == net::opcode::SET_FIELD));
+        assert_eq!(map_now(&s), firsttime::EXIT_MAP, "out to the Exit");
+        assert_eq!(firsttime::instance_of(id), None, "and out of the run");
+
+        // 3. Nella on the Exit map sends them to Kerning City.
+        let out = s.handle(&click(911));
+        let said = out.iter().find(|r| r.opcode == net::script::SCRIPT_MESSAGE).map(|r| String::from_utf8_lossy(&r.body).to_string()).unwrap_or_default();
+        assert!(said.contains("Kerning City"), "{said}");
+        let _ = s.handle(&yes());
+        assert_eq!(map_now(&s), firsttime::TOWN_MAP, "home");
+        assert!(firsttime::close(inst.id) || true);
+
+        // 4. **Leaving the party takes you out**, with no Nella involved. Back into a run,
+        //    on a stage, then ejected.
+        let mut back = store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
+        s.go_to_map(&mut back, firsttime::STAGE_1, 0, "back in".to_string());
+        let inst = firsttime::open(9_002, vec![id], store::Store::unix_now());
+        assert_eq!(firsttime::instance_of(id).map(|i| i.id), Some(inst.id));
+        let _ = s.eject_from_party_quest(id, "they left the party");
+        assert_eq!(map_now(&s), firsttime::EXIT_MAP, "the leaver lands on the Exit");
+        assert_eq!(firsttime::instance_of(id), None);
+
+        // 5. **The clock running out** ejects whoever is still inside.
+        let mut back = store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
+        s.go_to_map(&mut back, firsttime::STAGE_1, 0, "back in again".to_string());
+        let expiring = firsttime::open(9_003, vec![id], store::Store::unix_now() - i64::from(firsttime::TIME_LIMIT_S));
+        assert!(expiring.is_over(store::Store::unix_now()));
+        let _ = s.party_quest_timer_tick();
+        assert_eq!(map_now(&s), firsttime::EXIT_MAP, "time up, out to the Exit");
+        assert_eq!(firsttime::instance_of(id), None, "and the run is forgotten");
+    }
+
     /// **A party buff reaches every member on the caster's field, and nobody else.**
     ///
     /// The owner, 2026-09-06: *"party buffs should apply to everyone in the party who is in the

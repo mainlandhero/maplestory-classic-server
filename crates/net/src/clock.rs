@@ -60,6 +60,12 @@ pub const CLOCK_TYPE_HMS: u8 = 1;
 /// Body length of a type-1 clock: the type byte and three time bytes.
 pub const CLOCK_HMS_LEN: usize = 4;
 
+/// The type byte for a **countdown**: one `u32` of seconds.
+pub const CLOCK_TYPE_SECONDS: u8 = 2;
+
+/// Body length of a type-2 clock: the type byte and the `u32`.
+pub const CLOCK_SECONDS_LEN: usize = 5;
+
 /// Build a type-1 [`FIELD_CLOCK`] body: `u8 1, u8 hour, u8 minute, u8 second`.
 ///
 /// `hour` is `0..24`. The client divides by 12 itself, so passing a 12-hour value would
@@ -76,8 +82,43 @@ pub fn clock_hms(hour: u8, minute: u8, second: u8) -> Vec<u8> {
     w.into_vec()
 }
 
+/// Build a type-2 [`FIELD_CLOCK`] body: `u8 2, u32 seconds` - the countdown in the corner.
+///
+/// # This one is safe on a map with no `clock` node, and that had to be checked
+///
+/// The type-1 arm above fetches the map's widget with `FUN_1418a7dd0`, which **throws** when
+/// the holder is empty - which is why `clock_hms` is sent only to maps in
+/// `gm-handbook/clocks.txt`. The party quest's seven fields declare no `clock` node at all,
+/// so sending type 1 there would kill the client.
+///
+/// Type 2 does not fetch. Decompiled 2026-09-22 (`research/msexe-clock-countdown.c`): the
+/// arm at `FUN_1418564d0` case 2 reads the `u32` and calls `FUN_141839a60`, which
+/// **allocates** a `0x2c8` object (`FUN_14019b780`), constructs it (`FUN_14189f7e0`) and
+/// stores it into the very `+0x220` holder type 1 reads from (`FUN_1418a74f0`). Its only
+/// `0x431` throws are on the slot it has *just* filled. So it builds its own widget and
+/// needs nothing from the map. **[L]**
+///
+/// `0` is not special here and is not used as "stop": the countdown simply shows zero.
+pub fn clock_seconds(seconds: u32) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(CLOCK_TYPE_SECONDS); // 141856511: the switch
+    w.u32(seconds); //           the u32 FUN_1406e8c20 reads, passed to FUN_141839a60
+    w.into_vec()
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// The countdown is the type byte and one little-endian `u32`, and nothing else.
+    #[test]
+    fn a_countdown_is_the_type_byte_and_a_u32() {
+        let b = clock_seconds(1_800);
+        assert_eq!(b.len(), CLOCK_SECONDS_LEN);
+        assert_eq!(b[0], CLOCK_TYPE_SECONDS);
+        assert_eq!(&b[1..], &1_800u32.to_le_bytes());
+        assert_eq!(clock_seconds(0), vec![CLOCK_TYPE_SECONDS, 0, 0, 0, 0], "zero is a value, not a stop");
+    }
     use super::*;
 
     /// **Four bytes, type first, then hour, minute, second** - the order the handler reads

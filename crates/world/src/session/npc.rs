@@ -917,6 +917,11 @@ impl Session {
             return replies;
         }
 
+        // **Nella**, in any of the seven quest fields: the way out, and home from the Exit.
+        if let Some(replies) = self.open_nella(template) {
+            return replies;
+        }
+
         if let Some(replies) = self.open_taxi_for(template) {
             return replies;
         }
@@ -2468,6 +2473,9 @@ impl Session {
         // find no quest id, and drop the conversation with NO PACKET SENT - and they would go
         // silent on the first Yes. (Phil's guide used to sit here for the same reason; it is
         // a type-6 menu now and is answered above, beside the taxi's.)
+        if convo.path == crate::firsttime::NELLA_PATH {
+            return self.nella_answer(reply.action);
+        }
         if convo.path == crate::firsttime::ASK_PATH {
             return self.first_time_together_answer(reply.action);
         }
