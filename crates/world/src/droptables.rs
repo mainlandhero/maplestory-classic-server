@@ -324,6 +324,39 @@ mod tests {
     /// It also guards the fragility the file's own header warns about: these rows are hand
     /// written into a generated file, so a re-scrape would delete them and the scrolls would
     /// stop dropping silently. This test is what turns that into a failure.
+    /// **Every Ligator owes a coupon.** The owner, 2026-09-22: *"the coupon drop from Ligators
+    /// should be a 100% drop rate."*
+    ///
+    /// `4001001` is stage 1 of First Time Together: each member is asked for a number of
+    /// coupons, so the stage is a counting exercise and a percentage would make it a
+    /// lottery. Asserted in basis points AND by rolling, because "100 in the file" and "it
+    /// always drops" are two different claims and only the second one is the requirement.
+    ///
+    /// Like the scrolls below, this is a hand edit in a generated file: a re-scrape would
+    /// put the old 6% back. This test is what turns that into a failure rather than a party
+    /// standing in stage 1 wondering why nothing drops.
+    #[test]
+    fn the_ligator_always_drops_its_party_quest_coupon() {
+        let tables = DropTables::load(std::path::Path::new("../../data/drops.txt"));
+        assert!(tables.problems.is_empty(), "{:?}", tables.problems);
+        let row = tables
+            .for_mob(crate::firsttime::LIGATOR)
+            .iter()
+            .find(|e| e.item_id == crate::firsttime::COUPON)
+            .unwrap_or_else(|| panic!("the Ligator has no {} row at all", crate::firsttime::COUPON))
+            .clone();
+        assert!(
+            row.chance_bp >= BASIS_POINTS,
+            "{} bp is not certain - stage 1 counts coupons, it does not gamble for them",
+            row.chance_bp
+        );
+        assert_eq!((row.min_qty, row.max_qty), (1, 1), "one coupon per Ligator");
+        // And it actually drops, for every roll the generator can produce.
+        for roll in [0u64, 1, 9_999, 10_000, u64::MAX] {
+            assert!(row.hits(roll), "roll {roll} must still drop it");
+        }
+    }
+
     #[test]
     fn the_two_scrolls_drop_globally_at_one_basis_point() {
         let tables = DropTables::load(std::path::Path::new("../../data/drops.txt"));

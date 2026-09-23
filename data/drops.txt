@@ -28,6 +28,16 @@
 # the scrolls stop dropping, silently. Whoever runs it next has to put them back or
 # teach the script to keep the global table.
 #
+# THE LIGATOR'S COUPON IS 100%, set by hand 2026-09-22 on the owner's instruction: "the coupon
+# drop from Ligators should be a 100% drop rate." 4001001 is stage 1 of the First Time
+# Together party quest - every Ligator owes one coupon, so the stage is a counting exercise
+# rather than a lottery. It was 6% from the scrape, which is a vote score and not a measured
+# rate (see the header).
+#
+# The same fragility applies: a re-scrape would put 6 back. `droptables.rs`'s
+# `the_ligator_always_drops_its_party_quest_coupon` is what turns that into a failure
+# instead of a party standing in stage 1 wondering why nothing drops.
+#
 # 4001009 Event Trophy was a third row here until 2026-09-09. The owner: "Do not use event
 # trophy since it does not stack" - itemdata.txt gives it slotMax 0. Innocence did not
 # go with it; it became one of the Scroll of Secrets' three modes.
@@ -1034,7 +1044,7 @@
 700005 | 2043202 | 5 | 1 | 1 | 1 | One-Handed Blunt Weapon Attack Scroll: Greater
 700005 | 2044702 | 5 | 1 | 1 | 1 | Claw Attack Scroll: Greater
 700005 | 4130002 | 6 | 1 | 1 | 1 | Armor Crafting Catalyst
-800000 | 4001001 | 6 | 1 | 1 | 1 | Coupon
+800000 | 4001001 | 100 | 1 | 1 | 1 | Coupon
 800001 | 4001001 | 6 | 1 | 1 | 1 | Coupon
 800002 | 4001001 | 6 | 1 | 1 | 1 | Coupon
 800003 | 1072128 | 1 | 1 | 1 | 2 | Squishy Shoes
