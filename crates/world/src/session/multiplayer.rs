@@ -1149,6 +1149,92 @@ mod tests {
         assert!(crate::firsttime::close(inst.id));
     }
 
+    /// **A level-up redraws the party window for everyone.**
+    ///
+    /// The owner, 2026-09-22: *"When a party member levels up, the level up does not reflect in
+    /// the party list."* `party_block` always read the level correctly; it was simply never
+    /// rebuilt, because a level is not a join, a leave or a rights change. Two members: one
+    /// gains enough EXP to level, and the OTHER's mailbox gets a `PARTY_STATE` whose seat
+    /// for the leveller carries the new number.
+    #[test]
+    fn a_level_up_re_sends_the_party_window_to_every_member() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut ids = Vec::new();
+        for name in ["Leader", "Member"] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: 104_040_000, level: 1, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.create_migration(account, id, 0, 0).unwrap();
+            ids.push(id);
+        }
+        // A curve, or nothing levels and the test passes for the wrong reason.
+        let curve = crate::expcurve::ExpCurve::parse("1 | 15
+2 | 34
+3 | 57
+");
+        let config = Arc::new(Config { exp_curve: curve, ..(*config).clone() });
+        let mut leader = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut member = Session::joining(store.clone(), config, fields);
+        leader.claim_for_character(ids[0]);
+        member.claim_for_character(ids[1]);
+        leader.on_field_entered();
+        member.on_field_entered();
+        let created = leader.run_party_request(ids[0], crate::party::Request::Create { name: "P".into() });
+        let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        let _ = leader.run_party_request(ids[0], crate::party::Request::Invite { target: ids[1] });
+        let _ = member.tick(1_000);
+        let _ = member.run_party_request(ids[1], crate::party::Request::Accept { party });
+        let _ = leader.tick(1_100);
+        let _ = member.tick(1_100);
+
+        // The member levels. Enough EXP that the curve must carry them past level 5.
+        let before = store.character_brief(ids[1]).unwrap().unwrap().level;
+        let own = member.award_experience(20, "a test", true, false);
+        let after = store.character_brief(ids[1]).unwrap().unwrap().level;
+        assert!(after > before, "the member actually levelled: {before} -> {after}");
+
+        // Their own client is told, and so is the leader's.
+        // PARTY_STATE on the wire: u8 code, u8 1, u32 partyId, u8 0, then six members.
+        // A member is u32 charId (0 ends an empty seat), str name, u32 job, u32, u32 LEVEL,
+        // u32, u8, u32, u64, then 0x78 zero bytes - `net::party::write_member`.
+        let seat_level = |r: &Reply| -> Option<u32> {
+            let b = &r.body;
+            if b.first() != Some(&net::party::result::PARTY_STATE) || b.get(1) != Some(&1) {
+                return None;
+            }
+            let mut at = 2 + 4 + 1;
+            for _ in 0..net::party::PARTY_SEATS {
+                let id = u32::from_le_bytes(b[at..at + 4].try_into().ok()?);
+                at += 4;
+                if id == 0 {
+                    continue;
+                }
+                let n = u16::from_le_bytes(b[at..at + 2].try_into().ok()?) as usize;
+                at += 2 + n;
+                let level = u32::from_le_bytes(b[at + 8..at + 12].try_into().ok()?);
+                if id == ids[1] {
+                    return Some(level);
+                }
+                at += 4 * 4 + 1 + 4 + 8 + 0x78;
+            }
+            None
+        };
+        let own_state: Vec<u32> = own.iter().filter(|r| r.opcode == net::party::PARTY_RESULT).filter_map(seat_level).collect();
+        assert_eq!(own_state, vec![after], "the leveller's own window: {own_state:?}");
+
+        let mail = leader.tick(2_000);
+        let seen: Vec<u32> = mail.iter().filter(|r| r.opcode == net::party::PARTY_RESULT).filter_map(seat_level).collect();
+        assert_eq!(seen, vec![after], "the other member's window carries the NEW level: {seen:?}");
+
+        // A gain that does not level sends no party packet at all.
+        let quiet = member.award_experience(1, "a crumb", true, false);
+        assert!(
+            !quiet.iter().any(|r| r.opcode == net::party::PARTY_RESULT),
+            "no level, no redraw: {:?}",
+            quiet.iter().map(|r| &r.what).collect::<Vec<_>>()
+        );
+    }
+
     /// **A party buff reaches every member on the caster's field, and nobody else.**
     ///
     /// The owner, 2026-09-06: *"party buffs should apply to everyone in the party who is in the
