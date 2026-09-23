@@ -286,22 +286,46 @@ impl Session {
         if template != firsttime::CLOTO {
             return None;
         }
-        let fresh = self.fields.runs().clear_stage(chr.id, chr.map_id);
-        let fresh = fresh?;
+        let inst = self.fields.runs().instance_of(chr.id);
+        let inst = inst?;
+        firsttime::next_stage(chr.map_id)?;
         self.conversation = None;
-        let run = self.fields.runs().instance_of(chr.id).map(|i| i.id).unwrap_or(0);
+        let run = inst.id;
         let say = |line: &str, what: String| Reply {
             opcode: net::script::SCRIPT_MESSAGE,
             body: net::script::npc_say(template, line, false, false),
             what,
         };
+        // **Everyone in the run on this stage, or no clear.** The owner, 2026-09-23. "On this
+        // stage" is this run's FIELD - `(map, instance)` - on the presence table, which is
+        // the same thing that decides who can see whom. A member who has disconnected is no
+        // longer in the run (`leave_party_quest_on_disconnect`), so they cannot hold it up.
+        let key = self.field_of(&chr);
+        let here: std::collections::HashSet<u32> = self.bus().characters_on(key, &inst.members).into_iter().collect();
+        let missing: Vec<String> = inst
+            .members
+            .iter()
+            .filter(|m| !here.contains(m))
+            .map(|&m| self.store.character_brief(m).ok().flatten().map(|b| b.name).unwrap_or_else(|| format!("character {m}")))
+            .collect();
+        if !missing.is_empty() {
+            crate::server::log(&format!(
+                "   first time together: {} ({}) asked Cloto to clear map {} for instance {run}; refused, not here: {}",
+                chr.name, chr.id, chr.map_id, missing.join(", ")
+            ));
+            return Some(vec![say(
+                &firsttime::cloto_waiting(&missing),
+                format!("ScriptMessage Say from Cloto: map {} NOT cleared, waiting for {}", chr.map_id, missing.join(", ")),
+            )]);
+        }
+        let fresh = self.fields.runs().clear_stage(chr.id, chr.map_id);
+        let fresh = fresh?;
         if !fresh {
             return Some(vec![say(
                 firsttime::CLOTO_ALREADY,
                 format!("ScriptMessage Say from Cloto: map {} already cleared by instance {run}", chr.map_id),
             )]);
         }
-        let key = self.field_of(&chr);
         crate::server::log(&format!(
             "   first time together: {} ({}) cleared map {} for instance {run} (TEMPORARY: Cloto clears on click); \
              effects to field {key} only",
@@ -327,6 +351,52 @@ impl Session {
             format!("ScriptMessage Say from Cloto: map {} cleared for instance {run}", chr.map_id),
         ));
         Some(out)
+    }
+
+    /// **A login never lands on a stage.** The owner, 2026-09-23: *"If anyone disconnects from the
+    /// party quest mid-session, they should log-in onto the Exit map to be returned to Kerning
+    /// City. Disconnected players should never be logged back into to any of the PQ stages."*
+    ///
+    /// Called on the login `SetField` path, before the record is read for it, so the saved
+    /// map is rewritten first and the `SetField` carries the Exit. That path is also the
+    /// arrival of a channel change, and the rule holds there too: runs belong to a channel
+    /// (`Fields::runs`), so a stage on another channel is a stage with no run behind it.
+    ///
+    /// It keys on the **saved map, not on the run**, deliberately. A server restart or a
+    /// crash forgets every run, and the saved map is the only thing that survives - which is
+    /// exactly the case where a check on the run would find nothing and let them in.
+    pub(super) fn keep_out_of_party_quest_on_login(&mut self) {
+        let Some(chr) = self.claimed_character() else { return };
+        if !firsttime::is_quest_map(chr.map_id) || chr.map_id == firsttime::EXIT_MAP {
+            return;
+        }
+        let _ = self.fields.runs().drop_member(chr.id);
+        let result = self.store.set_character_map(chr.id, firsttime::EXIT_MAP);
+        crate::server::log(&format!(
+            "   first time together: {} ({}) logged in on stage map {}; sent to the Exit {} instead - {}",
+            chr.name,
+            chr.id,
+            chr.map_id,
+            firsttime::EXIT_MAP,
+            match result {
+                Ok(()) => "saved".to_string(),
+                Err(e) => format!("THE SAVE FAILED ({e}), so this login lands where it was saved"),
+            }
+        ));
+    }
+
+    /// **A dropped connection leaves its run.** Without this the rest of the party could
+    /// never clear another stage - Cloto waits for everyone in the run, and someone who is
+    /// not connected can never arrive. Also on a channel change: the run is this channel's.
+    pub(super) fn leave_party_quest_on_disconnect(&mut self) {
+        let Some(chr) = self.claimed_character() else { return };
+        let was = self.fields.runs().drop_member(chr.id);
+        if let Some(run) = was {
+            crate::server::log(&format!(
+                "   first time together: {} ({}) disconnected on map {}; out of instance {} - they log in on the Exit",
+                chr.name, chr.id, chr.map_id, run.id
+            ));
+        }
     }
 
     /// **A cleared stage's gate, for whoever arrives after the clear.** The gate object is

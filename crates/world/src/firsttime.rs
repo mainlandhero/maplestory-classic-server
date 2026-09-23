@@ -78,6 +78,16 @@ pub const CLOTO: u32 = 800_001;
 /// What Cloto says as they clear a stage, during the temporary test.
 pub const CLOTO_CLEARED: &str =
     "Stage cleared! The portal is open - go through it to reach the next stage.";
+/// What they say when somebody in the run is not standing on their stage. The owner, 2026-09-23:
+/// *"Do not clear a stage unless everyone is on same map that the stage is about to be
+/// cleared of."* The missing names are listed so the party knows whom to wait for.
+pub fn cloto_waiting(missing: &[String]) -> String {
+    format!(
+        "Not everyone is here yet. #b{}#k must be on this stage with you before I can clear it.",
+        missing.join(", ")
+    )
+}
+
 /// What they say when this party has already cleared the stage they stand on.
 pub const CLOTO_ALREADY: &str = "This stage is already cleared. The portal is open.";
 /// What the `next00` portal says while this party's stage is still closed.
