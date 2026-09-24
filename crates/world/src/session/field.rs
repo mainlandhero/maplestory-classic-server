@@ -127,6 +127,8 @@ impl Session {
         // So what goes out here is whatever is alive RIGHT NOW, at its current position -
         // which for a returning player is where the mobs actually wandered to, not their
         // spawn points. `crate::fields`.
+        // The party quest's last stage fills all at once instead. session/firsttime.rs.
+        self.fill_last_stage(&chr);
         self.fields.seed(self.field_of(&chr), &self.config, self.clock_ms);
         // **Who controls what, decided before a single packet is built.**
         //
