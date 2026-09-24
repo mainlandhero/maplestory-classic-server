@@ -217,6 +217,30 @@ pub const STAGE_3_PLATFORMS: [Area; 5] = [
     Area { x1: 698, y1: -243, x2: 826, y2: -184 },
 ];
 
+/// `<4th stage>`.
+pub const STAGE_4: u32 = 80_000_300;
+
+/// **Stage 4's six barrels**, from the client's `area` node -
+/// `Map0_000.wz/080000300.img/area/0..5` **[L]**, read 2026-09-23.
+///
+/// A pyramid, 3 / 2 / 1. Each rectangle sits on one barrel top - area 0 is x 840..882 over
+/// the foothold at 843..880, y -130 - and, unlike the platforms, is a few pixels WIDER than
+/// the top it covers, so the whole of a barrel's top counts. Pinned against `footholds.txt`
+/// by `the_barrel_areas_sit_on_the_barrel_tops`.
+pub const STAGE_4_BARRELS: [Area; 6] = [
+    Area { x1: 840, y1: -142, x2: 882, y2: -125 },
+    Area { x1: 905, y1: -140, x2: 950, y2: -125 },
+    Area { x1: 975, y1: -139, x2: 1019, y2: -125 },
+    Area { x1: 871, y1: -191, x2: 916, y2: -178 },
+    Area { x1: 939, y1: -190, x2: 987, y2: -176 },
+    Area { x1: 907, y1: -242, x2: 949, y2: -228 },
+];
+
+/// **The number painted on each barrel**, by area index - from the owner's screenshot of the
+/// stage, 2026-09-23: 1 on top, 2 and 3 in the middle, 4, 5 and 6 along the bottom. Used
+/// only to write the dealt answer into the log in the words the screen uses.
+pub const STAGE_4_PAINTED: [u8; 6] = [4, 5, 6, 2, 3, 1];
+
 /// **A stage solved by standing in the right places** - the ropes of stage 2 and the
 /// platforms of stage 3 are the same rule over different rectangles, so they are one code
 /// path. The owner, 2026-09-23: 2 correct for a pair, 3 for a party of three or four, dealt at
@@ -229,13 +253,29 @@ pub struct ZoneStage {
     pub noun: &'static str,
     /// Cloto's opening, given how many must stand.
     pub intro: fn(usize) -> String,
+    /// What the screen calls each zone, for the log - the barrels' painted numbers. Empty
+    /// where nothing is painted; the log then says the area index.
+    pub labels: &'static [u8],
+}
+
+impl ZoneStage {
+    /// The zones in `answer`, as the screen names them.
+    pub fn describe(&self, answer: &[usize]) -> String {
+        if self.labels.is_empty() {
+            return format!("{} {answer:?} (area index)", self.noun);
+        }
+        let mut painted: Vec<u8> = answer.iter().filter_map(|&i| self.labels.get(i).copied()).collect();
+        painted.sort_unstable();
+        format!("{} {painted:?} (as painted)", self.noun)
+    }
 }
 
 /// The zone stage on `map`, if it is one.
 pub fn zone_stage(map: u32) -> Option<ZoneStage> {
     match map {
-        STAGE_2 => Some(ZoneStage { map, zones: &STAGE_2_ROPES, noun: "ropes", intro: cloto_stage2_intro }),
-        STAGE_3 => Some(ZoneStage { map, zones: &STAGE_3_PLATFORMS, noun: "platforms", intro: cloto_stage3_intro }),
+        STAGE_2 => Some(ZoneStage { map, zones: &STAGE_2_ROPES, noun: "ropes", intro: cloto_stage2_intro, labels: &[] }),
+        STAGE_3 => Some(ZoneStage { map, zones: &STAGE_3_PLATFORMS, noun: "platforms", intro: cloto_stage3_intro, labels: &[] }),
+        STAGE_4 => Some(ZoneStage { map, zones: &STAGE_4_BARRELS, noun: "barrels", intro: cloto_stage4_intro, labels: &STAGE_4_PAINTED }),
         _ => None,
     }
 }
@@ -320,6 +360,25 @@ pub fn cloto_stage3_intro(needed: usize) -> String {
          Only #b{lower} of them {are} connected to the portal to the next stage. {n} {members} \
          in the center of one of these platforms.#k\r\nYour answers will only count when \
          you're in the middle of the platforms, meaning you can't be on the edges. And {people}.",
+        are = if needed == 1 { "is" } else { "are" },
+    )
+}
+
+/// Cloto's stage-4 opening. **Not from the client and not from the owner** - they have not sent
+/// this stage's text yet, so this is written in the shape of stage 3's. Replace it with
+/// the real line when it arrives.
+pub fn cloto_stage4_intro(needed: usize) -> String {
+    let n = number_word(needed);
+    let lower = n.to_lowercase();
+    let (who, rule) = if needed == 1 {
+        ("party member must stand".to_string(), "Only one person should be on the barrels".to_string())
+    } else {
+        ("of your party members must each stand".to_string(), format!("Only {lower} people, one on each barrel, should be on the barrels"))
+    };
+    format!(
+        "Welcome to the fourth stage. Here, you'll find six numbered barrels. Only #b{lower} of \
+         them {are} connected to the portal to the next stage. {n} {who} on top of one of these \
+         barrels.#k\r\n{rule}, and then your leader must talk to me.",
         are = if needed == 1 { "is" } else { "are" },
     )
 }
@@ -964,7 +1023,31 @@ mod tests {
         }
         assert_eq!(zone_stage(STAGE_3).map(|z| z.zones.len()), Some(5));
         assert_eq!(zone_stage(STAGE_2).map(|z| z.zones.len()), Some(4));
-        assert!(zone_stage(STAGE_1).is_none() && zone_stage(80_000_300).is_none());
+        assert!(zone_stage(STAGE_1).is_none() && zone_stage(80_000_400).is_none());
+    }
+
+    /// The barrel rectangles are the client's, each on one barrel top (`footholds.txt`, map
+    /// 80000300, footholds 116 114 112 115 113 117), covering all of it; standing anywhere on
+    /// a barrel's top is inside exactly its own rectangle; and the painted numbers are a
+    /// permutation of 1..=6 that puts 1 on the top row.
+    #[test]
+    fn the_barrel_areas_sit_on_the_barrel_tops() {
+        let tops = [(843i16, 880i16, -130i16), (910, 947, -130), (978, 1015, -130), (876, 913, -182), (945, 982, -182), (910, 947, -234)];
+        for (i, (from, to, y)) in tops.into_iter().enumerate() {
+            for x in from..=to {
+                let hits: Vec<usize> = (0..6).filter(|&j| STAGE_4_BARRELS[j].contains((x, y))).collect();
+                assert_eq!(hits, vec![i], "standing at ({x}, {y}) on barrel area {i}");
+            }
+        }
+        let mut painted = STAGE_4_PAINTED.to_vec();
+        painted.sort_unstable();
+        assert_eq!(painted, vec![1, 2, 3, 4, 5, 6]);
+        let top = (0..6).min_by_key(|&i| STAGE_4_BARRELS[i].y1).unwrap();
+        assert_eq!(STAGE_4_PAINTED[top], 1, "1 is the top barrel");
+        let z = zone_stage(STAGE_4).unwrap();
+        assert_eq!(z.zones.len(), 6);
+        assert_eq!(z.describe(&[5, 0]), "barrels [1, 4] (as painted)");
+        assert_eq!(zone_stage(STAGE_2).unwrap().describe(&[2, 0]), "ropes [2, 0] (area index)");
     }
 
     /// The owner's rules: exactly `needed` on the ropes, else a count; the dealt ropes, else WRONG.
@@ -1032,7 +1115,7 @@ mod tests {
         assert!(!CLOTO_STAGE1_INTRO.contains("except"), "the leader exception is removed");
         // A Python patch once swallowed a line-continuation backslash and left runs of
         // spaces inside two of these; the client would draw every one of them.
-        let mut said = vec![CLOTO_STAGE1_INTRO.to_string(), CLOTO_RIGHT.into(), CLOTO_DONE.into(), CLOTO_BAG_FULL.into(), cloto_short(3, 1), cloto_menu(3), cloto_stage2_intro(2), cloto_stage2_intro(3), cloto_zone_count(1, 2, "ropes"), cloto_stage3_intro(2), cloto_stage3_intro(3), cloto_stage3_intro(1)];
+        let mut said = vec![CLOTO_STAGE1_INTRO.to_string(), CLOTO_RIGHT.into(), CLOTO_DONE.into(), CLOTO_BAG_FULL.into(), cloto_short(3, 1), cloto_menu(3), cloto_stage2_intro(2), cloto_stage2_intro(3), cloto_zone_count(1, 2, "ropes"), cloto_stage3_intro(2), cloto_stage3_intro(3), cloto_stage3_intro(1), cloto_stage4_intro(1), cloto_stage4_intro(2), cloto_stage4_intro(3)];
         said.extend((0..QUESTIONS.len()).flat_map(|i| [cloto_question(i), cloto_wrong(i)]));
         for line in said {
             assert!(!line.contains("  "), "a run of spaces in: {line:?}");

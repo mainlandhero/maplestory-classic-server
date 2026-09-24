@@ -271,7 +271,7 @@ impl Session {
         self.leave_party_quest("Nella showed them out")
     }
 
-    /// **Cloto.** Stages 1 to 3 are real (`cloto_stage_one`, `cloto_zone_stage`); 4 and 5 still clear
+    /// **Cloto.** Stages 1 to 4 are real (`cloto_stage_one`, `cloto_zone_stage`); 5 still clears
     /// on a click - TEMPORARY, for the instancing test (the owner, 2026-09-23: clicking their should
     /// *"send the "stage clear" opcode and enable the portal to go to the next stage"*).
     ///
@@ -299,7 +299,7 @@ impl Session {
         if let Some(stage) = firsttime::zone_stage(chr.map_id) {
             return Some(self.cloto_zone_stage(&chr, &inst, stage));
         }
-        Some(self.cloto_clear(&chr, &inst, "TEMPORARY: Cloto clears stages 4 and 5 on a click"))
+        Some(self.cloto_clear(&chr, &inst, "TEMPORARY: Cloto clears stage 5 on a click"))
     }
 
     /// One line from Cloto. `next` puts a Next button on it.
@@ -340,7 +340,7 @@ impl Session {
         }]
     }
 
-    /// **Stages 2 and 3 - the ropes and the platforms.** The owner, 2026-09-23: *"In a 2 person
+    /// **Stages 2, 3 and 4 - the ropes, the platforms and the barrels.** The owner, 2026-09-23: *"In a 2 person
     /// party, 2 people must hang from the 2 correct ropes then have the party leader talk to
     /// Cloto. The server randomly decides for this particular party instance that which of
     /// the 2 ropes are correct."* Three for a party of three or four; and stage 3 is the same
@@ -372,14 +372,18 @@ impl Session {
         let roll = self.rng.next();
         let answer = self.fields.runs().answer_for(chr.id, stage.map, needed, stage.zones.len(), roll);
         let Some(answer) = answer else { return Vec::new() };
+        crate::server::log(&format!(
+            "   first time together: {} ({}) asked Cloto on map {} with {on} of {needed} on the {}; the answer is {}",
+            chr.name, chr.id, stage.map, stage.noun, stage.describe(&answer)
+        ));
         match firsttime::check_zones(stage.zones, &at, &answer, needed) {
             firsttime::ZoneCheck::Count { on, needed } => {
                 vec![self.cloto_say(&firsttime::cloto_zone_count(on, needed, stage.noun), false, format!("{on} on the {}, {needed} needed", stage.noun))]
             }
             firsttime::ZoneCheck::Wrong => {
                 crate::server::log(&format!(
-                    "   first time together: instance {} tried the wrong {} on map {} (dealt {answer:?})",
-                    inst.id, stage.noun, stage.map
+                    "   first time together: instance {} tried the wrong {} on map {} - the answer is {}",
+                    inst.id, stage.noun, stage.map, stage.describe(&answer)
                 ));
                 // **The animation and nothing else.** The owner, 2026-09-23: *"If the combination is
                 // incorrect, clicking on Cloto will only play the animation, no dialogue will
@@ -393,7 +397,7 @@ impl Session {
                     &format!("wrong {}, instance {}", stage.noun, inst.id),
                 )
             }
-            firsttime::ZoneCheck::Right => self.cloto_clear(chr, inst, &format!("the right {} {answer:?}", stage.noun)),
+            firsttime::ZoneCheck::Right => self.cloto_clear(chr, inst, &format!("the right {}", stage.describe(&answer))),
         }
     }
 
