@@ -154,6 +154,18 @@ fn main() -> ExitCode {
                         eprintln!("maplecw-world: cannot open --log-file {path}: {e}");
                         return ExitCode::FAILURE;
                     }
+                    // `previous-runs\` beside this log keeps a week - now, and once a day for a
+                    // server left running. world::logprune.
+                    let archive = world::logprune::archive_dir_for(std::path::Path::new(path));
+                    for line in world::logprune::prune_archive(&archive) {
+                        world::server::log(&line);
+                    }
+                    std::thread::spawn(move || loop {
+                        std::thread::sleep(world::logprune::EVERY);
+                        for line in world::logprune::prune_archive(&archive) {
+                            world::server::log(&line);
+                        }
+                    });
                 }
                 None => {
                     eprintln!("--log-file needs a path\n\n{USAGE}");
