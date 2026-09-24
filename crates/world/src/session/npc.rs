@@ -2422,6 +2422,10 @@ impl Session {
         }
         // The salons' coupon menu and their pick-a-look box (type 0x0a) - each only when its
         // own salon conversation is parked. session/salon.rs.
+        // Cloto's stage-1 menu for the party leader. session/firsttime.rs.
+        if let Some(replies) = self.cloto_menu_answer(body) {
+            return replies;
+        }
         if let Some(replies) = self.salon_menu_answer(body) {
             return replies;
         }
@@ -2479,6 +2483,9 @@ impl Session {
         // find no quest id, and drop the conversation with NO PACKET SENT - and they would go
         // silent on the first Yes. (Phil's guide used to sit here for the same reason; it is
         // a type-6 menu now and is answered above, beside the taxi's.)
+        if convo.path == crate::firsttime::CLOTO_INTRO_PATH {
+            return self.cloto_intro_answer(reply.action);
+        }
         if convo.path == crate::firsttime::NELLA_PATH {
             return self.nella_answer(reply.action);
         }
