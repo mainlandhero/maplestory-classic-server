@@ -251,6 +251,14 @@ pub struct ZoneStage {
     pub zones: &'static [Area],
     /// "ropes" / "platforms", for the count line.
     pub noun: &'static str,
+    /// One of them - "rope".
+    pub one: &'static str,
+    /// How a member uses one - "hang from".
+    pub verb: &'static str,
+    /// The way up - "climb up".
+    pub get_on: &'static str,
+    /// The stage's own catch, said with the count, or empty.
+    pub catch: &'static str,
     /// Cloto's opening, given how many must stand.
     pub intro: fn(usize) -> String,
     /// What the screen calls each zone, for the log - the barrels' painted numbers. Empty
@@ -273,9 +281,39 @@ impl ZoneStage {
 /// The zone stage on `map`, if it is one.
 pub fn zone_stage(map: u32) -> Option<ZoneStage> {
     match map {
-        STAGE_2 => Some(ZoneStage { map, zones: &STAGE_2_ROPES, noun: "ropes", intro: cloto_stage2_intro, labels: &[] }),
-        STAGE_3 => Some(ZoneStage { map, zones: &STAGE_3_PLATFORMS, noun: "platforms", intro: cloto_stage3_intro, labels: &[] }),
-        STAGE_4 => Some(ZoneStage { map, zones: &STAGE_4_BARRELS, noun: "barrels", intro: cloto_stage4_intro, labels: &STAGE_4_PAINTED }),
+        STAGE_2 => Some(ZoneStage {
+            map,
+            zones: &STAGE_2_ROPES,
+            noun: "ropes",
+            one: "rope",
+            verb: "hang from",
+            get_on: "climb up",
+            catch: "Hanging at the bottom of a rope doesn't count - climb up.",
+            intro: cloto_stage2_intro,
+            labels: &[],
+        }),
+        STAGE_3 => Some(ZoneStage {
+            map,
+            zones: &STAGE_3_PLATFORMS,
+            noun: "platforms",
+            one: "platform",
+            verb: "stand in the middle of",
+            get_on: "get onto a platform",
+            catch: "Standing on the edge of a platform doesn't count - move to the middle.",
+            intro: cloto_stage3_intro,
+            labels: &[],
+        }),
+        STAGE_4 => Some(ZoneStage {
+            map,
+            zones: &STAGE_4_BARRELS,
+            noun: "barrels",
+            one: "barrel",
+            verb: "stand on top of",
+            get_on: "get onto a barrel",
+            catch: "",
+            intro: cloto_stage4_intro,
+            labels: &STAGE_4_PAINTED,
+        }),
         _ => None,
     }
 }
@@ -383,15 +421,44 @@ pub fn cloto_stage4_intro(needed: usize) -> String {
     )
 }
 
-/// What they say when the count on the ropes or platforms is off.
-pub fn cloto_zone_count(on: usize, needed: usize, noun: &str) -> String {
-    let who = |n: usize| if n == 1 { "1 person".to_string() } else { format!("{n} people") };
-    format!(
-        "There must be exactly #b{}#k on the {noun}, and I see {}. {}",
-        who(needed),
-        who(on),
-        if on < needed { "Someone else must get up there." } else { "Someone must come down." }
-    )
+/// **What they say when the count on the ropes, platforms or barrels is off.**
+///
+/// The owner, 2026-09-23: *"if Cloto only sees one person, can be make the dialogue a little bit
+/// clear about the requirement of the stage?"* So the line restates the whole rule - how
+/// many, one each, at the same time, then the leader - says what they see, what is
+/// missing, and the stage's own catch (a rope's bottom, a platform's edge). The same shape
+/// for too many, so the two read alike.
+pub fn cloto_zone_count(on: usize, needed: usize, stage: &ZoneStage) -> String {
+    let members = |n: usize| if n == 1 { "1 party member".to_string() } else { format!("{n} party members") };
+    let people = |n: usize| if n == 1 { "1 person".to_string() } else { format!("{n} people") };
+    let rule = format!(
+        "To clear this stage, #b{}#k must each {} a different {}, all at the same time. \
+         Then the party leader talks to me.",
+        members(needed),
+        stage.verb,
+        stage.one,
+    );
+    let now = if on < needed {
+        let short = needed - on;
+        format!(
+            "Right now I see only #r{}#k on the {}. #b{}#k must {}.",
+            people(on),
+            stage.noun,
+            if short == 1 { "1 more party member".to_string() } else { format!("{short} more party members") },
+            stage.get_on,
+        )
+    } else {
+        let over = on - needed;
+        format!(
+            "Right now I see #r{}#k on the {}, but only #b{needed}#k may be up there. #b{}#k must \
+             come down.",
+            people(on),
+            stage.noun,
+            people(over),
+        )
+    };
+    let catch = if stage.catch.is_empty() || on > needed { String::new() } else { format!("\r\n{}", stage.catch) };
+    format!("{rule}\r\n\r\n{now}{catch}")
 }
 
 fn number_word(n: usize) -> String {
@@ -1050,6 +1117,27 @@ mod tests {
         assert_eq!(zone_stage(STAGE_2).unwrap().describe(&[2, 0]), "ropes [2, 0] (area index)");
     }
 
+    /// **The count line states the rule.** The owner, 2026-09-23. For each stage: how many, what
+    /// to do, "a different" one each, "the same time", the leader; then what they see and
+    /// what is missing; and the stage's own catch when someone is missing.
+    #[test]
+    fn the_count_line_states_the_stages_whole_rule() {
+        let ropes = cloto_zone_count(1, 2, &zone_stage(STAGE_2).unwrap());
+        for want in ["#b2 party members#k must each hang from a different rope", "same time", "party leader talks to me",
+                     "only #r1 person#k on the ropes", "#b1 more party member#k must climb up", "bottom of a rope doesn't count"] {
+            assert!(ropes.contains(want), "{want:?} missing from {ropes:?}");
+        }
+        let platforms = cloto_zone_count(1, 3, &zone_stage(STAGE_3).unwrap());
+        for want in ["#b3 party members#k must each stand in the middle of a different platform", "#b2 more party members#k must get onto a platform", "edge of a platform doesn't count"] {
+            assert!(platforms.contains(want), "{want:?} missing from {platforms:?}");
+        }
+        let barrels = cloto_zone_count(0, 2, &zone_stage(STAGE_4).unwrap());
+        assert!(barrels.contains("stand on top of a different barrel") && barrels.contains("only #r0 people#k on the barrels"), "{barrels}");
+        let crowded = cloto_zone_count(3, 2, &zone_stage(STAGE_2).unwrap());
+        assert!(crowded.contains("#r3 people#k on the ropes, but only #b2#k may be up there") && crowded.contains("#b1 person#k must come down"), "{crowded}");
+        assert!(!crowded.contains("doesn't count"), "the catch is for someone missing, not someone extra");
+    }
+
     /// The owner's rules: exactly `needed` on the ropes, else a count; the dealt ropes, else WRONG.
     #[test]
     fn the_ropes_are_judged_by_count_first_and_then_by_which() {
@@ -1115,7 +1203,7 @@ mod tests {
         assert!(!CLOTO_STAGE1_INTRO.contains("except"), "the leader exception is removed");
         // A Python patch once swallowed a line-continuation backslash and left runs of
         // spaces inside two of these; the client would draw every one of them.
-        let mut said = vec![CLOTO_STAGE1_INTRO.to_string(), CLOTO_RIGHT.into(), CLOTO_DONE.into(), CLOTO_BAG_FULL.into(), cloto_short(3, 1), cloto_menu(3), cloto_stage2_intro(2), cloto_stage2_intro(3), cloto_zone_count(1, 2, "ropes"), cloto_stage3_intro(2), cloto_stage3_intro(3), cloto_stage3_intro(1), cloto_stage4_intro(1), cloto_stage4_intro(2), cloto_stage4_intro(3)];
+        let mut said = vec![CLOTO_STAGE1_INTRO.to_string(), CLOTO_RIGHT.into(), CLOTO_DONE.into(), CLOTO_BAG_FULL.into(), cloto_short(3, 1), cloto_menu(3), cloto_stage2_intro(2), cloto_stage2_intro(3), cloto_zone_count(1, 2, &zone_stage(STAGE_2).unwrap()), cloto_zone_count(4, 3, &zone_stage(STAGE_3).unwrap()), cloto_stage3_intro(2), cloto_stage3_intro(3), cloto_stage3_intro(1), cloto_stage4_intro(1), cloto_stage4_intro(2), cloto_stage4_intro(3)];
         said.extend((0..QUESTIONS.len()).flat_map(|i| [cloto_question(i), cloto_wrong(i)]));
         for line in said {
             assert!(!line.contains("  "), "a run of spaces in: {line:?}");

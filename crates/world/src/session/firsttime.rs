@@ -378,7 +378,7 @@ impl Session {
         ));
         match firsttime::check_zones(stage.zones, &at, &answer, needed) {
             firsttime::ZoneCheck::Count { on, needed } => {
-                vec![self.cloto_say(&firsttime::cloto_zone_count(on, needed, stage.noun), false, format!("{on} on the {}, {needed} needed", stage.noun))]
+                vec![self.cloto_say(&firsttime::cloto_zone_count(on, needed, &stage), false, format!("{on} on the {}, {needed} needed", stage.noun))]
             }
             firsttime::ZoneCheck::Wrong => {
                 crate::server::log(&format!(
