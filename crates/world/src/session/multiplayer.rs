@@ -1648,6 +1648,101 @@ mod tests {
         assert!(closed);
     }
 
+    /// **Stage 3: the platforms, for a party of three.** The owner, 2026-09-23: *"The server
+    /// randomly selects 2 of these platforms (or 3, in a 3-4 player party)"*.
+    ///
+    /// Claims: a member gets the stage-3 intro with "three"; three are dealt out of five;
+    /// someone on a platform's EDGE is not counted (the count line says 2 of 3); two on one
+    /// platform with the right count is WRONG with no dialogue; the dealt three clear it.
+    #[test]
+    fn stage_three_is_three_of_five_platforms_for_a_party_of_three() {
+        use crate::firsttime;
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut cfg = (*config).clone();
+        cfg.fields.insert(firsttime::STAGE_3);
+        cfg.npcs.insert(
+            firsttime::STAGE_3,
+            vec![net::opcode::FieldNpc { object_id: 922, template_id: firsttime::CLOTO, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 }],
+        );
+        let config = Arc::new(cfg);
+        let mut ids = Vec::new();
+        let mut sessions = Vec::new();
+        for name in ["Leader", "Mote", "Nook"] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: firsttime::STAGE_3, level: 21, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.set_character_map(id, firsttime::STAGE_3).unwrap();
+            store.create_migration(account, id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(id);
+            ids.push(id);
+            sessions.push(s);
+        }
+        let created = sessions[0].run_party_request(ids[0], crate::party::Request::Create { name: "P".into() });
+        let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        for i in 1..3 {
+            let _ = sessions[0].run_party_request(ids[0], crate::party::Request::Invite { target: ids[i] });
+            let _ = sessions[i].tick(500);
+            let _ = sessions[i].run_party_request(ids[i], crate::party::Request::Accept { party });
+        }
+        let run = fields.runs().open(5_501, ids.clone(), store::Store::unix_now());
+        for s in sessions.iter_mut() {
+            let _ = s.on_field_entered();
+        }
+        for s in sessions.iter_mut() {
+            let _ = s.tick(1_000);
+        }
+        let mut click = net::script::CLIENT_NPC_CLICK.to_le_bytes().to_vec();
+        click.extend_from_slice(&922u32.to_le_bytes());
+        click.extend_from_slice(&0i16.to_le_bytes());
+        click.extend_from_slice(&0i16.to_le_bytes());
+        click.extend_from_slice(&u32::MAX.to_le_bytes());
+        let said = |out: &[Reply]| {
+            out.iter().filter(|r| r.opcode == net::script::SCRIPT_MESSAGE).map(|r| String::from_utf8_lossy(&r.body).to_string()).collect::<String>()
+        };
+        let screens = |out: &[Reply]| -> Vec<String> {
+            out.iter().filter(|r| r.opcode == net::fieldeffect::FIELD_EFFECT).map(|r| String::from_utf8_lossy(&r.body[3..]).to_string()).collect()
+        };
+        let p = &firsttime::STAGE_3_PLATFORMS;
+        // Standing in the middle of platform i, on its floor (the rectangle's bottom edge
+        // is just below the floor for every platform).
+        let mid = |i: usize| ((p[i].x1 + p[i].x2) / 2, p[i].y2 - 10);
+        let stand = |s: &mut Vec<Session>, who: usize, at: (i16, i16)| s[who].note_own_position(at.0, at.1, None);
+
+        let out = sessions[1].handle(&click);
+        assert!(said(&out).contains("third stage") && said(&out).contains("three of them are"), "{}", said(&out));
+
+        // Two in the middle of platforms, the third on platform 0's very EDGE (x 600: the
+        // footholds start at 597, the rectangle at 608).
+        stand(&mut sessions, 0, mid(0));
+        stand(&mut sessions, 1, mid(1));
+        stand(&mut sessions, 2, (600, -135));
+        let out = sessions[0].handle(&click);
+        assert!(said(&out).contains("exactly #b3 people#k on the platforms") && said(&out).contains("I see 2 people"), "{}", said(&out));
+        let answer = fields.runs().instance_of(ids[0]).unwrap().answers.iter().find(|(s, _)| *s == firsttime::STAGE_3).map(|(_, a)| a.clone()).expect("dealt");
+        assert_eq!(answer.len(), 3, "three of five for a party of three");
+        assert!(answer.iter().all(|&i| i < 5));
+
+        // Three counted, but two of them on one platform: WRONG, and no dialogue.
+        stand(&mut sessions, 0, mid(answer[0]));
+        stand(&mut sessions, 1, (mid(answer[0]).0 + 5, mid(answer[0]).1));
+        stand(&mut sessions, 2, mid(answer[1]));
+        let out = sessions[0].handle(&click);
+        assert!(said(&out).is_empty(), "no dialogue: {}", said(&out));
+        assert!(screens(&out).iter().any(|x| x.contains("quest/party/wrong")), "{:?}", screens(&out));
+
+        // The dealt three.
+        for (who, &i) in answer.iter().enumerate() {
+            stand(&mut sessions, who, mid(i));
+        }
+        let out = sessions[0].handle(&click);
+        assert!(screens(&out).iter().any(|x| x.contains("quest/party/clear")), "{:?} {}", screens(&out), said(&out));
+        let cleared = fields.runs().is_cleared(ids[0], firsttime::STAGE_3);
+        assert!(cleared);
+        let closed = fields.runs().close(run.id);
+        assert!(closed);
+    }
+
     /// **Cloto will not clear a stage until the whole run is standing on it.** The owner,
     /// 2026-09-23: *"Do not clear a stage unless everyone is on same map that the stage is
     /// about to be cleared of."*
@@ -1659,9 +1754,9 @@ mod tests {
     #[test]
     fn cloto_waits_for_the_whole_run_to_be_on_her_stage() {
         use crate::firsttime;
-        // Stage 3: stages 1 and 2 are the real Cloto now, and 3-5 still clear on a click
+        // Stage 4: stages 1-3 are the real Cloto now, and 4 and 5 still clear on a click
         // (TEMPORARY).
-        let stage = firsttime::STAGE_1 + 200;
+        let stage = firsttime::STAGE_1 + 300;
         let (store, config, fields) = channel();
         let account = store.create_account("maplecw", "correct horse battery").unwrap();
         let mut cfg = (*config).clone();
@@ -1786,9 +1881,9 @@ mod tests {
     #[test]
     fn a_stage_clear_opens_one_runs_portal_and_no_other_runs() {
         use crate::firsttime;
-        // Stage 3: stages 1 and 2 are the real Cloto now, and 3-5 still clear on a click
+        // Stage 4: stages 1-3 are the real Cloto now, and 4 and 5 still clear on a click
         // (TEMPORARY).
-        let stage = firsttime::STAGE_1 + 200;
+        let stage = firsttime::STAGE_1 + 300;
         let (store, config, fields) = channel();
         let account = store.create_account("maplecw", "correct horse battery").unwrap();
         let mut cfg = (*config).clone();

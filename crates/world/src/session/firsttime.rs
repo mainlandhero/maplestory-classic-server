@@ -271,7 +271,7 @@ impl Session {
         self.leave_party_quest("Nella showed them out")
     }
 
-    /// **Cloto.** Stages 1 and 2 are real (`cloto_stage_one`, `cloto_stage_two`); 3 to 5 still clear
+    /// **Cloto.** Stages 1 to 3 are real (`cloto_stage_one`, `cloto_zone_stage`); 4 and 5 still clear
     /// on a click - TEMPORARY, for the instancing test (the owner, 2026-09-23: clicking their should
     /// *"send the "stage clear" opcode and enable the portal to go to the next stage"*).
     ///
@@ -296,10 +296,10 @@ impl Session {
         if chr.map_id == firsttime::STAGE_1 {
             return Some(self.cloto_stage_one(&chr, &inst));
         }
-        if chr.map_id == firsttime::STAGE_2 {
-            return Some(self.cloto_stage_two(&chr, &inst));
+        if let Some(stage) = firsttime::zone_stage(chr.map_id) {
+            return Some(self.cloto_zone_stage(&chr, &inst, stage));
         }
-        Some(self.cloto_clear(&chr, &inst, "TEMPORARY: Cloto clears stages 3-5 on a click"))
+        Some(self.cloto_clear(&chr, &inst, "TEMPORARY: Cloto clears stages 4 and 5 on a click"))
     }
 
     /// One line from Cloto. `next` puts a Next button on it.
@@ -340,10 +340,12 @@ impl Session {
         }]
     }
 
-    /// **Stage 2 - the ropes.** The owner, 2026-09-23: *"In a 2 person party, 2 people must hang
-    /// from the 2 correct ropes then have the party leader talk to Cloto. The server randomly
-    /// decides for this particular party instance that which of the 2 ropes are correct."*
-    /// Three for a party of three or four.
+    /// **Stages 2 and 3 - the ropes and the platforms.** The owner, 2026-09-23: *"In a 2 person
+    /// party, 2 people must hang from the 2 correct ropes then have the party leader talk to
+    /// Cloto. The server randomly decides for this particular party instance that which of
+    /// the 2 ropes are correct."* Three for a party of three or four; and stage 3 is the same
+    /// with five platforms (*"The server randomly selects 2 of these platforms (or 3, in a
+    /// 3-4 player party)"*).
     ///
     /// A member gets the intro. The leader gets the intro too while nobody is on a rope -
     /// it is the only way the leader reads it - and otherwise the verdict: the wrong count
@@ -351,33 +353,33 @@ impl Session {
     /// dialogue at all (the owner's rule); the right
     /// ropes clear the stage (which still requires everyone in the run to be on it).
     ///
-    /// "On a rope" is standing inside one of the client's own `area` rectangles
-    /// (`firsttime::STAGE_2_ROPES`), read from each member's last reported position on
-    /// the bus.
-    fn cloto_stage_two(&mut self, chr: &net::opcode::Character, inst: &firsttime::Instance) -> Vec<Reply> {
+    /// "On a rope" (or platform) is standing inside one of the client's own `area`
+    /// rectangles (`firsttime::STAGE_2_ROPES`, `STAGE_3_PLATFORMS`), read from each
+    /// member's last reported position on the bus.
+    fn cloto_zone_stage(&mut self, chr: &net::opcode::Character, inst: &firsttime::Instance, stage: firsttime::ZoneStage) -> Vec<Reply> {
         let needed = usize::try_from(firsttime::passes_required(inst.members.len())).unwrap_or(3);
-        let intro = |s: &Self| vec![s.cloto_say(&firsttime::cloto_stage2_intro(needed), false, format!("stage 2 intro to {}", chr.name))];
+        let intro = |s: &Self| vec![s.cloto_say(&(stage.intro)(needed), false, format!("map {} intro to {}", stage.map, chr.name))];
         let leads = self.fields.parties().party_of(chr.id).map(|p| p.leader) == Some(chr.id);
         if !leads {
             return intro(self);
         }
         let key = self.field_of(chr);
         let at: Vec<(i16, i16)> = self.bus().positions_on(key, &inst.members).into_iter().map(|(_, p)| p).collect();
-        let on = at.iter().filter(|&&p| firsttime::STAGE_2_ROPES.iter().any(|r| r.contains(p))).count();
+        let on = at.iter().filter(|&&p| stage.zones.iter().any(|r| r.contains(p))).count();
         if on == 0 {
             return intro(self);
         }
         let roll = self.rng.next();
-        let answer = self.fields.runs().answer_for(chr.id, firsttime::STAGE_2, needed, firsttime::STAGE_2_ROPES.len(), roll);
+        let answer = self.fields.runs().answer_for(chr.id, stage.map, needed, stage.zones.len(), roll);
         let Some(answer) = answer else { return Vec::new() };
-        match firsttime::check_ropes(&firsttime::STAGE_2_ROPES, &at, &answer, needed) {
-            firsttime::RopeCheck::Count { on, needed } => {
-                vec![self.cloto_say(&firsttime::cloto_rope_count(on, needed), false, format!("{on} on the ropes, {needed} needed"))]
+        match firsttime::check_zones(stage.zones, &at, &answer, needed) {
+            firsttime::ZoneCheck::Count { on, needed } => {
+                vec![self.cloto_say(&firsttime::cloto_zone_count(on, needed, stage.noun), false, format!("{on} on the {}, {needed} needed", stage.noun))]
             }
-            firsttime::RopeCheck::Wrong => {
+            firsttime::ZoneCheck::Wrong => {
                 crate::server::log(&format!(
-                    "   first time together: instance {} tried the wrong ropes on stage 2 (dealt {answer:?})",
-                    inst.id
+                    "   first time together: instance {} tried the wrong {} on map {} (dealt {answer:?})",
+                    inst.id, stage.noun, stage.map
                 ));
                 // **The animation and nothing else.** The owner, 2026-09-23: *"If the combination is
                 // incorrect, clicking on Cloto will only play the animation, no dialogue will
@@ -388,10 +390,10 @@ impl Session {
                         (net::fieldeffect::screen(net::fieldeffect::SCREEN_PARTY_WRONG), "screen quest/party/wrong"),
                         (net::fieldeffect::sound(net::fieldeffect::SOUND_PARTY_FAILED, 100), "sound Party1/Failed"),
                     ],
-                    &format!("wrong ropes, instance {}", inst.id),
+                    &format!("wrong {}, instance {}", stage.noun, inst.id),
                 )
             }
-            firsttime::RopeCheck::Right => self.cloto_clear(chr, inst, &format!("the right ropes {answer:?}")),
+            firsttime::ZoneCheck::Right => self.cloto_clear(chr, inst, &format!("the right {} {answer:?}", stage.noun)),
         }
     }
 
