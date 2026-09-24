@@ -271,16 +271,12 @@ impl Session {
         self.leave_party_quest("Nella showed them out")
     }
 
-    /// **Cloto clears the stage they stand on - TEMPORARY, for the instancing test.** The owner,
-    /// 2026-09-23: clicking the stage NPC should *"send the "stage clear" opcode and enable
-    /// the portal to go to the next stage"*, and *"the PQ stage clears should be per
-    /// instance, and never shared."*
+    /// **Cloto.** Stage 1 is the real stage (`cloto_stage_one`); stages 2 to 5 still clear
+    /// on a click - TEMPORARY, for the instancing test (the owner, 2026-09-23: clicking their should
+    /// *"send the "stage clear" opcode and enable the portal to go to the next stage"*).
     ///
-    /// The clear is recorded on this run's instance (`firsttime::Runs::clear_stage`), and the three
-    /// effects go to this screen directly and to **this field key** on the bus - which is
-    /// `(map, instance)`, so another party on the same stage gets nothing and its gate stays
-    /// shut. `None` outside a run, so a GM who walked in with `!map` falls through to them
-    /// ordinary dialogue.
+    /// `None` outside a run, so a GM who walked in with `!map` falls through to their ordinary
+    /// dialogue.
     pub(super) fn open_cloto(&mut self, template: u32) -> Option<Vec<Reply>> {
         let chr = self.claimed_character()?;
         if template != firsttime::CLOTO {
@@ -290,17 +286,174 @@ impl Session {
         let inst = inst?;
         firsttime::next_stage(chr.map_id)?;
         self.conversation = None;
-        let run = inst.id;
-        let say = |line: &str, what: String| Reply {
+        if inst.cleared.contains(&chr.map_id) {
+            return Some(vec![self.cloto_say(
+                firsttime::CLOTO_ALREADY,
+                false,
+                format!("map {} already cleared by instance {}", chr.map_id, inst.id),
+            )]);
+        }
+        if chr.map_id == firsttime::STAGE_1 {
+            return Some(self.cloto_stage_one(&chr, &inst));
+        }
+        Some(self.cloto_clear(&chr, &inst, "TEMPORARY: Cloto clears stages 2-5 on a click"))
+    }
+
+    /// One line from Cloto. `next` puts a Next button on it.
+    fn cloto_say(&self, line: &str, next: bool, what: String) -> Reply {
+        Reply {
             opcode: net::script::SCRIPT_MESSAGE,
-            body: net::script::npc_say(template, line, false, false),
-            what,
+            body: net::script::npc_say(firsttime::CLOTO, line, false, next),
+            what: format!("ScriptMessage Say from Cloto: {what}"),
+        }
+    }
+
+    /// **Stage 1.** The owner, 2026-09-23. The leader gets a menu - take a question like everyone
+    /// else, or hand in the Passes - and every other member goes straight to their mission.
+    ///
+    /// "Leader" is the party's leader now, from the party registry, so a crown that changed
+    /// hands mid-run moves the menu with it.
+    fn cloto_stage_one(&mut self, chr: &net::opcode::Character, inst: &firsttime::Instance) -> Vec<Reply> {
+        let leads = self.fields.parties().party_of(chr.id).map(|p| p.leader) == Some(chr.id);
+        if !leads {
+            return self.cloto_mission(chr);
+        }
+        let required = firsttime::passes_required(inst.members.len());
+        self.conversation = Some(Conversation {
+            npc_template: firsttime::CLOTO,
+            quest_id: None,
+            path: firsttime::CLOTO_MENU_PATH.to_string(),
+            sent: 0,
+            awaiting_yes_no: false,
+            sent_with_next: false,
+        });
+        vec![Reply {
+            opcode: net::script::SCRIPT_MESSAGE,
+            body: net::script::npc_menu(firsttime::CLOTO, &firsttime::cloto_menu(required)),
+            what: format!(
+                "ScriptMessage MENU from Cloto to leader {} ({}): a question, or hand in {required} Pass(es) for instance {}",
+                chr.name, chr.id, inst.id
+            ),
+        }]
+    }
+
+    /// The leader's menu came back.
+    pub(super) fn cloto_menu_answer(&mut self, body: &[u8]) -> Option<Vec<Reply>> {
+        let convo = self.conversation.clone()?;
+        if convo.path != firsttime::CLOTO_MENU_PATH {
+            return None;
+        }
+        let reply = net::script::parse_menu_reply(body)?;
+        self.conversation = None;
+        let chr = self.claimed_character()?;
+        let inst = self.fields.runs().instance_of(chr.id);
+        let Some(inst) = inst else { return Some(Vec::new()) };
+        match reply.selection {
+            Some(firsttime::CLOTO_MENU_QUESTION) => Some(self.cloto_mission(&chr)),
+            Some(firsttime::CLOTO_MENU_PASSES) => Some(self.cloto_hand_in(&chr, &inst)),
+            _ => Some(Vec::new()),
+        }
+    }
+
+    /// **A member's mission.** First visit: the intro, then (on Next) a question. Later
+    /// visits: exactly the answer's number of Coupons buys a Pass; any other number repeats
+    /// the question without the answer. One Pass per member per run.
+    fn cloto_mission(&mut self, chr: &net::opcode::Character) -> Vec<Reply> {
+        let inst = self.fields.runs().instance_of(chr.id);
+        let Some(inst) = inst else { return Vec::new() };
+        if inst.passed.contains(&chr.id) {
+            return vec![self.cloto_say(firsttime::CLOTO_DONE, false, format!("{} already earned their Pass", chr.name))];
+        }
+        let Some(&(_, question)) = inst.questions.iter().find(|(c, _)| *c == chr.id) else {
+            self.conversation = Some(Conversation {
+                npc_template: firsttime::CLOTO,
+                quest_id: None,
+                path: firsttime::CLOTO_INTRO_PATH.to_string(),
+                sent: 0,
+                awaiting_yes_no: false,
+                sent_with_next: true,
+            });
+            return vec![self.cloto_say(firsttime::CLOTO_STAGE1_INTRO, true, format!("stage 1 intro to {}; Next deals a question", chr.name))];
         };
-        // **Everyone in the run on this stage, or no clear.** The owner, 2026-09-23. "On this
-        // stage" is this run's FIELD - `(map, instance)` - on the presence table, which is
-        // the same thing that decides who can see whom. A member who has disconnected is no
-        // longer in the run (`leave_party_quest_on_disconnect`), so they cannot hold it up.
-        let key = self.field_of(&chr);
+        let answer = firsttime::QUESTIONS[question].1;
+        let held = self.held(chr.id, firsttime::COUPON);
+        if held != answer {
+            crate::server::log(&format!(
+                "   first time together: {} ({}) brought {held} coupon(s) for question {question} (answer {answer}); not the number",
+                chr.name, chr.id
+            ));
+            return vec![self.cloto_say(&firsttime::cloto_wrong(question), false, format!("{} held {held}, needs {answer}", chr.name))];
+        }
+        // The Pass first, then the Coupons: a full bag must cost them nothing.
+        let (line, mut out) = match self.give_item(firsttime::PASS, 1, "Cloto: a Pass for a mission completed") {
+            Ok(given) => given,
+            Err(why) => {
+                crate::server::log(&format!("   first time together: {} ({}) earned a Pass and could not take it: {why}", chr.name, chr.id));
+                return vec![self.cloto_say(firsttime::CLOTO_BAG_FULL, false, format!("{}'s bag is full", chr.name))];
+            }
+        };
+        out.extend(self.take_items(chr.id, store::InventoryType::Etc, firsttime::COUPON, answer));
+        let _ = self.fields.runs().mark_passed(chr.id);
+        crate::server::log(&format!(
+            "   first time together: {} ({}) answered question {question} with {answer} coupon(s) - {line}",
+            chr.name, chr.id
+        ));
+        out.push(self.cloto_say(firsttime::CLOTO_RIGHT, false, format!("{} earned a Pass", chr.name)));
+        out
+    }
+
+    /// The intro's Next: deal the question (or repeat the one already dealt).
+    pub(super) fn cloto_intro_answer(&mut self, action: i8) -> Vec<Reply> {
+        self.conversation = None;
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        if action != net::script::SCRIPT_ACTION_YES {
+            return Vec::new();
+        }
+        let roll = self.rng.next();
+        let dealt = self.fields.runs().deal_question(chr.id, roll);
+        let Some(question) = dealt else { return Vec::new() };
+        crate::server::log(&format!(
+            "   first time together: {} ({}) was dealt question {question}: {:?} (answer {})",
+            chr.name, chr.id, firsttime::QUESTIONS[question].0, firsttime::QUESTIONS[question].1
+        ));
+        vec![self.cloto_say(&firsttime::cloto_question(question), false, format!("question {question} to {}", chr.name))]
+    }
+
+    /// **The leader hands in the Passes.** Everyone in the run must be on the stage first,
+    /// and that is checked before a Pass is taken, so a refusal costs nothing.
+    fn cloto_hand_in(&mut self, chr: &net::opcode::Character, inst: &firsttime::Instance) -> Vec<Reply> {
+        let required = firsttime::passes_required(inst.members.len());
+        if let Some(wait) = self.cloto_waiting_for(chr, inst) {
+            return vec![wait];
+        }
+        let held = self.held(chr.id, firsttime::PASS);
+        if held < required {
+            return vec![self.cloto_say(&firsttime::cloto_short(required, held), false, format!("{} holds {held} of {required} Passes", chr.name))];
+        }
+        let mut out = self.take_items(chr.id, store::InventoryType::Etc, firsttime::PASS, required);
+        out.extend(self.cloto_clear(chr, inst, &format!("{required} Pass(es) handed in by the leader")));
+        out
+    }
+
+    /// How many of `item` the character holds, across every stack.
+    fn held(&self, chr_id: u32, item: u32) -> u32 {
+        self.store
+            .bag_items(chr_id, store::InventoryType::Etc)
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.item.item_id == item)
+            .map(|r| u32::from(r.item.kind.quantity()))
+            .sum()
+    }
+
+    /// **Everyone in the run on this stage?** The owner, 2026-09-23: *"Do not clear a stage unless
+    /// everyone is on same map that the stage is about to be cleared of."* "On this stage" is
+    /// this run's FIELD - `(map, instance)` - on the presence table, which is the same thing
+    /// that decides who can see whom. A member who has disconnected is no longer in the run
+    /// (`leave_party_quest_on_disconnect`), so they cannot hold it up. `Some` is Cloto's
+    /// refusal naming who is missing.
+    fn cloto_waiting_for(&self, chr: &net::opcode::Character, inst: &firsttime::Instance) -> Option<Reply> {
+        let key = self.field_of(chr);
         let here: std::collections::HashSet<u32> = self.bus().characters_on(key, &inst.members).into_iter().collect();
         let missing: Vec<String> = inst
             .members
@@ -308,27 +461,36 @@ impl Session {
             .filter(|m| !here.contains(m))
             .map(|&m| self.store.character_brief(m).ok().flatten().map(|b| b.name).unwrap_or_else(|| format!("character {m}")))
             .collect();
-        if !missing.is_empty() {
-            crate::server::log(&format!(
-                "   first time together: {} ({}) asked Cloto to clear map {} for instance {run}; refused, not here: {}",
-                chr.name, chr.id, chr.map_id, missing.join(", ")
-            ));
-            return Some(vec![say(
-                &firsttime::cloto_waiting(&missing),
-                format!("ScriptMessage Say from Cloto: map {} NOT cleared, waiting for {}", chr.map_id, missing.join(", ")),
-            )]);
-        }
-        let fresh = self.fields.runs().clear_stage(chr.id, chr.map_id);
-        let fresh = fresh?;
-        if !fresh {
-            return Some(vec![say(
-                firsttime::CLOTO_ALREADY,
-                format!("ScriptMessage Say from Cloto: map {} already cleared by instance {run}", chr.map_id),
-            )]);
+        if missing.is_empty() {
+            return None;
         }
         crate::server::log(&format!(
-            "   first time together: {} ({}) cleared map {} for instance {run} (TEMPORARY: Cloto clears on click); \
-             effects to field {key} only",
+            "   first time together: {} ({}) asked Cloto to clear map {} for instance {}; refused, not here: {}",
+            chr.name, chr.id, chr.map_id, inst.id, missing.join(", ")
+        ));
+        Some(self.cloto_say(
+            &firsttime::cloto_waiting(&missing),
+            false,
+            format!("map {} NOT cleared, waiting for {}", chr.map_id, missing.join(", ")),
+        ))
+    }
+
+    /// **Clear the stage for this run**: the three effects to this screen and to this run's
+    /// field on the bus - `(map, instance)`, so another party on the same stage gets nothing
+    /// and its gate stays shut - and the clear recorded on the run. Checks that everyone is
+    /// here first, so every caller gets that rule.
+    fn cloto_clear(&mut self, chr: &net::opcode::Character, inst: &firsttime::Instance, how: &str) -> Vec<Reply> {
+        if let Some(wait) = self.cloto_waiting_for(chr, inst) {
+            return vec![wait];
+        }
+        let fresh = self.fields.runs().clear_stage(chr.id, chr.map_id);
+        if fresh != Some(true) {
+            return vec![self.cloto_say(firsttime::CLOTO_ALREADY, false, format!("map {} already cleared", chr.map_id))];
+        }
+        let key = self.field_of(chr);
+        let run = inst.id;
+        crate::server::log(&format!(
+            "   first time together: {} ({}) cleared map {} for instance {run} ({how}); effects to field {key} only",
             chr.name, chr.id, chr.map_id
         ));
         let effects = [
@@ -346,11 +508,8 @@ impl Session {
             self.bus().publish(self.subscriber, key, reply.clone(), None);
             out.push(reply);
         }
-        out.push(say(
-            firsttime::CLOTO_CLEARED,
-            format!("ScriptMessage Say from Cloto: map {} cleared for instance {run}", chr.map_id),
-        ));
-        Some(out)
+        out.push(self.cloto_say(firsttime::CLOTO_CLEARED, false, format!("map {} cleared for instance {run}", chr.map_id)));
+        out
     }
 
     /// **A login never lands on a stage.** The owner, 2026-09-23: *"If anyone disconnects from the

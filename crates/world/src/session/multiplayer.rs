@@ -1409,6 +1409,147 @@ mod tests {
         assert!(closed_a && closed_b);
     }
 
+    /// **Stage 1: questions, Coupons, Passes.** The owner, 2026-09-23.
+    ///
+    /// A party of three - Leader, Mote, Nook - on stage 1. Claims, in order: a member's first
+    /// click is the intro (without "except the party leader") and NOT a menu; its Next deals a
+    /// question from the owner's eight, which a second visit cannot reroll; a wrong count - none,
+    /// then one too many - repeats the question and pays nothing; the exact count pays one
+    /// Pass and takes exactly those Coupons; a second visit pays no second Pass. The leader
+    /// gets the two-line menu; its question line leads to the same intro; handing in fewer
+    /// Passes than three is refused and takes none; three clears the stage - the three
+    /// effects, reaching the other members - and costs exactly three.
+    #[test]
+    fn stage_one_is_questions_coupons_and_passes() {
+        use crate::firsttime;
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut cfg = (*config).clone();
+        cfg.fields.insert(firsttime::STAGE_1);
+        cfg.npcs.insert(
+            firsttime::STAGE_1,
+            vec![net::opcode::FieldNpc { object_id: 920, template_id: firsttime::CLOTO, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 }],
+        );
+        for item in [firsttime::COUPON, firsttime::PASS] {
+            cfg.item_names.insert(item, format!("item {item}"));
+        }
+        let config = Arc::new(cfg);
+        let mut ids = Vec::new();
+        let mut sessions = Vec::new();
+        for name in ["Leader", "Mote", "Nook"] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: firsttime::STAGE_1, level: 21, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.set_character_map(id, firsttime::STAGE_1).unwrap();
+            store.create_migration(account, id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(id);
+            ids.push(id);
+            sessions.push(s);
+        }
+        let created = sessions[0].run_party_request(ids[0], crate::party::Request::Create { name: "P".into() });
+        let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        for i in 1..3 {
+            let _ = sessions[0].run_party_request(ids[0], crate::party::Request::Invite { target: ids[i] });
+            let _ = sessions[i].tick(500);
+            let _ = sessions[i].run_party_request(ids[i], crate::party::Request::Accept { party });
+        }
+        assert_eq!(fields.parties().party_of(ids[0]).map(|p| p.members.len()), Some(3));
+        let run = fields.runs().open(5_301, ids.clone(), store::Store::unix_now());
+        for s in sessions.iter_mut() {
+            let _ = s.on_field_entered();
+        }
+        for s in sessions.iter_mut() {
+            let _ = s.tick(1_000);
+        }
+
+        let mut click = net::script::CLIENT_NPC_CLICK.to_le_bytes().to_vec();
+        click.extend_from_slice(&920u32.to_le_bytes());
+        click.extend_from_slice(&0i16.to_le_bytes());
+        click.extend_from_slice(&0i16.to_le_bytes());
+        click.extend_from_slice(&u32::MAX.to_le_bytes());
+        let next = {
+            let mut b = net::script::CLIENT_SCRIPT_REPLY.to_le_bytes().to_vec();
+            b.extend_from_slice(&0u32.to_le_bytes());
+            b.push(0);
+            b.extend_from_slice(&0u32.to_le_bytes());
+            b.extend_from_slice(&0u16.to_le_bytes());
+            b.push(net::script::SCRIPT_ACTION_YES as u8);
+            b
+        };
+        let pick = |line: u32| {
+            let mut b = net::script::CLIENT_SCRIPT_REPLY.to_le_bytes().to_vec();
+            b.extend_from_slice(&0u32.to_le_bytes());
+            b.push(net::script::SCRIPT_TYPE_MENU);
+            b.push(1);
+            b.extend_from_slice(&line.to_le_bytes());
+            b
+        };
+        let said = |out: &[Reply]| {
+            out.iter().filter(|r| r.opcode == net::script::SCRIPT_MESSAGE).map(|r| String::from_utf8_lossy(&r.body).to_string()).collect::<String>()
+        };
+        let is_menu = |out: &[Reply]| out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE && r.body.get(10) == Some(&net::script::SCRIPT_TYPE_MENU));
+        let effects = |out: &[Reply]| out.iter().filter(|r| r.opcode == net::fieldeffect::FIELD_EFFECT).count();
+        let held = |id: u32, item: u32| -> u32 {
+            store.bag_items(id, store::InventoryType::Etc).unwrap().iter().filter(|r| r.item.item_id == item).map(|r| u32::from(r.item.kind.quantity())).sum()
+        };
+
+        // 1. Mote's first click: the intro, with a Next, and no menu.
+        let out = sessions[1].handle(&click);
+        assert!(said(&out).contains("welcome the first stage"), "{}", said(&out));
+        assert!(!said(&out).contains("except the party leader"));
+        assert!(!is_menu(&out), "a member gets no menu");
+        // 2. Next deals a question from the owner's list.
+        let out = sessions[1].handle(&next);
+        let q = fields.runs().instance_of(ids[1]).unwrap().questions.iter().find(|(c, _)| *c == ids[1]).map(|(_, q)| *q).expect("dealt");
+        let (text, answer) = firsttime::QUESTIONS[q];
+        assert!(said(&out).contains(text), "{}", said(&out));
+        // 3. None, then one too many: the question again, and no Pass.
+        let out = sessions[1].handle(&click);
+        assert!(said(&out).contains(text) && said(&out).contains("not the right number"), "{}", said(&out));
+        let _ = sessions[1].give_item(firsttime::COUPON, u16::try_from(answer + 1).unwrap(), "test").unwrap();
+        let out = sessions[1].handle(&click);
+        assert!(said(&out).contains("not the right number"), "one too many is wrong too: {}", said(&out));
+        assert_eq!(held(ids[1], firsttime::PASS), 0);
+        assert_eq!(held(ids[1], firsttime::COUPON), answer + 1, "a wrong answer costs nothing");
+        let same = fields.runs().instance_of(ids[1]).unwrap().questions.iter().find(|(c, _)| *c == ids[1]).map(|(_, q)| *q);
+        assert_eq!(same, Some(q), "revisiting does not reroll");
+        // 4. Exactly the answer: one Pass, the Coupons gone.
+        let _ = sessions[1].take_items(ids[1], store::InventoryType::Etc, firsttime::COUPON, 1);
+        let out = sessions[1].handle(&click);
+        assert!(said(&out).contains("That is right"), "{}", said(&out));
+        assert_eq!(held(ids[1], firsttime::PASS), 1);
+        assert_eq!(held(ids[1], firsttime::COUPON), 0);
+        // 5. And only one.
+        let _ = sessions[1].give_item(firsttime::COUPON, u16::try_from(answer).unwrap(), "test").unwrap();
+        let out = sessions[1].handle(&click);
+        assert!(said(&out).contains("already completed"), "{}", said(&out));
+        assert_eq!(held(ids[1], firsttime::PASS), 1, "one Pass per member per run");
+
+        // 6. The leader gets the menu; the question line is the same intro.
+        let out = sessions[0].handle(&click);
+        assert!(is_menu(&out), "the leader gets the two-line menu");
+        let out = sessions[0].handle(&pick(firsttime::CLOTO_MENU_QUESTION));
+        assert!(said(&out).contains("welcome the first stage"), "{}", said(&out));
+        // 7. Two Passes of three: refused, nothing taken, nothing cleared.
+        let _ = sessions[0].give_item(firsttime::PASS, 2, "test").unwrap();
+        let _ = sessions[0].handle(&click);
+        let out = sessions[0].handle(&pick(firsttime::CLOTO_MENU_PASSES));
+        assert!(said(&out).contains("I need"), "{}", said(&out));
+        assert_eq!(effects(&out), 0);
+        assert_eq!(held(ids[0], firsttime::PASS), 2, "a refusal takes nothing");
+        // 8. Three: the stage clears for everybody here, and it costs exactly three.
+        let _ = sessions[0].give_item(firsttime::PASS, 2, "test").unwrap();
+        let _ = sessions[0].handle(&click);
+        let out = sessions[0].handle(&pick(firsttime::CLOTO_MENU_PASSES));
+        assert_eq!(effects(&out), 3, "banner, fanfare, gate: {}", said(&out));
+        assert_eq!(held(ids[0], firsttime::PASS), 1, "four held, three taken");
+        assert_eq!(effects(&sessions[2].tick(2_000)), 3, "Nook, same run, sees the clear");
+        let cleared = fields.runs().is_cleared(ids[0], firsttime::STAGE_1);
+        assert!(cleared);
+        let closed = fields.runs().close(run.id);
+        assert!(closed);
+    }
+
     /// **Cloto will not clear a stage until the whole run is standing on it.** The owner,
     /// 2026-09-23: *"Do not clear a stage unless everyone is on same map that the stage is
     /// about to be cleared of."*
@@ -1420,19 +1561,21 @@ mod tests {
     #[test]
     fn cloto_waits_for_the_whole_run_to_be_on_her_stage() {
         use crate::firsttime;
+        // Stage 2: stage 1 is the real Cloto now, and 2-5 still clear on a click (TEMPORARY).
+        let stage = firsttime::STAGE_1 + 100;
         let (store, config, fields) = channel();
         let account = store.create_account("maplecw", "correct horse battery").unwrap();
         let mut cfg = (*config).clone();
-        cfg.fields.insert(firsttime::STAGE_1);
-        cfg.fields.insert(firsttime::STAGE_1 + 100);
+        cfg.fields.insert(stage);
+        cfg.fields.insert(stage + 100);
         cfg.npcs.insert(
-            firsttime::STAGE_1,
+            stage,
             vec![net::opcode::FieldNpc { object_id: 920, template_id: firsttime::CLOTO, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 }],
         );
         let config = Arc::new(cfg);
         let mut ids = Vec::new();
         let mut sessions = Vec::new();
-        for (name, map) in [("Alfa", firsttime::STAGE_1), ("Alto", firsttime::STAGE_1 + 100), ("Arco", firsttime::STAGE_1)] {
+        for (name, map) in [("Alfa", stage), ("Alto", stage + 100), ("Arco", stage)] {
             let chr = net::opcode::Character { name: name.to_string(), map_id: map, level: 21, ..Default::default() };
             let id = store.create_character(account, 0, &chr).unwrap().id;
             store.set_character_map(id, map).unwrap();
@@ -1466,7 +1609,7 @@ mod tests {
         assert!(said(&out).contains("Alto"), "the missing member is named: {}", said(&out));
         assert!(!said(&out).contains("Arco"), "a member who IS here is not: {}", said(&out));
         assert_eq!(effects(&sessions[2].tick(2_000)), 0, "and nothing reached the bus");
-        let cleared = fields.runs().is_cleared(ids[0], firsttime::STAGE_1);
+        let cleared = fields.runs().is_cleared(ids[0], stage);
         assert!(!cleared, "the stage is still shut");
 
         // Alto DISCONNECTS on stage 2. They leave the run, so they no longer hold it up.
@@ -1478,7 +1621,7 @@ mod tests {
         // The control: with everyone left in the run on stage 1, the same click clears.
         let out = sessions[0].handle(&click);
         assert_eq!(effects(&out), 3, "banner, fanfare, gate: {}", said(&out));
-        let cleared = fields.runs().is_cleared(ids[0], firsttime::STAGE_1);
+        let cleared = fields.runs().is_cleared(ids[0], stage);
         assert!(cleared);
         let closed = fields.runs().close(run.id);
         assert!(closed);
@@ -1544,13 +1687,15 @@ mod tests {
     #[test]
     fn a_stage_clear_opens_one_runs_portal_and_no_other_runs() {
         use crate::firsttime;
+        // Stage 2: stage 1 is the real Cloto now, and 2-5 still clear on a click (TEMPORARY).
+        let stage = firsttime::STAGE_1 + 100;
         let (store, config, fields) = channel();
         let account = store.create_account("maplecw", "correct horse battery").unwrap();
         let mut cfg = (*config).clone();
-        cfg.fields.insert(firsttime::STAGE_1);
-        cfg.fields.insert(firsttime::STAGE_1 + 100);
+        cfg.fields.insert(stage);
+        cfg.fields.insert(stage + 100);
         cfg.npcs.insert(
-            firsttime::STAGE_1,
+            stage,
             vec![net::opcode::FieldNpc { object_id: 920, template_id: firsttime::CLOTO, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 }],
         );
         let config = Arc::new(cfg);
@@ -1558,9 +1703,9 @@ mod tests {
         let mut ids = Vec::new();
         let mut sessions = Vec::new();
         for name in ["Alfa", "Alto", "Bravo"] {
-            let chr = net::opcode::Character { name: name.to_string(), map_id: firsttime::STAGE_1, level: 21, ..Default::default() };
+            let chr = net::opcode::Character { name: name.to_string(), map_id: stage, level: 21, ..Default::default() };
             let id = store.create_character(account, 0, &chr).unwrap().id;
-            store.set_character_map(id, firsttime::STAGE_1).unwrap();
+            store.set_character_map(id, stage).unwrap();
             store.create_migration(account, id, 0, 0).unwrap();
             let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
             s.claim_for_character(id);
@@ -1600,10 +1745,10 @@ mod tests {
         assert!(out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE), "and Cloto answers the click");
         assert_eq!(effects(&sessions[1].tick(2_000)), all_three, "A2 - same run - gets all three");
         assert_eq!(effects(&sessions[2].tick(2_000)), Vec::<u8>::new(), "B1 - other run, same map - gets nothing");
-        let a1 = fields.runs().is_cleared(ids[0], firsttime::STAGE_1);
-        let a2 = fields.runs().is_cleared(ids[1], firsttime::STAGE_1);
+        let a1 = fields.runs().is_cleared(ids[0], stage);
+        let a2 = fields.runs().is_cleared(ids[1], stage);
         assert!(a1 && a2);
-        assert!(!fields.runs().is_cleared(ids[2], firsttime::STAGE_1), "B's stage 1 is still shut");
+        assert!(!fields.runs().is_cleared(ids[2], stage), "B's stage 1 is still shut");
 
         // A second click is not a second clear.
         let again = sessions[0].handle(&click);
@@ -1623,7 +1768,7 @@ mod tests {
         let b_out = sessions[2].handle(&press(firsttime::NEXT_PORTAL));
         assert!(!b_out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "B's portal is shut");
         assert!(!b_out.is_empty(), "and the press is still answered");
-        assert_eq!(map_of(ids[2]), firsttime::STAGE_1);
+        assert_eq!(map_of(ids[2]), stage);
 
         // A2 re-enters stage 1 (the gate starts closed on every entry) and is shown it open;
         // B1 re-entering is not.
@@ -1632,7 +1777,7 @@ mod tests {
 
         let a_out = sessions[0].handle(&press(firsttime::NEXT_PORTAL));
         assert!(a_out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "A's portal is open");
-        assert_eq!(map_of(ids[0]), firsttime::STAGE_1 + 100, "onto stage 2");
+        assert_eq!(map_of(ids[0]), stage + 100, "onto stage 2");
 
         let closed_a = fields.runs().close(run_a.id);
         let closed_b = fields.runs().close(run_b.id);

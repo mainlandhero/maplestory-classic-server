@@ -75,6 +75,92 @@ pub const COUPON: u32 = 4_001_001;
 /// `research/first-time-together-pq.md` §4 and are not built.
 pub const CLOTO: u32 = 800_001;
 
+/// The Pass - what a member earns from Cloto on stage 1 and the leader hands in to clear it.
+pub const PASS: u32 = 4_001_002;
+
+/// **Stage 1's questions.** The owner, 2026-09-23 - the question text and the answer are both
+/// theirs, and the answer is how many [`COUPON`]s the member must bring back. One is dealt at
+/// random to each member who asks, and it stays theirs for the run.
+pub const QUESTIONS: [(&str, u32); 8] = [
+    ("What is the Magician first job advancement level?", 10),
+    ("What is the Warrior first job advancement level?", 10),
+    ("What is the Thief first job advancement level?", 10),
+    ("What is the Archer first job advancement level?", 10),
+    ("What is the EXP needed to get from level 1 to level 2?", 15),
+    ("How many questions are in Rain's Maple Quiz on Maple Island?", 7),
+    ("What is the required character level to unlock Crafting?", 10),
+    ("What is the level requirement to become a citizen of either Henesys or Kerning City?", 12),
+];
+
+/// **How many Passes clear stage 1.** The owner, 2026-09-23: *"In a 2 person party, 2 passes are
+/// required. In a 3 or 4 person party, 3 passes are required."* That is the size capped at
+/// three, and the same formula gives **1** for the temporary party of one
+/// ([`ENTRY_MIN_PARTY`]) - the only reading that lets a solo test finish the stage.
+///
+/// The size is the **run's**, not the party's: a member who disconnected has left the run
+/// (and cannot come back into it), so they are not owed a Pass.
+pub fn passes_required(run_size: usize) -> u32 {
+    u32::try_from(run_size.min(3)).unwrap_or(3)
+}
+
+/// Cloto's stage-1 opening, from the owner's screenshot of the client's own text, with the words
+/// "except the party leader" taken out as they asked: the leader may earn a Pass too.
+pub const CLOTO_STAGE1_INTRO: &str = "Hello and welcome the first stage. As you can see, this      place is full of Ligators. Each Ligator will drop one #bcoupon#k when defeated. Each party      member must come talk to me and then bring me the exact number of #bcoupons#k that I ask      for. Once everyone #bcompletes their individual missions#k, the party can move on to the      next stage. Good luck!";
+
+/// The conversation path the intro's Next is parked under.
+pub const CLOTO_INTRO_PATH: &str = "firsttime.cloto.intro";
+/// The conversation path the leader's two-line menu is parked under.
+pub const CLOTO_MENU_PATH: &str = "firsttime.cloto.menu";
+/// Menu line: take a question like everybody else.
+pub const CLOTO_MENU_QUESTION: u32 = 0;
+/// Menu line: hand in the Passes and clear the stage.
+pub const CLOTO_MENU_PASSES: u32 = 1;
+
+/// The leader's menu. `required` is [`passes_required`] for this run.
+pub fn cloto_menu(required: u32) -> String {
+    format!(
+        "You are the leader of this party. What would you like to do?\r\n\
+         #d#L{CLOTO_MENU_QUESTION}#Give me a question.#l\r\n\
+         #L{CLOTO_MENU_PASSES}#I have brought {required} #t{PASS}#s.#l#k"
+    )
+}
+
+/// The question, as they deal it or repeats it.
+pub fn cloto_question(question: usize) -> String {
+    let (text, _) = QUESTIONS[question % QUESTIONS.len()];
+    format!(
+        "Here is your question:\r\n\r\n#b{text}#k\r\n\r\nBring me exactly as many          #b#t{COUPON}#s#k as the answer, and I will give you a #b#t{PASS}##k."
+    )
+}
+
+/// They repeat the question when the count is wrong - without saying the answer.
+pub fn cloto_wrong(question: usize) -> String {
+    let (text, _) = QUESTIONS[question % QUESTIONS.len()];
+    format!(
+        "That is not the right number of #b#t{COUPON}#s#k. Remember your question:\r\n\r\n\
+         #b{text}#k\r\n\r\nBring me exactly that many."
+    )
+}
+
+/// A correct answer.
+pub const CLOTO_RIGHT: &str =
+    "That is right! Here is your #b#t4001002##k. Give it to your party leader.";
+/// A member who has already earned their Pass this run.
+pub const CLOTO_DONE: &str =
+    "You have already completed your mission. Give your #b#t4001002##k to your party leader.";
+/// The Pass would not fit.
+pub const CLOTO_BAG_FULL: &str =
+    "You have the right answer, but no room for a #b#t4001002##k. Make room in your Etc \
+     inventory and talk to me again.";
+
+/// The leader is short of Passes.
+pub fn cloto_short(required: u32, held: u32) -> String {
+    format!(
+        "I need #b{required} #t{PASS}#s#k to let your party through, and you have {held}. Every \
+         member who completes a mission earns one."
+    )
+}
+
 /// What Cloto says as they clear a stage, during the temporary test.
 pub const CLOTO_CLEARED: &str =
     "Stage cleared! The portal is open - go through it to reach the next stage.";
@@ -286,6 +372,10 @@ pub struct Instance {
     /// 2026-09-23: *"just because one party instance cleared, doesn't mean that all party
     /// instances cleared."* It lives on the instance, so there is nowhere else for it to be.
     pub cleared: Vec<u32>,
+    /// Stage 1: the question each member was dealt, as an index into [`QUESTIONS`].
+    pub questions: Vec<(CharacterId, usize)>,
+    /// Stage 1: who has earned their Pass this run. A member earns one, not one per visit.
+    pub passed: Vec<CharacterId>,
 }
 
 impl Instance {
@@ -333,6 +423,8 @@ impl Runs {
             members,
             deadline_unix: now_unix + i64::from(TIME_LIMIT_S),
             cleared: Vec::new(),
+            questions: Vec::new(),
+            passed: Vec::new(),
         };
         self.next_id += 1;
         self.live.push(inst.clone());
@@ -382,6 +474,30 @@ impl Runs {
             return Some(false);
         }
         run.cleared.push(stage);
+        Some(true)
+    }
+
+    /// **Deal `character` a question**, or return the one they already hold - a question is
+    /// theirs for the run, so asking again cannot reroll for an easier number. `None` when
+    /// they are in no run.
+    pub fn deal_question(&mut self, character: CharacterId, roll: u64) -> Option<usize> {
+        let run = self.live.iter_mut().find(|i| i.members.contains(&character))?;
+        if let Some(&(_, q)) = run.questions.iter().find(|(c, _)| *c == character) {
+            return Some(q);
+        }
+        let q = usize::try_from(roll % QUESTIONS.len() as u64).unwrap_or(0);
+        run.questions.push((character, q));
+        Some(q)
+    }
+
+    /// Record that `character` earned their Pass. `Some(true)` when newly, `Some(false)` when
+    /// they already had, `None` when in no run.
+    pub fn mark_passed(&mut self, character: CharacterId) -> Option<bool> {
+        let run = self.live.iter_mut().find(|i| i.members.contains(&character))?;
+        if run.passed.contains(&character) {
+            return Some(false);
+        }
+        run.passed.push(character);
         Some(true)
     }
 
@@ -580,6 +696,55 @@ mod tests {
         assert_eq!(runs.clear_stage(42, 80_000_500), None, "the Bonus has no way forward");
         runs.close(a.id);
         runs.close(b.id);
+    }
+
+    /// **A question is the member's for the run**, whatever the next roll says; each run
+    /// deals its own; a Pass is earned once.
+    #[test]
+    fn a_question_is_dealt_once_per_member_and_a_pass_is_earned_once() {
+        let mut runs = Runs::default();
+        let _a = runs.open(7_400, vec![51, 52], 4_000_000_000);
+        let q = runs.deal_question(51, 3).unwrap();
+        assert_eq!(q, 3);
+        assert_eq!(runs.deal_question(51, 6), Some(3), "asking again cannot reroll");
+        assert_eq!(runs.deal_question(52, 6), Some(6), "the other member gets their own");
+        assert_eq!(runs.deal_question(99, 1), None, "not in a run");
+        assert_eq!(runs.deal_question(51, 11), Some(3));
+        assert_eq!(runs.mark_passed(51), Some(true));
+        assert_eq!(runs.mark_passed(51), Some(false), "one Pass per member per run");
+        assert_eq!(runs.mark_passed(99), None);
+        // Every roll lands on a real question.
+        let mut other = Runs::default();
+        for (n, id) in (100..140u32).enumerate() {
+            other.open(8_000 + id, vec![id], 4_000_000_000);
+            assert!(other.deal_question(id, n as u64 * 7_919).unwrap() < QUESTIONS.len());
+        }
+    }
+
+    /// The owner's table, and the solo case the same formula gives.
+    #[test]
+    fn the_passes_required_are_two_for_two_and_three_for_three_or_four() {
+        assert_eq!(passes_required(2), 2);
+        assert_eq!(passes_required(3), 3);
+        assert_eq!(passes_required(4), 3);
+        assert_eq!(passes_required(1), 1, "the temporary party of one");
+    }
+
+    /// The owner's eight questions and answers, verbatim - and none of the lines Cloto says gives
+    /// the answer away.
+    #[test]
+    fn the_questions_are_wisps_and_the_wrong_answer_line_does_not_leak_the_number() {
+        let answers: Vec<u32> = QUESTIONS.iter().map(|(_, a)| *a).collect();
+        assert_eq!(answers, vec![10, 10, 10, 10, 15, 7, 10, 12]);
+        for (i, (text, answer)) in QUESTIONS.iter().enumerate() {
+            for line in [cloto_question(i), cloto_wrong(i)] {
+                assert!(line.contains(text), "{line}");
+                let digits: String = line.replace(&format!("{COUPON}"), "").replace(&format!("{PASS}"), "");
+                let stripped = digits.replace(text, "");
+                assert!(!stripped.contains(&answer.to_string()), "leaks {answer}: {line}");
+            }
+        }
+        assert!(!CLOTO_STAGE1_INTRO.contains("except"), "the leader exception is removed");
     }
 
     /// Stage 1 to 5 go one on, the last stage goes to the Bonus, and nothing leaves the
