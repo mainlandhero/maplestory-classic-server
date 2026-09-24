@@ -105,7 +105,7 @@ pub fn passes_required(run_size: usize) -> u32 {
 
 /// Cloto's stage-1 opening, from the owner's screenshot of the client's own text, with the words
 /// "except the party leader" taken out as they asked: the leader may earn a Pass too.
-pub const CLOTO_STAGE1_INTRO: &str = "Hello and welcome the first stage. As you can see, this      place is full of Ligators. Each Ligator will drop one #bcoupon#k when defeated. Each party      member must come talk to me and then bring me the exact number of #bcoupons#k that I ask      for. Once everyone #bcompletes their individual missions#k, the party can move on to the      next stage. Good luck!";
+pub const CLOTO_STAGE1_INTRO: &str = "Hello and welcome the first stage. As you can see, this place is full of Ligators. Each Ligator will drop one #bcoupon#k when defeated. Each party member must come talk to me and then bring me the exact number of #bcoupons#k that I ask for. Once everyone #bcompletes their individual missions#k, the party can move on to the next stage. Good luck!";
 
 /// The conversation path the intro's Next is parked under.
 pub const CLOTO_INTRO_PATH: &str = "firsttime.cloto.intro";
@@ -129,7 +129,7 @@ pub fn cloto_menu(required: u32) -> String {
 pub fn cloto_question(question: usize) -> String {
     let (text, _) = QUESTIONS[question % QUESTIONS.len()];
     format!(
-        "Here is your question:\r\n\r\n#b{text}#k\r\n\r\nBring me exactly as many          #b#t{COUPON}#s#k as the answer, and I will give you a #b#t{PASS}##k."
+        "Here is your question:\r\n\r\n#b{text}#k\r\n\r\nBring me exactly as many #b#t{COUPON}#s#k as the answer, and I will give you a #b#t{PASS}##k."
     )
 }
 
@@ -159,6 +159,128 @@ pub fn cloto_short(required: u32, held: u32) -> String {
         "I need #b{required} #t{PASS}#s#k to let your party through, and you have {held}. Every \
          member who completes a mission earns one."
     )
+}
+
+/// `<2nd Stage>`.
+pub const STAGE_2: u32 = 80_000_100;
+
+/// A rectangle from a map's `area` node, inclusive, in map coordinates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Area {
+    pub x1: i16,
+    pub y1: i16,
+    pub x2: i16,
+    pub y2: i16,
+}
+
+impl Area {
+    pub fn contains(&self, (x, y): (i16, i16)) -> bool {
+        (self.x1..=self.x2).contains(&x) && (self.y1..=self.y2).contains(&y)
+    }
+}
+
+/// **Stage 2's four ropes**, as the client's own `area` node draws them -
+/// `Map0_000.wz/080000100.img/area/0..3` **[L]**, read 2026-09-23.
+///
+/// Each rectangle sits on one of the map's four real ropes (`ladderRope` 7, 6, 4, 5 at
+/// x = -753, -481, -719, -584) and **stops about 40 px above the rope's bottom**: rope 7
+/// runs y -135..89 and its area -132..46. That gap is Cloto's *"Being at the bottom of the
+/// rope doesn't count, so make sure to climb up"* - built into the data, not a rule here.
+///
+/// Held as constants rather than read at startup because `tools/dump_portals.py` does not
+/// export `area` yet (`research/first-time-together-pq.md` §5); `the_rope_areas_sit_on_the_ropes`
+/// pins them against the rope columns.
+pub const STAGE_2_ROPES: [Area; 4] = [
+    Area { x1: -770, y1: -132, x2: -742, y2: 46 },
+    Area { x1: -495, y1: -125, x2: -471, y2: 40 },
+    Area { x1: -733, y1: -337, x2: -707, y2: -232 },
+    Area { x1: -601, y1: -328, x2: -572, y2: -223 },
+];
+
+/// **What the members on the ropes add up to.** The owner, 2026-09-23: *"In a 2 person party, 2
+/// people must hang from the 2 correct ropes ... In a party of 3 or 4, 3 members must hang
+/// from the ropes."* `needed` is [`passes_required`] - the same table, and 1 for the
+/// temporary party of one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RopeCheck {
+    /// Fewer or more members on the ropes than `needed`.
+    Count { on: usize, needed: usize },
+    /// The right number, on the ropes the run was dealt.
+    Right,
+    /// The right number, on the wrong ropes - or two sharing one.
+    Wrong,
+}
+
+/// Judge the ropes. `positions` is every run member on the stage who has moved; `answer`
+/// is the rope indexes this run was dealt.
+pub fn check_ropes(ropes: &[Area], positions: &[(i16, i16)], answer: &[usize], needed: usize) -> RopeCheck {
+    let mut on: Vec<usize> = positions
+        .iter()
+        .filter_map(|&at| ropes.iter().position(|r| r.contains(at)))
+        .collect();
+    if on.len() != needed {
+        return RopeCheck::Count { on: on.len(), needed };
+    }
+    on.sort_unstable();
+    on.dedup();
+    let mut want = answer.to_vec();
+    want.sort_unstable();
+    if on == want { RopeCheck::Right } else { RopeCheck::Wrong }
+}
+
+/// **Deal `count` distinct indexes out of `of`**, from one roll - the correct ropes (or,
+/// later, platforms) for one run. A partial Fisher-Yates driven by a small LCG off the
+/// roll, so it needs nothing but the session's own `Xorshift` output.
+pub fn deal_combination(count: usize, of: usize, roll: u64) -> Vec<usize> {
+    let mut pool: Vec<usize> = (0..of).collect();
+    let mut state = roll | 1;
+    let count = count.min(of);
+    for i in 0..count {
+        state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        let j = i + usize::try_from((state >> 33) % (of - i) as u64).unwrap_or(0);
+        pool.swap(i, j);
+    }
+    let mut out = pool[..count].to_vec();
+    out.sort_unstable();
+    out
+}
+
+/// Cloto's stage-2 opening, from the owner's screenshot - with "Three" made the run's own
+/// number, since a pair needs two.
+pub fn cloto_stage2_intro(needed: usize) -> String {
+    let n = number_word(needed);
+    let (members, ropes, people) = if needed == 1 {
+        ("party member", "rope", "one person".to_string())
+    } else {
+        ("party members", "ropes", format!("{} people", n.to_lowercase()))
+    };
+    format!(
+        "Hello and welcome to the second stage. You'll see a bunch of ropes next to me. \
+         #b{n} of these will lead to the portal to the next stage. {n} {members} must climb \
+         the correct {ropes}.\r\nBeing at the bottom of the rope doesn't count, so make sure \
+         to climb up. Only {people} can be on the ropes. While the party members are on the \
+         ropes, the party leader must double-click me to learn the answer.#k Okay, good luck!"
+    )
+}
+
+/// What they say when the count on the ropes is off.
+pub fn cloto_rope_count(on: usize, needed: usize) -> String {
+    let who = |n: usize| if n == 1 { "1 person".to_string() } else { format!("{n} people") };
+    format!(
+        "There must be exactly #b{}#k on the ropes, and I see {}. {}",
+        who(needed),
+        who(on),
+        if on < needed { "Someone else must climb up." } else { "Someone must come down." }
+    )
+}
+
+fn number_word(n: usize) -> String {
+    match n {
+        1 => "One".into(),
+        2 => "Two".into(),
+        3 => "Three".into(),
+        _ => n.to_string(),
+    }
 }
 
 /// What Cloto says as they clear a stage, during the temporary test.
@@ -376,6 +498,9 @@ pub struct Instance {
     pub questions: Vec<(CharacterId, usize)>,
     /// Stage 1: who has earned their Pass this run. A member earns one, not one per visit.
     pub passed: Vec<CharacterId>,
+    /// The correct ropes / platforms this run was dealt, per stage map. Dealt the first time
+    /// the leader asks and fixed for the run after that.
+    pub answers: Vec<(u32, Vec<usize>)>,
 }
 
 impl Instance {
@@ -425,6 +550,7 @@ impl Runs {
             cleared: Vec::new(),
             questions: Vec::new(),
             passed: Vec::new(),
+            answers: Vec::new(),
         };
         self.next_id += 1;
         self.live.push(inst.clone());
@@ -488,6 +614,24 @@ impl Runs {
         let q = usize::try_from(roll % QUESTIONS.len() as u64).unwrap_or(0);
         run.questions.push((character, q));
         Some(q)
+    }
+
+    /// **This run's answer for `stage`** - `count` of `of` - dealt from `roll` the first
+    /// time and the same every time after, so a wrong guess cannot be retried against a
+    /// fresh deal. `None` when `character` is in no run.
+    pub fn answer_for(&mut self, character: CharacterId, stage: u32, count: usize, of: usize, roll: u64) -> Option<Vec<usize>> {
+        let run = self.live.iter_mut().find(|i| i.members.contains(&character))?;
+        // Kept only while it is still the right SIZE: a member who disconnects shrinks the
+        // run, and a pair cannot be asked to find three ropes.
+        if let Some((_, a)) = run.answers.iter().find(|(s, _)| *s == stage) {
+            if a.len() == count {
+                return Some(a.clone());
+            }
+        }
+        let a = deal_combination(count, of, roll);
+        run.answers.retain(|(s, _)| *s != stage);
+        run.answers.push((stage, a.clone()));
+        Some(a)
     }
 
     /// Record that `character` earned their Pass. `Some(true)` when newly, `Some(false)` when
@@ -721,6 +865,58 @@ mod tests {
         }
     }
 
+    /// The rope rectangles are the client's, and each one sits on one of the map's four real
+    /// ropes (`ladderRope` x = -753, -481, -719, -584) and ends above that rope's bottom.
+    #[test]
+    fn the_rope_areas_sit_on_the_ropes() {
+        // (rope x, rope bottom y) from 080000100.img/ladderRope 7, 6, 4, 5.
+        let ropes = [(-753i16, 89i16), (-481, 91), (-719, -187), (-584, -172)];
+        for (area, (x, bottom)) in STAGE_2_ROPES.iter().zip(ropes) {
+            assert!(area.x1 <= x && x <= area.x2, "{area:?} is not on the rope at x {x}");
+            assert!(area.y2 < bottom, "{area:?} reaches the bottom of its rope ({bottom})");
+            assert!(!area.contains((x, bottom)), "standing at the bottom does not count");
+        }
+    }
+
+    /// The owner's rules: exactly `needed` on the ropes, else a count; the dealt ropes, else WRONG.
+    #[test]
+    fn the_ropes_are_judged_by_count_first_and_then_by_which() {
+        let r = &STAGE_2_ROPES;
+        let on = |i: usize| (r[i].x1 + 1, r[i].y1 + 1);
+        let floor = (-348i16, 91i16);
+        assert_eq!(check_ropes(r, &[on(0)], &[0, 2], 2), RopeCheck::Count { on: 1, needed: 2 });
+        assert_eq!(check_ropes(r, &[on(0), floor], &[0, 2], 2), RopeCheck::Count { on: 1, needed: 2 }, "the floor is not a rope");
+        assert_eq!(check_ropes(r, &[on(0), on(1), on(2)], &[0, 2], 2), RopeCheck::Count { on: 3, needed: 2 });
+        assert_eq!(check_ropes(r, &[on(0), on(2)], &[0, 2], 2), RopeCheck::Right);
+        assert_eq!(check_ropes(r, &[on(2), on(0)], &[2, 0], 2), RopeCheck::Right, "order does not matter");
+        assert_eq!(check_ropes(r, &[on(0), on(1)], &[0, 2], 2), RopeCheck::Wrong);
+        assert_eq!(check_ropes(r, &[on(0), on(0)], &[0, 2], 2), RopeCheck::Wrong, "two on one rope is not two ropes");
+        assert_eq!(check_ropes(r, &[on(1), on(2), on(3)], &[1, 2, 3], 3), RopeCheck::Right);
+    }
+
+    /// A deal is `count` distinct indexes in range, every combination is reachable, and a
+    /// run's answer is fixed once dealt.
+    #[test]
+    fn a_deal_is_distinct_in_range_reaches_every_combination_and_stays_fixed() {
+        let mut seen = std::collections::HashSet::new();
+        for roll in 0..2_000u64 {
+            let d = deal_combination(2, 4, roll.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            assert_eq!(d.len(), 2);
+            assert!(d[0] < d[1] && d[1] < 4, "{d:?}");
+            seen.insert(d);
+        }
+        assert_eq!(seen.len(), 6, "all six pairs of four ropes: {seen:?}");
+        let mut seen3 = std::collections::HashSet::new();
+        for roll in 0..2_000u64 {
+            seen3.insert(deal_combination(3, 4, roll.wrapping_mul(0x9E37_79B9_7F4A_7C15)));
+        }
+        assert_eq!(seen3.len(), 4, "all four triples");
+        let mut runs = Runs::default();
+        runs.open(7_500, vec![61], 4_000_000_000);
+        let first = runs.answer_for(61, STAGE_2, 2, 4, 1).unwrap();
+        assert_eq!(runs.answer_for(61, STAGE_2, 2, 4, 999).unwrap(), first, "fixed for the run");
+    }
+
     /// The owner's table, and the solo case the same formula gives.
     #[test]
     fn the_passes_required_are_two_for_two_and_three_for_three_or_four() {
@@ -745,6 +941,13 @@ mod tests {
             }
         }
         assert!(!CLOTO_STAGE1_INTRO.contains("except"), "the leader exception is removed");
+        // A Python patch once swallowed a line-continuation backslash and left runs of
+        // spaces inside two of these; the client would draw every one of them.
+        let mut said = vec![CLOTO_STAGE1_INTRO.to_string(), CLOTO_RIGHT.into(), CLOTO_DONE.into(), CLOTO_BAG_FULL.into(), cloto_short(3, 1), cloto_menu(3), cloto_stage2_intro(2), cloto_stage2_intro(3), cloto_rope_count(1, 2)];
+        said.extend((0..QUESTIONS.len()).flat_map(|i| [cloto_question(i), cloto_wrong(i)]));
+        for line in said {
+            assert!(!line.contains("  "), "a run of spaces in: {line:?}");
+        }
     }
 
     /// Stage 1 to 5 go one on, the last stage goes to the Bonus, and nothing leaves the

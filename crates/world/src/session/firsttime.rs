@@ -271,7 +271,7 @@ impl Session {
         self.leave_party_quest("Nella showed them out")
     }
 
-    /// **Cloto.** Stage 1 is the real stage (`cloto_stage_one`); stages 2 to 5 still clear
+    /// **Cloto.** Stages 1 and 2 are real (`cloto_stage_one`, `cloto_stage_two`); 3 to 5 still clear
     /// on a click - TEMPORARY, for the instancing test (the owner, 2026-09-23: clicking their should
     /// *"send the "stage clear" opcode and enable the portal to go to the next stage"*).
     ///
@@ -296,7 +296,10 @@ impl Session {
         if chr.map_id == firsttime::STAGE_1 {
             return Some(self.cloto_stage_one(&chr, &inst));
         }
-        Some(self.cloto_clear(&chr, &inst, "TEMPORARY: Cloto clears stages 2-5 on a click"))
+        if chr.map_id == firsttime::STAGE_2 {
+            return Some(self.cloto_stage_two(&chr, &inst));
+        }
+        Some(self.cloto_clear(&chr, &inst, "TEMPORARY: Cloto clears stages 3-5 on a click"))
     }
 
     /// One line from Cloto. `next` puts a Next button on it.
@@ -335,6 +338,77 @@ impl Session {
                 chr.name, chr.id, inst.id
             ),
         }]
+    }
+
+    /// **Stage 2 - the ropes.** The owner, 2026-09-23: *"In a 2 person party, 2 people must hang
+    /// from the 2 correct ropes then have the party leader talk to Cloto. The server randomly
+    /// decides for this particular party instance that which of the 2 ropes are correct."*
+    /// Three for a party of three or four.
+    ///
+    /// A member gets the intro. The leader gets the intro too while nobody is on a rope -
+    /// it is the only way the leader reads it - and otherwise the verdict: the wrong count
+    /// says so; the right count on the wrong ropes plays WRONG for the whole run, with no
+    /// dialogue at all (the owner's rule); the right
+    /// ropes clear the stage (which still requires everyone in the run to be on it).
+    ///
+    /// "On a rope" is standing inside one of the client's own `area` rectangles
+    /// (`firsttime::STAGE_2_ROPES`), read from each member's last reported position on
+    /// the bus.
+    fn cloto_stage_two(&mut self, chr: &net::opcode::Character, inst: &firsttime::Instance) -> Vec<Reply> {
+        let needed = usize::try_from(firsttime::passes_required(inst.members.len())).unwrap_or(3);
+        let intro = |s: &Self| vec![s.cloto_say(&firsttime::cloto_stage2_intro(needed), false, format!("stage 2 intro to {}", chr.name))];
+        let leads = self.fields.parties().party_of(chr.id).map(|p| p.leader) == Some(chr.id);
+        if !leads {
+            return intro(self);
+        }
+        let key = self.field_of(chr);
+        let at: Vec<(i16, i16)> = self.bus().positions_on(key, &inst.members).into_iter().map(|(_, p)| p).collect();
+        let on = at.iter().filter(|&&p| firsttime::STAGE_2_ROPES.iter().any(|r| r.contains(p))).count();
+        if on == 0 {
+            return intro(self);
+        }
+        let roll = self.rng.next();
+        let answer = self.fields.runs().answer_for(chr.id, firsttime::STAGE_2, needed, firsttime::STAGE_2_ROPES.len(), roll);
+        let Some(answer) = answer else { return Vec::new() };
+        match firsttime::check_ropes(&firsttime::STAGE_2_ROPES, &at, &answer, needed) {
+            firsttime::RopeCheck::Count { on, needed } => {
+                vec![self.cloto_say(&firsttime::cloto_rope_count(on, needed), false, format!("{on} on the ropes, {needed} needed"))]
+            }
+            firsttime::RopeCheck::Wrong => {
+                crate::server::log(&format!(
+                    "   first time together: instance {} tried the wrong ropes on stage 2 (dealt {answer:?})",
+                    inst.id
+                ));
+                // **The animation and nothing else.** The owner, 2026-09-23: *"If the combination is
+                // incorrect, clicking on Cloto will only play the animation, no dialogue will
+                // be generated for getting a combination wrong."*
+                self.party_quest_effects(
+                    key,
+                    &[
+                        (net::fieldeffect::screen(net::fieldeffect::SCREEN_PARTY_WRONG), "screen quest/party/wrong"),
+                        (net::fieldeffect::sound(net::fieldeffect::SOUND_PARTY_FAILED, 100), "sound Party1/Failed"),
+                    ],
+                    &format!("wrong ropes, instance {}", inst.id),
+                )
+            }
+            firsttime::RopeCheck::Right => self.cloto_clear(chr, inst, &format!("the right ropes {answer:?}")),
+        }
+    }
+
+    /// Field effects to this screen and to `key` on the bus - which is one run's copy of
+    /// the map, so no other party sees them.
+    fn party_quest_effects(&self, key: crate::fields::FieldKey, effects: &[(Vec<u8>, &str)], why: &str) -> Vec<Reply> {
+        let mut out = Vec::new();
+        for (body, what) in effects {
+            let reply = Reply {
+                opcode: net::fieldeffect::FIELD_EFFECT,
+                body: body.clone(),
+                what: format!("FieldEffect {what}: {why}"),
+            };
+            self.bus().publish(self.subscriber, key, reply.clone(), None);
+            out.push(reply);
+        }
+        out
     }
 
     /// The leader's menu came back.
@@ -493,21 +567,15 @@ impl Session {
             "   first time together: {} ({}) cleared map {} for instance {run} ({how}); effects to field {key} only",
             chr.name, chr.id, chr.map_id
         ));
-        let effects = [
-            (net::fieldeffect::screen(net::fieldeffect::SCREEN_PARTY_CLEAR), "screen quest/party/clear"),
-            (net::fieldeffect::sound(net::fieldeffect::SOUND_PARTY_CLEAR, 100), "sound Party1/Clear"),
-            (net::fieldeffect::object_state(net::fieldeffect::OBJECT_GATE), "object state gate - the portal opens"),
-        ];
-        let mut out = Vec::new();
-        for (body, what) in effects {
-            let reply = Reply {
-                opcode: net::fieldeffect::FIELD_EFFECT,
-                body,
-                what: format!("FieldEffect {what}: stage {} cleared, instance {run}", chr.map_id),
-            };
-            self.bus().publish(self.subscriber, key, reply.clone(), None);
-            out.push(reply);
-        }
+        let mut out = self.party_quest_effects(
+            key,
+            &[
+                (net::fieldeffect::screen(net::fieldeffect::SCREEN_PARTY_CLEAR), "screen quest/party/clear"),
+                (net::fieldeffect::sound(net::fieldeffect::SOUND_PARTY_CLEAR, 100), "sound Party1/Clear"),
+                (net::fieldeffect::object_state(net::fieldeffect::OBJECT_GATE), "object state gate - the portal opens"),
+            ],
+            &format!("stage {} cleared, instance {run}", chr.map_id),
+        );
         out.push(self.cloto_say(firsttime::CLOTO_CLEARED, false, format!("map {} cleared for instance {run}", chr.map_id)));
         out
     }
