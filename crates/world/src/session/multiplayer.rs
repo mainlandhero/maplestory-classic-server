@@ -1100,9 +1100,19 @@ mod tests {
         assert!(said(&out).contains("not for one adventurer"), "alone: {}", said(&out));
         assert_eq!(map_of(&leader, ids[0]), crate::firsttime::ENTRY_MAP, "nobody moved");
 
-        // 3. In a party, but asked by the member rather than the leader.
+        // 3. **A party of one is refused, and nobody moves.** A leader who has made a party
+        //    and has nobody in it yet. The owner, 2026-09-23, ending the solo test: *"Remove the
+        //    ability to enter the PQ with just a party of 1"* - this is the path that test ran.
         let created = leader.run_party_request(ids[0], crate::party::Request::Create { name: "P".into() });
         let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        let _ = leader.handle(&click(900));
+        let out = leader.handle(&yes());
+        assert!(said(&out).contains("only 1 of you"), "a party of one: {}", said(&out));
+        assert_eq!(map_of(&leader, ids[0]), crate::firsttime::ENTRY_MAP, "a party of one stays in Kerning City");
+        let none = leader.fields.runs().instance_of(ids[0]);
+        assert_eq!(none, None, "and no run was opened");
+
+        // 4. In a party, but asked by the member rather than the leader.
         let _ = leader.run_party_request(ids[0], crate::party::Request::Invite { target: ids[1] });
         let _ = member.tick(1_000);
         let _ = member.run_party_request(ids[1], crate::party::Request::Accept { party });
@@ -1964,6 +1974,86 @@ mod tests {
         let _ = sessions[1].tick(5_000);
         assert_eq!(held(ids[1], firsttime::COMPANIONS_MAGIC_BOX, store::InventoryType::Use), 1, "Mote's box, through their own session");
         let closed = fields.runs().close(run.id);
+        assert!(closed);
+    }
+
+    /// **A run of one does not go on.** The owner, 2026-09-23: *"A party of 1 should not be allowed
+    /// to continue doing the party quest."*
+    ///
+    /// A pair on stage 2: Mote disconnects, and the Leader - now alone - is sent to the Exit
+    /// with the reason, and the run is gone. The control: a trio where one walks out through
+    /// Nella leaves two, and those two carry on where they stand.
+    #[test]
+    fn a_run_left_with_one_member_ends_and_sends_them_out() {
+        use crate::firsttime;
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let stage = firsttime::STAGE_2;
+        let mut cfg = (*config).clone();
+        for m in [stage, firsttime::EXIT_MAP] {
+            cfg.fields.insert(m);
+        }
+        cfg.npcs.insert(
+            stage,
+            vec![net::opcode::FieldNpc { object_id: 930, template_id: firsttime::NELLA, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 }],
+        );
+        let config = Arc::new(cfg);
+        let mut ids = Vec::new();
+        let mut sessions = Vec::new();
+        for name in ["Leader", "Mote", "Tria", "Quad", "Quin"] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: stage, level: 21, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.set_character_map(id, stage).unwrap();
+            store.create_migration(account, id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(id);
+            ids.push(id);
+            sessions.push(s);
+        }
+        let map_of = |id: u32| store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().map_id;
+        let pair = fields.runs().open(5_801, vec![ids[0], ids[1]], store::Store::unix_now());
+        let trio = fields.runs().open(5_802, vec![ids[2], ids[3], ids[4]], store::Store::unix_now());
+        for s in sessions.iter_mut() {
+            let _ = s.on_field_entered();
+        }
+        for s in sessions.iter_mut() {
+            let _ = s.tick(1_000);
+        }
+
+        // The pair: Mote disconnects.
+        let mote = sessions.remove(1);
+        drop(mote);
+        let gone = fields.runs().instance(pair.id);
+        assert_eq!(gone, None, "a run of one is ended");
+        let out = sessions[0].tick(2_000);
+        assert!(out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "the Leader is sent out");
+        let told = out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE && String::from_utf8_lossy(&r.body).contains("too small to continue"));
+        assert!(told, "and told why");
+        assert_eq!(map_of(ids[0]), firsttime::EXIT_MAP, "to the Exit");
+
+        // The control: Tria leaves the trio through Nella; two remain and stay put.
+        let mut click = net::script::CLIENT_NPC_CLICK.to_le_bytes().to_vec();
+        click.extend_from_slice(&930u32.to_le_bytes());
+        click.extend_from_slice(&0i16.to_le_bytes());
+        click.extend_from_slice(&0i16.to_le_bytes());
+        click.extend_from_slice(&u32::MAX.to_le_bytes());
+        let mut yes = net::script::CLIENT_SCRIPT_REPLY.to_le_bytes().to_vec();
+        yes.extend_from_slice(&0u32.to_le_bytes());
+        yes.push(0);
+        yes.extend_from_slice(&0u32.to_le_bytes());
+        yes.extend_from_slice(&0u16.to_le_bytes());
+        yes.push(net::script::SCRIPT_ACTION_YES as u8);
+        let _ = sessions[1].handle(&click);
+        let _ = sessions[1].handle(&yes);
+        assert_eq!(map_of(ids[2]), firsttime::EXIT_MAP, "Tria is out");
+        let still = fields.runs().instance(trio.id).map(|i| i.members);
+        assert_eq!(still, Some(vec![ids[3], ids[4]]), "two remain in the run");
+        for i in [2, 3] {
+            let out = sessions[i].tick(3_000);
+            assert!(!out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "and nobody else is moved");
+        }
+        assert_eq!(map_of(ids[3]), stage);
+        let closed = fields.runs().close(trio.id);
         assert!(closed);
     }
 
