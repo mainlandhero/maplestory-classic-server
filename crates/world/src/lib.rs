@@ -55,6 +55,7 @@ pub mod jobs;
 pub mod leafcoupons;
 pub mod logprune;
 pub mod magicbox;
+pub mod mobskills;
 pub mod leveleffect;
 pub mod link;
 pub mod magic;

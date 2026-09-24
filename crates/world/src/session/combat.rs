@@ -118,7 +118,10 @@ impl Session {
                 audience.supersedes(),
             );
         }
-        vec![Reply {
+        // King Slime's MP and summon, and whatever a reported summon spawned.
+        // session/mobskill.rs, crate::mobskills.
+        let (mp, skill, level, summoned) = self.mob_skill_ack(map, &req);
+        let mut out = vec![Reply {
             opcode: net::mobmove::MOB_CTRL_ACK,
             // **The one bool that lets a mob attack at all.**
             //
@@ -136,18 +139,23 @@ impl Session {
             // **Unconditional, deliberately.** The client owns every other precondition - the
             // attack count, the per-attack cooldown, range, target - and the state survives
             // only until the next move report, so a grant buys **one action**, not a mode.
-            body: net::mobmove::mob_ctrl_ack(
+            body: net::mobmove::mob_ctrl_ack_with(
                 req.object_id,
                 req.move_id,
                 crate::mobattack::grant_attack(),
+                mp,
+                skill,
+                level,
             ),
             what: format!(
-                "MobCtrlAck: mob {} move {} acknowledged. Without this the client runs one \
-                 simulation step and stops - measured twice, 30 grants and 30 reports all \
-                 with moveId 1, then silence.",
+                "MobCtrlAck: mob {} move {} acknowledged (mp {mp}, skill {skill} level {level}). \
+                 Without this the client runs one simulation step and stops - measured twice, 30 \
+                 grants and 30 reports all with moveId 1, then silence.",
                 req.object_id, req.move_id
             ),
-        }]
+        }];
+        out.extend(summoned);
+        out
     }
 
 

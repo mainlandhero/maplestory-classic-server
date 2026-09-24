@@ -702,33 +702,9 @@ impl Session {
             }
         }
 
-        // The Slimes, where it died. Summoned like a sack's mobs: never a spawn point, so a
-        // kill books nothing and they do not come back.
-        let landed = self.config.footholds.landing(key.map, x, y);
-        let (sx, sy, fh) = match landed {
-            Some(l) => (l.x, l.y, i16::try_from(l.foothold).unwrap_or(0)),
-            None => (x, y, 0),
-        };
-        let hp = self.config.mob_templates.get(&firsttime::SLIME).map(|t| u64::from(t.max_hp)).unwrap_or(1);
-        for _ in 0..firsttime::SLIMES_FROM_THE_KING {
-            let live = self.fields.summon_mob(key, firsttime::SLIME, (sx, sy), fh, hp);
-            let mut mob = live.as_seen();
-            mob.forced_stat = self.forced_stat_for(mob.template_id);
-            let spawn = Reply {
-                opcode: net::mob::MOB_ENTER_FIELD,
-                body: net::mob::mob_enter_field(&mob),
-                what: format!("MobEnterField: a Slime out of the King Slime at ({sx}, {sy}), object id {}", mob.object_id),
-            };
-            self.bus().publish(self.subscriber, key, spawn.clone(), None);
-            out.push(spawn);
-            if self.fields.controllers().claim_one(key, mob.object_id, self.subscriber.get()) {
-                out.push(Reply {
-                    opcode: net::mobmove::MOB_CHANGE_CONTROLLER,
-                    body: net::mobmove::mob_change_controller(&mob, net::mobmove::CONTROL_NORMAL),
-                    what: format!("MobChangeController: King Slime's Slime {} to this client", mob.object_id),
-                });
-            }
-        }
+        // The Slimes, where it died - summoned, so they never come back. session/mobskill.rs.
+        let slimes = [firsttime::SLIME; firsttime::SLIMES_FROM_THE_KING];
+        out.extend(self.summon_mobs_at(key, &slimes, (x, y), "the King Slime broke apart"));
         crate::server::log(&format!(
             "   first time together: the King Slime died at ({x}, {y}) on field {key}; {} pair(s) of shoes, {} Slimes",
             here.len(),
