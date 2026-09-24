@@ -2031,6 +2031,105 @@ mod tests {
         assert!(closed);
     }
 
+    /// **King Slime's MP and summon, on the move acknowledgement.** The owner, 2026-09-24: *"There
+    /// should be a jump attack, and there should be a summon slime attack."*
+    ///
+    /// Claims, each against the mob's own data: the King's ack carries its full MP (100),
+    /// which is what lets the client's chooser consider its 10-MP jump attack, and offers no
+    /// skill while it is above half HP; at half or below it offers skill 200 level 1; a report
+    /// that names the skill as used spawns exactly three Slimes where it stands, and the same
+    /// report again inside the 15-second interval spawns none and the offer stops. The
+    /// control: a Jr. Necki on the same field still gets the old zeros.
+    #[test]
+    fn king_slime_gets_its_mp_and_its_summon_and_nothing_else_changes() {
+        use crate::firsttime;
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let stage = firsttime::STAGE_5;
+        let mut cfg = (*config).clone();
+        cfg.fields.insert(stage);
+        cfg.mobs.insert(
+            stage,
+            vec![
+                net::mob::FieldMob::new(1_000, firsttime::KING_SLIME, 162, -435, 1, 16_820),
+                net::mob::FieldMob::new(1_001, 800_001, 80, -1455, 1, 765),
+            ],
+        );
+        cfg.mob_respawn_s.insert((stage, 1_000), -1);
+        cfg.mob_respawn_s.insert((stage, 1_001), 180);
+        cfg.mob_templates.insert(firsttime::KING_SLIME, crate::config::MobTemplate { max_hp: 16_820, max_mp: 100, ..Default::default() });
+        cfg.mob_templates.insert(800_001, crate::config::MobTemplate { max_hp: 765, max_mp: 30, ..Default::default() });
+        cfg.mob_templates.insert(firsttime::SLIME, crate::config::MobTemplate { max_hp: 115, ..Default::default() });
+        let config = Arc::new(cfg);
+        let mut ids = Vec::new();
+        let mut sessions = Vec::new();
+        for name in ["Leader", "Mote"] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: stage, level: 30, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.set_character_map(id, stage).unwrap();
+            store.create_migration(account, id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(id);
+            ids.push(id);
+            sessions.push(s);
+        }
+        let run = fields.runs().open(5_901, ids.clone(), store::Store::unix_now());
+        let key = crate::fields::FieldKey::instanced(stage, run.id);
+        let _ = sessions[0].on_field_entered(); // the leader controls both mobs
+        let _ = sessions[1].on_field_entered();
+
+        // A minimal 0x02FF: object id, move id, packed, action, the skill command, the rest empty.
+        let report = |object_id: u32, move_id: u16, skill: u64| {
+            let mut b = net::mobmove::MOB_MOVE_REQUEST.to_le_bytes().to_vec();
+            b.extend_from_slice(&object_id.to_le_bytes());
+            b.extend_from_slice(&move_id.to_le_bytes());
+            b.push(0);
+            b.push(0xFF);
+            b.extend_from_slice(&skill.to_le_bytes());
+            b.extend_from_slice(&[0u8; 2]);
+            b.extend_from_slice(&[0u8, 0u8]);
+            b.extend_from_slice(&0u32.to_le_bytes());
+            b.extend_from_slice(&[0u8; 22]);
+            b.extend_from_slice(&[0u8; net::mobmove::MOB_PATH_HEAD_LEN]);
+            b
+        };
+        let ack = |out: &[Reply]| -> (u32, u32, u16) {
+            let a = out.iter().find(|r| r.opcode == net::mobmove::MOB_CTRL_ACK).expect("an ack");
+            (
+                u32::from_le_bytes(a.body[7..11].try_into().unwrap()),
+                u32::from_le_bytes(a.body[11..15].try_into().unwrap()),
+                u16::from_le_bytes(a.body[15..17].try_into().unwrap()),
+            )
+        };
+        let slimes = || fields.mobs_on(key).iter().filter(|m| m.spawn.template_id == firsttime::SLIME).count();
+        let used = 200u64 | (1 << 16);
+
+        // Full HP: MP, no skill.
+        let out = sessions[0].handle(&report(1_000, 1, 0));
+        assert_eq!(ack(&out), (100, 0, 0), "full MP so the 10-MP jump attack can be chosen; no summon above half");
+        // The control: a Jr. Necki still gets zeros.
+        let out = sessions[0].handle(&report(1_001, 1, 0));
+        assert_eq!(ack(&out), (0, 0, 0), "every other mob is unchanged");
+
+        // Half HP: the summon is offered.
+        let _ = sessions[0].deal_to_mob(key, 1_000, 8_410, ids[0]);
+        let out = sessions[0].handle(&report(1_000, 2, 0));
+        assert_eq!(ack(&out), (100, 200, 1));
+
+        // The client used it: three Slimes, shown to Mote too; then not again for 15 s.
+        let out = sessions[0].handle(&report(1_000, 3, used));
+        assert_eq!(out.iter().filter(|r| r.opcode == net::mob::MOB_ENTER_FIELD).count(), 3, "three Slimes");
+        assert_eq!(slimes(), 3);
+        assert_eq!(ack(&out), (100, 0, 0), "cooling down: no offer");
+        let seen = sessions[1].tick(5_000).iter().filter(|r| r.opcode == net::mob::MOB_ENTER_FIELD).count();
+        assert_eq!(seen, 3, "the party sees them");
+        let _ = sessions[0].handle(&report(1_000, 4, used));
+        assert_eq!(slimes(), 3, "a second report inside the interval summons nothing");
+
+        let closed = fields.runs().close(run.id);
+        assert!(closed);
+    }
+
     /// **Opening a Companion's Magic Box.** The owner, 2026-09-23. Two boxes stacked in one Use
     /// slot; the `0x0114` for that slot opens ONE: exactly one prize from the table in its
     /// table quantity, the slot left holding one box (not emptied - boxes stack), the

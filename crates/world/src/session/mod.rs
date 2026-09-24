@@ -588,6 +588,7 @@ mod ground;
 mod inventory;
 mod keymap;
 mod reactor;
+mod mobskill;
 mod multiplayer;
 mod npc;
 mod party;

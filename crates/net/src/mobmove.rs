@@ -437,6 +437,11 @@ pub struct MobMoveRequest {
     /// **`0xFF` means "no action"**: `141c8176d CMP AL,0xFF / JE` skips the whole animation
     /// block. Every one of the 30 captured bodies carries `0xFF`. **[L]**
     pub move_action: u8,
+    /// Body offset 8, `141cb7f44`, a `u64`: **the skill the mob just used**. The v214
+    /// reader takes skill id from the low 16 bits and level from the next 16 **[C]**; `0` in
+    /// every archived body, because no skill had ever been offered (`crate::mobskills` in
+    /// `world` has why). [`MobMoveRequest::skill_id`], [`MobMoveRequest::skill_level`].
+    pub skill_command: u64,
     /// Where the client now believes the mob is, from the path head at `1404b265b`.
     ///
     /// **Confirmed against an independent capture.** `research/mob-behaviour.md` §0 records
@@ -460,6 +465,18 @@ pub struct MobMoveRequest {
     pub path: Vec<u8>,
 }
 
+impl MobMoveRequest {
+    /// The skill the mob just used, or `0`.
+    pub fn skill_id(&self) -> u32 {
+        (self.skill_command & 0xFFFF) as u32
+    }
+
+    /// Its level.
+    pub fn skill_level(&self) -> u16 {
+        ((self.skill_command >> 16) & 0xFFFF) as u16
+    }
+}
+
 /// Parse a client mob-move report. The caller has already stripped the opcode.
 ///
 /// `None` only if the body is malformed - too short for the head, or a count that runs off
@@ -473,7 +490,7 @@ pub fn parse_mob_move(body: &[u8]) -> Option<MobMoveRequest> {
     let move_id = c.u16()?; //                         4   141cb7f05  deobf(mob+0x2f0) + 1
     let packed = c.u8()?; //                           6   141cb7f20
     let move_action = c.u8()?; //                      7   141cb7f31
-    c.skip(8)?; //                                     8   141cb7f44  u64
+    let skill_command = c.u64()?; //                   8   141cb7f44  u64: skill id, level
     c.skip(2)?; //                                    16   141cb7f55, 141cb7f65
     let n1 = c.u8()?; //                              18   141cb7f80/91  mob+0x8c8
     c.skip(usize::from(n1) * 4)?; //                        141cb7ff2 + 141cb803a per element
@@ -522,6 +539,7 @@ pub fn parse_mob_move(body: &[u8]) -> Option<MobMoveRequest> {
         move_id,
         packed,
         move_action,
+        skill_command,
         x,
         y,
         element_count,
@@ -561,13 +579,30 @@ pub fn parse_mob_move(body: &[u8]) -> Option<MobMoveRequest> {
 /// exactly what arrived is the only value that is always on the right side of that compare
 /// without inventing state. **[L]**
 pub fn mob_ctrl_ack(object_id: u32, move_id: u16, next_attack_possible: bool) -> Vec<u8> {
+    mob_ctrl_ack_with(object_id, move_id, next_attack_possible, 0, 0, 0)
+}
+
+/// [`mob_ctrl_ack`] carrying the mob's **MP** and a **skill to offer**.
+///
+/// Offset 7 is stored in `mob+0x3b0`, which the attack chooser `FUN_141c7c900` compares
+/// against each attack's cost (`141c7d38f..141c7d3b2`) **[L]** - so `0` rules out every attack
+/// that costs MP. Offsets 11/15 are a skill id and level looked up in the template
+/// (`FUN_14049a080`); `0` offers none. `world::mobskills` decides both.
+pub fn mob_ctrl_ack_with(
+    object_id: u32,
+    move_id: u16,
+    next_attack_possible: bool,
+    mp: u32,
+    skill_id: u32,
+    skill_level: u16,
+) -> Vec<u8> {
     let mut b = Vec::with_capacity(MOB_CTRL_ACK_LEN);
     b.extend_from_slice(&object_id.to_le_bytes()); //  0   u32 141d32b4d (the dispatcher)
     b.extend_from_slice(&move_id.to_le_bytes()); //    4   u16 141c8209e
     b.push(u8::from(next_attack_possible)); //         6   u8  141c820ab
-    b.extend_from_slice(&0u32.to_le_bytes()); //       7   u32 141c820b7  [I] MP
-    b.extend_from_slice(&0u32.to_le_bytes()); //      11   u32 141c820f0  skill id: none
-    b.extend_from_slice(&0u16.to_le_bytes()); //      15   u16 141c820fa  skill level
+    b.extend_from_slice(&mp.to_le_bytes()); //         7   u32 141c820b7  MP -> mob+0x3b0
+    b.extend_from_slice(&skill_id.to_le_bytes()); //  11   u32 141c820f0  skill id, 0 = none
+    b.extend_from_slice(&skill_level.to_le_bytes()); // 15 u16 141c820fa  skill level
     b.extend_from_slice(&0u32.to_le_bytes()); //      17   u32 141c82105  0 -> skip 140401b30
     b.extend_from_slice(&0u32.to_le_bytes()); //      21   u32 141c82114  discarded
     b.push(0); //                                     25   u8  141c8211c  discarded
@@ -673,6 +708,10 @@ impl<'a> Cursor<'a> {
     fn u32(&mut self) -> Option<u32> {
         self.take(4)
             .map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+    }
+
+    fn u64(&mut self) -> Option<u64> {
+        self.take(8).map(|s| u64::from_le_bytes(s.try_into().expect("eight bytes")))
     }
 }
 
@@ -1035,6 +1074,29 @@ mod tests {
         }
     }
 
+    /// The MP and the offered skill land where the handler reads them, and the plain form is
+    /// the old all-zero body; the report's skill command splits id low, level next.
+    #[test]
+    fn the_ack_carries_mp_and_a_skill_and_the_report_names_the_skill_used() {
+        let b = mob_ctrl_ack_with(9, 4, true, 100, 200, 1);
+        assert_eq!(b.len(), MOB_CTRL_ACK_LEN);
+        assert_eq!(&b[7..11], &100u32.to_le_bytes(), "MP at 7");
+        assert_eq!(&b[11..15], &200u32.to_le_bytes(), "skill at 11");
+        assert_eq!(&b[15..17], &1u16.to_le_bytes(), "level at 15");
+        assert_eq!(mob_ctrl_ack(9, 4, true), mob_ctrl_ack_with(9, 4, true, 0, 0, 0));
+        let mut body = vec![0u8; 8];
+        body[..4].copy_from_slice(&9u32.to_le_bytes());
+        body.extend_from_slice(&(200u64 | (1 << 16) | (5 << 32)).to_le_bytes());
+        // the rest of a minimal body: two bytes, two empty lists, gate 0, 22 bytes, a path head
+        body.extend_from_slice(&[0u8; 2]);
+        body.extend_from_slice(&[0u8, 0u8]);
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&[0u8; 22]);
+        body.extend_from_slice(&[0u8; MOB_PATH_HEAD_LEN]);
+        let req = parse_mob_move(&body).expect("parses");
+        assert_eq!((req.skill_id(), req.skill_level()), (200, 1));
+    }
+
     /// An empty path is structurally legal (`1404b26a9`'s `JLE` bails), and the builder must
     /// not produce a body that claims elements it does not carry.
     #[test]
@@ -1044,6 +1106,7 @@ mod tests {
             move_id: 3,
             packed: 0,
             move_action: 0xFF,
+            skill_command: 0,
             x: 10,
             y: 20,
             element_count: 0,

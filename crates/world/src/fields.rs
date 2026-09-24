@@ -211,6 +211,8 @@ struct FieldState {
     /// Set once the spawn points have been registered, so entering twice does not double
     /// the field.
     seeded: bool,
+    /// When each mob may next use its skill, wall-clock ms. `crate::mobskills`.
+    skill_ready_at: HashMap<u32, u64>,
     /// The next object id [`Fields::summon_mob`] will hand out on this map.
     ///
     /// `0` means "not started"; the first call begins at [`SUMMON_OBJECT_ID_BASE`]. A summoned
@@ -449,6 +451,25 @@ impl Fields {
                 field.pending.push((now_ms.saturating_add(delay), Refill::Point(mob.object_id)));
             }
         }
+    }
+
+    /// Whether mob `object_id` may use its skill at `now_ms` (wall clock).
+    pub fn skill_ready(&self, key: FieldKey, object_id: u32, now_ms: u64) -> bool {
+        let maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
+        maps.get(&key).and_then(|f| f.skill_ready_at.get(&object_id)).map_or(true, |&at| now_ms >= at)
+    }
+
+    /// **Spend the mob's skill**: `true` for the caller that took it, and it is not ready
+    /// again until `now_ms + interval_ms`. A test-and-set, so two reports of one cast - or two
+    /// controllers racing a handover - cannot summon twice.
+    pub fn take_skill(&self, key: FieldKey, object_id: u32, now_ms: u64, interval_ms: u64) -> bool {
+        let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
+        let field = maps.entry(key).or_default();
+        if field.skill_ready_at.get(&object_id).is_some_and(|&at| now_ms < at) {
+            return false;
+        }
+        field.skill_ready_at.insert(object_id, now_ms.saturating_add(interval_ms));
+        true
     }
 
     /// **Fill every spawn point on this field now** - the party quest's last stage. `true`
