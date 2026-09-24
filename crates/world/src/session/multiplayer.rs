@@ -1977,6 +1977,65 @@ mod tests {
         assert!(closed);
     }
 
+    /// **Opening a Companion's Magic Box.** The owner, 2026-09-23. Two boxes stacked in one Use
+    /// slot; the `0x0114` for that slot opens ONE: exactly one prize from the table in its
+    /// table quantity, the slot left holding one box (not emptied - boxes stack), the
+    /// player told what they got, and the client's request latch cleared. A packet naming the
+    /// wrong slot opens nothing and costs nothing.
+    #[test]
+    fn a_magic_box_opens_into_one_prize_from_the_table() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut cfg = (*config).clone();
+        cfg.item_names.insert(crate::magicbox::BOX, "Companion's Magic Box".into());
+        for n in 0..crate::magicbox::LINES {
+            let (id, _) = crate::magicbox::line(n);
+            cfg.item_names.insert(id, format!("item {id}"));
+        }
+        let config = Arc::new(cfg);
+        let chr = net::opcode::Character { name: "Opener".to_string(), map_id: 100_000_000, level: 30, ..Default::default() };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        store.create_migration(account, id, 0, 0).unwrap();
+        let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+        s.claim_for_character(id);
+        let _ = s.give_item(crate::magicbox::BOX, 2, "test").unwrap();
+        let bag = |inv: store::InventoryType| store.bag_items(id, inv).unwrap();
+        let box_slot = bag(store::InventoryType::Use).iter().find(|r| r.item.item_id == crate::magicbox::BOX).unwrap().slot;
+        let open = |slot: u16| {
+            let mut b = net::cashitem::CLIENT_USE_CASH_ITEM.to_le_bytes().to_vec();
+            b.extend_from_slice(&0u32.to_le_bytes());
+            b.extend_from_slice(&slot.to_le_bytes());
+            b.extend_from_slice(&crate::magicbox::BOX.to_le_bytes());
+            b
+        };
+        let held_everywhere = || -> Vec<(u32, u32)> {
+            let mut all = Vec::new();
+            for inv in [store::InventoryType::Equip, store::InventoryType::Use, store::InventoryType::Etc] {
+                for r in bag(inv) {
+                    all.push((r.item.item_id, u32::from(r.item.kind.quantity()).max(1)));
+                }
+            }
+            all
+        };
+
+        // The wrong slot: nothing opened, nothing spent.
+        let out = s.handle(&open(box_slot + 1));
+        assert!(!out.is_empty(), "answered, so the client's latch clears");
+        assert_eq!(held_everywhere(), vec![(crate::magicbox::BOX, 2)]);
+
+        // The right slot: one box becomes one prize.
+        let out = s.handle(&open(box_slot));
+        let now = held_everywhere();
+        let boxes: u32 = now.iter().filter(|(i, _)| *i == crate::magicbox::BOX).map(|(_, q)| q).sum();
+        assert_eq!(boxes, 1, "one of the two was opened, and the other is still there");
+        let prizes: Vec<(u32, u32)> = now.into_iter().filter(|(i, _)| *i != crate::magicbox::BOX).collect();
+        assert_eq!(prizes.len(), 1, "exactly one prize: {prizes:?}");
+        let (item, qty) = prizes[0];
+        let line = (0..crate::magicbox::LINES).map(crate::magicbox::line).find(|(i, _)| *i == item).expect("a prize from the table");
+        assert_eq!(qty, u32::from(line.1), "in the table's quantity");
+        assert!(out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE && String::from_utf8_lossy(&r.body).contains("from the Companion's Magic Box")));
+    }
+
     /// **A run of one does not go on.** The owner, 2026-09-23: *"A party of 1 should not be allowed
     /// to continue doing the party quest."*
     ///

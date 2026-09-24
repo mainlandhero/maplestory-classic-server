@@ -53,6 +53,11 @@ impl Session {
         if let Some(points) = crate::leafcoupons::leaf_points_for(req.item_id) {
             return self.use_leaf_coupon(req.item_id, req.slot, points);
         }
+        // **Companion's Magic Box**, the party quest's reward - the same Use-tab route.
+        // session/firsttime.rs, crate::magicbox.
+        if req.item_id == crate::magicbox::BOX {
+            return self.open_magic_box(req.slot);
+        }
 
         // **The slot must hold what the packet names.** Same rule as the summoning sack: the
         // client sends both, and trusting the id alone would let a crafted packet spend a

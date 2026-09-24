@@ -528,6 +528,61 @@ impl Session {
         }
     }
 
+    /// **Open a Companion's Magic Box.** One line of `crate::magicbox`'s table, equal odds.
+    ///
+    /// The prize goes in **first** and the box comes out only if it did: a full tab refuses
+    /// the prize, and then the player keeps the box and is told why - the same order the
+    /// Leaf coupons use, so a refusal never costs anything. The slot must hold the box the
+    /// packet names, or nothing happens.
+    pub(super) fn open_magic_box(&mut self, slot: u16) -> Vec<Reply> {
+        let op = net::cashitem::CLIENT_USE_CASH_ITEM;
+        let Some(chr) = self.claimed_character() else { return crate::mesodrop::unlock_unhandled_latching_request(op) };
+        let inv = store::InventoryType::Use;
+        let holding = self
+            .store
+            .bag_items(chr.id, inv)
+            .ok()
+            .into_iter()
+            .flatten()
+            .find(|r| r.slot == slot)
+            .map(|r| r.item.item_id);
+        if holding != Some(crate::magicbox::BOX) {
+            crate::server::log(&format!(
+                "   magic box: character {} asked to open Use slot {slot}, which holds {holding:?}; nothing opened",
+                chr.id
+            ));
+            return self.cash_item_notice_for(op, "That box is not where the client says it is. Nothing was used up.".to_string());
+        }
+        let roll = self.rng.next();
+        let (item, qty) = crate::magicbox::roll(roll);
+        let (line, mut out) = match self.give_item(item, qty, "Companion's Magic Box") {
+            Ok(given) => given,
+            Err(why) => {
+                crate::server::log(&format!("   magic box: character {} rolled {qty} x {item} and could not take it: {why}; the box is kept", chr.id));
+                return self.cash_item_notice_for(
+                    op,
+                    "There is no room for what is inside. Make room in your inventory and open it again - the box was kept.".to_string(),
+                );
+            }
+        };
+        let _ = self.store.remove_item(chr.id, inv, slot, Some(1));
+        let left = self
+            .store
+            .bag_items(chr.id, inv)
+            .ok()
+            .into_iter()
+            .flatten()
+            .find(|r| r.slot == slot)
+            .map(|r| r.item.kind.quantity())
+            .unwrap_or(0);
+        out.extend(self.stack_change_replies(inv, slot, left));
+        let name = self.item_name(item);
+        crate::server::log(&format!("   magic box: character {} opened a box from Use slot {slot} - {line}", chr.id));
+        let said = if qty > 1 { format!("You received {qty} {name} from the Companion's Magic Box.") } else { format!("You received {name} from the Companion's Magic Box.") };
+        out.extend(self.cash_item_notice_for(op, said));
+        out
+    }
+
     /// **The last stage fills all at once**, the first time anyone in the run walks in.
     /// `Fields::seed_all_now` has the reasoning; this only decides that it is this map, in a
     /// run, and stands the mobs up so the field-entry batch that follows carries them.
