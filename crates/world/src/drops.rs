@@ -329,6 +329,12 @@ pub struct LiveDrop {
     /// The character who dropped it. See [`OWNER_LOCK_MS`] and
     /// [`drop_is_locked_to_owner_forever`].
     pub owner_id: u32,
+    /// **Only the owner may ever see or take this**, however long it lies there - no party
+    /// share, no end to the owner lock, and no other member shown it on a field entry.
+    /// First Time Together's King Slime drops one pair of Squishy Shoes per member this way
+    /// (the owner, 2026-09-23: *"Players should only see Slime Shoes that they can pick up, and
+    /// each member of the party gets one."*). Set by [`DropTable::personal_drop_from_mob`].
+    pub personal: bool,
     /// The party this drop belongs to, or `0` for none. The owner, 2026-09-05: *"All members of a
     /// party should see all drops killed by members of the party ... Once someone leaves the
     /// party, they can no longer pick up the party's drops unless they were the killer."* So
@@ -435,6 +441,9 @@ impl LiveDrop {
     ) -> bool {
         if character_id == self.owner_id {
             return true;
+        }
+        if self.personal {
+            return false;
         }
         if drop_is_locked_to_owner_forever(self.item_id()) {
             return false;
@@ -1007,6 +1016,7 @@ impl DropTable {
     pub fn drop_from_mob(&mut self, d: DropFromMob) -> (u32, Reply) {
         let object_id = self.mint_object_id();
         let drop = LiveDrop {
+            personal: false,
             object_id,
             map_id: d.map_id,
             item: d.item,
@@ -1028,6 +1038,16 @@ impl DropTable {
         };
         let enter = drop.enter_reply(net::drops::ENTER_FLOATING);
         self.live.insert(object_id, drop);
+        (object_id, enter)
+    }
+
+    /// A mob drop that only `d.owner_id` may ever see or take - see [`LiveDrop::personal`].
+    /// The caller delivers the enter packet to the owner alone.
+    pub fn personal_drop_from_mob(&mut self, d: DropFromMob) -> (u32, Reply) {
+        let (object_id, enter) = self.drop_from_mob(DropFromMob { party_id: 0, ..d });
+        if let Some(drop) = self.live.get_mut(&object_id) {
+            drop.personal = true;
+        }
         (object_id, enter)
     }
 
@@ -1062,6 +1082,7 @@ impl DropTable {
         let object_id = self.mint_object_id();
         let (source, delay) = arc_from((d.from_x, d.from_y), (d.x, d.y));
         let drop = LiveDrop {
+            personal: false,
             object_id,
             map_id: d.map_id,
             item: d.item,
@@ -1155,6 +1176,7 @@ impl DropTable {
         let object_id = self.mint_object_id();
         let (source, delay) = arc_from((d.from_x, d.from_y), (d.x, d.y));
         let drop = LiveDrop {
+            personal: false,
             object_id,
             map_id: d.map_id,
             // `meso > 0` is what makes this a bag of coins; `item` is the documented
@@ -1376,7 +1398,12 @@ impl DropTable {
             self.live.remove(&id);
         }
         self.on_field(map_id)
-            .filter(|d| crate::mobshare::may_see_drop(d.owner_id, viewer, party))
+            .filter(|d| {
+                if d.personal {
+                    return d.owner_id == viewer;
+                }
+                crate::mobshare::may_see_drop(d.owner_id, viewer, party)
+            })
             .map(|d| d.enter_reply(net::drops::ENTER_INSTANT))
             .collect()
     }

@@ -120,6 +120,9 @@ impl Session {
                 crate::broadcast::Event::PartyQuestEnter { map, why } => {
                     out.extend(self.enter_party_quest(map, &why));
                 }
+                crate::broadcast::Event::PartyQuestReward { item, why } => {
+                    out.extend(self.receive_party_quest_reward(item, &why));
+                }
                 crate::broadcast::Event::FriendRequest => {
                     // Their list changed: redraw it, and say out loud anything that is now
                     // waiting on this player. session/friends.rs.
@@ -1824,6 +1827,146 @@ mod tests {
         assert!(closed);
     }
 
+    /// **The last stage.** The owner, 2026-09-23, and their follow-up *"The other mobs can respawn,
+    /// only the King Slime should not respawn"*. A pair, Leader and Mote, on stage 5, with
+    /// the map's real ten spawn points (3 Curse Eyes, 6 Jr. Neckis, the King Slime) and their
+    /// real `mobTime`s (180, and -1 for the King).
+    ///
+    /// Claims: the first entry stands all ten up in the entry batch, not after 180 s; the
+    /// second entry adds none; the King Slime's death leaves exactly one pair of shoes per
+    /// member, each personal - owned by, shown to and takeable by that member only, even long
+    /// after the owner lock - and twenty Slimes where it died; the King never comes back and a
+    /// Jr. Necki does, after 180 s; Cloto refuses nine Passes and takes ten, and both members
+    /// get a Companion's Magic Box.
+    #[test]
+    fn the_last_stage_is_ten_mobs_at_once_shoes_each_twenty_slimes_and_ten_passes() {
+        use crate::firsttime;
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let stage = firsttime::STAGE_5;
+        let mut cfg = (*config).clone();
+        cfg.fields.insert(stage);
+        cfg.npcs.insert(
+            stage,
+            vec![net::opcode::FieldNpc { object_id: 924, template_id: firsttime::CLOTO, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 }],
+        );
+        // gm-handbook/mobs.txt, map 80000400, in its own order.
+        let points: Vec<(u32, i16, i16, i32)> = vec![
+            (800_002, 297, -2175, 180), (800_002, 132, -2175, 180), (800_002, 433, -2175, 180),
+            (800_001, -406, -1455, 180), (800_001, -187, -1455, 180), (800_001, 80, -1455, 180),
+            (800_001, 435, -1455, 180), (800_001, 653, -1455, 180),
+            (firsttime::KING_SLIME, 162, -435, -1),
+            (800_001, 247, -1455, 180),
+        ];
+        let mut mobs = Vec::new();
+        for (i, &(template, x, y, mob_time)) in points.iter().enumerate() {
+            let id = 1_000 + i as u32;
+            mobs.push(net::mob::FieldMob::new(id, template, x, y, 1, 100));
+            cfg.mob_respawn_s.insert((stage, id), mob_time);
+        }
+        cfg.mobs.insert(stage, mobs);
+        for (item, name) in [(firsttime::PASS, "Pass"), (firsttime::COMPANIONS_MAGIC_BOX, "Companion's Magic Box")] {
+            cfg.item_names.insert(item, name.into());
+        }
+        let config = Arc::new(cfg);
+        let mut ids = Vec::new();
+        let mut sessions = Vec::new();
+        for name in ["Leader", "Mote"] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: stage, level: 21, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.set_character_map(id, stage).unwrap();
+            store.create_migration(account, id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(id);
+            ids.push(id);
+            sessions.push(s);
+        }
+        let created = sessions[0].run_party_request(ids[0], crate::party::Request::Create { name: "P".into() });
+        let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        let _ = sessions[0].run_party_request(ids[0], crate::party::Request::Invite { target: ids[1] });
+        let _ = sessions[1].tick(500);
+        let _ = sessions[1].run_party_request(ids[1], crate::party::Request::Accept { party });
+        let run = fields.runs().open(5_701, ids.clone(), store::Store::unix_now());
+        let key = crate::fields::FieldKey::instanced(stage, run.id);
+        let entered = |out: &[Reply]| out.iter().filter(|r| r.opcode == net::mob::MOB_ENTER_FIELD).count();
+
+        // 1. All ten, in the first entry's batch.
+        let out = sessions[0].on_field_entered();
+        assert_eq!(entered(&out), 10, "all ten at once, not after 180 s");
+        assert_eq!(fields.mob_count(key), 10);
+        // 2. The second member walking in adds none.
+        let out = sessions[1].on_field_entered();
+        assert_eq!(entered(&out), 10, "Mote is shown the same ten");
+        assert_eq!(fields.mob_count(key), 10, "and no second fill");
+        let _ = sessions[0].tick(1_000);
+        let _ = sessions[1].tick(1_000);
+
+        // 3. The King Slime dies.
+        let king = fields.mobs_on(key).into_iter().find(|m| m.spawn.template_id == firsttime::KING_SLIME).expect("the King").spawn.object_id;
+        let out = sessions[0].deal_to_mob(key, king, 1_000_000, ids[0]);
+        let slimes = out.iter().filter(|r| r.opcode == net::mob::MOB_ENTER_FIELD).count();
+        assert_eq!(slimes, firsttime::SLIMES_FROM_THE_KING, "twenty Slimes");
+        let slime_count = fields.mobs_on(key).iter().filter(|m| m.spawn.template_id == firsttime::SLIME).count();
+        assert_eq!(slime_count, 20);
+        let shoes: Vec<crate::drops::LiveDrop> =
+            fields.with_drops(key, |d| d.on_field(key).filter(|x| x.item_id() == firsttime::SLIME_SHOES).copied().collect());
+        let mut owners: Vec<u32> = shoes.iter().map(|x| x.owner_id).collect();
+        owners.sort_unstable();
+        assert_eq!(owners, ids, "one pair each");
+        let long_after = 10 * 60 * 1_000;
+        for pair in &shoes {
+            assert!(pair.personal);
+            let other = if pair.owner_id == ids[0] { ids[1] } else { ids[0] };
+            assert!(pair.may_be_taken_by(pair.owner_id, long_after, 15_000, &ids));
+            assert!(!pair.may_be_taken_by(other, long_after, 15_000, &ids), "not the other member's, ever");
+        }
+        // The leader's own pair is in the leader's replies; Mote's reaches only Mote.
+        assert_eq!(out.iter().filter(|r| r.opcode == net::drops::DROP_ENTER_FIELD).count(), 1, "the leader is shown one pair");
+        let hers = sessions[1].tick(2_000);
+        let shown_to_her = hers.iter().filter(|r| r.opcode == net::drops::DROP_ENTER_FIELD).count();
+        assert_eq!(shown_to_her, 1, "Mote is shown theirs and not the leader's");
+        // And re-entering shows each member their own pair only.
+        let reentry = fields.with_drops(key, |d| d.field_entry(key, 3_000, ids[1], &crate::mobshare::Party::solo(ids[1])));
+        let reentry_both = fields.with_drops(key, |d| {
+            d.field_entry(key, 3_000, ids[1], &crate::mobshare::Party::of(ids[1], ids.clone()))
+        });
+        assert_eq!(reentry.len(), 1);
+        assert_eq!(reentry_both.len(), 1, "even as a party member, only their own pair");
+
+        // 4. The King never returns; a Jr. Necki does, after 180 s.
+        let necki = fields.mobs_on(key).into_iter().find(|m| m.spawn.template_id == 800_001).unwrap().spawn.object_id;
+        let _ = sessions[0].deal_to_mob(key, necki, 1_000_000, ids[0]);
+        let now = sessions[0].clock_ms;
+        let early = fields.due_respawns(key, &config, now + 179_000);
+        assert!(early.is_empty(), "not before its 180 s");
+        let back = fields.due_respawns(key, &config, now + 181_000 + 3_600_000);
+        assert_eq!(back.iter().map(|m| m.spawn.object_id).collect::<Vec<_>>(), vec![necki], "the Necki returns, the King does not");
+        assert!(!fields.mobs_on(key).iter().any(|m| m.spawn.template_id == firsttime::KING_SLIME));
+
+        // 5. Cloto: nine is short and takes nothing; ten clears, and both are rewarded.
+        let mut click = net::script::CLIENT_NPC_CLICK.to_le_bytes().to_vec();
+        click.extend_from_slice(&924u32.to_le_bytes());
+        click.extend_from_slice(&0i16.to_le_bytes());
+        click.extend_from_slice(&0i16.to_le_bytes());
+        click.extend_from_slice(&u32::MAX.to_le_bytes());
+        let held = |id: u32, item: u32, inv: store::InventoryType| -> u32 {
+            store.bag_items(id, inv).unwrap().iter().filter(|r| r.item.item_id == item).map(|r| u32::from(r.item.kind.quantity())).sum()
+        };
+        let _ = sessions[0].give_item(firsttime::PASS, 9, "test").unwrap();
+        let out = sessions[0].handle(&click);
+        assert_eq!(out.iter().filter(|r| r.opcode == net::fieldeffect::FIELD_EFFECT).count(), 0);
+        assert_eq!(held(ids[0], firsttime::PASS, store::InventoryType::Etc), 9, "short: nothing taken");
+        let _ = sessions[0].give_item(firsttime::PASS, 1, "test").unwrap();
+        let out = sessions[0].handle(&click);
+        assert_eq!(out.iter().filter(|r| r.opcode == net::fieldeffect::FIELD_EFFECT).count(), 3, "cleared");
+        assert_eq!(held(ids[0], firsttime::PASS, store::InventoryType::Etc), 0, "all ten taken");
+        assert_eq!(held(ids[0], firsttime::COMPANIONS_MAGIC_BOX, store::InventoryType::Use), 1, "the leader's box");
+        let _ = sessions[1].tick(5_000);
+        assert_eq!(held(ids[1], firsttime::COMPANIONS_MAGIC_BOX, store::InventoryType::Use), 1, "Mote's box, through their own session");
+        let closed = fields.runs().close(run.id);
+        assert!(closed);
+    }
+
     /// **Cloto will not clear a stage until the whole run is standing on it.** The owner,
     /// 2026-09-23: *"Do not clear a stage unless everyone is on same map that the stage is
     /// about to be cleared of."*
@@ -1835,9 +1978,9 @@ mod tests {
     #[test]
     fn cloto_waits_for_the_whole_run_to_be_on_her_stage() {
         use crate::firsttime;
-        // Stage 5 (the last): stages 1-4 are the real Cloto now, and 5 still clears on a
-        // click (TEMPORARY).
-        let stage = firsttime::STAGE_1 + 400;
+        // The last stage: the leader clears it with ten Passes, which is the simplest real
+        // clear there is, so the rule under test is the only thing that can refuse it.
+        let stage = firsttime::STAGE_5;
         let (store, config, fields) = channel();
         let account = store.create_account("maplecw", "correct horse battery").unwrap();
         let mut cfg = (*config).clone();
@@ -1847,6 +1990,7 @@ mod tests {
             stage,
             vec![net::opcode::FieldNpc { object_id: 920, template_id: firsttime::CLOTO, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 }],
         );
+        cfg.item_names.insert(firsttime::PASS, "Pass".into());
         let config = Arc::new(cfg);
         let mut ids = Vec::new();
         let mut sessions = Vec::new();
@@ -1860,7 +2004,15 @@ mod tests {
             ids.push(id);
             sessions.push(s);
         }
-        // Alfa and Alto in one run; Arco in it too, for the disconnect half.
+        // Alfa leads all three; Arco is in it for the disconnect half.
+        let created = sessions[0].run_party_request(ids[0], crate::party::Request::Create { name: "P".into() });
+        let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        for i in 1..3 {
+            let _ = sessions[0].run_party_request(ids[0], crate::party::Request::Invite { target: ids[i] });
+            let _ = sessions[i].tick(500);
+            let _ = sessions[i].run_party_request(ids[i], crate::party::Request::Accept { party });
+        }
+        let _ = sessions[0].give_item(firsttime::PASS, 10, "test").unwrap();
         let run = fields.runs().open(5_201, ids.clone(), store::Store::unix_now());
         for s in sessions.iter_mut() {
             let _ = s.on_field_entered();
@@ -1886,6 +2038,8 @@ mod tests {
         assert_eq!(effects(&sessions[2].tick(2_000)), 0, "and nothing reached the bus");
         let cleared = fields.runs().is_cleared(ids[0], stage);
         assert!(!cleared, "the stage is still shut");
+        let passes: u32 = store.bag_items(ids[0], store::InventoryType::Etc).unwrap().iter().filter(|r| r.item.item_id == firsttime::PASS).map(|r| u32::from(r.item.kind.quantity())).sum();
+        assert_eq!(passes, 10, "a refusal takes no Pass");
 
         // Alto DISCONNECTS on stage 2. They leave the run, so they no longer hold it up.
         let alto = sessions.remove(1);
@@ -1893,7 +2047,7 @@ mod tests {
         let still = fields.runs().instance_of(ids[1]);
         assert_eq!(still, None, "a dropped connection leaves the run");
 
-        // The control: with everyone left in the run on stage 1, the same click clears.
+        // The control: with everyone left in the run on the stage, the same click clears.
         let out = sessions[0].handle(&click);
         assert_eq!(effects(&out), 3, "banner, fanfare, gate: {}", said(&out));
         let cleared = fields.runs().is_cleared(ids[0], stage);
@@ -1962,9 +2116,9 @@ mod tests {
     #[test]
     fn a_stage_clear_opens_one_runs_portal_and_no_other_runs() {
         use crate::firsttime;
-        // Stage 5 (the last): stages 1-4 are the real Cloto now, and 5 still clears on a
-        // click (TEMPORARY).
-        let stage = firsttime::STAGE_1 + 400;
+        // The last stage: the leader clears it with ten Passes, which is the simplest real
+        // clear there is, so the rule under test is the only thing that can refuse it.
+        let stage = firsttime::STAGE_5;
         let (store, config, fields) = channel();
         let account = store.create_account("maplecw", "correct horse battery").unwrap();
         let mut cfg = (*config).clone();
@@ -1974,6 +2128,7 @@ mod tests {
             stage,
             vec![net::opcode::FieldNpc { object_id: 920, template_id: firsttime::CLOTO, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 }],
         );
+        cfg.item_names.insert(firsttime::PASS, "Pass".into());
         let config = Arc::new(cfg);
 
         let mut ids = Vec::new();
@@ -1988,6 +2143,12 @@ mod tests {
             ids.push(id);
             sessions.push(s);
         }
+        let created = sessions[0].run_party_request(ids[0], crate::party::Request::Create { name: "A".into() });
+        let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        let _ = sessions[0].run_party_request(ids[0], crate::party::Request::Invite { target: ids[1] });
+        let _ = sessions[1].tick(500);
+        let _ = sessions[1].run_party_request(ids[1], crate::party::Request::Accept { party });
+        let _ = sessions[0].give_item(firsttime::PASS, 10, "test").unwrap();
         let run_a = fields.runs().open(5_101, vec![ids[0], ids[1]], store::Store::unix_now());
         let run_b = fields.runs().open(5_102, vec![ids[2]], store::Store::unix_now());
         for s in sessions.iter_mut() {

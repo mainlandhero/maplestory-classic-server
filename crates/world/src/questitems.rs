@@ -766,7 +766,12 @@ mod tests {
         // Counted rather than adjusted: if a re-scrape drops the hand-written rows this falls
         // to 993 and fails, which is the point - the file's own header warns that hand edits
         // do not survive a scrape, and the scrolls would otherwise stop dropping silently.
-        assert_eq!(rows, 995, "every parseable row in data/drops.txt");
+        //
+        // 997 since 2026-09-23: First Time Together's last stage added three 100% Pass rows
+        // (800001, 800002, 800003) and removed the King Slime's scraped 1% Squishy Shoes row -
+        // the shoes are per member, in code. `droptables`'
+        // `the_last_stage_always_drops_passes_and_never_shared_shoes` pins those rows.
+        assert_eq!(rows, 997, "every parseable row in data/drops.txt");
         assert_eq!(gated_rows, 9, "rows this filter can now remove (15 quest-item rows, 6 marble)");
         assert!(
             gated.contains(&4_031_047),

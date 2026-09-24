@@ -1046,9 +1046,11 @@
 700005 | 4130002 | 6 | 1 | 1 | 1 | Armor Crafting Catalyst
 800000 | 4001001 | 100 | 1 | 1 | 1 | Coupon
 800001 | 4001001 | 6 | 1 | 1 | 1 | Coupon
+800001 | 4001002 | 100 | 1 | 1 | 1 | Pass
 800002 | 4001001 | 6 | 1 | 1 | 1 | Coupon
-800003 | 1072128 | 1 | 1 | 1 | 2 | Squishy Shoes
+800002 | 4001002 | 100 | 1 | 1 | 1 | Pass
 800003 | 4001001 | 6 | 1 | 1 | 1 | Coupon
+800003 | 4001002 | 100 | 1 | 1 | 1 | Pass
 # ---- THE SIX DARK MARBLE ROWS BELOW NO LONGER DECIDE ANYTHING ------------------
 # They are left in place because the next scrape would put them back, and because
 # they are honest about what the source said. But the marble is decided in code -

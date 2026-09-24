@@ -271,9 +271,8 @@ impl Session {
         self.leave_party_quest("Nella showed them out")
     }
 
-    /// **Cloto.** Stages 1 to 4 are real (`cloto_stage_one`, `cloto_zone_stage`); 5 still clears
-    /// on a click - TEMPORARY, for the instancing test (the owner, 2026-09-23: clicking their should
-    /// *"send the "stage clear" opcode and enable the portal to go to the next stage"*).
+    /// **Cloto.** Every stage has its own rule: `cloto_stage_one`, `cloto_zone_stage` for
+    /// 2-4, `cloto_stage_five`. The temporary click-to-clear is gone.
     ///
     /// `None` outside a run, so a GM who walked in with `!map` falls through to their ordinary
     /// dialogue.
@@ -299,7 +298,11 @@ impl Session {
         if let Some(stage) = firsttime::zone_stage(chr.map_id) {
             return Some(self.cloto_zone_stage(&chr, &inst, stage));
         }
-        Some(self.cloto_clear(&chr, &inst, "TEMPORARY: Cloto clears stage 5 on a click"))
+        if chr.map_id == firsttime::STAGE_5 {
+            return Some(self.cloto_stage_five(&chr, &inst));
+        }
+        // No stage map is left without its own rule; anything else is their ordinary dialogue.
+        None
     }
 
     /// One line from Cloto. `next` puts a Next button on it.
@@ -414,6 +417,162 @@ impl Session {
             self.bus().publish(self.subscriber, key, reply.clone(), None);
             out.push(reply);
         }
+        out
+    }
+
+    /// **The last stage.** The owner, 2026-09-23: *"The Party Leader should talk with Cloto once
+    /// all 10 passes has been collected in exchange to clear the stage. Upon clearing the
+    /// stage, each member of the party will immediately receive Companion's Magic Box as a
+    /// reward."* A member gets the intro; the leader with ten Passes clears it (the whole run
+    /// must be here, checked before a Pass is taken) and every member of the run is rewarded.
+    fn cloto_stage_five(&mut self, chr: &net::opcode::Character, inst: &firsttime::Instance) -> Vec<Reply> {
+        let leads = self.fields.parties().party_of(chr.id).map(|p| p.leader) == Some(chr.id);
+        if !leads {
+            return vec![self.cloto_say(&firsttime::cloto_stage5_intro(), false, format!("last stage intro to {}", chr.name))];
+        }
+        if let Some(wait) = self.cloto_waiting_for(chr, inst) {
+            return vec![wait];
+        }
+        let held = self.held(chr.id, firsttime::PASS);
+        if held < firsttime::STAGE_5_PASSES {
+            return vec![self.cloto_say(&firsttime::cloto_stage5_short(held), false, format!("{} holds {held} of 10 Passes", chr.name))];
+        }
+        let mut out = self.take_items(chr.id, store::InventoryType::Etc, firsttime::PASS, firsttime::STAGE_5_PASSES);
+        out.extend(self.cloto_clear(chr, inst, "10 Passes handed in on the last stage"));
+        let cleared = self.fields.runs().is_cleared(chr.id, firsttime::STAGE_5);
+        if !cleared {
+            return out;
+        }
+        // **The reward, to every member of the run** - the leader here, the rest through
+        // their own sessions. All of them are on this stage: `cloto_clear` refused otherwise.
+        let why = format!("First Time Together cleared, instance {}", inst.id);
+        for &member in &inst.members {
+            if member == chr.id {
+                out.extend(self.receive_party_quest_reward(firsttime::COMPANIONS_MAGIC_BOX, &why));
+                continue;
+            }
+            let sent = self.bus().publish_event_to_character(
+                member,
+                crate::broadcast::Event::PartyQuestReward { item: firsttime::COMPANIONS_MAGIC_BOX, why: why.clone() },
+            );
+            if !sent {
+                crate::server::log(&format!("   first time together: member {member} could not be reached for the reward"));
+            }
+        }
+        out
+    }
+
+    /// A reward arriving in this character's bag.
+    pub(super) fn receive_party_quest_reward(&mut self, item: u32, why: &str) -> Vec<Reply> {
+        match self.give_item(item, 1, why) {
+            Ok((line, replies)) => {
+                crate::server::log(&format!("   first time together: reward - {line} ({why})"));
+                replies
+            }
+            Err(e) => {
+                crate::server::log(&format!("   first time together: reward {item} NOT given - {e} ({why})"));
+                self.notice(format!("Your reward could not be given: {e}"))
+            }
+        }
+    }
+
+    /// **The last stage fills all at once**, the first time anyone in the run walks in.
+    /// `Fields::seed_all_now` has the reasoning; this only decides that it is this map, in a
+    /// run, and stands the mobs up so the field-entry batch that follows carries them.
+    pub(super) fn fill_last_stage(&mut self, chr: &net::opcode::Character) {
+        if chr.map_id != firsttime::STAGE_5 {
+            return;
+        }
+        let key = self.field_of(chr);
+        if !key.is_instanced() {
+            return;
+        }
+        if self.fields.seed_all_now(key, &self.config, self.clock_ms) {
+            let up = self.fields.due_respawns(key, &self.config, self.clock_ms);
+            crate::server::log(&format!(
+                "   first time together: the last stage for field {key} filled at once - {} mob(s)",
+                up.len()
+            ));
+        }
+    }
+
+    /// **A kill on the last stage.** The King Slime leaves a pair of Squishy Shoes for every
+    /// member of the run on this field - each one only theirs to see and take - and breaks
+    /// into twenty Slimes where it died. The owner, 2026-09-23. The Passes come from the ordinary
+    /// drop table, which carries them at 100% (`data/drops.txt`).
+    pub(super) fn party_quest_kill(&mut self, key: crate::fields::FieldKey, template: u32, died_at: Option<(i16, i16)>) -> Vec<Reply> {
+        if template != firsttime::KING_SLIME || key.map != firsttime::STAGE_5 || !key.is_instanced() {
+            return Vec::new();
+        }
+        let Some(me) = self.claimed_character().map(|c| c.id) else { return Vec::new() };
+        let run = self.fields.runs().instance_of(me);
+        let Some(run) = run else { return Vec::new() };
+        let Some((x, y)) = died_at.or(self.last_position) else { return Vec::new() };
+        let mut out = Vec::new();
+
+        // The shoes. One each, owned by and shown to that member alone.
+        let here = self.bus().characters_on(key, &run.members);
+        let n = here.len() as i16;
+        for (i, &member) in here.iter().enumerate() {
+            let offset = (i as i16 - (n - 1) / 2) * crate::drops::DROP_STAGGER_PX;
+            let landed = self.config.footholds.landing(key.map, x.saturating_add(offset), y);
+            let (dx, dy) = landed.map(|l| (l.x, l.y)).unwrap_or((x, y));
+            let now = self.clock_ms;
+            let (_, enter) = self.fields.with_drops(key, |d| {
+                d.personal_drop_from_mob(crate::drops::DropFromMob {
+                    map_id: key,
+                    owner_id: member,
+                    item: store::Item::equip(firsttime::SLIME_SHOES),
+                    inv_type: store::InventoryType::Equip,
+                    meso: 0,
+                    x: dx,
+                    y: dy,
+                    source_x: x,
+                    source_y: y,
+                    now_ms: now,
+                    party_id: 0,
+                    from_mob: true,
+                })
+            });
+            if member == me {
+                out.push(enter);
+            } else {
+                self.bus().publish_to_character(member, key, enter);
+            }
+        }
+
+        // The Slimes, where it died. Summoned like a sack's mobs: never a spawn point, so a
+        // kill books nothing and they do not come back.
+        let landed = self.config.footholds.landing(key.map, x, y);
+        let (sx, sy, fh) = match landed {
+            Some(l) => (l.x, l.y, i16::try_from(l.foothold).unwrap_or(0)),
+            None => (x, y, 0),
+        };
+        let hp = self.config.mob_templates.get(&firsttime::SLIME).map(|t| u64::from(t.max_hp)).unwrap_or(1);
+        for _ in 0..firsttime::SLIMES_FROM_THE_KING {
+            let live = self.fields.summon_mob(key, firsttime::SLIME, (sx, sy), fh, hp);
+            let mut mob = live.as_seen();
+            mob.forced_stat = self.forced_stat_for(mob.template_id);
+            let spawn = Reply {
+                opcode: net::mob::MOB_ENTER_FIELD,
+                body: net::mob::mob_enter_field(&mob),
+                what: format!("MobEnterField: a Slime out of the King Slime at ({sx}, {sy}), object id {}", mob.object_id),
+            };
+            self.bus().publish(self.subscriber, key, spawn.clone(), None);
+            out.push(spawn);
+            if self.fields.controllers().claim_one(key, mob.object_id, self.subscriber.get()) {
+                out.push(Reply {
+                    opcode: net::mobmove::MOB_CHANGE_CONTROLLER,
+                    body: net::mobmove::mob_change_controller(&mob, net::mobmove::CONTROL_NORMAL),
+                    what: format!("MobChangeController: King Slime's Slime {} to this client", mob.object_id),
+                });
+            }
+        }
+        crate::server::log(&format!(
+            "   first time together: the King Slime died at ({x}, {y}) on field {key}; {} pair(s) of shoes, {} Slimes",
+            here.len(),
+            firsttime::SLIMES_FROM_THE_KING
+        ));
         out
     }
 

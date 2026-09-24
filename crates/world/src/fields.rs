@@ -451,6 +451,36 @@ impl Fields {
         }
     }
 
+    /// **Fill every spawn point on this field now** - the party quest's last stage. `true`
+    /// the first time, and then the caller must run [`Fields::due_respawns`] to stand them
+    /// up; `false` when the field was already seeded, which is the next member walking in.
+    ///
+    /// The owner, 2026-09-23: *"upon entry in the map for the party instance, it should
+    /// automatically spawn the 10 mobs that should be present in the map (without waiting
+    /// the full respawn timer of 3 minutes)."* [`Fields::seed`] cannot: it fills 75% of the
+    /// points, each only after its own `mobTime` (180 s on this map), and a `mobTime -1` point -
+    /// the King Slime - never at all. This books **every** point as due now instead, and
+    /// changes nothing after that: a kill still books its point back by the WZ's own clock,
+    /// so the Curse Eyes and Jr. Neckis return after 180 s and the King Slime (`-1`) does not -
+    /// which is the owner's second message, *"The other mobs can respawn, only the King Slime
+    /// should not respawn"*.
+    pub fn seed_all_now(&self, key: FieldKey, config: &Config, now_ms: u64) -> bool {
+        let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
+        let field = maps.entry(key).or_default();
+        if field.seeded {
+            return false;
+        }
+        field.seeded = true;
+        field.rng = (key.map as u64) << 32 ^ now_ms.wrapping_mul(0x9E37_79B9);
+        if !config.send_mobs {
+            return true;
+        }
+        for mob in config.mobs.get(&key.map).map(Vec::as_slice).unwrap_or(&[]) {
+            field.pending.push((now_ms, Refill::Point(mob.object_id)));
+        }
+        true
+    }
+
     /// **Put a mob on a map that has no spawn point for it.** A summoning sack.
     ///
     /// The owner, 2026-09-09: *"I just also tried summoning the GM Black Sack Jr. Balrog lvl 80"* -

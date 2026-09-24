@@ -207,6 +207,11 @@ pub enum Event {
     /// else assembled on their behalf.
     PartyQuestEnter { map: u32, why: String },
 
+    /// **A party-quest reward for this character** - `item`, because the stage their run
+    /// was on has just been cleared. Crosses as a fact for the same reason the warp does:
+    /// only the member's own session holds their bag and their client.
+    PartyQuestReward { item: u32, why: String },
+
     /// A **party buff** `caster` just put on themselves reaches this character too:
     /// `skill_id` at `level`, cast while both stood on one field.
     ///
@@ -1204,6 +1209,7 @@ mod tests {
                 Event::PartyMesos { picker, .. } => panic!("not an EXP share: mesos from {picker}"),
                 Event::GiftDrop => panic!("not an EXP share: a gift drop"),
                 Event::PartyQuestEnter { map, .. } => panic!("not an EXP share: a warp to {map}"),
+                Event::PartyQuestReward { item, .. } => panic!("not an EXP share: a reward of {item}"),
             Event::FriendRequest => panic!("not an EXP share: a friend request"),
             })
             .collect()

@@ -241,6 +241,42 @@ pub const STAGE_4_BARRELS: [Area; 6] = [
 /// only to write the dealt answer into the log in the words the screen uses.
 pub const STAGE_4_PAINTED: [u8; 6] = [4, 5, 6, 2, 3, 1];
 
+/// `<Last Stage>` - three Curse Eyes, six Jr. Neckis and the King Slime [L].
+pub const STAGE_5: u32 = 80_000_400;
+/// The King Slime - the one mob on the last stage that does not come back (`mobTime -1`).
+pub const KING_SLIME: u32 = 800_003;
+/// An ordinary Slime - the same template that spawns across Maple Island.
+pub const SLIME: u32 = 7;
+/// How many Slimes the King Slime breaks into. The owner, 2026-09-23: *"Once the King Slime is
+/// killed, its death should automatically spawn 20 slimes at the location where it died
+/// with normal slime drops."*
+pub const SLIMES_FROM_THE_KING: usize = 20;
+/// Squishy Shoes - what this client calls the Slime Shoes. One per member, each only for them.
+pub const SLIME_SHOES: u32 = 1_072_128;
+/// **The last stage's price**: every one of its ten mobs drops a Pass (`data/drops.txt`),
+/// and the leader hands in all ten.
+pub const STAGE_5_PASSES: u32 = 10;
+/// What every member receives when the last stage clears.
+pub const COMPANIONS_MAGIC_BOX: u32 = 2_430_000;
+
+/// Cloto on the last stage. **Not the client's text and not the owner's** - they have not sent it;
+/// written in the shape of the others. Replace it when the real line arrives.
+pub fn cloto_stage5_intro() -> String {
+    format!(
+        "Welcome to the last stage. The monsters here - the #bCurse Eyes#k, the #bJr. Neckis#k \
+         and the #bKing Slime#k - each carry a #b#t{PASS}##k. Defeat them, gather \
+         #b{STAGE_5_PASSES} #t{PASS}#s#k, and have your party leader bring them to me."
+    )
+}
+
+/// What they say to a leader who is short.
+pub fn cloto_stage5_short(held: u32) -> String {
+    format!(
+        "I need #b{STAGE_5_PASSES} #t{PASS}#s#k to let your party finish, and you have {held}. \
+         Every monster on this stage carries one."
+    )
+}
+
 /// **A stage solved by standing in the right places** - the ropes of stage 2 and the
 /// platforms of stage 3 are the same rule over different rectangles, so they are one code
 /// path. The owner, 2026-09-23: 2 correct for a pair, 3 for a party of three or four, dealt at
@@ -1203,7 +1239,7 @@ mod tests {
         assert!(!CLOTO_STAGE1_INTRO.contains("except"), "the leader exception is removed");
         // A Python patch once swallowed a line-continuation backslash and left runs of
         // spaces inside two of these; the client would draw every one of them.
-        let mut said = vec![CLOTO_STAGE1_INTRO.to_string(), CLOTO_RIGHT.into(), CLOTO_DONE.into(), CLOTO_BAG_FULL.into(), cloto_short(3, 1), cloto_menu(3), cloto_stage2_intro(2), cloto_stage2_intro(3), cloto_zone_count(1, 2, &zone_stage(STAGE_2).unwrap()), cloto_zone_count(4, 3, &zone_stage(STAGE_3).unwrap()), cloto_stage3_intro(2), cloto_stage3_intro(3), cloto_stage3_intro(1), cloto_stage4_intro(1), cloto_stage4_intro(2), cloto_stage4_intro(3)];
+        let mut said = vec![CLOTO_STAGE1_INTRO.to_string(), CLOTO_RIGHT.into(), CLOTO_DONE.into(), CLOTO_BAG_FULL.into(), cloto_short(3, 1), cloto_menu(3), cloto_stage2_intro(2), cloto_stage2_intro(3), cloto_zone_count(1, 2, &zone_stage(STAGE_2).unwrap()), cloto_zone_count(4, 3, &zone_stage(STAGE_3).unwrap()), cloto_stage3_intro(2), cloto_stage3_intro(3), cloto_stage3_intro(1), cloto_stage4_intro(1), cloto_stage4_intro(2), cloto_stage4_intro(3), cloto_stage5_intro(), cloto_stage5_short(4)];
         said.extend((0..QUESTIONS.len()).flat_map(|i| [cloto_question(i), cloto_wrong(i)]));
         for line in said {
             assert!(!line.contains("  "), "a run of spaces in: {line:?}");

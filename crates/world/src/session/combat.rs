@@ -843,6 +843,8 @@ impl Session {
             let (worth, why) = self.exp_for_kill(template);
             out.extend(self.award_kill_experience(worth, &why, chr_id, &shares));
             out.extend(self.credit_kill_to_quests(template, chr_id));
+            // The King Slime's shoes and its twenty Slimes. session/firsttime.rs.
+            out.extend(self.party_quest_kill(map, template, died_at));
             // The registry's entry for a mob that no longer exists. `reconcile` on the
             // next field entry would catch it anyway - this is so the count in a log line
             // means what it says between now and then.
