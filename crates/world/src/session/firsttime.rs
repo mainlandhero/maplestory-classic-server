@@ -24,28 +24,43 @@ impl Session {
             quest_id: None,
             path: firsttime::ASK_PATH.to_string(),
             sent: 0,
-            awaiting_yes_no: true,
+            awaiting_yes_no: false,
             sent_with_next: false,
         });
         Some(vec![Reply {
             opcode: net::script::SCRIPT_MESSAGE,
-            body: net::script::npc_ask(template, firsttime::GREETING, false),
-            what: format!(
-                "ScriptMessage YES/NO from NPC {template} (Lakelis): take on First Time Together? \
-                 The party gate runs on Yes"
-            ),
+            body: net::script::npc_menu(template, &firsttime::lakelis_menu()),
+            what: format!("ScriptMessage MENU from NPC {template} (Lakelis): enter, or count today's entries"),
         }])
     }
 
-    /// Lakelis' yes/no came back. Anything but Yes leaves without a word, which is what them
-    /// own `no` node in `Quest.wz` does.
-    pub(super) fn first_time_together_answer(&mut self, action: i8) -> Vec<Reply> {
-        self.conversation = None;
-        let Some(chr) = self.claimed_character() else { return Vec::new() };
-        if action != net::script::SCRIPT_ACTION_YES {
-            crate::server::log(&format!("   first time together: {} declined at Lakelis", chr.name));
-            return Vec::new();
+    /// Lakelis' menu came back: enter, or hear how many entries are left today.
+    pub(super) fn lakelis_menu_answer(&mut self, body: &[u8]) -> Option<Vec<Reply>> {
+        let convo = self.conversation.clone()?;
+        if convo.path != firsttime::ASK_PATH {
+            return None;
         }
+        let reply = net::script::parse_menu_reply(body)?;
+        self.conversation = None;
+        match reply.selection {
+            Some(firsttime::LAKELIS_ENTER) => Some(self.first_time_together_enter()),
+            Some(firsttime::LAKELIS_COUNT) => {
+                let chr = self.claimed_character()?;
+                let used = self.store.daily_uses_now(chr.id, firsttime::ENTRY_COUNT_KEY).unwrap_or(0);
+                let left = firsttime::DAILY_ENTRIES.saturating_sub(used);
+                Some(vec![Reply {
+                    opcode: net::script::SCRIPT_MESSAGE,
+                    body: net::script::npc_say(firsttime::LAKELIS, &firsttime::lakelis_entries_line(left), false, false),
+                    what: format!("ScriptMessage Say from Lakelis: {} has {left} of {} entries left today", chr.name, firsttime::DAILY_ENTRIES),
+                }])
+            }
+            _ => Some(Vec::new()),
+        }
+    }
+
+    /// **The leader asked to go in.** The gate, today's entries, and the warp.
+    pub(super) fn first_time_together_enter(&mut self) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
         // The party registry is locked only for the read, because `check` calls back into
         // the store for every member and holding both locks is how a deadlock starts.
         let party = self.fields.parties().party_of(chr.id).cloned();
@@ -59,12 +74,14 @@ impl Session {
             self.bus().characters_on(crate::fields::FieldKey::world(firsttime::ENTRY_MAP), &members).into_iter().collect();
         let store = self.store.clone();
         let gate = firsttime::check(chr.id, party.as_ref(), |id| {
+            let used = store.daily_uses_now(id, firsttime::ENTRY_COUNT_KEY).ok()?;
             store.character_brief(id).ok().flatten().map(|b| firsttime::Candidate {
                 character: id,
                 name: b.name,
                 level: u16::try_from(b.level).unwrap_or(u16::MAX),
                 online: online.contains(&id),
                 here: here.contains(&id),
+                entries_left: firsttime::DAILY_ENTRIES.saturating_sub(used),
             })
         });
         let members = match gate {
@@ -82,6 +99,30 @@ impl Session {
             }
         };
         let Some(party) = party else { return Vec::new() };
+        // **Charge the entry** - every member, one each, in one transaction, or nobody. The
+        // gate above already read the counts; this is the write that decides, so a second
+        // leader click racing this one cannot spend an entry twice or let a spent member in.
+        let ids: Vec<u32> = members.iter().map(|m| m.character).collect();
+        match self.store.take_daily_uses_now(&ids, firsttime::ENTRY_COUNT_KEY, firsttime::DAILY_ENTRIES) {
+            Ok(Ok(())) => {}
+            Ok(Err(spent)) => {
+                let name = members.iter().find(|m| m.character == spent).map(|m| m.name.clone()).unwrap_or_default();
+                let why = firsttime::Refusal::OutOfEntries { name };
+                return vec![Reply {
+                    opcode: net::script::SCRIPT_MESSAGE,
+                    body: net::script::npc_say(firsttime::LAKELIS, &why.line(), false, false),
+                    what: format!("ScriptMessage Say from Lakelis: entry refused at the charge - {why:?}"),
+                }];
+            }
+            Err(e) => {
+                crate::server::log(&format!("   first time together: could not charge today's entries: {e}; nobody goes in"));
+                return vec![Reply {
+                    opcode: net::script::SCRIPT_MESSAGE,
+                    body: net::script::npc_say(firsttime::LAKELIS, "I cannot send you in just now. Try again in a moment.", false, false),
+                    what: format!("ScriptMessage Say from Lakelis: the entry charge failed - {e}"),
+                }];
+            }
+        }
         let instance = self.fields.runs().open(
             party.id,
             members.iter().map(|m| m.character).collect(),
@@ -514,6 +555,19 @@ impl Session {
         out
     }
 
+    /// **A stage clear's EXP arriving**: `percent` of what this character needs for their
+    /// next level, through the ordinary award so a level-up is a level-up.
+    pub(super) fn receive_party_quest_exp(&mut self, percent: u64, why: &str) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let to_next = self.config.exp_curve.to_next(chr.level).unwrap_or(0);
+        let gained = firsttime::stage_exp(to_next, percent);
+        crate::server::log(&format!(
+            "   first time together: {} ({}) at level {} gets {percent}% of {to_next} = {gained} EXP - {why}",
+            chr.name, chr.id, chr.level
+        ));
+        self.award_experience(gained, why, true, true)
+    }
+
     /// A reward arriving in this character's bag.
     pub(super) fn receive_party_quest_reward(&mut self, item: u32, why: &str) -> Vec<Reply> {
         match self.give_item(item, 1, why) {
@@ -848,6 +902,22 @@ impl Session {
             ],
             &format!("stage {} cleared, instance {run}", chr.map_id),
         );
+        // **The clear's EXP, to every member, as the banner plays.** The owner, 2026-09-23. A
+        // percent of each member's OWN next level, so it crosses as a percent; everyone in
+        // the run is on this stage, or `cloto_waiting_for` would have refused above.
+        if let Some(percent) = firsttime::stage_exp_percent(chr.map_id) {
+            let why = format!("First Time Together: stage {} cleared", (chr.map_id - firsttime::STAGE_1) / 100 + 1);
+            for &member in &inst.members {
+                if member == chr.id {
+                    out.extend(self.receive_party_quest_exp(percent, &why));
+                    continue;
+                }
+                self.bus().publish_event_to_character(
+                    member,
+                    crate::broadcast::Event::PartyQuestExp { percent, why: why.clone() },
+                );
+            }
+        }
         out.push(self.cloto_say(firsttime::CLOTO_CLEARED, false, format!("map {} cleared for instance {run}", chr.map_id)));
         out
     }

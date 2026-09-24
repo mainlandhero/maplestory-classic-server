@@ -212,6 +212,11 @@ pub enum Event {
     /// only the member's own session holds their bag and their client.
     PartyQuestReward { item: u32, why: String },
 
+    /// **A stage-clear EXP award**, as a percent of the recipient's OWN next level - which is
+    /// why it crosses as a percent and not as an amount: only their session knows their
+    /// level. `crate::firsttime::stage_exp_percent`.
+    PartyQuestExp { percent: u64, why: String },
+
     /// A **party buff** `caster` just put on themselves reaches this character too:
     /// `skill_id` at `level`, cast while both stood on one field.
     ///
@@ -1210,6 +1215,7 @@ mod tests {
                 Event::GiftDrop => panic!("not an EXP share: a gift drop"),
                 Event::PartyQuestEnter { map, .. } => panic!("not an EXP share: a warp to {map}"),
                 Event::PartyQuestReward { item, .. } => panic!("not an EXP share: a reward of {item}"),
+                Event::PartyQuestExp { percent, .. } => panic!("not an EXP share: a stage clear's {percent}%"),
             Event::FriendRequest => panic!("not an EXP share: a friend request"),
             })
             .collect()

@@ -2422,8 +2422,11 @@ impl Session {
         }
         // The salons' coupon menu and their pick-a-look box (type 0x0a) - each only when its
         // own salon conversation is parked. session/salon.rs.
-        // Cloto's stage-1 menu for the party leader. session/firsttime.rs.
+        // Cloto's stage-1 menu for the party leader, and Lakelis' own. session/firsttime.rs.
         if let Some(replies) = self.cloto_menu_answer(body) {
+            return replies;
+        }
+        if let Some(replies) = self.lakelis_menu_answer(body) {
             return replies;
         }
         if let Some(replies) = self.salon_menu_answer(body) {
@@ -2488,9 +2491,6 @@ impl Session {
         }
         if convo.path == crate::firsttime::NELLA_PATH {
             return self.nella_answer(reply.action);
-        }
-        if convo.path == crate::firsttime::ASK_PATH {
-            return self.first_time_together_answer(reply.action);
         }
         if convo.path == crate::shanks::ASK_PATH {
             return self.shanks_reply(reply.action);
