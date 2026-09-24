@@ -329,6 +329,8 @@ impl Session {
         }
         self.last_position = Some((x, y));
         self.last_move_action = action;
+        // And the bus's copy, which is the only one another session can read.
+        self.fields.bus().note_position(self.subscriber, x, y);
         // Only worth rebuilding while somebody could still arrive and be told. A connection
         // with no presence is not on a field.
         let Some(chr) = self.claimed_character() else { return };
@@ -1550,6 +1552,102 @@ mod tests {
         assert!(closed);
     }
 
+    /// **Stage 2: the ropes.** The owner, 2026-09-23. A pair - Leader and Mote - on stage 2.
+    ///
+    /// Claims: Mote gets the intro, with the pair's own number in it; the leader gets it too
+    /// while nobody is on a rope; one on a rope is a count line and no effect; two on the
+    /// wrong pair plays WRONG - screen and sound, to Mote as well - and **no dialogue at
+    /// all**; two on the dealt pair clears the stage. A rope is only counted from a position
+    /// inside the client's `area` rectangle, so the bottom of a rope does not count.
+    #[test]
+    fn stage_two_is_the_right_ropes_or_wrong() {
+        use crate::firsttime;
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut cfg = (*config).clone();
+        cfg.fields.insert(firsttime::STAGE_2);
+        cfg.npcs.insert(
+            firsttime::STAGE_2,
+            vec![net::opcode::FieldNpc { object_id: 921, template_id: firsttime::CLOTO, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 }],
+        );
+        let config = Arc::new(cfg);
+        let mut ids = Vec::new();
+        let mut sessions = Vec::new();
+        for name in ["Leader", "Mote"] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: firsttime::STAGE_2, level: 21, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.set_character_map(id, firsttime::STAGE_2).unwrap();
+            store.create_migration(account, id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(id);
+            ids.push(id);
+            sessions.push(s);
+        }
+        let created = sessions[0].run_party_request(ids[0], crate::party::Request::Create { name: "P".into() });
+        let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        let _ = sessions[0].run_party_request(ids[0], crate::party::Request::Invite { target: ids[1] });
+        let _ = sessions[1].tick(500);
+        let _ = sessions[1].run_party_request(ids[1], crate::party::Request::Accept { party });
+        let run = fields.runs().open(5_401, ids.clone(), store::Store::unix_now());
+        for s in sessions.iter_mut() {
+            let _ = s.on_field_entered();
+        }
+        for s in sessions.iter_mut() {
+            let _ = s.tick(1_000);
+        }
+
+        let mut click = net::script::CLIENT_NPC_CLICK.to_le_bytes().to_vec();
+        click.extend_from_slice(&921u32.to_le_bytes());
+        click.extend_from_slice(&0i16.to_le_bytes());
+        click.extend_from_slice(&0i16.to_le_bytes());
+        click.extend_from_slice(&u32::MAX.to_le_bytes());
+        let said = |out: &[Reply]| {
+            out.iter().filter(|r| r.opcode == net::script::SCRIPT_MESSAGE).map(|r| String::from_utf8_lossy(&r.body).to_string()).collect::<String>()
+        };
+        let screens = |out: &[Reply]| -> Vec<String> {
+            out.iter().filter(|r| r.opcode == net::fieldeffect::FIELD_EFFECT).map(|r| String::from_utf8_lossy(&r.body[3..]).to_string()).collect()
+        };
+        let ropes = &firsttime::STAGE_2_ROPES;
+        let on = |i: usize| (ropes[i].x1 + 2, ropes[i].y1 + 20);
+
+        // 1. Mote: the intro, with "Two".
+        let out = sessions[1].handle(&click);
+        assert!(said(&out).contains("second stage") && said(&out).contains("Two of these"), "{}", said(&out));
+        // 2. The leader, nobody on a rope: the intro too.
+        let out = sessions[0].handle(&click);
+        assert!(said(&out).contains("second stage"), "{}", said(&out));
+        // 3. One on a rope; the other at the BOTTOM of a rope, which does not count.
+        sessions[0].note_own_position(on(0).0, on(0).1, None);
+        sessions[1].note_own_position(-753, 89, None); // rope 0's own bottom (ladderRope 7)
+        let out = sessions[0].handle(&click);
+        assert!(said(&out).contains("exactly #b2 people#k") && said(&out).contains("I see 1 person"), "{}", said(&out));
+        assert!(screens(&out).is_empty());
+        let answer = fields.runs().instance_of(ids[0]).unwrap().answers.iter().find(|(s, _)| *s == firsttime::STAGE_2).map(|(_, a)| a.clone()).expect("dealt");
+        assert_eq!(answer.len(), 2, "a pair is dealt two ropes");
+        // 4. Two on the wrong pair: WRONG, to both, and not a word from Cloto.
+        let wrong: Vec<usize> = (0..4).flat_map(|a| (a + 1..4).map(move |b| vec![a, b])).find(|p| *p != answer).unwrap();
+        sessions[0].note_own_position(on(wrong[0]).0, on(wrong[0]).1, None);
+        sessions[1].note_own_position(on(wrong[1]).0, on(wrong[1]).1, None);
+        let _ = sessions[1].tick(1_500);
+        let out = sessions[0].handle(&click);
+        assert!(said(&out).is_empty(), "no dialogue on a wrong combination: {}", said(&out));
+        let s = screens(&out);
+        assert!(s.iter().any(|x| x.contains("quest/party/wrong")) && s.iter().any(|x| x.contains("Party1/Failed")), "{s:?}");
+        let theirs = screens(&sessions[1].tick(2_000));
+        assert!(theirs.iter().any(|x| x.contains("quest/party/wrong")), "Mote sees WRONG too: {theirs:?}");
+        let cleared = fields.runs().is_cleared(ids[0], firsttime::STAGE_2);
+        assert!(!cleared);
+        // 5. The dealt pair: cleared.
+        sessions[0].note_own_position(on(answer[0]).0, on(answer[0]).1, None);
+        sessions[1].note_own_position(on(answer[1]).0, on(answer[1]).1, None);
+        let out = sessions[0].handle(&click);
+        assert!(screens(&out).iter().any(|x| x.contains("quest/party/clear")), "{:?} {}", screens(&out), said(&out));
+        let cleared = fields.runs().is_cleared(ids[0], firsttime::STAGE_2);
+        assert!(cleared);
+        let closed = fields.runs().close(run.id);
+        assert!(closed);
+    }
+
     /// **Cloto will not clear a stage until the whole run is standing on it.** The owner,
     /// 2026-09-23: *"Do not clear a stage unless everyone is on same map that the stage is
     /// about to be cleared of."*
@@ -1561,8 +1659,9 @@ mod tests {
     #[test]
     fn cloto_waits_for_the_whole_run_to_be_on_her_stage() {
         use crate::firsttime;
-        // Stage 2: stage 1 is the real Cloto now, and 2-5 still clear on a click (TEMPORARY).
-        let stage = firsttime::STAGE_1 + 100;
+        // Stage 3: stages 1 and 2 are the real Cloto now, and 3-5 still clear on a click
+        // (TEMPORARY).
+        let stage = firsttime::STAGE_1 + 200;
         let (store, config, fields) = channel();
         let account = store.create_account("maplecw", "correct horse battery").unwrap();
         let mut cfg = (*config).clone();
@@ -1687,8 +1786,9 @@ mod tests {
     #[test]
     fn a_stage_clear_opens_one_runs_portal_and_no_other_runs() {
         use crate::firsttime;
-        // Stage 2: stage 1 is the real Cloto now, and 2-5 still clear on a click (TEMPORARY).
-        let stage = firsttime::STAGE_1 + 100;
+        // Stage 3: stages 1 and 2 are the real Cloto now, and 3-5 still clear on a click
+        // (TEMPORARY).
+        let stage = firsttime::STAGE_1 + 200;
         let (store, config, fields) = channel();
         let account = store.create_account("maplecw", "correct horse battery").unwrap();
         let mut cfg = (*config).clone();

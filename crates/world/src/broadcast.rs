@@ -259,6 +259,12 @@ struct Mailbox {
     /// one and not the other. Nothing supersedes here - two shares of two kills are
     /// two shares.
     events: Vec<Event>,
+    /// Where this character last reported standing on its current field, `None` until it
+    /// has moved there. Cleared on every field entry, so a position is never read against
+    /// the wrong map. Read by `positions_on` - First Time Together's rope and platform
+    /// stages ask where every member of a run is, and only each member's own session hears
+    /// their `0x00D9`.
+    position: Option<(i16, i16)>,
 }
 
 #[derive(Debug, Default)]
@@ -347,6 +353,8 @@ impl Bus {
         let companions = presence.companions.clone();
         if let Some(mine) = inner.boxes.get_mut(&id) {
             mine.presence = Some(presence);
+            // A position from the last field means nothing on this one.
+            mine.position = None;
             // Anything queued for the old field is addressed to objects the client
             // has just destroyed. A `SetField` empties the user pool, so a movement
             // packet for a character on the map we just left names an id the pool no
@@ -584,6 +592,29 @@ impl Bus {
             .map(|p| p.character)
             .collect();
         characters.iter().copied().filter(|c| here.contains(c)).collect()
+    }
+
+    /// Record where this connection's character is standing. `Session::note_own_position`
+    /// calls it, beside the spawn refresh, so every movement and attack that moves the
+    /// character updates it.
+    pub fn note_position(&self, id: SubscriberId, x: i16, y: i16) {
+        if let Some(m) = self.lock().boxes.get_mut(&id) {
+            m.position = Some((x, y));
+        }
+    }
+
+    /// **Where each of `characters` is standing on `map`**, for those on it who have moved
+    /// since arriving. A character on `map` who has not moved yet is absent - they are at
+    /// the portal they came in by, which is never inside a rope or a platform.
+    pub fn positions_on(&self, map: crate::fields::FieldKey, characters: &[u32]) -> Vec<(u32, (i16, i16))> {
+        let inner = self.lock();
+        inner
+            .boxes
+            .values()
+            .filter_map(|m| Some((m.presence.as_ref()?, m.position?)))
+            .filter(|(p, _)| p.map == map && characters.contains(&p.character))
+            .map(|(p, at)| (p.character, at))
+            .collect()
     }
 
     /// [`Bus::send_to_character`], named for the call sites that read better that way.

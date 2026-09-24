@@ -57,6 +57,10 @@ pub const TYPE_SOUND: u8 = 7;
 pub const SCREEN_PARTY_CLEAR: &str = "quest/party/clear";
 /// Its fanfare.
 pub const SOUND_PARTY_CLEAR: &str = "Party1/Clear";
+/// The party-quest "WRONG" banner - `Map_000.wz/Effect.img/quest/party/wrong/0..4` [L].
+pub const SCREEN_PARTY_WRONG: &str = "quest/party/wrong";
+/// Its sound - `Sound_001.wz/Field.img/Party1/Failed`, 1 764 ms [L].
+pub const SOUND_PARTY_FAILED: &str = "Party1/Failed";
 /// The object over each First Time Together `next00` portal.
 pub const OBJECT_GATE: &str = "gate";
 
