@@ -197,12 +197,55 @@ pub const STAGE_2_ROPES: [Area; 4] = [
     Area { x1: -601, y1: -328, x2: -572, y2: -223 },
 ];
 
+/// `<3rd Stage>`.
+pub const STAGE_3: u32 = 80_000_200;
+
+/// **Stage 3's five platforms**, from the client's `area` node -
+/// `Map0_000.wz/080000200.img/area/0..4` **[L]**, read 2026-09-23.
+///
+/// Each sits inside one platform's walkable span and short of both its ends - area 0 is
+/// x 608..737 over a platform whose footholds run 597..753 at y -135 - which is Cloto's
+/// *"Your answers will only count when you're in the middle of the platforms, meaning you
+/// can't be on the edges"*, already in the data. The rectangles reach up to cover the barrel
+/// on each platform too, so standing on the barrel counts as standing on the platform.
+/// `the_platform_areas_sit_inside_the_platforms` pins them against `footholds.txt`.
+pub const STAGE_3_PLATFORMS: [Area; 5] = [
+    Area { x1: 608, y1: -185, x2: 737, y2: -125 },
+    Area { x1: 780, y1: -120, x2: 918, y2: -66 },
+    Area { x1: 969, y1: -183, x2: 1096, y2: -122 },
+    Area { x1: 880, y1: -243, x2: 1005, y2: -186 },
+    Area { x1: 698, y1: -243, x2: 826, y2: -184 },
+];
+
+/// **A stage solved by standing in the right places** - the ropes of stage 2 and the
+/// platforms of stage 3 are the same rule over different rectangles, so they are one code
+/// path. The owner, 2026-09-23: 2 correct for a pair, 3 for a party of three or four, dealt at
+/// random per run, and the leader asks Cloto.
+#[derive(Debug, Clone, Copy)]
+pub struct ZoneStage {
+    pub map: u32,
+    pub zones: &'static [Area],
+    /// "ropes" / "platforms", for the count line.
+    pub noun: &'static str,
+    /// Cloto's opening, given how many must stand.
+    pub intro: fn(usize) -> String,
+}
+
+/// The zone stage on `map`, if it is one.
+pub fn zone_stage(map: u32) -> Option<ZoneStage> {
+    match map {
+        STAGE_2 => Some(ZoneStage { map, zones: &STAGE_2_ROPES, noun: "ropes", intro: cloto_stage2_intro }),
+        STAGE_3 => Some(ZoneStage { map, zones: &STAGE_3_PLATFORMS, noun: "platforms", intro: cloto_stage3_intro }),
+        _ => None,
+    }
+}
+
 /// **What the members on the ropes add up to.** The owner, 2026-09-23: *"In a 2 person party, 2
 /// people must hang from the 2 correct ropes ... In a party of 3 or 4, 3 members must hang
 /// from the ropes."* `needed` is [`passes_required`] - the same table, and 1 for the
 /// temporary party of one.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RopeCheck {
+pub enum ZoneCheck {
     /// Fewer or more members on the ropes than `needed`.
     Count { on: usize, needed: usize },
     /// The right number, on the ropes the run was dealt.
@@ -211,21 +254,21 @@ pub enum RopeCheck {
     Wrong,
 }
 
-/// Judge the ropes. `positions` is every run member on the stage who has moved; `answer`
-/// is the rope indexes this run was dealt.
-pub fn check_ropes(ropes: &[Area], positions: &[(i16, i16)], answer: &[usize], needed: usize) -> RopeCheck {
+/// Judge the zones - ropes or platforms. `positions` is every run member on the stage who
+/// has moved; `answer` is the zone indexes this run was dealt.
+pub fn check_zones(ropes: &[Area], positions: &[(i16, i16)], answer: &[usize], needed: usize) -> ZoneCheck {
     let mut on: Vec<usize> = positions
         .iter()
         .filter_map(|&at| ropes.iter().position(|r| r.contains(at)))
         .collect();
     if on.len() != needed {
-        return RopeCheck::Count { on: on.len(), needed };
+        return ZoneCheck::Count { on: on.len(), needed };
     }
     on.sort_unstable();
     on.dedup();
     let mut want = answer.to_vec();
     want.sort_unstable();
-    if on == want { RopeCheck::Right } else { RopeCheck::Wrong }
+    if on == want { ZoneCheck::Right } else { ZoneCheck::Wrong }
 }
 
 /// **Deal `count` distinct indexes out of `of`**, from one roll - the correct ropes (or,
@@ -263,14 +306,32 @@ pub fn cloto_stage2_intro(needed: usize) -> String {
     )
 }
 
-/// What they say when the count on the ropes is off.
-pub fn cloto_rope_count(on: usize, needed: usize) -> String {
+/// Cloto's stage-3 opening, from the owner's screenshot - with "three" made the run's own number.
+pub fn cloto_stage3_intro(needed: usize) -> String {
+    let n = number_word(needed);
+    let lower = n.to_lowercase();
+    let (members, people) = if needed == 1 {
+        ("party member must stand", "only one person should be on the platforms".to_string())
+    } else {
+        ("of your party members must each stand", format!("only {lower} people, one on each platform, should be on the platforms"))
+    };
+    format!(
+        "Welcome to the third stage. Here, you'll find some platforms with barrels and cats. \
+         Only #b{lower} of them {are} connected to the portal to the next stage. {n} {members} \
+         in the center of one of these platforms.#k\r\nYour answers will only count when \
+         you're in the middle of the platforms, meaning you can't be on the edges. And {people}.",
+        are = if needed == 1 { "is" } else { "are" },
+    )
+}
+
+/// What they say when the count on the ropes or platforms is off.
+pub fn cloto_zone_count(on: usize, needed: usize, noun: &str) -> String {
     let who = |n: usize| if n == 1 { "1 person".to_string() } else { format!("{n} people") };
     format!(
-        "There must be exactly #b{}#k on the ropes, and I see {}. {}",
+        "There must be exactly #b{}#k on the {noun}, and I see {}. {}",
         who(needed),
         who(on),
-        if on < needed { "Someone else must climb up." } else { "Someone must come down." }
+        if on < needed { "Someone else must get up there." } else { "Someone must come down." }
     )
 }
 
@@ -878,20 +939,48 @@ mod tests {
         }
     }
 
+    /// The platform rectangles are the client's, and each lies inside its platform's
+    /// footholds (`gm-handbook/footholds.txt`, map 80000200) and short of both ends - the
+    /// edges do not count - at a height that covers someone standing on it.
+    #[test]
+    fn the_platform_areas_sit_inside_the_platforms() {
+        // (platform x from, x to, floor y) - the foothold runs 14-17, 2-5, 8-11, 34-37, 25-28.
+        let platforms = [(597i16, 753i16, -135i16), (777, 933, -75), (957, 1113, -135), (867, 1023, -195), (687, 843, -195)];
+        for (area, (from, to, y)) in STAGE_3_PLATFORMS.iter().zip(platforms) {
+            assert!(from < area.x1 && area.x2 < to, "{area:?} reaches an edge of {from}..{to}");
+            assert!(area.contains(((area.x1 + area.x2) / 2, y)), "{area:?} misses someone standing at y {y}");
+            assert!(!area.contains((from + 1, y)) && !area.contains((to - 1, y)), "the edges must not count");
+        }
+        // **Two of the client's rectangles DO overlap** - areas 0 and 4 share the band
+        // y -185..-184, x 698..737. First found by this test asserting they did not. That
+        // band is mid-air (50 px above platform 0's floor, 10 px below platform 4's), so the
+        // claim that matters is narrower and is what is pinned: anyone STANDING on a
+        // platform, anywhere along it, is inside exactly one rectangle.
+        for (i, (from, to, y)) in platforms.into_iter().enumerate() {
+            for x in from..=to {
+                let hits: Vec<usize> = (0..STAGE_3_PLATFORMS.len()).filter(|&j| STAGE_3_PLATFORMS[j].contains((x, y))).collect();
+                assert!(hits.is_empty() || hits == vec![i], "standing at ({x}, {y}) on platform {i} counts for {hits:?}");
+            }
+        }
+        assert_eq!(zone_stage(STAGE_3).map(|z| z.zones.len()), Some(5));
+        assert_eq!(zone_stage(STAGE_2).map(|z| z.zones.len()), Some(4));
+        assert!(zone_stage(STAGE_1).is_none() && zone_stage(80_000_300).is_none());
+    }
+
     /// The owner's rules: exactly `needed` on the ropes, else a count; the dealt ropes, else WRONG.
     #[test]
     fn the_ropes_are_judged_by_count_first_and_then_by_which() {
         let r = &STAGE_2_ROPES;
         let on = |i: usize| (r[i].x1 + 1, r[i].y1 + 1);
         let floor = (-348i16, 91i16);
-        assert_eq!(check_ropes(r, &[on(0)], &[0, 2], 2), RopeCheck::Count { on: 1, needed: 2 });
-        assert_eq!(check_ropes(r, &[on(0), floor], &[0, 2], 2), RopeCheck::Count { on: 1, needed: 2 }, "the floor is not a rope");
-        assert_eq!(check_ropes(r, &[on(0), on(1), on(2)], &[0, 2], 2), RopeCheck::Count { on: 3, needed: 2 });
-        assert_eq!(check_ropes(r, &[on(0), on(2)], &[0, 2], 2), RopeCheck::Right);
-        assert_eq!(check_ropes(r, &[on(2), on(0)], &[2, 0], 2), RopeCheck::Right, "order does not matter");
-        assert_eq!(check_ropes(r, &[on(0), on(1)], &[0, 2], 2), RopeCheck::Wrong);
-        assert_eq!(check_ropes(r, &[on(0), on(0)], &[0, 2], 2), RopeCheck::Wrong, "two on one rope is not two ropes");
-        assert_eq!(check_ropes(r, &[on(1), on(2), on(3)], &[1, 2, 3], 3), RopeCheck::Right);
+        assert_eq!(check_zones(r, &[on(0)], &[0, 2], 2), ZoneCheck::Count { on: 1, needed: 2 });
+        assert_eq!(check_zones(r, &[on(0), floor], &[0, 2], 2), ZoneCheck::Count { on: 1, needed: 2 }, "the floor is not a rope");
+        assert_eq!(check_zones(r, &[on(0), on(1), on(2)], &[0, 2], 2), ZoneCheck::Count { on: 3, needed: 2 });
+        assert_eq!(check_zones(r, &[on(0), on(2)], &[0, 2], 2), ZoneCheck::Right);
+        assert_eq!(check_zones(r, &[on(2), on(0)], &[2, 0], 2), ZoneCheck::Right, "order does not matter");
+        assert_eq!(check_zones(r, &[on(0), on(1)], &[0, 2], 2), ZoneCheck::Wrong);
+        assert_eq!(check_zones(r, &[on(0), on(0)], &[0, 2], 2), ZoneCheck::Wrong, "two on one rope is not two ropes");
+        assert_eq!(check_zones(r, &[on(1), on(2), on(3)], &[1, 2, 3], 3), ZoneCheck::Right);
     }
 
     /// A deal is `count` distinct indexes in range, every combination is reachable, and a
@@ -943,7 +1032,7 @@ mod tests {
         assert!(!CLOTO_STAGE1_INTRO.contains("except"), "the leader exception is removed");
         // A Python patch once swallowed a line-continuation backslash and left runs of
         // spaces inside two of these; the client would draw every one of them.
-        let mut said = vec![CLOTO_STAGE1_INTRO.to_string(), CLOTO_RIGHT.into(), CLOTO_DONE.into(), CLOTO_BAG_FULL.into(), cloto_short(3, 1), cloto_menu(3), cloto_stage2_intro(2), cloto_stage2_intro(3), cloto_rope_count(1, 2)];
+        let mut said = vec![CLOTO_STAGE1_INTRO.to_string(), CLOTO_RIGHT.into(), CLOTO_DONE.into(), CLOTO_BAG_FULL.into(), cloto_short(3, 1), cloto_menu(3), cloto_stage2_intro(2), cloto_stage2_intro(3), cloto_zone_count(1, 2, "ropes"), cloto_stage3_intro(2), cloto_stage3_intro(3), cloto_stage3_intro(1)];
         said.extend((0..QUESTIONS.len()).flat_map(|i| [cloto_question(i), cloto_wrong(i)]));
         for line in said {
             assert!(!line.contains("  "), "a run of spaces in: {line:?}");
