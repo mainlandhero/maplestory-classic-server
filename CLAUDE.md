@@ -566,7 +566,7 @@ Scored against a held-out control it got **1 of 8**. Label every claim from it a
 | `client-patched\maplecw-hook.log` | `WATCH` lines, session patches, client faults |
 | `client-exit.log` | how the client died |
 | `research/` | decompilation as `msexe-<topic>.c`, findings as `.md` beside it |
-| `previous-runs/` | the last few runs' logs, archived by the launcher instead of deleted. A rolling buffer - gitignored |
+| `previous-runs/` | the last few runs' logs, archived by the launcher instead of deleted. A rolling buffer - gitignored. **Files last written more than 7 days ago are deleted** by the world server when its log opens and daily after (`world::logprune`, the owner 2026-09-24) - copy anything worth keeping into `research/fixtures/` first |
 
 **Channel 0's log was called `world.log` until 2026-09-14.** It is `world-ch0.log` now, so a
 two-channel server does not read as one channel plus a mystery file. Anything already in
