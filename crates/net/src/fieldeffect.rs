@@ -40,6 +40,14 @@
 //! not been read** - it is taken to be "advance to the next state", which is what the v214
 //! scripts use this for, and which is why the gate is sent **once per field entry** and
 //! never twice to the same screen.
+//!
+//! # On screen
+//!
+//! The owner, 2026-09-23, through stages 1 and 2 of First Time Together: the banner and fanfare
+//! play, *"The gate does visibly open when a stage clears"*, and *"The wrong banner did play
+//! when I selected two of the incorrect ropes."* So types 2, 4 and 7 are confirmed with the
+//! shapes above. Still unread, and not needed yet: what a second type-2 to the same screen
+//! does.
 
 use crate::PacketWriter;
 
