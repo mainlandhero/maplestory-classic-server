@@ -58,8 +58,7 @@ impl Session {
         let here: std::collections::HashSet<u32> =
             self.bus().characters_on(crate::fields::FieldKey::world(firsttime::ENTRY_MAP), &members).into_iter().collect();
         let store = self.store.clone();
-        // `ENTRY_MIN_PARTY`, not `MIN_PARTY`: the TEMPORARY solo test (firsttime.rs).
-        let gate = firsttime::check_min(firsttime::ENTRY_MIN_PARTY, chr.id, party.as_ref(), |id| {
+        let gate = firsttime::check(chr.id, party.as_ref(), |id| {
             store.character_brief(id).ok().flatten().map(|b| firsttime::Candidate {
                 character: id,
                 name: b.name,
@@ -122,7 +121,58 @@ impl Session {
     pub(super) fn enter_party_quest(&mut self, map: u32, why: &str) -> Vec<Reply> {
         let Some(mut chr) = self.claimed_character() else { return Vec::new() };
         crate::server::log(&format!("   first time together: {} ({}) pulled in - {why}", chr.name, chr.id));
-        self.go_to_map(&mut chr, map, 0, why.to_string())
+        let mut out = if why == firsttime::TOO_FEW_LEFT { self.notice(why.to_string()) } else { Vec::new() };
+        if map == firsttime::EXIT_MAP && chr.map_id == firsttime::EXIT_MAP {
+            // Already standing there: a second SetField of the same map is a visible reload
+            // for nothing.
+            return out;
+        }
+        out.extend(self.go_to_map(&mut chr, map, 0, why.to_string()));
+        out
+    }
+
+    /// **Take `who` out of their run - and end the run if too few are left.** Every way out
+    /// comes through here: leaving the party, Nella, a disconnect, a login onto a stage.
+    ///
+    /// The owner, 2026-09-23: *"A party of 1 should not be allowed to continue doing the party
+    /// quest."* So when the departure leaves fewer than `MIN_PARTY` in the run, the run is
+    /// closed and whoever is left is sent to the Exit with `TOO_FEW_LEFT` - this session
+    /// directly if it is them, anyone else through `Event::PartyQuestEnter`. `close` is the
+    /// test-and-set: two sessions noticing the same departure cannot both end it.
+    ///
+    /// Returns this session's own packets; the leaver's own warp is the caller's business.
+    fn drop_from_run(&mut self, who: u32, why: &str) -> Vec<Reply> {
+        let was = self.fields.runs().drop_member(who);
+        let Some(was) = was else { return Vec::new() };
+        let left = self.fields.runs().instance(was.id);
+        let Some(left) = left else { return Vec::new() }; // nobody left; it is already gone
+        if left.members.len() >= firsttime::MIN_PARTY {
+            return Vec::new();
+        }
+        let closed = self.fields.runs().close(left.id);
+        if !closed {
+            return Vec::new();
+        }
+        crate::server::log(&format!(
+            "   first time together: character {who} left instance {} ({why}); {} member(s) left, fewer than {} - the run ends and they go to the Exit",
+            left.id,
+            left.members.len(),
+            firsttime::MIN_PARTY
+        ));
+        let me = self.claimed_character().map(|c| c.id);
+        let mut out = Vec::new();
+        for member in left.members {
+            if Some(member) == me {
+                out.extend(self.notice(firsttime::TOO_FEW_LEFT.to_string()));
+                out.extend(self.leave_party_quest(firsttime::TOO_FEW_LEFT));
+                continue;
+            }
+            self.bus().publish_event_to_character(
+                member,
+                crate::broadcast::Event::PartyQuestEnter { map: firsttime::EXIT_MAP, why: firsttime::TOO_FEW_LEFT.to_string() },
+            );
+        }
+        out
     }
 
     /// **The countdown, on every field entry inside the quest.** Sent from the field-entry
@@ -191,18 +241,19 @@ impl Session {
     /// that left will also be immediately brought to the party exit."*
     pub(super) fn leave_party_quest(&mut self, why: &str) -> Vec<Reply> {
         let Some(mut chr) = self.claimed_character() else { return Vec::new() };
-        let _ = self.fields.runs().drop_member(chr.id);
+        let mut out = self.drop_from_run(chr.id, why);
         if !firsttime::is_quest_map(chr.map_id) || chr.map_id == firsttime::EXIT_MAP {
             // Not inside, or already standing at the Exit: dropping them from the run is the
             // whole effect. Warping someone who is in Kerning City would be a bug with a
             // very confusing screen.
-            return Vec::new();
+            return out;
         }
         crate::server::log(&format!(
             "   first time together: {} ({}) leaves for the Exit map - {why}",
             chr.name, chr.id
         ));
-        self.go_to_map(&mut chr, firsttime::EXIT_MAP, 0, format!("First Time Together: {why}"))
+        out.extend(self.go_to_map(&mut chr, firsttime::EXIT_MAP, 0, format!("First Time Together: {why}")));
+        out
     }
 
     /// **Somebody left the party, so they leave the quest.** The owner, 2026-09-22: *"If anyone
@@ -221,13 +272,13 @@ impl Session {
         if self.claimed_character().map(|c| c.id) == Some(who) {
             return self.leave_party_quest(why);
         }
-        let _ = self.fields.runs().drop_member(who);
+        let out = self.drop_from_run(who, why);
         self.bus().publish_event_to_character(
             who,
             crate::broadcast::Event::PartyQuestEnter { map: firsttime::EXIT_MAP, why: why.to_string() },
         );
         crate::server::log(&format!("   first time together: character {who} is out of the quest - {why}"));
-        Vec::new()
+        out
     }
 
     /// Nella, in any of the seven fields. Inside the quest they offer the way out; on the
@@ -265,8 +316,9 @@ impl Session {
             crate::server::log(&format!("   first time together: {} ({}) leaves the Exit for Kerning City", chr.name, chr.id));
             // Already out of the run by the time they reach the Exit, but a member who
             // logged back in there may not be; dropping again is harmless.
-            let _ = self.fields.runs().drop_member(chr.id);
-            return self.go_to_map(&mut chr, firsttime::TOWN_MAP, 0, "First Time Together: Nella sends them home".to_string());
+            let mut out = self.drop_from_run(chr.id, "Nella sent them home");
+            out.extend(self.go_to_map(&mut chr, firsttime::TOWN_MAP, 0, "First Time Together: Nella sends them home".to_string()));
+            return out;
         }
         self.leave_party_quest("Nella showed them out")
     }
@@ -762,7 +814,9 @@ impl Session {
         if !firsttime::is_quest_map(chr.map_id) || chr.map_id == firsttime::EXIT_MAP {
             return;
         }
-        let _ = self.fields.runs().drop_member(chr.id);
+        // Its replies are for this session, which is mid-login and has no field yet; the
+        // members left behind hear through the bus, which is what matters.
+        let _ = self.drop_from_run(chr.id, "logged in on a stage");
         let result = self.store.set_character_map(chr.id, firsttime::EXIT_MAP);
         crate::server::log(&format!(
             "   first time together: {} ({}) logged in on stage map {}; sent to the Exit {} instead - {}",
@@ -782,13 +836,15 @@ impl Session {
     /// not connected can never arrive. Also on a channel change: the run is this channel's.
     pub(super) fn leave_party_quest_on_disconnect(&mut self) {
         let Some(chr) = self.claimed_character() else { return };
-        let was = self.fields.runs().drop_member(chr.id);
-        if let Some(run) = was {
-            crate::server::log(&format!(
-                "   first time together: {} ({}) disconnected on map {}; out of instance {} - they log in on the Exit",
-                chr.name, chr.id, chr.map_id, run.id
-            ));
-        }
+        let run = self.fields.runs().instance_of(chr.id);
+        let Some(run) = run else { return };
+        crate::server::log(&format!(
+            "   first time together: {} ({}) disconnected on map {}; out of instance {} - they log in on the Exit",
+            chr.name, chr.id, chr.map_id, run.id
+        ));
+        // A partner left alone is sent out through the bus. This session is closing, so its
+        // own replies have nowhere to go - and the leaver cannot be among those left.
+        let _ = self.drop_from_run(chr.id, "disconnected");
     }
 
     /// **A cleared stage's gate, for whoever arrives after the clear.** The gate object is

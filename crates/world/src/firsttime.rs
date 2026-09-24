@@ -19,9 +19,8 @@
 //! It is the gate: who may start, what Lakelis says when they may not, the per-channel
 //! registry of runs ([`Runs`]), and each run's cleared stages. The instance id a run gets is
 //! the `instance` half of `crate::fields::FieldKey`, so mobs, drops and broadcasts are the
-//! run's own. It is **not** the stage rules: a stage is cleared today by clicking Cloto
-//! ([`CLOTO`], TEMPORARY), not by coupons, ropes or platforms -
-//! `research/first-time-together-pq.md` §4 has those.
+//! run's own. And it holds each stage's rule as data - the questions, the rope, platform
+//! and barrel rectangles, the Pass counts - which `session/firsttime.rs` applies.
 
 use crate::party::{CharacterId, Party, PartyId};
 
@@ -42,15 +41,6 @@ pub const MIN_PARTY: usize = 2;
 /// Four, as both the owner and the client say.
 pub const MAX_PARTY: usize = 4;
 
-/// **TEMPORARY - the minimum Lakelis actually enforces while instancing is being tested.**
-///
-/// The owner, 2026-09-23: *"I would like to do a temporary test to make sure the instancing works.
-/// Please temporarily allow party of 1s to enter via Lakelis in Kerning City."* The rule is
-/// still [`MIN_PARTY`], and [`check`] still enforces it and its tests still pin it; only the
-/// session's call goes through [`check_min`] with this instead. **Put it back to
-/// `MIN_PARTY` when the test is over** - `STATUS.md` lists it as a temporary switch.
-pub const ENTRY_MIN_PARTY: usize = 1;
-
 /// **How long a party has.** The owner, 2026-09-22: *"the party quest lacked a timer, since it
 /// has to be finished within the time limit or its members will be kicked out into the exit
 /// map."* Then a screenshot of the widget itself, reading **29:32** a few seconds into a
@@ -68,11 +58,7 @@ pub const COUPON: u32 = 4_001_001;
 /// Cloto - on stages 1 to 5 (`80000000`..`80000400`), and nowhere else [L]
 /// (`gm-handbook/npcs.txt`). The stage NPC.
 ///
-/// **TEMPORARY behaviour.** The owner, 2026-09-23: *"Lakelis in every stage when clicked on should
-/// send the "stage clear" opcode and enable the portal to go to the next stage."* The NPC on
-/// every stage is Cloto, not Lakelis (who stands only in Kerning City), so this is them. For
-/// the test they clear the stage on a click; the real rules (coupons, ropes, platforms) are
-/// `research/first-time-together-pq.md` §4 and are not built.
+/// Each stage's rule is theirs: `session/firsttime.rs` `open_cloto`.
 pub const CLOTO: u32 = 800_001;
 
 /// The Pass - what a member earns from Cloto on stage 1 and the leader hands in to clear it.
@@ -94,13 +80,14 @@ pub const QUESTIONS: [(&str, u32); 8] = [
 
 /// **How many Passes clear stage 1.** The owner, 2026-09-23: *"In a 2 person party, 2 passes are
 /// required. In a 3 or 4 person party, 3 passes are required."* That is the size capped at
-/// three, and the same formula gives **1** for the temporary party of one
-/// ([`ENTRY_MIN_PARTY`]) - the only reading that lets a solo test finish the stage.
+/// three, and **never below two** - the owner, 2026-09-23: *"Passes required should stay at 2"*. A
+/// run of one cannot exist any more (the gate refuses it and a run that shrinks to one ends -
+/// [`TOO_FEW_LEFT`]), so the floor is only ever a guard.
 ///
 /// The size is the **run's**, not the party's: a member who disconnected has left the run
 /// (and cannot come back into it), so they are not owed a Pass.
 pub fn passes_required(run_size: usize) -> u32 {
-    u32::try_from(run_size.min(3)).unwrap_or(3)
+    u32::try_from(run_size.clamp(2, 3)).unwrap_or(3)
 }
 
 /// Cloto's stage-1 opening, from the owner's screenshot of the client's own text, with the words
@@ -356,8 +343,7 @@ pub fn zone_stage(map: u32) -> Option<ZoneStage> {
 
 /// **What the members on the ropes add up to.** The owner, 2026-09-23: *"In a 2 person party, 2
 /// people must hang from the 2 correct ropes ... In a party of 3 or 4, 3 members must hang
-/// from the ropes."* `needed` is [`passes_required`] - the same table, and 1 for the
-/// temporary party of one.
+/// from the ropes."* `needed` is [`passes_required`] - the same table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ZoneCheck {
     /// Fewer or more members on the ropes than `needed`.
@@ -529,6 +515,11 @@ pub const ARRIVAL_PORTAL: &str = "st00";
 /// The forward portal on stages 1 to 5.
 pub const NEXT_PORTAL: &str = "next00";
 
+/// **Why the last member of a run is sent out.** The owner, 2026-09-23: *"A party of 1 should not
+/// be allowed to continue doing the party quest."* When a departure leaves fewer than
+/// [`MIN_PARTY`] in a run, the run ends and whoever is left goes to the Exit, told this.
+pub const TOO_FEW_LEFT: &str = "Your party is too small to continue. Everyone in it has been sent out.";
+
 /// Nella - in every one of the seven fields, including the Exit. The way out.
 pub const NELLA: u32 = 800_002;
 /// The conversation path Nella's yes/no is parked under.
@@ -653,17 +644,6 @@ impl Candidate {
 pub fn check(
     who: CharacterId,
     party: Option<&Party>,
-    levels: impl FnMut(CharacterId) -> Option<Candidate>,
-) -> Result<Vec<Candidate>, Refusal> {
-    check_min(MIN_PARTY, who, party, levels)
-}
-
-/// [`check`] with the minimum party size given. Exists for [`ENTRY_MIN_PARTY`], the
-/// temporary solo test, so the rule itself does not have to move to allow it.
-pub fn check_min(
-    min_party: usize,
-    who: CharacterId,
-    party: Option<&Party>,
     mut levels: impl FnMut(CharacterId) -> Option<Candidate>,
 ) -> Result<Vec<Candidate>, Refusal> {
     let Some(party) = party else { return Err(Refusal::NoParty) };
@@ -671,7 +651,7 @@ pub fn check_min(
         return Err(Refusal::NotLeader);
     }
     let size = party.members.len();
-    if size < min_party {
+    if size < MIN_PARTY {
         return Err(Refusal::TooSmall { size });
     }
     if size > MAX_PARTY {
@@ -799,6 +779,11 @@ impl Runs {
             self.live.remove(at);
         }
         Some(was)
+    }
+
+    /// The instance with this id, if it is still running.
+    pub fn instance(&self, id: u32) -> Option<Instance> {
+        self.live.iter().find(|i| i.id == id).cloned()
     }
 
     /// The instance `character` is running, if any.
@@ -1219,7 +1204,8 @@ mod tests {
         assert_eq!(passes_required(2), 2);
         assert_eq!(passes_required(3), 3);
         assert_eq!(passes_required(4), 3);
-        assert_eq!(passes_required(1), 1, "the temporary party of one");
+        assert_eq!(passes_required(1), 2, "never below two - the owner: \"Passes required should stay at 2\"");
+        assert_eq!(passes_required(0), 2);
     }
 
     /// The owner's eight questions and answers, verbatim - and none of the lines Cloto says gives
@@ -1256,20 +1242,6 @@ mod tests {
         assert_eq!(next_stage(80_000_500), None);
         assert_eq!(next_stage(EXIT_MAP), None);
         assert_eq!(next_stage(ENTRY_MAP), None);
-    }
-
-    /// **The temporary solo switch moves the session's minimum, not the rule.** `check` still
-    /// refuses a party of one; `check_min` with the entry minimum lets it through.
-    #[test]
-    fn the_solo_test_switch_does_not_move_the_rule() {
-        let solo = party(1, &[1]);
-        assert_eq!(check(1, Some(&solo), at(30)), Err(Refusal::TooSmall { size: 1 }));
-        let entered = check_min(ENTRY_MIN_PARTY, 1, Some(&solo), at(30));
-        if ENTRY_MIN_PARTY <= 1 {
-            assert!(entered.is_ok(), "{entered:?}");
-        } else {
-            assert_eq!(entered, Err(Refusal::TooSmall { size: 1 }));
-        }
     }
 
     /// The seven quest fields, and nothing either side of them.
