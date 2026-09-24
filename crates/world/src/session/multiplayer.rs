@@ -1620,7 +1620,7 @@ mod tests {
         sessions[0].note_own_position(on(0).0, on(0).1, None);
         sessions[1].note_own_position(-753, 89, None); // rope 0's own bottom (ladderRope 7)
         let out = sessions[0].handle(&click);
-        assert!(said(&out).contains("exactly #b2 people#k") && said(&out).contains("I see 1 person"), "{}", said(&out));
+        assert!(said(&out).contains("#b2 party members#k must each hang from") && said(&out).contains("only #r1 person#k on the ropes"), "{}", said(&out));
         assert!(screens(&out).is_empty());
         let answer = fields.runs().instance_of(ids[0]).unwrap().answers.iter().find(|(s, _)| *s == firsttime::STAGE_2).map(|(_, a)| a.clone()).expect("dealt");
         assert_eq!(answer.len(), 2, "a pair is dealt two ropes");
@@ -1718,7 +1718,7 @@ mod tests {
         stand(&mut sessions, 1, mid(1));
         stand(&mut sessions, 2, (600, -135));
         let out = sessions[0].handle(&click);
-        assert!(said(&out).contains("exactly #b3 people#k on the platforms") && said(&out).contains("I see 2 people"), "{}", said(&out));
+        assert!(said(&out).contains("#b3 party members#k must each stand in the middle of") && said(&out).contains("only #r2 people#k on the platforms"), "{}", said(&out));
         let answer = fields.runs().instance_of(ids[0]).unwrap().answers.iter().find(|(s, _)| *s == firsttime::STAGE_3).map(|(_, a)| a.clone()).expect("dealt");
         assert_eq!(answer.len(), 3, "three of five for a party of three");
         assert!(answer.iter().all(|&i| i < 5));
@@ -1803,7 +1803,7 @@ mod tests {
         sessions[0].note_own_position(top(0).0, top(0).1, None);
         sessions[1].note_own_position(1147, -75, None); // beside Cloto, on the ground
         let out = sessions[0].handle(&click);
-        assert!(said(&out).contains("on the barrels") && said(&out).contains("I see 1 person"), "{}", said(&out));
+        assert!(said(&out).contains("stand on top of a different barrel") && said(&out).contains("only #r1 person#k on the barrels"), "{}", said(&out));
         let answer = fields.runs().instance_of(ids[0]).unwrap().answers.iter().find(|(s, _)| *s == firsttime::STAGE_4).map(|(_, a)| a.clone()).expect("dealt");
         assert_eq!(answer.len(), 2, "two of six for a pair");
 
