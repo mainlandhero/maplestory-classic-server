@@ -123,6 +123,9 @@ impl Session {
                 crate::broadcast::Event::PartyQuestReward { item, why } => {
                     out.extend(self.receive_party_quest_reward(item, &why));
                 }
+                crate::broadcast::Event::PartyQuestExp { percent, why } => {
+                    out.extend(self.receive_party_quest_exp(percent, &why));
+                }
                 crate::broadcast::Event::FriendRequest => {
                     // Their list changed: redraw it, and say out loud anything that is now
                     // waiting on this player. session/friends.rs.
@@ -1069,16 +1072,17 @@ mod tests {
             b.extend_from_slice(&u32::MAX.to_le_bytes());
             b
         };
-        // The yes/no body: u32 handle, u8 messageType, u32 echo, u16 empty text, u8 action.
-        let yes = || {
+        // Lakelis' menu, answered: u32 handle, u8 6, u8 accepted, u32 line. `yes` is the
+        // "enter" line - the name is from when they asked a yes/no.
+        let pick = |line: u32| {
             let mut b = net::script::CLIENT_SCRIPT_REPLY.to_le_bytes().to_vec();
             b.extend_from_slice(&0u32.to_le_bytes());
-            b.push(0);
-            b.extend_from_slice(&0u32.to_le_bytes());
-            b.extend_from_slice(&0u16.to_le_bytes());
-            b.push(net::script::SCRIPT_ACTION_YES as u8);
+            b.push(net::script::SCRIPT_TYPE_MENU);
+            b.push(1);
+            b.extend_from_slice(&line.to_le_bytes());
             b
         };
+        let yes = || pick(crate::firsttime::LAKELIS_ENTER);
         let map_of = |s: &Session, id: u32| {
             s.store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().map_id
         };
@@ -1146,6 +1150,12 @@ mod tests {
         member.go_to_map(&mut wandered, crate::firsttime::ENTRY_MAP, 0, "back".to_string());
         member.on_field_entered();
 
+        // 6a. The count line: ten left, and asking spends none.
+        let _ = leader.handle(&click(900));
+        let out = leader.handle(&pick(crate::firsttime::LAKELIS_COUNT));
+        assert!(said(&out).contains("#b10#k more times today"), "{}", said(&out));
+        assert_eq!(store.daily_uses_now(ids[0], crate::firsttime::ENTRY_COUNT_KEY).unwrap(), 0, "refusals and asking cost nothing");
+
         // 6. Everyone at 21 and together: the leader goes, and the member follows.
         low.level = 21;
         store.save_character_progress(&low).unwrap();
@@ -1163,6 +1173,31 @@ mod tests {
         let other = leader.fields.runs().instance_of(ids[1]);
         assert_eq!(other.map(|i| i.id), Some(inst.id), "one instance, both members");
         assert!(leader.fields.runs().close(inst.id));
+        // One entry charged to each of them.
+        for id in &ids {
+            assert_eq!(store.daily_uses_now(*id, crate::firsttime::ENTRY_COUNT_KEY).unwrap(), 1);
+        }
+
+        // 7. **Out of entries.** Back in Kerning City, the member spends the other nine;
+        //    the leader is refused by the member's name, nobody moves, and the leader - who
+        //    still has nine - is charged nothing.
+        let mut l = store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == ids[0]).unwrap();
+        leader.go_to_map(&mut l, crate::firsttime::ENTRY_MAP, 0, "home".to_string());
+        let mut m = store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == ids[1]).unwrap();
+        member.go_to_map(&mut m, crate::firsttime::ENTRY_MAP, 0, "home".to_string());
+        leader.on_field_entered();
+        member.on_field_entered();
+        for _ in 0..9 {
+            assert_eq!(store.take_daily_uses_now(&[ids[1]], crate::firsttime::ENTRY_COUNT_KEY, 10).unwrap(), Ok(()));
+        }
+        let _ = leader.handle(&click(900));
+        let out = leader.handle(&yes());
+        assert!(said(&out).contains("Member") && said(&out).contains("10 times today"), "spent: {}", said(&out));
+        assert_eq!(map_of(&leader, ids[0]), crate::firsttime::ENTRY_MAP, "nobody moved");
+        assert_eq!(store.daily_uses_now(ids[0], crate::firsttime::ENTRY_COUNT_KEY).unwrap(), 1, "and the leader was not charged");
+        let _ = leader.handle(&click(900));
+        let out = leader.handle(&pick(crate::firsttime::LAKELIS_COUNT));
+        assert!(said(&out).contains("#b9#k more times today"), "{}", said(&out));
     }
 
     /// **A level-up redraws the party window for everyone.**
@@ -1448,6 +1483,10 @@ mod tests {
         for item in [firsttime::COUPON, firsttime::PASS] {
             cfg.item_names.insert(item, format!("item {item}"));
         }
+        // Level 21 needs 1000 for 22, so 5% is 50.
+        cfg.exp_curve = crate::expcurve::ExpCurve::parse("21 | 1000
+22 | 1200
+");
         let config = Arc::new(cfg);
         let mut ids = Vec::new();
         let mut sessions = Vec::new();
@@ -1559,6 +1598,13 @@ mod tests {
         assert_eq!(effects(&out), 3, "banner, fanfare, gate: {}", said(&out));
         assert_eq!(held(ids[0], firsttime::PASS), 1, "four held, three taken");
         assert_eq!(effects(&sessions[2].tick(2_000)), 3, "Nook, same run, sees the clear");
+        // **The clear pays 5% of the next level to every member** - the leader now, the
+        // others on their own tick.
+        let _ = sessions[1].tick(2_000);
+        let exp_of = |id: u32| store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().exp;
+        for id in &ids {
+            assert_eq!(exp_of(*id), 50, "5% of 1000 for character {id}");
+        }
         let cleared = fields.runs().is_cleared(ids[0], firsttime::STAGE_1);
         assert!(cleared);
         let closed = fields.runs().close(run.id);
@@ -1878,6 +1924,9 @@ mod tests {
         for (item, name) in [(firsttime::PASS, "Pass"), (firsttime::COMPANIONS_MAGIC_BOX, "Companion's Magic Box")] {
             cfg.item_names.insert(item, name.into());
         }
+        cfg.exp_curve = crate::expcurve::ExpCurve::parse("21 | 1000
+22 | 1200
+");
         let config = Arc::new(cfg);
         let mut ids = Vec::new();
         let mut sessions = Vec::new();
@@ -1967,12 +2016,17 @@ mod tests {
         assert_eq!(out.iter().filter(|r| r.opcode == net::fieldeffect::FIELD_EFFECT).count(), 0);
         assert_eq!(held(ids[0], firsttime::PASS, store::InventoryType::Etc), 9, "short: nothing taken");
         let _ = sessions[0].give_item(firsttime::PASS, 1, "test").unwrap();
+        let exp_before: Vec<u64> = ids.iter().map(|id| store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == *id).unwrap().exp).collect();
         let out = sessions[0].handle(&click);
         assert_eq!(out.iter().filter(|r| r.opcode == net::fieldeffect::FIELD_EFFECT).count(), 3, "cleared");
         assert_eq!(held(ids[0], firsttime::PASS, store::InventoryType::Etc), 0, "all ten taken");
         assert_eq!(held(ids[0], firsttime::COMPANIONS_MAGIC_BOX, store::InventoryType::Use), 1, "the leader's box");
         let _ = sessions[1].tick(5_000);
         assert_eq!(held(ids[1], firsttime::COMPANIONS_MAGIC_BOX, store::InventoryType::Use), 1, "Mote's box, through their own session");
+        // 35% of 1000 each, for the last stage - on top of whatever the kills above paid,
+        // so measured as the difference across the clear.
+        let exp_after: Vec<u64> = ids.iter().map(|id| store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == *id).unwrap().exp).collect();
+        assert_eq!(exp_after.iter().zip(&exp_before).map(|(a, b)| a - b).collect::<Vec<_>>(), vec![350, 350]);
         let closed = fields.runs().close(run.id);
         assert!(closed);
     }

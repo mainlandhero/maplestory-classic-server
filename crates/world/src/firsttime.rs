@@ -41,6 +41,36 @@ pub const MIN_PARTY: usize = 2;
 /// Four, as both the owner and the client say.
 pub const MAX_PARTY: usize = 4;
 
+/// **Entries per character per UTC day.** The owner, 2026-09-23: *"The PQ should also have an
+/// entry limit of 10 entries per character per day."* Counted by `store::dailycount`, which
+/// resets at UTC midnight like the Maple Administrator's daily favours.
+pub const DAILY_ENTRIES: u32 = 10;
+/// The key the entries are counted under.
+pub const ENTRY_COUNT_KEY: &str = "first_time_together";
+
+/// **The EXP a stage clear pays, as a percent of the EXP each member needs for their own next
+/// level.** The owner, 2026-09-23: 5, 7, 9, 11 and 35 for stages 1 to 5, *"given to each party
+/// member immediately when the clear animation is shown."* Not scaled by the server's EXP
+/// rate: these are their numbers for this reward, and a rate would make them someone else's.
+pub fn stage_exp_percent(stage: u32) -> Option<u64> {
+    match stage {
+        STAGE_1 => Some(5),
+        80_000_100 => Some(7),
+        80_000_200 => Some(9),
+        80_000_300 => Some(11),
+        80_000_400 => Some(35),
+        _ => None,
+    }
+}
+
+/// `percent` of `to_next`, rounded down but never to nothing for a real level.
+pub fn stage_exp(to_next: u64, percent: u64) -> u64 {
+    if to_next == 0 {
+        return 0;
+    }
+    (to_next.saturating_mul(percent) / 100).max(1)
+}
+
 /// **How long a party has.** The owner, 2026-09-22: *"the party quest lacked a timer, since it
 /// has to be finished within the time limit or its members will be kicked out into the exit
 /// map."* Then a screenshot of the widget itself, reading **29:32** a few seconds into a
@@ -533,8 +563,32 @@ pub const NELLA_LEAVE: &str =
 /// What Nella asks on the Exit map.
 pub const NELLA_TOWN: &str = "Shall I send you back to Kerning City?";
 
-/// The conversation path Lakelis' yes/no is parked under.
+/// The conversation path Lakelis' menu is parked under.
 pub const ASK_PATH: &str = "firsttime.ask";
+/// Lakelis' menu line: go in.
+pub const LAKELIS_ENTER: u32 = 0;
+/// Lakelis' menu line: how many entries are left today.
+pub const LAKELIS_COUNT: u32 = 1;
+
+/// **Lakelis' menu.** The owner, 2026-09-23: players *"can talk to [them] to see their remaining
+/// entries left for the day, or enter the party quest."* Their own greeting, then the two.
+pub fn lakelis_menu() -> String {
+    format!(
+        "{GREETING}\r\n#d#L{LAKELIS_ENTER}#I want to enter with my party.#l\r\n\
+         #L{LAKELIS_COUNT}#How many more times can I enter today?#l#k"
+    )
+}
+
+/// What they say about the count.
+pub fn lakelis_entries_line(left: u32) -> String {
+    match left {
+        0 => format!(
+            "You have used all {DAILY_ENTRIES} of today's entries. They come back at midnight (UTC)."
+        ),
+        1 => format!("You can enter #b1#k more time today, of {DAILY_ENTRIES}."),
+        n => format!("You can enter #b{n}#k more times today, of {DAILY_ENTRIES}."),
+    }
+}
 
 /// What Lakelis says when clicked - the line in the owner's screenshot, verbatim.
 pub const GREETING: &str =
@@ -566,6 +620,8 @@ pub enum Refusal {
     /// with you" is true of both; saying "offline" would be asserting the half nobody looked
     /// up - the same rule as [`Refusal::UnknownMember`].
     NotHere { name: String },
+    /// A member has used all [`DAILY_ENTRIES`] of today's entries.
+    OutOfEntries { name: String },
     /// A member's record could not be read, so their level is unknown. Refusing is the
     /// only safe answer: letting them in would be asserting a level nobody looked up.
     UnknownMember { character: CharacterId },
@@ -606,6 +662,10 @@ impl Refusal {
                 "#b{name}#k is not online here with you. Everyone in the party must be here \
                  in Kerning City before I can send you in."
             ),
+            Refusal::OutOfEntries { name } => format!(
+                "#b{name}#k has already entered {DAILY_ENTRIES} times today. Everyone's entries \
+                 come back at midnight (UTC)."
+            ),
             Refusal::UnknownMember { character } => format!(
                 "I cannot see everyone in your party right now (character {character}). Try \
                  again in a moment."
@@ -624,12 +684,14 @@ pub struct Candidate {
     pub online: bool,
     /// That presence is on [`ENTRY_MAP`]. Implies `online`.
     pub here: bool,
+    /// How many of today's [`DAILY_ENTRIES`] they have left.
+    pub entries_left: u32,
 }
 
 impl Candidate {
     /// A candidate standing in Kerning City - the shape that passes the presence rules.
     pub fn present(character: CharacterId, name: &str, level: u16) -> Self {
-        Self { character, name: name.to_string(), level, online: true, here: true }
+        Self { character, name: name.to_string(), level, online: true, here: true, entries_left: DAILY_ENTRIES }
     }
 }
 
@@ -677,6 +739,10 @@ pub fn check(
     // party always reads the same line whoever happens to be listed first.
     if let Some(low) = out.iter().filter(|c| c.level < MIN_LEVEL).min_by_key(|c| c.level) {
         return Err(Refusal::Underlevelled { name: low.name.clone(), level: low.level });
+    }
+    // Last: a party that cannot go for any other reason should hear that reason, not this.
+    if let Some(spent) = out.iter().find(|c| c.entries_left == 0) {
+        return Err(Refusal::OutOfEntries { name: spent.name.clone() });
     }
     Ok(out)
 }
@@ -887,6 +953,46 @@ mod tests {
 
     fn at(level: u16) -> impl FnMut(CharacterId) -> Option<Candidate> {
         move |id| Some(Candidate::present(id, &format!("C{id}"), level))
+    }
+
+    /// **Out of entries refuses, and names who.** Checked last, so a party refused for
+    /// anything else hears that first; and one member at zero is enough.
+    #[test]
+    fn a_member_with_no_entries_left_refuses_the_party() {
+        let p = party(1, &[1, 2]);
+        let spent = |id: CharacterId| {
+            let mut c = Candidate::present(id, &format!("C{id}"), 30);
+            if id == 2 {
+                c.entries_left = 0;
+            }
+            Some(c)
+        };
+        let err = check(1, Some(&p), spent).unwrap_err();
+        assert_eq!(err, Refusal::OutOfEntries { name: "C2".into() });
+        assert!(err.line().contains("10 times today"), "{}", err.line());
+        // Under-levelled AND out: the level is what they hear.
+        let both = |id: CharacterId| {
+            let mut c = Candidate::present(id, &format!("C{id}"), 30);
+            if id == 2 {
+                c.entries_left = 0;
+                c.level = 5;
+            }
+            Some(c)
+        };
+        assert!(matches!(check(1, Some(&p), both), Err(Refusal::Underlevelled { .. })));
+        assert!(check(1, Some(&p), at(30)).is_ok(), "the control: entries left, in");
+    }
+
+    /// The owner's five percentages, the floor for a real level, and nothing at the cap.
+    #[test]
+    fn a_stage_clear_pays_wisps_percent_of_the_next_level() {
+        let pct: Vec<Option<u64>> = (0..7).map(|n| stage_exp_percent(STAGE_1 + n * 100)).collect();
+        assert_eq!(pct, vec![Some(5), Some(7), Some(9), Some(11), Some(35), None, None]);
+        assert_eq!(stage_exp(1_000, 35), 350);
+        assert_eq!(stage_exp(15, 5), 1, "never nothing for a real level");
+        assert_eq!(stage_exp(0, 35), 0, "nothing at the cap");
+        assert_eq!(lakelis_entries_line(3), "You can enter #b3#k more times today, of 10.");
+        assert!(lakelis_entries_line(0).contains("used all 10"));
     }
 
     /// Each of the owner's four rules, refused on its own terms.
@@ -1225,7 +1331,7 @@ mod tests {
         assert!(!CLOTO_STAGE1_INTRO.contains("except"), "the leader exception is removed");
         // A Python patch once swallowed a line-continuation backslash and left runs of
         // spaces inside two of these; the client would draw every one of them.
-        let mut said = vec![CLOTO_STAGE1_INTRO.to_string(), CLOTO_RIGHT.into(), CLOTO_DONE.into(), CLOTO_BAG_FULL.into(), cloto_short(3, 1), cloto_menu(3), cloto_stage2_intro(2), cloto_stage2_intro(3), cloto_zone_count(1, 2, &zone_stage(STAGE_2).unwrap()), cloto_zone_count(4, 3, &zone_stage(STAGE_3).unwrap()), cloto_stage3_intro(2), cloto_stage3_intro(3), cloto_stage3_intro(1), cloto_stage4_intro(1), cloto_stage4_intro(2), cloto_stage4_intro(3), cloto_stage5_intro(), cloto_stage5_short(4)];
+        let mut said = vec![CLOTO_STAGE1_INTRO.to_string(), CLOTO_RIGHT.into(), CLOTO_DONE.into(), CLOTO_BAG_FULL.into(), cloto_short(3, 1), cloto_menu(3), cloto_stage2_intro(2), cloto_stage2_intro(3), cloto_zone_count(1, 2, &zone_stage(STAGE_2).unwrap()), cloto_zone_count(4, 3, &zone_stage(STAGE_3).unwrap()), cloto_stage3_intro(2), cloto_stage3_intro(3), cloto_stage3_intro(1), cloto_stage4_intro(1), cloto_stage4_intro(2), cloto_stage4_intro(3), cloto_stage5_intro(), cloto_stage5_short(4), lakelis_menu(), lakelis_entries_line(0), lakelis_entries_line(1), lakelis_entries_line(7)];
         said.extend((0..QUESTIONS.len()).flat_map(|i| [cloto_question(i), cloto_wrong(i)]));
         for line in said {
             assert!(!line.contains("  "), "a run of spaces in: {line:?}");
