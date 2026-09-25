@@ -55,6 +55,19 @@ impl Session {
         // in one call, because half of a mutual sighting is invisible on one
         // screen. `crate::session::multiplayer`.
         out.extend(self.announce_field_entry());
+        // **Every spawn above is a fresh `CUser` on the other screens, with an empty HP bar**,
+        // so the party HP cache must forget what it sent. `announce_field_entry` posts this
+        // character's `0x0225` farewell and a new `0x0224`, and the object the new one
+        // creates has `+0x10cc == 0` until a `0x02B2` fills it (`net::userpool::USER_HP_REMOTE`).
+        // `party_hp_tick` resends only when `(hp, max, who)` changes, and after a re-entry on
+        // the SAME map none of the three has - so the bar stayed blank until the HP moved.
+        //
+        // The owner, 2026-09-24: *"When players initially sit on a chair then stand up, their HP
+        // bars appear empty when they are part of a party."* Standing up is exactly that case:
+        // the client's `SetSeat` (`FUN_1428a81d0`) ends by sending `0x00DC`, and every
+        // stand-up in `research/fixtures/map-chairs-sit-stand-relay-two-clients-world.log` is
+        // followed 3-12 ms later by one, then `0x0225` + `0x0224` for the stander.
+        self.last_party_hp = None;
         // The summoned pet, if any - the pools it lived in were just rebuilt. session/pet.rs.
         out.extend(self.pet_entry_replies(&chr));
         // The party window, once, for a member who was in a party when they last left: seats

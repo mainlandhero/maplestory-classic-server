@@ -942,6 +942,67 @@ mod tests {
         assert_eq!(again[0].1, u32::try_from(hurt.hp).unwrap(), "with the new HP");
     }
 
+    /// **Standing up from a chair does not blank the stander's HP bar on a partner's screen.**
+    ///
+    /// The owner, 2026-09-24: *"When players initially sit on a chair then stand up, their HP bars
+    /// appear empty when they are part of a party."* The client's stand-up (`SetSeat`) ends
+    /// by sending `0x00DC`, the server answers it as a field entry, and the partner is sent the
+    /// stander's `0x0225` and a fresh `0x0224` - a new `CUser` with an empty bar. This replays
+    /// that sequence (sit, stand, `0x00DC`) with the HP unchanged throughout, and requires an
+    /// `0x02B2` about the stander to reach the partner AFTER the new spawn.
+    #[test]
+    fn standing_up_from_a_chair_resends_the_standers_hp_after_their_new_spawn() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut ids = Vec::new();
+        for name in ["Cobalt", "Tester2"] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: 104_040_000, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.create_migration(account, id, 0, 0).unwrap();
+            ids.push(id);
+        }
+        let mut sitter = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut partner = Session::joining(store.clone(), config, fields);
+        sitter.claim_for_character(ids[0]);
+        partner.claim_for_character(ids[1]);
+        sitter.on_field_entered();
+        partner.on_field_entered();
+        let created = sitter.run_party_request(ids[0], crate::party::Request::Create { name: "P".into() });
+        let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        let _ = sitter.run_party_request(ids[0], crate::party::Request::Invite { target: ids[1] });
+        let _ = partner.tick(1_000);
+        let _ = partner.run_party_request(ids[1], crate::party::Request::Accept { party });
+        for t in [2_000, 2_100, 2_200] {
+            let _ = sitter.tick(t);
+            let _ = partner.tick(t);
+        }
+        let about = |r: &Reply| u32::from_le_bytes(r.body[0..4].try_into().unwrap());
+        let is_hp_of_sitter = |r: &Reply| r.opcode == net::userpool::USER_HP_REMOTE && about(r) == ids[0];
+        assert!(!partner.tick(2_300).iter().any(is_hp_of_sitter), "baseline: the bar is already sent and nothing changed");
+
+        // Sit on a Red Chair, stand, and the client's own 0x00DC from SetSeat.
+        let mut sit = vec![0u8; 4];
+        sit.extend_from_slice(&3_010_000u32.to_le_bytes());
+        sit.extend_from_slice(&1u32.to_le_bytes());
+        let _ = sitter.on_chair_sit(&sit);
+        let _ = sitter.on_chair_cancel(&0xFFFFu16.to_le_bytes());
+        let _ = sitter.on_field_entered();
+        let _ = sitter.tick(3_000);
+
+        let seen = partner.tick(3_010);
+        let spawn = seen
+            .iter()
+            .rposition(|r| r.opcode == net::userpool::USER_ENTER_FIELD && about(r) == ids[0])
+            .expect("the stand-up's 0x00DC re-announces the stander - the reason the bar empties");
+        let hp = seen.iter().rposition(is_hp_of_sitter).expect("the stander's HP is sent again");
+        assert!(hp > spawn, "the HP must follow the spawn that creates the CUser it fills");
+        assert_eq!(
+            u32::from_le_bytes(seen[hp].body[4..8].try_into().unwrap()),
+            u32::try_from(sitter.claimed_character().unwrap().hp).unwrap(),
+            "the unchanged HP - nothing moved but the chair"
+        );
+    }
+
     /// **A party member's HP waits for their own spawn** - the channel-change bug.
     ///
     /// The owner, 2026-09-21: *"the owner changing channels back from channel 2 to channel 1, the owner's HP
