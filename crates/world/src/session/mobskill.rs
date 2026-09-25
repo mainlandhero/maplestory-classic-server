@@ -1,9 +1,9 @@
-//! A mob's MP and skills, on the acknowledgement of each move - King Slime's jump attack and
-//! summon. `crate::mobskills` has the data and the working.
+//! A mob's MP and skills, on the acknowledgement of each move - for every mob
+//! `gm-handbook/mobskills.txt` has a kit for. `crate::mobskills` has the data and the working.
 
 use super::{Reply, Session};
 
-/// Wall-clock milliseconds: a skill's cooldown belongs to the mob, not to whichever session
+/// Wall-clock milliseconds: MP and skill clocks belong to the mob, not to whichever session
 /// is controlling it, and two sessions' `clock_ms` count from two different connections.
 fn wall_ms() -> u64 {
     std::time::SystemTime::now()
@@ -13,51 +13,98 @@ fn wall_ms() -> u64 {
 }
 
 impl Session {
-    /// **What this move's acknowledgement carries**: `(mp, skill, level)` and any packets
-    /// the report itself caused.
+    /// **What this move's acknowledgement carries**: `(mp, skill, level)`, and any packets the
+    /// report itself caused.
     ///
-    /// For a mob `crate::mobskills` knows (King Slime), the MP is its full `maxMP` - so the
-    /// client's attack chooser stops ruling out its 10-MP jump attack - and the summon is
-    /// offered whenever its own data allows. A report that names the summon as USED spawns
-    /// the mobs, once per cooldown. Every other mob gets the old zeros.
+    /// For a mob with a kit: an MP-costing attack in the report is charged; a summon the
+    /// report names as USED is applied (once per its interval) and its `mpCon` charged; the
+    /// MP after regeneration is what the controller is told; and one skill whose conditions
+    /// hold - its effect applicable, off cooldown, HP at or under its threshold, MP enough,
+    /// under its summon limit - is offered, at random when several do. Every other mob gets
+    /// the old zeros.
     pub(super) fn mob_skill_ack(
         &mut self,
         map: crate::fields::FieldKey,
         req: &net::mobmove::MobMoveRequest,
     ) -> (u32, u32, u16, Vec<Reply>) {
         let template = self.fields.mob_template(map, req.object_id).unwrap_or(0);
-        let Some(kit) = crate::mobskills::kit(template) else { return (0, 0, 0, Vec::new()) };
-        let (mp, max_hp) = self
-            .config
-            .mob_templates
-            .get(&template)
-            .map(|t| (t.max_mp, u64::from(t.max_hp)))
-            .unwrap_or((0, 0));
+        let Some(kit) = self.config.mob_skills.kit(template).cloned() else { return (0, 0, 0, Vec::new()) };
+        let object_id = req.object_id;
         let now = wall_ms();
-        let alive = |s: &Self| s.fields.mobs_on(map).iter().filter(|m| kit.mobs.contains(&m.spawn.template_id)).count();
+        let max_hp = self.config.mob_templates.get(&template).map(|t| u64::from(t.max_hp)).unwrap_or(0);
+        let alive_of = |s: &Self, summons: &[u32]| {
+            s.fields.mobs_on(map).iter().filter(|m| summons.contains(&m.spawn.template_id)).count()
+        };
         let mut out = Vec::new();
 
-        // The client says it just USED the summon: spawn them, once per cooldown.
-        if req.skill_id() == kit.skill && req.skill_level() == kit.level {
-            let n = crate::mobskills::how_many(&kit, alive(self));
-            if n > 0 && self.fields.take_skill(map, req.object_id, now, kit.interval_ms) {
-                let at = self.fields.mob_site(map, req.object_id).unwrap_or((req.x, req.y));
+        // An MP-costing attack in this report.
+        if let Some(index) = crate::mobskills::attack_index(req.move_action) {
+            let charged = self.fields.with_mob_mp(map, object_id, kit.max_mp, now, |m| (m.attacked(&kit, index, now), m.mp));
+            if let Some((true, left)) = charged {
                 crate::server::log(&format!(
-                    "   mob skill: mob {} (template {template}) used skill {} level {} on field {map} - summoning {n}",
-                    req.object_id, kit.skill, kit.level
+                    "   mob mp: mob {object_id} (template {template}) used attack{} - {left}/{} MP left",
+                    index + 1,
+                    kit.max_mp
                 ));
-                out.extend(self.summon_mobs_at(map, &kit.mobs[..n], at, &format!("skill {} of mob {}", kit.skill, req.object_id)));
             }
         }
 
-        let hp = self.fields.mob_hp(map, req.object_id).unwrap_or(0);
-        let ready = self.fields.skill_ready(map, req.object_id, now);
-        let offer = crate::mobskills::may_offer(&kit, hp, max_hp, ready, alive(self));
-        if offer {
-            (mp, kit.skill, kit.level, out)
-        } else {
-            (mp, 0, 0, out)
+        // A skill this report says was USED.
+        let used = (req.skill_id(), req.skill_level());
+        if used.0 != 0 {
+            let level = self.config.mob_skills.level(used.0, used.1).cloned();
+            match level {
+                Some(level) if kit.skills.contains(&used) && level.applicable(used.0) => {
+                    let n = level.how_many(alive_of(self, &level.summons));
+                    if n > 0 && self.fields.take_skill(map, object_id, used.0, now, level.interval_ms) {
+                        let _ = self.fields.with_mob_mp(map, object_id, kit.max_mp, now, |m| {
+                            m.regen(kit.max_mp, kit.regen, now);
+                            m.spend(kit.max_mp, level.mp_con, now);
+                        });
+                        let at = self.fields.mob_site(map, object_id).unwrap_or((req.x, req.y));
+                        crate::server::log(&format!(
+                            "   mob skill: mob {object_id} (template {template}) used skill {} level {} on field {map} - summoning {n}",
+                            used.0, used.1
+                        ));
+                        let why = format!("skill {} of mob {object_id}", used.0);
+                        out.extend(self.summon_mobs_at(map, &level.summons[..n], at, &why));
+                    }
+                }
+                _ => crate::server::log(&format!(
+                    "   mob skill: mob {object_id} (template {template}) reported skill {} level {} - not one this server applies; ignored",
+                    used.0, used.1
+                )),
+            }
         }
+
+        // The MP the controller is told, after regeneration.
+        let mp = self
+            .fields
+            .with_mob_mp(map, object_id, kit.max_mp, now, |m| {
+                m.regen(kit.max_mp, kit.regen, now);
+                m.mp
+            })
+            .unwrap_or(0);
+
+        // One skill to offer, if any qualifies.
+        let hp = self.fields.mob_hp(map, object_id).unwrap_or(0);
+        let offers: Vec<(u32, u16)> = kit
+            .skills
+            .iter()
+            .copied()
+            .filter(|&(skill, lv)| {
+                self.config.mob_skills.level(skill, lv).is_some_and(|l| {
+                    l.applicable(skill)
+                        && l.may_offer(mp, hp, max_hp, self.fields.skill_ready(map, object_id, skill, now), alive_of(self, &l.summons))
+                })
+            })
+            .collect();
+        let (skill, level) = if offers.is_empty() {
+            (0, 0)
+        } else {
+            offers[(self.rng.next() % offers.len() as u64) as usize]
+        };
+        (mp, skill, level, out)
     }
 
     /// **Put `templates` on the field at `at`**, like a summoning sack: never a spawn point,

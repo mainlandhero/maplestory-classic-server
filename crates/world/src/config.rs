@@ -297,6 +297,9 @@ pub struct Config {
     /// are kept because they answer different questions: that one is "what does the SERVER
     /// think this hit for", this one is "what should the CLIENT be told the mob is".
     pub mob_templates: HashMap<u32, MobTemplate>,
+    /// Every mob's MP, MP-costing attacks and skills, and the skill levels they name -
+    /// `gm-handbook/mobskills.txt`. `crate::mobskills`.
+    pub mob_skills: crate::mobskills::MobSkillTable,
     /// What each quest requires: mobs to kill and items to hold. `gm-handbook/questreq.txt`.
     ///
     /// Generated from the client's own `Quest.wz`, so this is the client's data rather than
@@ -2528,6 +2531,7 @@ impl Default for Config {
             mob_exp: HashMap::new(),
             mob_attack: HashMap::new(),
             mob_templates: HashMap::new(),
+            mob_skills: crate::mobskills::MobSkillTable::default(),
             quest_reqs: net::quest::QuestRequirementTable::default(),
             quest_items: crate::questitems::QuestItems::default(),
             chatter_off: false,

@@ -125,6 +125,7 @@ fn main() -> ExitCode {
     let mut chairs_path = PathBuf::from("gm-handbook/chairs.txt");
     let mut recipes_path = PathBuf::from("gm-handbook/craftrecipes.txt");
     let mut mob_templates_path = PathBuf::from("gm-handbook/mobtemplates.txt");
+    let mut mob_skills_path = PathBuf::from("gm-handbook/mobskills.txt");
     let mut npc_strings_path = PathBuf::from("gm-handbook/npcstrings.txt");
     let mut pet_commands_path = PathBuf::from("gm-handbook/petcommands.txt");
     // Authored source like data/shops.txt: hand-written, committed, and NOT in gm-handbook/,
@@ -269,6 +270,7 @@ fn main() -> ExitCode {
             "--chairs" => value().map(|v| chairs_path = PathBuf::from(v)),
             "--craftrecipes" => value().map(|v| recipes_path = PathBuf::from(v)),
             "--mob-templates" => value().map(|v| mob_templates_path = PathBuf::from(v)),
+            "--mob-skills" => value().map(|v| mob_skills_path = PathBuf::from(v)),
             "--npc-strings" => value().map(|v| npc_strings_path = PathBuf::from(v)),
             "--pet-commands" => value().map(|v| pet_commands_path = PathBuf::from(v)),
             "--npc-dialogue" => value().map(|v| npc_dialogue_path = PathBuf::from(v)),
@@ -456,6 +458,22 @@ fn main() -> ExitCode {
     // Kept whole, so a forced-stat block can be built from the mob's own WZ row rather than
     // from zeros. See Config::mob_templates.
     config.mob_templates = mob_templates.clone();
+    // MP, MP-costing attacks and skills. Without it every mob is sent MP 0 and offered no
+    // skill, which is how every mob behaved before 2026-09-24. crate::mobskills.
+    config.mob_skills = world::mobskills::MobSkillTable::load(&mob_skills_path);
+    if config.mob_skills.mobs.is_empty() {
+        eprintln!(
+            "maplecw-world: no mob skills from {} - no mob will use an MP-costing attack or a skill. Regenerate with: python tools/dump_mobskills.py",
+            mob_skills_path.display()
+        );
+    } else {
+        println!(
+            "mob skills    {} mobs, {} skill levels from {}",
+            config.mob_skills.mobs.len(),
+            config.mob_skills.levels.len(),
+            mob_skills_path.display()
+        );
+    }
     let (mob_fields, mob_respawn) = world::config::Config::load_mobs(&mobs_path, &mob_templates);
     config.mobs = mob_fields;
     config.mob_respawn_s = mob_respawn;
