@@ -2060,6 +2060,14 @@ mod tests {
         cfg.mob_templates.insert(firsttime::KING_SLIME, crate::config::MobTemplate { max_hp: 16_820, max_mp: 100, ..Default::default() });
         cfg.mob_templates.insert(800_001, crate::config::MobTemplate { max_hp: 765, max_mp: 30, ..Default::default() });
         cfg.mob_templates.insert(firsttime::SLIME, crate::config::MobTemplate { max_hp: 115, ..Default::default() });
+        // King Slime's rows exactly as gm-handbook/mobskills.txt has them; the Necki has none.
+        cfg.mob_skills = crate::mobskills::MobSkillTable::parse(
+            "mob, 800003, 100, 10
+attack, 800003, 0, 10, 3000
+skill, 800003, 200, 1
+level, 200, 1, 0, 15, 50, 15, 7 7 7
+",
+        );
         let config = Arc::new(cfg);
         let mut ids = Vec::new();
         let mut sessions = Vec::new();
@@ -2079,12 +2087,12 @@ mod tests {
         let _ = sessions[1].on_field_entered();
 
         // A minimal 0x02FF: object id, move id, packed, action, the skill command, the rest empty.
-        let report = |object_id: u32, move_id: u16, skill: u64| {
+        let report_as = |object_id: u32, move_id: u16, action: u8, skill: u64| {
             let mut b = net::mobmove::MOB_MOVE_REQUEST.to_le_bytes().to_vec();
             b.extend_from_slice(&object_id.to_le_bytes());
             b.extend_from_slice(&move_id.to_le_bytes());
             b.push(0);
-            b.push(0xFF);
+            b.push(action);
             b.extend_from_slice(&skill.to_le_bytes());
             b.extend_from_slice(&[0u8; 2]);
             b.extend_from_slice(&[0u8, 0u8]);
@@ -2093,6 +2101,7 @@ mod tests {
             b.extend_from_slice(&[0u8; net::mobmove::MOB_PATH_HEAD_LEN]);
             b
         };
+        let report = |object_id: u32, move_id: u16, skill: u64| report_as(object_id, move_id, 0xFF, skill);
         let ack = |out: &[Reply]| -> (u32, u32, u16) {
             let a = out.iter().find(|r| r.opcode == net::mobmove::MOB_CTRL_ACK).expect("an ack");
             (
@@ -2111,19 +2120,28 @@ mod tests {
         let out = sessions[0].handle(&report(1_001, 1, 0));
         assert_eq!(ack(&out), (0, 0, 0), "every other mob is unchanged");
 
+        // **The jump costs 10, once**: attack1 is wire action 13, 26 facing left.
+        let out = sessions[0].handle(&report_as(1_000, 2, 26, 0));
+        assert_eq!(ack(&out), (90, 0, 0), "the server kept the MP and tells the controller 90");
+        let out = sessions[0].handle(&report_as(1_000, 3, 26, 0));
+        assert_eq!(ack(&out).0, 90, "the same jump in the next report is not charged again");
+        // A skill it does not have, reported: ignored, nothing summoned.
+        let _ = sessions[0].handle(&report(1_000, 4, 120 | (1 << 16)));
+        assert_eq!(slimes(), 0);
+
         // Half HP: the summon is offered.
         let _ = sessions[0].deal_to_mob(key, 1_000, 8_410, ids[0]);
-        let out = sessions[0].handle(&report(1_000, 2, 0));
-        assert_eq!(ack(&out), (100, 200, 1));
+        let out = sessions[0].handle(&report(1_000, 5, 0));
+        assert_eq!(ack(&out), (90, 200, 1));
 
         // The client used it: three Slimes, shown to Mote too; then not again for 15 s.
-        let out = sessions[0].handle(&report(1_000, 3, used));
+        let out = sessions[0].handle(&report(1_000, 6, used));
         assert_eq!(out.iter().filter(|r| r.opcode == net::mob::MOB_ENTER_FIELD).count(), 3, "three Slimes");
         assert_eq!(slimes(), 3);
-        assert_eq!(ack(&out), (100, 0, 0), "cooling down: no offer");
+        assert_eq!(ack(&out), (90, 0, 0), "cooling down: no offer (the summon costs no MP)");
         let seen = sessions[1].tick(5_000).iter().filter(|r| r.opcode == net::mob::MOB_ENTER_FIELD).count();
         assert_eq!(seen, 3, "the party sees them");
-        let _ = sessions[0].handle(&report(1_000, 4, used));
+        let _ = sessions[0].handle(&report(1_000, 7, used));
         assert_eq!(slimes(), 3, "a second report inside the interval summons nothing");
 
         let closed = fields.runs().close(run.id);

@@ -211,8 +211,11 @@ struct FieldState {
     /// Set once the spawn points have been registered, so entering twice does not double
     /// the field.
     seeded: bool,
-    /// When each mob may next use its skill, wall-clock ms. `crate::mobskills`.
-    skill_ready_at: HashMap<u32, u64>,
+    /// When each mob may next use each skill, wall-clock ms: `(object id, skill) -> ms`.
+    /// `crate::mobskills`.
+    skill_ready_at: HashMap<(u32, u32), u64>,
+    /// Each live mob's MP, for the mobs `crate::mobskills` has a kit for.
+    mob_mp: HashMap<u32, crate::mobskills::MobMp>,
     /// The next object id [`Fields::summon_mob`] will hand out on this map.
     ///
     /// `0` means "not started"; the first call begins at [`SUMMON_OBJECT_ID_BASE`]. A summoned
@@ -453,23 +456,42 @@ impl Fields {
         }
     }
 
-    /// Whether mob `object_id` may use its skill at `now_ms` (wall clock).
-    pub fn skill_ready(&self, key: FieldKey, object_id: u32, now_ms: u64) -> bool {
+    /// Whether mob `object_id` may use `skill` at `now_ms` (wall clock).
+    pub fn skill_ready(&self, key: FieldKey, object_id: u32, skill: u32, now_ms: u64) -> bool {
         let maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
-        maps.get(&key).and_then(|f| f.skill_ready_at.get(&object_id)).map_or(true, |&at| now_ms >= at)
+        maps.get(&key).and_then(|f| f.skill_ready_at.get(&(object_id, skill))).map_or(true, |&at| now_ms >= at)
     }
 
     /// **Spend the mob's skill**: `true` for the caller that took it, and it is not ready
     /// again until `now_ms + interval_ms`. A test-and-set, so two reports of one cast - or two
-    /// controllers racing a handover - cannot summon twice.
-    pub fn take_skill(&self, key: FieldKey, object_id: u32, now_ms: u64, interval_ms: u64) -> bool {
+    /// controllers racing a handover - cannot apply it twice.
+    pub fn take_skill(&self, key: FieldKey, object_id: u32, skill: u32, now_ms: u64, interval_ms: u64) -> bool {
         let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
         let field = maps.entry(key).or_default();
-        if field.skill_ready_at.get(&object_id).is_some_and(|&at| now_ms < at) {
+        if field.skill_ready_at.get(&(object_id, skill)).is_some_and(|&at| now_ms < at) {
             return false;
         }
-        field.skill_ready_at.insert(object_id, now_ms.saturating_add(interval_ms));
+        field.skill_ready_at.insert((object_id, skill), now_ms.saturating_add(interval_ms));
         true
+    }
+
+    /// **Run `f` against this mob's MP**, creating it full on first sight. `None` for a mob
+    /// that is not alive on the field - a corpse has no MP to keep.
+    pub fn with_mob_mp<T>(
+        &self,
+        key: FieldKey,
+        object_id: u32,
+        max_mp: u32,
+        now_ms: u64,
+        f: impl FnOnce(&mut crate::mobskills::MobMp) -> T,
+    ) -> Option<T> {
+        let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
+        let field = maps.get_mut(&key)?;
+        if !field.mobs.contains_key(&object_id) {
+            return None;
+        }
+        let mp = field.mob_mp.entry(object_id).or_insert_with(|| crate::mobskills::MobMp::full(max_mp, now_ms));
+        Some(f(mp))
     }
 
     /// **Fill every spawn point on this field now** - the party quest's last stage. `true`
@@ -738,6 +760,10 @@ impl Fields {
             return Hurt::Alive(m.hp);
         }
         let dead = field.mobs.remove(&object_id);
+        // Its MP and its skill clocks die with it: a respawn reuses the object id and must
+        // start full and ready, not inherit a corpse's.
+        field.mob_mp.remove(&object_id);
+        field.skill_ready_at.retain(|(id, _), _| *id != object_id);
         // **Only a spawn point's death books a refill.** A summoned mob (`summon_mob`) has no
         // point behind it and stays dead; before refills could land anywhere, its stray
         // booking was harmless because `due_respawns` could not find it - now it would put a
