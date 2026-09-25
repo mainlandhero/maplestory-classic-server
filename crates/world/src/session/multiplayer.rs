@@ -3431,6 +3431,65 @@ level, 200, 1, 0, 15, 50, 15, 7 7 7
         );
     }
 
+    /// **A player arriving is handed the pet where it last walked, not where it was summoned.**
+    ///
+    /// The owner, 2026-09-24: *"Whenever a client enters the map, if other players have pets
+    /// summoned, I see their pets snap to their proper positions. We fixed this for players."*
+    /// The owner summons at (300, -50) and the pet then walks - a real `0x0202` whose path
+    /// ends at (75, 274), facing left (`0x03`). The arrival's `0x0277` must carry that point
+    /// and that stance. Then the control: a walk recorded on ANOTHER field says nothing about
+    /// this one, and the arrival is handed the owner's position as before.
+    #[test]
+    fn an_arrival_is_handed_the_pet_where_it_last_walked_not_where_it_was_summoned() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut ids = Vec::new();
+        for name in ["Owner", "Arrival"] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: 104_040_000, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.create_migration(account, id, 0, 0).unwrap();
+            ids.push(id);
+        }
+        store.add_item(ids[0], store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap();
+        let mut item_names = std::collections::HashMap::new();
+        item_names.insert(5_000_006u32, "Husky".to_string());
+        let config = Arc::new(Config { item_names, ..(*config).clone() });
+        let mut owner = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut arrival = Session::joining(store, config, fields.clone());
+        owner.claim_for_character(ids[0]);
+        arrival.claim_for_character(ids[1]);
+        owner.on_field_entered();
+        owner.last_position = Some((300, -50));
+        let _ = owner.on_pet_activate(&super::tests::hex("509a18140100"));
+
+        // (x, y, stance) out of an arrival's 0x0277 for the owner's pet.
+        let pet_at = |out: &[Reply]| -> (i16, i16, u8) {
+            let b = &out.iter().find(|r| r.opcode == net::pet::PET_ACTIVATED).expect("the pet").body;
+            let name_len = usize::from(u16::from_le_bytes([b[14], b[15]]));
+            let at = 14 + 2 + name_len + 8;
+            (i16::from_le_bytes([b[at], b[at + 1]]), i16::from_le_bytes([b[at + 2], b[at + 3]]), b[at + 4])
+        };
+
+        // The pet walks: 14:27:26.142 in previous-runs/world-ch0-20260922-195941.log, whose
+        // path ends at (75, 274) - net::usermove's test pins that against the next report.
+        let walk = super::tests::hex(
+            "000000000000000000700012010000000003000070001201000000008f0000000000000016d20000005a0012016aff00008f0000000000000003c90000004b0012016aff00008a000000000000000363000000",
+        );
+        assert!(owner.on_pet_move(&walk).is_empty(), "a report; the owner is not answered");
+        let (x, y, stance) = pet_at(&arrival.on_field_entered());
+        assert_eq!((x, y), (75, 274), "where the pet walked to, not the summon point (300, -50)");
+        assert_eq!(stance, 0x03, "and as it stood at the end of the walk");
+
+        // The control: the same walk recorded on another field is not this field's answer.
+        let _ = arrival.tick(1_000);
+        let elsewhere = crate::fields::FieldKey { map: 100_000_000, instance: 0 };
+        owner.pet_position = Some((elsewhere, 75, 274, Some(0x03)));
+        let chr = owner.claimed_character().unwrap();
+        let companions = owner.pet_companions(&chr);
+        let (x, _, _) = pet_at(&companions);
+        assert_eq!(x, 300, "a walk on another map says nothing here; the owner's position stands");
+    }
+
     /// **`broadcast_pets = false` is owner-local: no other client is ever handed the pet.**
     /// The safe fallback if the remote pet ever misbehaves again - neither the live observer
     /// nor a later arrival gets a `0x0277`/`0x0278`, and the owner's own pet is unaffected.

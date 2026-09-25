@@ -358,6 +358,10 @@ pub struct Session {
     /// The pet this session has summoned, if any - session-only, put away by a relog.
     /// `session/pet.rs`.
     active_pet: Option<pet::ActivePet>,
+    /// Where the summoned pet last reported walking to, on which field, with its stance -
+    /// read off its `0x0202`. What a player arriving later is told, so the pet does not
+    /// appear where it was summoned and then snap. `session/pet.rs` `on_pet_move`.
+    pet_position: Option<(crate::fields::FieldKey, i16, i16, Option<u8>)>,
     /// When the summoned pet next loses a fullness, on the session clock. `None` with no pet
     /// out. session/pet.rs `pet_hunger_tick`.
     pet_hunger_due_ms: Option<u64>,
@@ -666,6 +670,7 @@ impl Session {
             log_name: None,
             last_move_action: None,
             active_pet: None,
+            pet_position: None,
             pet_hunger_due_ms: None,
             pet_overfeeds: 0,
             pet_settle_pending: false,
