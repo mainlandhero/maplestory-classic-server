@@ -126,6 +126,22 @@ impl Session {
             what: format!("PetMove: {}'s pet walked; the path forwarded to the map", chr.name),
         };
         self.bus().publish(self.subscriber, self.field_of(&chr), reply, None);
+        // **And where it got to, for whoever arrives next.** The owner, 2026-09-24: *"Whenever a
+        // client enters the map, if other players have pets summoned, I see their pets snap to
+        // their proper positions. We fixed this for players."* The player's spawn is rebuilt
+        // at every move (`note_own_position`); the pet's `0x0277` companion was built once, at
+        // the summon or the field entry, so an arrival was told where the pet had been then,
+        // and the first `0x0278` after it jumped the pet across the map.
+        let path = body.get(net::pet::CLIENT_PET_MOVE_HEAD_LEN..).unwrap_or(&[]);
+        if let Some((x, y, action)) = net::usermove::path_end(path) {
+            let here = self.field_of(&chr);
+            let moved = self.pet_position != Some((here, x, y, action));
+            if moved {
+                self.pet_position = Some((here, x, y, action));
+                let companions = self.pet_companions(&chr);
+                self.bus().set_companions(self.subscriber, companions);
+            }
+        }
         Vec::new()
     }
 
@@ -278,6 +294,8 @@ impl Session {
         }
         out.push(up);
         self.active_pet = Some(next);
+        // A new summon stands beside its owner; the last pet's walk says nothing about it.
+        self.pet_position = None;
         self.pet_hunger_due_ms = Some(self.clock_ms + net::petfood::PET_HUNGER_INTERVAL_MS);
         self.pet_overfeeds = 0;
         // Remembered across a re-login: `restore_active_pet` reads this at the next claim.
@@ -296,13 +314,30 @@ impl Session {
             return Vec::new();
         }
         let Some(active) = self.active_pet else { return Vec::new() };
-        let pet = self.field_pet(chr, active);
+        let mut pet = self.field_pet(chr, active);
+        // Where the pet itself last walked to on THIS field, if it has walked here yet - not
+        // beside the owner, which is only where it was summoned. A position from another
+        // field is ignored: until the pet's first walk on a new map, the owner's is the best
+        // there is, and it is the one the owner's own client summons it at.
+        let at = match self.pet_position {
+            Some((field, x, y, action)) if field == self.field_of(chr) => {
+                let landing = self.config.footholds.landing(chr.map_id, x, y);
+                pet.x = x;
+                pet.y = landing.as_ref().map_or(y, |l| l.y);
+                pet.foothold = landing.map_or(0, |l| u16::try_from(l.foothold).unwrap_or(0));
+                if let Some(a) = action {
+                    pet.move_action = a;
+                }
+                "where it last walked to"
+            }
+            _ => "beside the owner - it has not walked on this field yet",
+        };
         vec![Reply {
             opcode: net::pet::PET_ACTIVATED,
             body: net::pet::pet_activated(chr.id, &pet),
             what: format!(
-                "PetActivated: {} ({}) beside {} - sent to a player who arrived after the summon",
-                pet.name, pet.item_id, chr.name
+                "PetActivated: {} ({}) of {} at ({}, {}), {at} - sent to a player who arrived after the summon",
+                pet.name, pet.item_id, chr.name, pet.x, pet.y
             ),
         }]
     }

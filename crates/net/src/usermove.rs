@@ -410,6 +410,22 @@ impl UserMove {
     }
 }
 
+/// **Where a movement path ends**: `(x, y, move_action)` of its last position-carrying and
+/// tail-carrying elements, for a path block that did not come inside a `0x00D9`.
+///
+/// The pet's `0x0202` carries the same path block after its own five-byte head
+/// (`net::pet::CLIENT_PET_MOVE_HEAD_LEN`) - the head `u32`, `x`, `y`, two `u16`, the count,
+/// then elements. Rather than a second element walker that could drift from this one, the
+/// path is put behind a zeroed ten-byte head and read by [`parse_user_move`] itself.
+///
+/// `None` when the block is shorter than a path head.
+pub fn path_end(path: &[u8]) -> Option<(i16, i16, Option<u8>)> {
+    let mut body = vec![0u8; USER_MOVE_HEAD_LEN];
+    body.extend_from_slice(path);
+    let m = parse_user_move(&body)?;
+    Some((m.x, m.y, m.move_action))
+}
+
 /// Parse a [`CLIENT_USER_MOVE`] body. The caller has already stripped the opcode.
 ///
 /// `None` only when the body is too short to contain the fixed head and the path head - 24
@@ -492,6 +508,31 @@ pub fn parse_user_move(body: &[u8]) -> Option<UserMove> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **A pet's path ends where its next report starts.** Four consecutive `0x0202` bodies
+    /// from `previous-runs/world-ch0-20260922-195941.log`, 14:27:25.631 to 14:27:27.162 -
+    /// each report's path head is where the previous one ended, so the client itself supplies
+    /// the answer [`path_end`] must give for all but the last. The five-byte pet head is
+    /// `net::pet::CLIENT_PET_MOVE_HEAD_LEN`, stripped here as the session strips it.
+    #[test]
+    fn a_pet_paths_end_is_where_its_next_report_starts() {
+        let reports = [
+            "000000000000000000700012010000000002000070001201000000008f00000000000000042c01000070001201000000008f0000000000000016d2000000",
+            "000000000000000000700012010000000003000070001201000000008f0000000000000016d20000005a0012016aff00008f0000000000000003c90000004b0012016aff00008a000000000000000363000000",
+            "0000000000000000004b0012016aff0000020000000012016aff00008a0000000000000003f4010000feff12016aff0000a600000000000000030a000000",
+            "000000000000000000feff12016aff0000020000cdff12016aff0000a600000000000000034a010000bfff1201faff0000a60000000000000005b4000000",
+        ];
+        let paths: Vec<Vec<u8>> = reports.iter().map(|h| body(h)[5..].to_vec()).collect();
+        let start = |p: &[u8]| (i16::from_le_bytes([p[4], p[5]]), i16::from_le_bytes([p[6], p[7]]));
+        for n in 0..3 {
+            let (x, y, _) = path_end(&paths[n]).expect("a path head");
+            assert_eq!((x, y), start(&paths[n + 1]), "report {n} ends where report {} starts", n + 1);
+        }
+        // The controls are not all the same point, or the check above would be empty.
+        assert_ne!(start(&paths[1]), start(&paths[2]));
+        assert_ne!(start(&paths[2]), start(&paths[3]));
+        assert_eq!(path_end(&[0u8; 4]), None, "shorter than a path head");
+    }
 
     /// 14:01:40.792 in `research/fixtures/character-on-map1-playable-world.log`.
     const MAP1_FIRST: &str = "0057a301a8c139cc04000000000043ffab010000000003000043ffd7010000a401000000000000ffff06d200000043ffe50100000000000000000000ffff061e00000043ffe501000000002b0000000000ffff040e010011000000000000000000";
