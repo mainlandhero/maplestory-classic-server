@@ -439,7 +439,33 @@ impl Fields {
             return;
         }
         let Some(points) = config.mobs.get(&key.map) else { return };
-        let alive = crate::config::spawn_capacity(points.len(), 1);
+        let mob_time = |id: u32| config.mob_respawn_s.get(&(key.map, id)).copied().unwrap_or(0);
+
+        // **A boss is never left to the draw, and never makes a fresh map wait.** The owner,
+        // 2026-09-24: *"let's say I go to Mushmom map and this is the first time the server has
+        // tried to load the map (a.k.a no mobs on map), the Mushmom should be scheduled to spawn
+        // instantly. Only after Mushmom is defeated, should the respawn timer kick in."*
+        //
+        // A point with its own `mobTime` - Mushmom's 3600, Jr. Balrog's 10800, a Fairy's 180 -
+        // used to be booked at `now + mobTime`, so the first visitor waited the whole timer.
+        // Worse, it went through the 75% draw below with everything else, and a refill after a
+        // kill only ever picks ORDINARY points: a boss point the draw left out never spawned
+        // until the server restarted - on a four-point map, one start in four. So every timed
+        // point (and a `-1` point, which spawns once and never again) is booked now, due now,
+        // outside the draw. After that nothing is different: `Fields::hurt` re-books the point
+        // at its own `mobTime` when it dies, and that countdown is on the process clock, so it
+        // keeps running with nobody on the map.
+        let (timed, ordinary): (Vec<&net::mob::FieldMob>, Vec<&net::mob::FieldMob>) =
+            points.iter().partition(|m| mob_time(m.object_id) != 0);
+        for mob in &timed {
+            field.pending.push((now_ms, Refill::Point(mob.object_id)));
+        }
+
+        // The ordinary points: 75% of them, drawn, each after the default delay - the fill-in
+        // The owner asked for on 2026-08-19 (*"on first enter, no mobs should exist until the
+        // respawn timer kicks in"*), unchanged.
+        let ordinary: Vec<net::mob::FieldMob> = ordinary.into_iter().copied().collect();
+        let alive = crate::config::spawn_capacity(ordinary.len(), 1);
         let alive = match config.mob_limit {
             Some(n) => alive.min(n),
             None => alive,
@@ -448,9 +474,8 @@ impl Fields {
         // lay the mobs out identically, and so a test can reproduce one exactly.
         let seed = (key.map as u64) << 32 ^ now_ms.wrapping_mul(0x9E37_79B9);
         field.rng = seed;
-        for mob in crate::config::share_balanced(points, alive, seed) {
-            let wz = config.mob_respawn_s.get(&(key.map, mob.object_id)).copied().unwrap_or(0);
-            if let Some(delay) = crate::config::respawn_delay_ms(wz) {
+        for mob in crate::config::share_balanced(&ordinary, alive, seed) {
+            if let Some(delay) = crate::config::respawn_delay_ms(mob_time(mob.object_id)) {
                 field.pending.push((now_ms.saturating_add(delay), Refill::Point(mob.object_id)));
             }
         }
@@ -1121,6 +1146,44 @@ mod tests {
         let back = f.due_respawns(crate::fields::FieldKey::world(7), &c, 1_000_000 + 60_000);
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].spawn.object_id, 2000, "at its own point");
+    }
+
+    /// **A boss stands at once on a fresh map, is never left to the draw, and after a kill is
+    /// due exactly its own `mobTime` later - on the process clock, so still due a day on.**
+    /// The owner, 2026-09-24, with Mushmom (`mobTime 3600`) as the example.
+    ///
+    /// Four ordinary points and one boss point. Across 200 fresh seeds the boss is due at the
+    /// very instant of the seed every time - the control is the ordinary points, which are
+    /// NOT due then and of which only 75% are ever booked.
+    #[test]
+    fn a_boss_is_due_at_once_on_a_fresh_map_and_again_its_own_time_after_it_dies() {
+        let key = crate::fields::FieldKey::world(7);
+        let mut mobs = HashMap::new();
+        let mut points: Vec<net::mob::FieldMob> =
+            (0..4).map(|i| net::mob::FieldMob::new(2000 + i, 2, 100 + i as i16 * 50, 395, 1, 30)).collect();
+        points.push(net::mob::FieldMob::new(2100, 700_000, 400, 395, 1, 20_000)); // Mushmom
+        mobs.insert(7u32, points);
+        let mut c = Config { mobs, send_mobs: true, ..Config::default() };
+        c.mob_respawn_s.insert((7, 2100), 3_600);
+        for n in 0..200u64 {
+            let f = Fields::new();
+            let t = 10_000 + n * 7_919;
+            f.seed(key, &c, t);
+            let now = f.due_respawns(key, &c, t);
+            assert_eq!(now.iter().map(|m| m.spawn.object_id).collect::<Vec<_>>(), vec![2100], "seed {n}: the boss, at once, and only the boss");
+            let later = f.due_respawns(key, &c, t + crate::config::DEFAULT_RESPAWN_MS);
+            assert_eq!(later.len(), 3, "seed {n}: 75% of the four ordinary points, after the default delay");
+        }
+        // Killed: not back one second early, back on time - and still due if nobody looks
+        // until a day later.
+        let f = Fields::new();
+        f.seed(key, &c, 0);
+        let _ = f.due_respawns(key, &c, 0);
+        let died = 50_000;
+        assert!(matches!(f.hurt(key, 2100, 1_000_000, 204, &c, died), Hurt::Died(_)));
+        assert!(f.due_respawns(key, &c, died + 3_599_999).iter().all(|m| m.spawn.object_id != 2100), "not early");
+        let day = f.due_respawns(key, &c, died + 24 * 3_600_000);
+        assert!(day.iter().any(|m| m.spawn.object_id == 2100), "a day later with nobody there: due, so it stands");
     }
 
     /// **A summoned mob's death books nothing.** It has no spawn point, so there is nothing
