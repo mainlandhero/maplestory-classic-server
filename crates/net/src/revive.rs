@@ -113,6 +113,45 @@ pub const DEATH_EXP_PENALTY_PERCENT: u64 = 10;
 /// The highest level that pays no experience penalty on death. The owner's number.
 pub const DEATH_PENALTY_FREE_MAX_LEVEL: u32 = 10;
 
+/// **The Safety Charm**, a Cash-tab item (`5130000`). Holding one when you die spends it
+/// instead of the experience penalty. The owner, 2026-09-24: *"if the player has a Safety Charm,
+/// a safety charm will be removed in exchange for keeping the player's current EXP level."*
+pub const SAFETY_CHARM: u32 = 5_130_000;
+
+/// The `0x02D1` effect id that posts the client's own Safety Charm line into the chat log:
+/// string `0x0852` *"The EXP did not drop after using %s item."*, `%s` being the name of the
+/// item id the body carries. **[L]**
+///
+/// ```text
+/// 14278bd86  second switch, table at image + 0x2791348, index = effect (<= 0x54)
+///            entry [0x0C] = 0x14278df90                    (first switch: the default arm)
+/// 14278df9a  READ u32          item id
+/// 14278dfb0  call 0x140398ba0  the item's name
+/// 14278dfb9  mov edx,0x852 / call 0x1408a9e40 / 14019ba10   format the sentence
+/// 14278e00a  mov edx,0xb   / call 0x1415eca30               post it, chat category 11
+/// ```
+///
+/// Found by scanning `.text` for `mov r32, 0x852`: exactly one site, in the `0x02D1` handler
+/// `FUN_1427863f0`, and the effect id from its switch table - whose control, effect 8 ->
+/// `0x14278b474`, matches `net::message::EFFECT_ITEM_GAINED`'s documented arm.
+///
+/// # It passes the same two gates as the quest-clear effect
+///
+/// This is a second-switch arm, so it is dropped in silence when there is **no field
+/// object** or the user is in one of the morph states (`crate::questeffect::quest_clear_local`
+/// has the listing). Send it after the client reports the field settled (`0x00DC`), never
+/// in the same batch as a `SetField` - which is exactly what a revive is.
+pub const EFFECT_SAFETY_CHARM_USED: u8 = 0x0C;
+
+/// The body of an [`EFFECT_SAFETY_CHARM_USED`] - **send with
+/// [`crate::stats::USER_EFFECT_LOCAL`], `0x02D1`.** `u8 12, u32 itemId`: five bytes.
+pub fn safety_charm_used(item_id: u32) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(EFFECT_SAFETY_CHARM_USED);
+    w.u32(item_id);
+    w.into_vec()
+}
+
 /// The HP a revived character comes back with. The owner's number.
 pub const REVIVE_HP: u32 = 50;
 
@@ -252,6 +291,16 @@ pub const HIT_DAMAGE_TEST_ID: u32 = 0x13D;
 
 #[cfg(test)]
 mod tests {
+    /// **The Safety Charm notice is five bytes**: effect `0x0C`, then the item id the client
+    /// names in *"The EXP did not drop after using %s item."* - read at `14278df9a`, and
+    /// nothing else read in that arm.
+    #[test]
+    fn the_safety_charm_notice_is_effect_twelve_and_the_item_id() {
+        let b = super::safety_charm_used(super::SAFETY_CHARM);
+        assert_eq!(b, vec![0x0C, 0x10, 0x47, 0x4E, 0x00]);
+        assert_eq!(u32::from_le_bytes(b[1..5].try_into().unwrap()), 5_130_000);
+    }
+
     use super::*;
 
     /// **The console packet is one string and the command is the one that clears the flag.**
