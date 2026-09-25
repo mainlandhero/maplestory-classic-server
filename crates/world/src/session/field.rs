@@ -88,6 +88,9 @@ impl Session {
         // **UTC, which is server time.** The first version sent the machine's local time and
         // The owner saw EDT on the wall: *"this needs to read the UTC time."* `crate::serverclock`.
         // It is also what every `world.log` stamp shows, so the wall and the log agree.
+        // Whatever was held for this field: a revive's Safety Charm lines, which the client
+        // drops while it has no field. By now it has one.
+        out.append(&mut self.after_field_entry);
         if self.config.clocks.contains(&chr.map_id) {
             let (h, m, s) = crate::serverclock::utc_hms();
             out.push(Reply {
@@ -1062,7 +1065,22 @@ impl Session {
 
     fn revive(&mut self, mut chr: net::opcode::Character) -> Vec<Reply> {
         let died_on = chr.map_id;
-        let lost = net::revive::death_exp_loss(chr.level, chr.exp);
+        let penalty = net::revive::death_exp_loss(chr.level, chr.exp);
+        // **What the death costs.** The owner, 2026-09-24: *"dying in a party quest area should
+        // not take any EXP penalty away from the player. Outside of the party quest area, if
+        // the player has a Safety Charm, a safety charm will be removed in exchange for
+        // keeping the player's current EXP level."* A charm is spent only when there is
+        // something to protect - never at level 10 or below, never in a party quest.
+        let why = if penalty == 0 {
+            DeathCost::Free
+        } else if crate::firsttime::is_quest_map(died_on) {
+            DeathCost::PartyQuest
+        } else if self.spend_safety_charm(chr.id) {
+            DeathCost::SafetyCharm
+        } else {
+            DeathCost::Penalty
+        };
+        let lost = if why == DeathCost::Penalty { penalty } else { 0 };
         chr.exp = chr.exp.saturating_sub(lost);
         chr.hp = net::revive::REVIVE_HP.min(chr.max_hp);
 
@@ -1090,10 +1108,11 @@ impl Session {
             "REVIVE: {where_note}, hp {}/{}, {}",
             chr.hp,
             chr.max_hp,
-            if lost > 0 {
-                format!("-{lost} exp (10% at level {}) -> {}", chr.level, chr.exp)
-            } else {
-                format!("no exp penalty at level {} (10 or below is free)", chr.level)
+            match why {
+                DeathCost::Penalty => format!("-{lost} exp (10% at level {}) -> {}", chr.level, chr.exp),
+                DeathCost::Free => format!("no exp penalty at level {} (10 or below is free)", chr.level),
+                DeathCost::PartyQuest => format!("no exp penalty: died in the party quest, on map {died_on} (would have been -{penalty})"),
+                DeathCost::SafetyCharm => format!("a Safety Charm was spent instead of -{penalty} exp"),
             }
         );
         let mut out = self.go_to_map(&mut chr, target, 0, note);
@@ -1113,7 +1132,45 @@ impl Session {
                 chr.hp, chr.max_hp, chr.exp
             ),
         });
+        // The charm's two lines wait for the town's `0x00DC`: sent now, beside the SetField,
+        // the client has no field and drops the notice (see `EFFECT_SAFETY_CHARM_USED`).
+        // The owner: *"The player should see that they have lost a Safety Charm when they respawn
+        // and a notice that a safety charm has been used to protect their EXP loss."*
+        if why == DeathCost::SafetyCharm {
+            self.after_field_entry.push(Reply {
+                opcode: net::stats::USER_EFFECT_LOCAL,
+                body: net::message::item_lost_in_chat(net::revive::SAFETY_CHARM, 1),
+                what: "UserEffectLocal item line: Safety Charm x1 lost - spent on a death".to_string(),
+            });
+            self.after_field_entry.push(Reply {
+                opcode: net::stats::USER_EFFECT_LOCAL,
+                body: net::revive::safety_charm_used(net::revive::SAFETY_CHARM),
+                what: "UserEffectLocal effect 0x0C: the client's own 'The EXP did not drop after using Safety Charm item.'".to_string(),
+            });
+        }
         out
+    }
+
+    /// **Take one Safety Charm from the Cash tab**, if there is one. `true` when one was
+    /// taken. The stack's new count is not sent now - it rides the `SetField`'s character
+    /// record, which is read from the store after this.
+    fn spend_safety_charm(&mut self, chr_id: u32) -> bool {
+        let inv = store::InventoryType::Cash;
+        let slot = self
+            .store
+            .bag_items(chr_id, inv)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|r| r.item.item_id == net::revive::SAFETY_CHARM && r.item.kind.quantity() > 0)
+            .map(|r| r.slot);
+        let Some(slot) = slot else { return false };
+        match self.store.remove_item(chr_id, inv, slot, Some(1)) {
+            Ok(_) => true,
+            Err(e) => {
+                crate::server::log(&format!("   revive: could not take a Safety Charm from Cash slot {slot}: {e}; the penalty applies"));
+                false
+            }
+        }
     }
 
     /// `0x01E7` - "revive on the spot", which this server never enables but always answers.
@@ -1139,6 +1196,19 @@ impl Session {
         );
         out
     }
+}
+
+/// What a death cost, decided once in `revive` and read by everything after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeathCost {
+    /// Level 10 or below: nothing to take.
+    Free,
+    /// Died on a party quest map: nothing taken, no charm spent.
+    PartyQuest,
+    /// A Safety Charm was spent instead of the experience.
+    SafetyCharm,
+    /// The 10% penalty.
+    Penalty,
 }
 
 #[cfg(test)]
@@ -1262,5 +1332,135 @@ mod free_market_tests {
         for portal in ["out00", "in00", "west00"] {
             assert!(s.free_market_door(&chr, portal).is_none(), "Perion's {portal}");
         }
+    }
+}
+
+#[cfg(test)]
+mod death_cost_tests {
+    use super::*;
+    use crate::config::Config;
+    use std::sync::Arc;
+    use store::Store;
+
+    /// A dead level-20 character with 1000 EXP on `map`, holding `charms` Safety Charms.
+    fn dead_on(map: u32, charms: u16) -> (Session, Arc<Store>, u32) {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Faller".to_string(), map_id: map, ..Default::default() };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        store.create_migration(account, id, 0, 0).unwrap();
+        let mut cfg = Config::default();
+        cfg.item_names.insert(net::revive::SAFETY_CHARM, "Safety Charm".into());
+        let mut s = Session::new(store.clone(), Arc::new(cfg));
+        s.claim_for_character(id);
+        if charms > 0 {
+            s.give_item(net::revive::SAFETY_CHARM, charms, "test").unwrap();
+        }
+        let mut chr = s.claimed_character().unwrap();
+        chr.level = 20;
+        chr.exp = 1_000;
+        chr.hp = 0;
+        chr.max_hp = 200;
+        store.save_character_progress(&chr).unwrap();
+        store.set_character_map(id, map).unwrap();
+        (s, store, id)
+    }
+
+    /// The town button: target 0, empty portal name.
+    fn revive(s: &mut Session) -> Vec<Reply> {
+        let mut body = vec![0u8; 16];
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&0u16.to_le_bytes());
+        s.on_transfer_field(&body)
+    }
+
+    fn exp(s: &Session) -> u64 {
+        s.claimed_character().unwrap().exp
+    }
+
+    fn charms(store: &Store, id: u32) -> u32 {
+        store
+            .bag_items(id, store::InventoryType::Cash)
+            .unwrap()
+            .iter()
+            .filter(|r| r.item.item_id == net::revive::SAFETY_CHARM)
+            .map(|r| u32::from(r.item.kind.quantity()))
+            .sum()
+    }
+
+    fn effects(out: &[Reply]) -> Vec<Vec<u8>> {
+        out.iter().filter(|r| r.opcode == net::stats::USER_EFFECT_LOCAL).map(|r| r.body.clone()).collect()
+    }
+
+    /// **A Safety Charm is spent instead of the EXP**, and its two lines - the charm lost,
+    /// the client's own "The EXP did not drop" - wait for the town's field entry: sent beside
+    /// the SetField, the second is dropped by a client with no field. Exactly one charm of
+    /// two, once; the next death spends the second, and the one after that pays.
+    #[test]
+    fn a_safety_charm_is_spent_instead_of_the_exp_and_says_so_once_the_town_has_loaded() {
+        let (mut s, store, id) = dead_on(40, 2);
+        let out = revive(&mut s);
+        assert_eq!(exp(&s), 1_000, "the EXP is kept");
+        assert_eq!(charms(&store, id), 1, "one charm of two spent");
+        assert!(effects(&out).is_empty(), "nothing beside the SetField - the client has no field to post it in");
+
+        let entered = s.on_field_entered();
+        assert_eq!(
+            effects(&entered),
+            vec![
+                net::message::item_lost_in_chat(net::revive::SAFETY_CHARM, 1),
+                net::revive::safety_charm_used(net::revive::SAFETY_CHARM),
+            ],
+            "the charm lost, then the notice, on the town's field entry"
+        );
+        assert!(effects(&s.on_field_entered()).is_empty(), "once, not on every field entry after");
+
+        // The second death spends the second charm; the third pays the penalty.
+        for (charms_left, exp_after) in [(0, 1_000), (0, 900)] {
+            let mut chr = s.claimed_character().unwrap();
+            chr.hp = 0;
+            store.save_character_progress(&chr).unwrap();
+            let _ = revive(&mut s);
+            assert_eq!(charms(&store, id), charms_left);
+            assert_eq!(exp(&s), exp_after);
+        }
+        assert!(effects(&s.on_field_entered()).len() <= 2, "the paid death adds no charm line");
+    }
+
+    /// **No charm, no protection**: the 10% penalty, and nothing said about a charm.
+    #[test]
+    fn without_a_charm_the_penalty_applies_and_no_charm_line_is_sent() {
+        let (mut s, _store, _id) = dead_on(40, 0);
+        let _ = revive(&mut s);
+        assert_eq!(exp(&s), 900);
+        assert!(effects(&s.on_field_entered()).is_empty());
+    }
+
+    /// **A party quest death costs nothing - not the EXP, and not a charm.** The owner,
+    /// 2026-09-24: *"dying in a party quest area should not take any EXP penalty away from
+    /// the player."* Every First Time Together map, stage 1 to the Exit.
+    #[test]
+    fn a_death_in_the_party_quest_costs_neither_exp_nor_a_charm() {
+        for map in [crate::firsttime::STAGE_1, crate::firsttime::STAGE_3, crate::firsttime::STAGE_5, crate::firsttime::EXIT_MAP] {
+            for held in [0, 1] {
+                let (mut s, store, id) = dead_on(map, held);
+                let _ = revive(&mut s);
+                assert_eq!(exp(&s), 1_000, "map {map}, {held} charm(s): no penalty");
+                assert_eq!(charms(&store, id), u32::from(held), "map {map}: the charm is not spent");
+                assert!(effects(&s.on_field_entered()).is_empty());
+            }
+        }
+    }
+
+    /// **Level 10 or below has nothing to protect**, so the charm stays in the bag.
+    #[test]
+    fn a_free_death_does_not_spend_a_charm() {
+        let (mut s, store, id) = dead_on(40, 1);
+        let mut chr = s.claimed_character().unwrap();
+        chr.level = 10;
+        store.save_character_progress(&chr).unwrap();
+        let _ = revive(&mut s);
+        assert_eq!(exp(&s), 1_000);
+        assert_eq!(charms(&store, id), 1);
     }
 }

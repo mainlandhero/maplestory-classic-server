@@ -386,6 +386,10 @@ pub struct Session {
     /// persists across a disconnect (while another member is online), so a returning member's window is rebuilt from the
     /// registry. Once, not per portal. session/party.rs `party_window_on_login`.
     party_window_sent: bool,
+    /// Replies that must wait for the NEXT field entry (`0x00DC`), because they are dropped in
+    /// silence while the client has no field - a revive's Safety Charm lines are the case
+    /// that needs it (`session/field.rs` `revive`). Drained at the end of `on_field_entered`.
+    after_field_entry: Vec<Reply>,
 
     /// Session milliseconds of the last thing the player did: moved, attacked, or was hit.
     ///
@@ -669,6 +673,7 @@ impl Session {
             handing_over: false,
             party_told_of_disconnect: false,
             party_window_sent: false,
+            after_field_entry: Vec::new(),
             banner_shown: None,
             last_activity_ms: 0,
             next_regen_ms: None,
