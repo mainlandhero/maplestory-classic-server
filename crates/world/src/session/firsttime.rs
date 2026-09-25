@@ -531,6 +531,7 @@ impl Session {
             return vec![self.cloto_say(&firsttime::cloto_stage5_short(held), false, format!("{} holds {held} of 10 Passes", chr.name))];
         }
         let mut out = self.take_items(chr.id, store::InventoryType::Etc, firsttime::PASS, firsttime::STAGE_5_PASSES);
+        out.push(self.item_chat_line(firsttime::PASS, -i64::from(firsttime::STAGE_5_PASSES)));
         out.extend(self.cloto_clear(chr, inst, "10 Passes handed in on the last stage"));
         let cleared = self.fields.runs().is_cleared(chr.id, firsttime::STAGE_5);
         if !cleared {
@@ -555,6 +556,27 @@ impl Session {
         out
     }
 
+    /// **One grey chat-log line for an item the party quest gave or took** - `<Item> x<n>
+    /// earned.` for a positive `delta`, `<Item> x<n> has been lost.` for a negative one, the
+    /// client's own wording beside `You have gained experience`. The owner, 2026-09-24: *"When
+    /// players receive items from the First Time Together party quests from NPCs, such as
+    /// Passes, it should show up in the chat log."* The same `0x02D1` effect 8 a quest reward
+    /// uses (`npc.rs`); an NPC's grant never goes through the pick-up message, whose chat copy
+    /// is gated on a field type no map has.
+    pub(super) fn item_chat_line(&self, item: u32, delta: i64) -> Reply {
+        let n = u32::try_from(delta.unsigned_abs()).unwrap_or(u32::MAX).min(i32::MAX as u32).max(1);
+        let (body, word) = if delta < 0 {
+            (net::message::item_lost_in_chat(item, n), "lost")
+        } else {
+            (net::message::item_gained_in_chat(item, n), "earned")
+        };
+        Reply {
+            opcode: net::stats::USER_EFFECT_LOCAL,
+            body,
+            what: format!("UserEffectLocal item line: {item} x{n} {word} - grey, in the chat log"),
+        }
+    }
+
     /// **A stage clear's EXP arriving**: `percent` of what this character needs for their
     /// next level, through the ordinary award so a level-up is a level-up.
     pub(super) fn receive_party_quest_exp(&mut self, percent: u64, why: &str) -> Vec<Reply> {
@@ -571,8 +593,9 @@ impl Session {
     /// A reward arriving in this character's bag.
     pub(super) fn receive_party_quest_reward(&mut self, item: u32, why: &str) -> Vec<Reply> {
         match self.give_item(item, 1, why) {
-            Ok((line, replies)) => {
+            Ok((line, mut replies)) => {
                 crate::server::log(&format!("   first time together: reward - {line} ({why})"));
+                replies.push(self.item_chat_line(item, 1));
                 replies
             }
             Err(e) => {
@@ -630,10 +653,13 @@ impl Session {
             .map(|r| r.item.kind.quantity())
             .unwrap_or(0);
         out.extend(self.stack_change_replies(inv, slot, left));
-        let name = self.item_name(item);
         crate::server::log(&format!("   magic box: character {} opened a box from Use slot {slot} - {line}", chr.id));
-        let said = if qty > 1 { format!("You received {qty} {name} from the Companion's Magic Box.") } else { format!("You received {name} from the Companion's Magic Box.") };
-        out.extend(self.cash_item_notice_for(op, said));
+        // The owner, 2026-09-24: *"the chat should reflect that they have lost the box but gained
+        // something else in two different chat lines."* The box first, then the prize - and
+        // the request is still answered, so the use latch comes off.
+        out.extend(crate::mesodrop::unlock_unhandled_latching_request(op));
+        out.push(self.item_chat_line(crate::magicbox::BOX, -1));
+        out.push(self.item_chat_line(item, i64::from(qty)));
         out
     }
 
@@ -768,7 +794,9 @@ impl Session {
                 return vec![self.cloto_say(firsttime::CLOTO_BAG_FULL, false, format!("{}'s bag is full", chr.name))];
             }
         };
+        out.push(self.item_chat_line(firsttime::PASS, 1));
         out.extend(self.take_items(chr.id, store::InventoryType::Etc, firsttime::COUPON, answer));
+        out.push(self.item_chat_line(firsttime::COUPON, -i64::from(answer)));
         let _ = self.fields.runs().mark_passed(chr.id);
         crate::server::log(&format!(
             "   first time together: {} ({}) answered question {question} with {answer} coupon(s) - {line}",
@@ -807,6 +835,7 @@ impl Session {
             return vec![self.cloto_say(&firsttime::cloto_short(required, held), false, format!("{} holds {held} of {required} Passes", chr.name))];
         }
         let mut out = self.take_items(chr.id, store::InventoryType::Etc, firsttime::PASS, required);
+        out.push(self.item_chat_line(firsttime::PASS, -i64::from(required)));
         out.extend(self.cloto_clear(chr, inst, &format!("{required} Pass(es) handed in by the leader")));
         out
     }

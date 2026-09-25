@@ -1546,6 +1546,10 @@ mod tests {
         let held = |id: u32, item: u32| -> u32 {
             store.bag_items(id, store::InventoryType::Etc).unwrap().iter().filter(|r| r.item.item_id == item).map(|r| u32::from(r.item.kind.quantity())).sum()
         };
+        // The grey chat-log item lines (the owner, 2026-09-24), in the order they were sent.
+        let item_lines = |out: &[Reply]| -> Vec<Vec<u8>> {
+            out.iter().filter(|r| r.opcode == net::stats::USER_EFFECT_LOCAL).map(|r| r.body.clone()).collect()
+        };
 
         // 1. Mote's first click: the intro, with a Next, and no menu.
         let out = sessions[1].handle(&click);
@@ -1563,6 +1567,7 @@ mod tests {
         let _ = sessions[1].give_item(firsttime::COUPON, u16::try_from(answer + 1).unwrap(), "test").unwrap();
         let out = sessions[1].handle(&click);
         assert!(said(&out).contains("not the right number"), "one too many is wrong too: {}", said(&out));
+        assert!(item_lines(&out).is_empty(), "a wrong answer moves nothing, so says nothing");
         assert_eq!(held(ids[1], firsttime::PASS), 0);
         assert_eq!(held(ids[1], firsttime::COUPON), answer + 1, "a wrong answer costs nothing");
         let same = fields.runs().instance_of(ids[1]).unwrap().questions.iter().find(|(c, _)| *c == ids[1]).map(|(_, q)| *q);
@@ -1573,6 +1578,11 @@ mod tests {
         assert!(said(&out).contains("That is right"), "{}", said(&out));
         assert_eq!(held(ids[1], firsttime::PASS), 1);
         assert_eq!(held(ids[1], firsttime::COUPON), 0);
+        assert_eq!(
+            item_lines(&out),
+            vec![net::message::item_gained_in_chat(firsttime::PASS, 1), net::message::item_lost_in_chat(firsttime::COUPON, answer)],
+            "the Pass earned and the Coupons lost, each a line in the chat log"
+        );
         // 5. And only one.
         let _ = sessions[1].give_item(firsttime::COUPON, u16::try_from(answer).unwrap(), "test").unwrap();
         let out = sessions[1].handle(&click);
@@ -1591,12 +1601,14 @@ mod tests {
         assert!(said(&out).contains("I need"), "{}", said(&out));
         assert_eq!(effects(&out), 0);
         assert_eq!(held(ids[0], firsttime::PASS), 2, "a refusal takes nothing");
+        assert!(item_lines(&out).is_empty(), "and says nothing was lost");
         // 8. Three: the stage clears for everybody here, and it costs exactly three.
         let _ = sessions[0].give_item(firsttime::PASS, 2, "test").unwrap();
         let _ = sessions[0].handle(&click);
         let out = sessions[0].handle(&pick(firsttime::CLOTO_MENU_PASSES));
         assert_eq!(effects(&out), 3, "banner, fanfare, gate: {}", said(&out));
         assert_eq!(held(ids[0], firsttime::PASS), 1, "four held, three taken");
+        assert_eq!(item_lines(&out), vec![net::message::item_lost_in_chat(firsttime::PASS, 3)], "the three Passes handed in");
         assert_eq!(effects(&sessions[2].tick(2_000)), 3, "Nook, same run, sees the clear");
         // **The clear pays 5% of the next level to every member** - the leader now, the
         // others on their own tick.
@@ -2021,8 +2033,21 @@ mod tests {
         assert_eq!(out.iter().filter(|r| r.opcode == net::fieldeffect::FIELD_EFFECT).count(), 3, "cleared");
         assert_eq!(held(ids[0], firsttime::PASS, store::InventoryType::Etc), 0, "all ten taken");
         assert_eq!(held(ids[0], firsttime::COMPANIONS_MAGIC_BOX, store::InventoryType::Use), 1, "the leader's box");
-        let _ = sessions[1].tick(5_000);
+        // The owner, 2026-09-24: each item that moves is a grey line in the chat log - the ten
+        // Passes going, then the box arriving.
+        let item_lines = |out: &[Reply]| -> Vec<Vec<u8>> {
+            out.iter().filter(|r| r.opcode == net::stats::USER_EFFECT_LOCAL).map(|r| r.body.clone()).collect()
+        };
+        assert_eq!(
+            item_lines(&out),
+            vec![
+                net::message::item_lost_in_chat(firsttime::PASS, 10),
+                net::message::item_gained_in_chat(firsttime::COMPANIONS_MAGIC_BOX, 1),
+            ]
+        );
+        let hers = sessions[1].tick(5_000);
         assert_eq!(held(ids[1], firsttime::COMPANIONS_MAGIC_BOX, store::InventoryType::Use), 1, "Mote's box, through their own session");
+        assert_eq!(item_lines(&hers), vec![net::message::item_gained_in_chat(firsttime::COMPANIONS_MAGIC_BOX, 1)], "and their own line for it");
         // 35% of 1000 each, for the last stage - on top of whatever the kills above paid,
         // so measured as the difference across the clear.
         let exp_after: Vec<u64> = ids.iter().map(|id| store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == *id).unwrap().exp).collect();
@@ -2204,7 +2229,16 @@ level, 200, 1, 0, 15, 50, 15, 7 7 7
         let (item, qty) = prizes[0];
         let line = (0..crate::magicbox::LINES).map(crate::magicbox::line).find(|(i, _)| *i == item).expect("a prize from the table");
         assert_eq!(qty, u32::from(line.1), "in the table's quantity");
-        assert!(out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE && String::from_utf8_lossy(&r.body).contains("from the Companion's Magic Box")));
+        // The owner, 2026-09-24: the box lost and the prize gained, as two grey chat-log lines in
+        // that order - and no yellow notice any more.
+        let lines: Vec<&Vec<u8>> = out.iter().filter(|r| r.opcode == net::stats::USER_EFFECT_LOCAL).map(|r| &r.body).collect();
+        assert_eq!(
+            lines,
+            vec![&net::message::item_lost_in_chat(crate::magicbox::BOX, 1), &net::message::item_gained_in_chat(item, qty)],
+            "one line for the box going, one for the prize arriving"
+        );
+        assert!(!out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE), "the old yellow notice is gone");
+        assert!(out.len() > lines.len() + 1, "the stack change and the latch release are still sent");
     }
 
     /// **A run of one does not go on.** The owner, 2026-09-23: *"A party of 1 should not be allowed

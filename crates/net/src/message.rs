@@ -878,6 +878,28 @@ pub fn item_gained_in_chat(item_id: u32, count: u32) -> Vec<u8> {
     item_effect_in_chat(&[ItemLine { item_id, quantity, in_bag: false }])
 }
 
+/// **`<Item> x<n> has been lost. (<Tab>)` in the chat log, in grey** - the same effect as
+/// [`item_gained_in_chat`] with the quantity negated, which the client draws with string
+/// `0x00EF` and the sign removed (`14278b5ae`). **[L]**
+///
+/// The owner, 2026-09-24: *"when users open the box, the chat should reflect that they have lost
+/// the box but gained something else in two different chat lines."*
+///
+/// **Send with [`crate::stats::USER_EFFECT_LOCAL`] (`0x02D1`), not with [`MESSAGE`].**
+///
+/// # Panics
+///
+/// On `count == 0` (a zero delta is skipped and draws nothing), and on a `count` whose
+/// negation does not fit an `i32`.
+pub fn item_lost_in_chat(item_id: u32, count: u32) -> Vec<u8> {
+    assert!(
+        count >= 1,
+        "quantity 0 is skipped at 14278b5ae jns; nothing would be drawn"
+    );
+    let quantity = i32::try_from(count).expect("the quantity field is one signed i32");
+    item_effect_in_chat(&[ItemLine { item_id, quantity: -quantity, in_bag: false }])
+}
+
 // ---------------------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -1337,5 +1359,19 @@ mod tests {
             -4,
             "0x00EF '%s x%d has been lost. (%s)'"
         );
+    }
+
+    /// The lost line is the gained line with only the quantity's sign flipped: the same
+    /// effect, one item, the same id, not in the bag.
+    #[test]
+    fn an_item_lost_line_is_the_gained_line_with_the_quantity_negated() {
+        let lost = item_lost_in_chat(2430000, 1);
+        let gained = item_gained_in_chat(2430000, 1);
+        assert_eq!(lost.len(), 11);
+        assert_eq!(lost[..6], gained[..6], "effect 8, one line, the same item id");
+        assert_eq!(i32::from_le_bytes(lost[6..10].try_into().unwrap()), -1);
+        assert_eq!(i32::from_le_bytes(gained[6..10].try_into().unwrap()), 1);
+        assert_eq!(lost[10], 0);
+        assert_eq!(i32::from_le_bytes(item_lost_in_chat(4001002, 3)[6..10].try_into().unwrap()), -3);
     }
 }
