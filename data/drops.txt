@@ -42,8 +42,12 @@
 # trophy since it does not stack" - itemdata.txt gives it slotMax 0. Innocence did not
 # go with it; it became one of the Scroll of Secrets' three modes.
 # ---------------------------------------------------------------------------------
-* | 4031065 | 0.01 | 1 | 1 | 0 | Scroll of Secrets (Chaos, Innocence or Clean Slate)
-* | 4031066 | 0.01 | 1 | 1 | 0 | Treasure Scroll (guarantees a real scroll)
+#
+# RAISED TO 0.5% on 2026-09-25, the owner: "seems like no player has been able to find it so far,
+# let's increase both of their droprate to 0.5%". 0.5 is 50 basis points - one kill in 200.
+# The NPC quotes crate::scrolls::GLOBAL_DROP_CHANCE_BP, and droptables.rs pins these rows to it.
+* | 4031065 | 0.5 | 1 | 1 | 0 | Scroll of Secrets (Chaos, Innocence or Clean Slate)
+* | 4031066 | 0.5 | 1 | 1 | 0 | Treasure Scroll (guarantees a real scroll)
 
 # ---- the global table: event items, rolled for every mob -----------------------
 # (empty - no events yet. One line here and every mob in the game can drop it.)
