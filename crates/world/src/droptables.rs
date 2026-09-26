@@ -388,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn the_two_scrolls_drop_globally_at_one_basis_point() {
+    fn the_two_scrolls_drop_globally_at_half_a_percent() {
         let tables = DropTables::load(std::path::Path::new("../../data/drops.txt"));
         assert!(tables.problems.is_empty(), "{:?}", tables.problems);
         for id in crate::scrolls::REPURPOSED {
@@ -397,7 +397,7 @@ mod tests {
                 .iter()
                 .find(|e| e.item_id == id)
                 .unwrap_or_else(|| panic!("{id} is not in the GLOBAL drop table"));
-            assert_eq!(row.chance_bp, 1, "{id} must be 0.01%, which is 1 basis point");
+            assert_eq!(row.chance_bp, 50, "{id} must be 0.5%, which is 50 basis points");
             assert_eq!((row.min_qty, row.max_qty), (1, 1), "{id} drops one at a time");
             // **The dialogue quotes this number, so the quote is tied to the file here.**
             // `crate::scrollnpc::nothing_to_use` tells the player how rare the scrolls are;

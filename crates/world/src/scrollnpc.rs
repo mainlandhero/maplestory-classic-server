@@ -768,8 +768,8 @@ mod tests {
             assert!(text.contains(describe_item(scroll)), "no description for {id}: {text}");
         }
         // The rate, rendered from the constant the drop-table test pins to the real file.
-        assert!(text.contains("0.01%"), "{text}");
-        assert!(text.contains("one in 10000"), "{text}");
+        assert!(text.contains("0.5%"), "{text}");
+        assert!(text.contains("one in 200"), "{text}");
         // And it must not be a menu: a `#L` here would put selectable rows on a say box.
         assert!(!text.contains("#L"), "{text}");
         assert!(!text.contains("#l"), "{text}");
