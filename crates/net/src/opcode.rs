@@ -191,7 +191,15 @@ pub fn world_list_entry(world_id: u8, name: &str, channels: u8) -> Vec<u8> {
     out.push(0);
     out.push(channels);
     for i in 0..channels {
-        put_str(&mut out, &format!("{name}-{i}"));
+        // **Numbered from 1, as a player counts them.** The client never formats a channel
+        // number where a player reads one: whispers, `/find`, the buddy window and a friend's
+        // status line all hand the index to `FUN_142cb92f0`, which returns THIS string out
+        // of the name array at `singleton+0x2cb8` verbatim. Named `{name}-{i}` until
+        // 2026-09-25, so a friend on the first channel read "Scania-0" while Change Channel
+        // - which draws its own labels - called the same channel 1. The owner: *"can we please
+        // show players as channels 1 and 2? Since that's what the UI says in change
+        // channels."* Only the NAME moves; every index on the wire stays 0-based.
+        put_str(&mut out, &format!("{name}-{}", u16::from(i) + 1));
         out.extend_from_slice(&0u32.to_le_bytes()); // user count
         // The client reads exactly four u8s here - confirmed in its own decoder
         // `FUN_141b2fac0`, the login stage's `case 0xb`, which reads them into chan+0x0c,
@@ -3626,7 +3634,7 @@ mod tests {
         // confounded and does not contradict this.
         assert_eq!(
             hex(&world_list_entry(0, "Scania", 1)),
-            "0006005363616e6961000000000108005363616e69612d30000000000000000100000000000000"
+            "0006005363616e6961000000000108005363616e69612d31000000000000000100000000000000"
         );
         assert_eq!(CHANNEL_ENABLED, 1, "the byte the golden string above encodes");
         assert_eq!(hex(&world_list_end()), "ff0000");
@@ -3646,6 +3654,22 @@ mod tests {
             // no callers of any kind. The gate can never open, so a non-zero value here can
             // only block the row. research/channel-two-greyed.md.
             assert_eq!(two[at + 2], 0, "the adult-channel flag - its gate can never open");
+            at += 4;
+        }
+    }
+
+    /// **Channel names count from 1**, the way Change Channel labels them - channel index 0
+    /// is "Scania-1". The index bytes after each name stay 0-based: those are what the client
+    /// sends back to pick a channel, and the rename must not touch them.
+    #[test]
+    fn channel_names_count_from_one_while_their_indexes_stay_zero_based() {
+        let two = world_list_entry(0, "Scania", 2);
+        let mut at = 1 + 2 + 6 + 1 + 2 + 1 + 1;
+        for (i, want) in ["Scania-1", "Scania-2"].iter().enumerate() {
+            let len = usize::from(u16::from_le_bytes([two[at], two[at + 1]]));
+            assert_eq!(&two[at + 2..at + 2 + len], want.as_bytes(), "channel index {i}");
+            at += 2 + len + 4;
+            assert_eq!(two[at + 1], i as u8, "the index itself is still {i}");
             at += 4;
         }
     }
