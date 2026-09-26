@@ -365,6 +365,105 @@ the `0x0224` (`world-ch0.log`), and a `0x0224` for an id already in the pool is 
 research had recorded. `broadcast_look_change` now sends `0x0225` then `0x0224` then the pets
 for that one character, the sequence a fresh sighting gets (§8.1). Unverified on the observer.
 
+**2026-09-25: Scroll of Secrets and Treasure Scroll drop at 0.5%, up from 0.01%.** The owner: *"Can we
+double check that Scroll of Secrets and Treasure Scroll are being dropped globally? If so ... let's
+increase both of their droprate to 0.5%."* Checked end to end first: both are `*` rows in
+`data/drops.txt`, `DropTables::roll_at` chains the global rows onto every mob (a mob with no table
+included), `questitems::is_exempt` keeps the quest-item orphan filter off them (both carry the
+client's quest flag and no quest names them), and the live banner of 2026-09-24 reads *"2 global
+(event) rows"*. No archived log records one dropping - at one kill in ten thousand, expected. Now
+50 basis points, one in 200; `scrolls::GLOBAL_DROP_CHANCE_BP` is what the scroll NPC quotes and
+`the_two_scrolls_drop_globally_at_half_a_percent` pins the file to it. **The live server needs the
+new `data/drops.txt` and a restart** - it is a data file, not a database migration.
+
+**2026-09-25: channels are named from 1.** The owner: whispers and the buddy list showed a player on
+the first channel as "Scania 0"; *"can we please show players as channels 1 and 2? Since that's
+what the UI says in change channels."* The client never formats a channel number there: `/find`,
+the buddy window's location check, a friend's status and an incoming whisper all hand the index
+to `FUN_142cb92f0`, which returns `names[index]` from the channel-name array at
+`singleton+0x2cb8` verbatim **[L]** - and our login server's world list named channel `i`
+`Scania-{i}`. `net::opcode::world_list_entry` now names it `Scania-{i+1}`; the index bytes after
+each name, which the client sends back to pick a channel, stay 0-based and a test pins both. Takes
+effect at the next login. Never on a screen.
+
+**2026-09-24: another player's pet no longer snaps when you enter the map.** The owner: *"if other
+players have pets summoned, I see their pets snap to their proper positions. We fixed this for
+players."* The player's spawn is rebuilt on every move; the pet's `0x0277` companion was built
+once, at the summon or the owner's field entry, so an arrival drew the pet there and its first
+`0x0278` jumped it. `on_pet_move` now reads where the pet's `0x0202` path ends
+(`net::usermove::path_end`, which runs the player's own walker) and rebuilds the companion there
+with the path's stance. Kept with its field key; before the pet walks on a new map the owner's
+position stands. The walker was checked on four consecutive captured pet reports - each ends where
+the next begins. Never on a screen.
+
+**2026-09-24: standing up from a chair no longer blanks your HP bar on a partner's screen.** The owner:
+*"When players initially sit on a chair then stand up, their HP bars appear empty when they are part
+of a party."* The client's stand-up (`SetSeat`, `FUN_1428a81d0`) ends by sending `0x00DC`
+(`research/chairs-2026-09-08.md` §13.2), the server answers it as a field entry, and the partner is
+sent the stander's `0x0225` and a fresh `0x0224` - a new `CUser` whose HP percent (`+0x10cc`) is 0
+until an `0x02B2` fills it. `party_hp_tick` only resent on a change of HP, max or recipients, and
+none had changed. All six stand-ups in `research/fixtures/map-chairs-sit-stand-relay-two-clients-world.log`
+show the `0x00DC` and the leave/enter. `on_field_entered` now clears `last_party_hp`. **Still
+open, deliberately:** a stand-up re-runs the whole field entry (NPCs, bag restore, the leave/enter).
+Telling it apart from a real entry would stop that, but the leave/enter may be what clears a map
+seat on bystanders' screens, which is unmeasured. The blank bar was reported, not captured; never
+on a screen since.
+
+**2026-09-24: death in a party quest costs nothing; elsewhere a Safety Charm is spent instead of
+the EXP.** The owner: *"dying in a party quest area should not take any EXP penalty ... Outside of the
+party quest area, if the player has a Safety Charm, a safety charm will be removed in exchange for
+keeping the player's current EXP level."* `revive` decides once (`DeathCost`): free at level 10 or
+below; nothing on any First Time Together map, charm untouched; else one `5130000` from the Cash
+tab; else the 10%. The notice is the client's own string `0x0852` *"The EXP did not drop after using
+%s item."*, posted by `0x02D1` effect `0x0C` + `u32 itemId` (`net::revive::safety_charm_used`) - found
+by scanning `.text` for `mov r32,0x852` (one site, in `FUN_1427863f0`) and reading the handler's
+second switch table, whose control (effect 8 -> the item-line arm) matched. That arm is behind the
+no-field gate and a revive is a `SetField`, so it and the grey "Safety Charm x1 has been lost" line
+wait in `Session::after_field_entry` for the town's `0x00DC`. **[L], never on a screen** - if the
+lost line shows and the notice does not, the effect id is wrong.
+
+**2026-09-24: First Time Together item moves are grey chat lines.** The owner: Passes from NPCs should
+show *"like 'You have gained experience (+X)'"*, and opening the Magic Box should show the box lost
+and the prize gained *"in two different chat lines."* `0x02D1` effect 8 - the quest-reward line -
+with a negative quantity for "has been lost" (`net::message::item_lost_in_chat`, string `0x00EF`).
+Sent for the stage-1 Pass and Coupons, every hand-in of Passes, the stage-5 box to each member, and
+the box opened (lost, then the prize - the yellow notice is gone). The "lost" wording is **[L]**,
+never drawn.
+
+**2026-09-24: bosses stand at once on a fresh map, and their timers run per channel.** The owner: *"the
+first time the server has tried to load the map ... the Mushmom should be scheduled to spawn
+instantly. Only after Mushmom is defeated, should the respawn timer kick in"*, and the timer keeps
+counting with nobody there. `Fields::seed` books every point with its own `mobTime` due **now**,
+outside the 75% first-fill draw - which also fixes a boss point the draw could leave out, after
+which it never spawned until a restart. After a kill it returns at its own `mobTime` on the
+process clock. Per channel by construction: each channel is its own `maplecw-world` process with
+its own `Fields`. Not on a screen.
+
+**2026-09-24: every mob's MP is the server's, and summon skills work.** The owner, on the King Slime:
+*"There should be a jump attack, and there should be a summon slime attack"*; then *"10 MP every 5
+seconds"*, and *"solve this for all mobs with skills"*. The move acknowledgement (`0x03E4`) carries
+the mob's MP at offset 7 - the client's attack chooser skips any attack costing more than it
+(`FUN_141c7c900`) - so MP-costing attacks were blocked on all 41 mobs that have one. `mobskills`
+keeps MP per mob (full at spawn, 10 per 5 s, spent per granted attack), offers a random qualifying
+skill at offset 11/15, and applies a reported summon (family 200) from the `0x02FF` skill field.
+Table from `tools/dump_mobskills.py` -> `gm-handbook/mobskills.txt`. **Not done:** player debuffs
+(120-126) and mob self-buffs (160-167) are never offered - their packets are not decoded.
+
+**2026-09-24: `previous-runs/` keeps a week.** The owner: *"if the logs are older than 7 days in
+previous-runs, please have the server automatically get rid of them."* `world::logprune`, at
+world-server startup and every 24 h. Copy anything worth keeping into `research/fixtures/` first.
+
+**2026-09-23 -> 24: First Time Together, stages 1 to 5.** Instanced per party - a field is
+`(map, instance)`, so two parties on one stage have their own mobs, drops, broadcasts and clears.
+**Confirmed on screen by the owner:** separate instances, stages 1 and 2 cleared, the WRONG banner,
+the gate opening, Leaf coupons (`0x0114`). Built and unseen: stages 3 (5 platforms) and 4 (6
+barrels) on the stage-2 rope code; stage 5 (all ten mobs at once, a Pass from each, per-member Slime
+Shoes, twenty Slimes from the King, ten Passes to clear, a Companion's Magic Box for everyone -
+61 prizes, one per double-click); stage EXP of 5/7/9/11/35% of each member's next level at the clear
+animation; 10 entries per character per UTC day, counted and shown by Lakelis; a clear only when the
+whole run is on the stage; a disconnect logs back in on the Exit; no party of one. **Placeholder
+text:** Cloto's stage-4 and stage-5 intros await the owner's screenshots.
+
 **2026-09-19: Gift Drops - `!giftdrop` and `!giftall`, through the Administrator's box.** The owner
 wanted the modern Gift Drop window for compensation. This client has no such window (no UI
 image, none of its strings), its own mailbox window has no way in that any scan found, and the
