@@ -365,6 +365,20 @@ the `0x0224` (`world-ch0.log`), and a `0x0224` for an id already in the pool is 
 research had recorded. `broadcast_look_change` now sends `0x0225` then `0x0224` then the pets
 for that one character, the sequence a fresh sighting gets (§8.1). Unverified on the observer.
 
+**2026-09-25: Maple Island's quests are open to every job.** The owner: *"remove the requirement that
+quests on the island are only for Beginners, any class should be able to do them."* **The server
+never checked a quest's job - the client does**, from its own `Quest.wz`: it decides what an NPC
+offers and runs the opening itself, so a non-Beginner never got as far as `0x0151`. The rule is
+`Check/0/job`, which the loader `FUN_14072B230` reads into a `std::set<int>` at `demand+0xC0`
+**[L]**; a quest without one is offered to everyone, like every quest outside the island and the
+job areas. `tools/quest_patch.py` deletes that node from every `QuestInfo/area 1` quest - all
+twenty, 1000 to 1019 (nineteen said `[0]`; 1001's 68-job list went too, since a list still refuses
+what it omits) - builds from the pristine `.bak`, verifies all 322 images parse and that nothing
+else changed, and installs into `client-patched`. **Installed on this machine. It reaches players at
+the next `package-server.ps1` + deploy**, which ships `client-patched` as the canonical client the
+launchers patch to; both release scripts now run `quest_patch.py --check` and refuse a stale
+archive. Not on a screen: a non-Beginner at Sera should now get "Borrowing Sera's Mirror".
+
 **2026-09-25: Scroll of Secrets and Treasure Scroll drop at 0.5%, up from 0.01%.** The owner: *"Can we
 double check that Scroll of Secrets and Treasure Scroll are being dropped globally? If so ... let's
 increase both of their droprate to 0.5%."* Checked end to end first: both are `*` rows in

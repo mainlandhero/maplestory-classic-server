@@ -153,6 +153,15 @@ closed:
   python "$repo\tools\backport_install.py" --install
 "@
     }
+    # And the quest archive: tools\quest_patch.py lifts the Maple Island quests' Beginner-only
+    # rule, which the client enforces from its own data (the owner, 2026-09-25).
+    & python (Join-Path $here 'quest_patch.py') --check
+    if ($LASTEXITCODE -ne 0) {
+        Fail @"
+the installed Quest\QuestData archive is not the current quest patch. With the client closed:
+  python "$repo\tools\quest_patch.py" --install
+"@
+    }
 }
 
 # **The handbook and data\ are the WORLD SERVER's, so a -ClientOnly payload needs neither**

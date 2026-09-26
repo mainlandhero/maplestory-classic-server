@@ -243,6 +243,17 @@ function Show-BuildIdentity([string]$dir, [string[]]$names) {
 # one place it is computed.
 function Add-ClientForPatching([string]$stageRoot, [string]$source) {
     $dest = Join-Path $stageRoot 'client'
+    # **The quest archive is ours too.** tools\quest_patch.py deletes Check/0/job from the Maple
+    # Island quests (the owner, 2026-09-25: "any class should be able to do them"); the client
+    # enforces that rule itself, so a staged client without the patch ships the Beginner-only
+    # island to every player. Five seconds; fails unless the installed archive is a fresh build.
+    & python (Join-Path $repo 'tools\quest_patch.py') --check
+    if ($LASTEXITCODE -ne 0) {
+        Fail @"
+the installed Quest\QuestData archive is not the current quest patch. With the client closed:
+  python "$repo\tools\quest_patch.py" --install
+"@
+    }
     Write-Host "staging the client for patching from $source" -ForegroundColor Cyan
     Write-Host '  (this is the slow part - a few hundred MB)'
 
