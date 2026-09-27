@@ -2503,6 +2503,12 @@ impl Session {
         if convo.path == crate::boat::PURIN_PATH {
             return self.purin_answer(reply.action);
         }
+        if convo.path == crate::boat::JOEL_INTRO_PATH {
+            return self.joel_intro_answer(reply.action);
+        }
+        if let Some(replies) = self.cherry_board_answer(&convo.path, reply.action, store::Store::unix_now()) {
+            return replies;
+        }
         if convo.path == crate::shanks::ASK_PATH {
             return self.shanks_reply(reply.action);
         }

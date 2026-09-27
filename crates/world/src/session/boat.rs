@@ -22,36 +22,58 @@ impl Session {
     /// any other NPC or map, so the ordinary click chain carries on.
     pub(super) fn open_boat_npc(&mut self, template: u32) -> Option<Vec<Reply>> {
         let chr = self.claimed_character()?;
-        let (path, body, what) = match (template, chr.map_id) {
-            (boat::JOEL, boat::STATION) => (
-                boat::JOEL_PATH,
-                net::script::npc_menu(template, &boat::joel_menu()),
-                "ScriptMessage MENU from Joel: the two tickets to Orbis".to_string(),
-            ),
-            (boat::CHERRY, boat::STATION) => {
-                let now = store::Store::unix_now();
-                (
-                    boat::CHERRY_PATH,
-                    net::script::npc_menu(template, &boat::cherry_menu(now)),
-                    format!("ScriptMessage MENU from Cherry: board with either ticket - {:?}", boat::boarding(now)),
-                )
+        match (template, chr.map_id) {
+            // Joel opens with their v96 introduction, and Next brings up the tickets.
+            (boat::JOEL, boat::STATION) => {
+                self.park_boat(template, boat::JOEL_INTRO_PATH, false, true);
+                Some(vec![Reply {
+                    opcode: net::script::SCRIPT_MESSAGE,
+                    body: net::script::npc_say(template, &boat::joel_intro(), false, true),
+                    what: "ScriptMessage Say from Joel: the station and its timetable; Next opens the tickets".to_string(),
+                }])
             }
-            (boat::PURIN, boat::WAITING_ROOM) => (
-                boat::PURIN_PATH,
-                net::script::npc_ask(template, boat::PURIN_ASK, false),
-                "ScriptMessage YES/NO from Purin: back to Ellinia Station?".to_string(),
-            ),
-            _ => return None,
-        };
+            (boat::CHERRY, boat::STATION) => Some(self.boat_menu(boat::CHERRY_PATH, template, &boat::cherry_menu(), "which ticket")),
+            (boat::PURIN, boat::WAITING_ROOM) => Some(self.boat_ask(boat::PURIN_PATH, template, boat::PURIN_ASK, "back to Ellinia Station?")),
+            _ => None,
+        }
+    }
+
+    fn park_boat(&mut self, template: u32, path: &str, yes_no: bool, next: bool) {
         self.conversation = Some(Conversation {
             npc_template: template,
             quest_id: None,
             path: path.to_string(),
             sent: 0,
-            awaiting_yes_no: path == boat::PURIN_PATH,
-            sent_with_next: false,
+            awaiting_yes_no: yes_no,
+            sent_with_next: next,
         });
-        Some(vec![Reply { opcode: net::script::SCRIPT_MESSAGE, body, what }])
+    }
+
+    fn boat_menu(&mut self, path: &str, template: u32, text: &str, what: &str) -> Vec<Reply> {
+        self.park_boat(template, path, false, false);
+        vec![Reply {
+            opcode: net::script::SCRIPT_MESSAGE,
+            body: net::script::npc_menu(template, text),
+            what: format!("ScriptMessage MENU from NPC {template}: {what}"),
+        }]
+    }
+
+    fn boat_ask(&mut self, path: &str, template: u32, text: &str, what: &str) -> Vec<Reply> {
+        self.park_boat(template, path, true, false);
+        vec![Reply {
+            opcode: net::script::SCRIPT_MESSAGE,
+            body: net::script::npc_ask(template, text, false),
+            what: format!("ScriptMessage YES/NO from NPC {template}: {what}"),
+        }]
+    }
+
+    /// Joel's Next: the tickets.
+    pub(super) fn joel_intro_answer(&mut self, action: i8) -> Vec<Reply> {
+        self.conversation = None;
+        if action != net::script::SCRIPT_ACTION_YES {
+            return Vec::new();
+        }
+        self.boat_menu(boat::JOEL_PATH, boat::JOEL, &boat::joel_menu(), "the two tickets to Orbis")
     }
 
     /// Joel's or Cherry's menu came back. `None` when neither is parked, so the other menu
@@ -67,7 +89,39 @@ impl Session {
         if convo.path == boat::JOEL_PATH {
             return Some(self.buy_ticket(ticket));
         }
-        Some(self.board_ship(ticket, store::Store::unix_now()))
+        Some(self.cherry_choice(ticket, store::Store::unix_now()))
+    }
+
+    /// **Cherry, once the ticket is named.** Every refusal is said here, before they ask -
+    /// no ticket, or (Basic) the ship is not boarding - so a Yes is never followed by a No.
+    /// The Yes re-checks both anyway ([`Session::board_ship`]): the window can close while the
+    /// question is on screen.
+    pub(super) fn cherry_choice(&mut self, ticket: Ticket, now: i64) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        if self.held_count(chr.id, ticket.item()) == 0 {
+            return vec![self.boat_say(boat::CHERRY, &boat::cherry_no_ticket(ticket), format!("no {}", ticket.name()))];
+        }
+        match ticket {
+            Ticket::Basic => match boat::cherry_not_boarding(now) {
+                Some(line) => vec![self.boat_say(boat::CHERRY, &line, format!("not boarding: {:?}", boat::boarding(now)))],
+                None => self.boat_ask(boat::CHERRY_BASIC_PATH, boat::CHERRY, boat::CHERRY_ASK_BASIC, "board the Basic ship?"),
+            },
+            Ticket::Regular => self.boat_ask(boat::CHERRY_REGULAR_PATH, boat::CHERRY, boat::CHERRY_ASK_REGULAR, "board a private ship?"),
+        }
+    }
+
+    /// Cherry's yes/no. `None` when it is not theirs. Yes boards; No gets their v96 line.
+    pub(super) fn cherry_board_answer(&mut self, path: &str, action: i8, now: i64) -> Option<Vec<Reply>> {
+        let ticket = match path {
+            boat::CHERRY_BASIC_PATH => Ticket::Basic,
+            boat::CHERRY_REGULAR_PATH => Ticket::Regular,
+            _ => return None,
+        };
+        self.conversation = None;
+        if action != net::script::SCRIPT_ACTION_YES {
+            return Some(vec![self.boat_say(boat::CHERRY, boat::CHERRY_DECLINED, "declined".to_string())]);
+        }
+        Some(self.board_ship(ticket, now))
     }
 
     fn boat_say(&self, template: u32, line: &str, what: String) -> Reply {
@@ -156,10 +210,14 @@ impl Session {
         out
     }
 
-    /// Purin's yes/no. Yes leaves the voyage and goes back to the station; the ticket is spent.
+    /// Purin's yes/no, from their v96 script. Yes leaves the voyage and goes back to the station
+    /// before the ship departs - the ticket is spent; No gets their line and they stay aboard.
     pub(super) fn purin_answer(&mut self, action: i8) -> Vec<Reply> {
         self.conversation = None;
         let Some(mut chr) = self.claimed_character() else { return Vec::new() };
+        if action == net::script::SCRIPT_ACTION_NO {
+            return vec![self.boat_say(boat::PURIN, boat::PURIN_STAY, "they stay aboard".to_string())];
+        }
         if action != net::script::SCRIPT_ACTION_YES || chr.map_id != boat::WAITING_ROOM {
             return Vec::new();
         }
@@ -338,14 +396,31 @@ mod tests {
         b
     }
 
-    fn yes() -> Vec<u8> {
+    /// A Say / yes-no answer: Yes (and Next, which the client sends as the same 1), or No.
+    fn answer(action: i8) -> Vec<u8> {
         let mut b = net::script::CLIENT_SCRIPT_REPLY.to_le_bytes().to_vec();
         b.extend_from_slice(&0u32.to_le_bytes());
         b.push(0);
         b.extend_from_slice(&0u32.to_le_bytes());
         b.extend_from_slice(&0u16.to_le_bytes());
-        b.push(net::script::SCRIPT_ACTION_YES as u8);
+        b.push(action as u8);
         b
+    }
+
+    fn yes() -> Vec<u8> {
+        answer(net::script::SCRIPT_ACTION_YES)
+    }
+
+    fn no() -> Vec<u8> {
+        answer(net::script::SCRIPT_ACTION_NO)
+    }
+
+    /// Joel's two boxes: their introduction, then Next to the tickets.
+    fn joel_tickets(s: &mut Session) -> Vec<Reply> {
+        let out = s.handle(&click(JOEL_OBJECT));
+        assert!(said(&out).contains("Hi there! I'm Joel"), "their introduction first: {}", said(&out));
+        assert!(said(&out).contains("every 10 minutes afterwards"), "{}", said(&out));
+        s.handle(&yes())
     }
 
     fn said(out: &[Reply]) -> String {
@@ -370,23 +445,29 @@ mod tests {
         let (s, id) = &mut ss[0];
         let id = *id;
 
-        let out = s.handle(&click(JOEL_OBJECT));
+        let out = joel_tickets(s);
         assert!(said(&out).contains("#L0#Ticket to Orbis (Basic)"), "a menu, not a shop: {}", said(&out));
         assert!(!out.iter().any(|r| r.opcode == net::classicshop::CLASSIC_OPEN_SHOP), "no shop window");
 
         let out = s.handle(&pick(Ticket::Basic.line()));
+        assert!(said(&out).contains("please go talk to #bCherry#k on the right"), "{}", said(&out));
         assert_eq!(s.held_count(id, boat::BASIC_TICKET), 1);
         assert_eq!(store.mesos(id).unwrap(), 21_000, "5,000 for the Basic");
         assert!(out.iter().any(|r| r.opcode == net::message::MESSAGE && r.body == net::message::meso_lost_line(boat::BASIC_PRICE)));
         assert!(out.iter().any(|r| r.opcode == net::stats::USER_EFFECT_LOCAL && r.body == net::message::item_gained_in_chat(boat::BASIC_TICKET, 1)));
         assert!(out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "the ticket reaches the bag on screen");
 
-        let _ = s.handle(&click(JOEL_OBJECT));
+        let _ = joel_tickets(s);
         let _ = s.handle(&pick(Ticket::Regular.line()));
         assert_eq!(s.held_count(id, boat::REGULAR_TICKET), 1);
         assert_eq!(store.mesos(id).unwrap(), 1_000, "20,000 for the Regular");
 
+        // Closing the introduction sells nothing and opens nothing.
         let _ = s.handle(&click(JOEL_OBJECT));
+        let out = s.handle(&answer(net::script::SCRIPT_ACTION_CLOSED));
+        assert!(said(&out).is_empty(), "{}", said(&out));
+
+        let _ = joel_tickets(s);
         let out = s.handle(&pick(Ticket::Regular.line()));
         assert!(said(&out).contains("don't have enough"), "{}", said(&out));
         assert_eq!(s.held_count(id, boat::REGULAR_TICKET), 1, "no second ticket");
@@ -410,9 +491,9 @@ mod tests {
 
         // Outside the window: refused, and the ticket stays.
         let out = ss[0].0.board_ship(Ticket::Basic, departs - 30);
-        assert!(said(&out).contains("about to leave"), "{}", said(&out));
+        assert!(said(&out).contains("getting ready for takeoff"), "{}", said(&out));
         let out = ss[0].0.board_ship(Ticket::Basic, departs - 400);
-        assert!(said(&out).contains("not boarding yet"), "{}", said(&out));
+        assert!(said(&out).contains("We will begin boarding"), "{}", said(&out));
         assert_eq!(ss[0].0.held_count(ann, boat::BASIC_TICKET), 1, "a refusal takes no ticket");
         assert_eq!(map_of(&ss[0].0), boat::STATION);
 
@@ -475,8 +556,11 @@ mod tests {
         let _ = ss[0].0.buy_ticket(Ticket::Regular);
         let _ = ss[1].0.buy_ticket(Ticket::Regular);
         let now = Store::unix_now();
-        // Any time at all - in the last minute before a Basic departure too.
-        let closing = boat::next_departure(now) - 30;
+        // Any time at all - in the last minute before a Basic departure too. The departure
+        // AFTER the next one, so this ship always lands after the first one's minute is up:
+        // the next departure itself can be under 30 s away.
+        let closing = boat::next_departure(now) + boat::DEPARTURE_EVERY_S - 30;
+        assert!(matches!(boat::boarding(closing), boat::Boarding::Closing { .. }));
         let _ = ss[0].0.board_ship(Ticket::Regular, now);
         let _ = ss[1].0.board_ship(Ticket::Regular, closing);
         assert_eq!((map_of(&ss[0].0), map_of(&ss[1].0)), (boat::DECK, boat::DECK), "no waiting room");
@@ -490,6 +574,53 @@ mod tests {
         let _ = ss[0].0.boat_tick_at(now + boat::PRIVATE_RIDE_S);
         assert_eq!(map_of(&ss[0].0), boat::ORBIS);
         assert!(fields.voyages().voyage_of(ss[1].1).is_some(), "the other ship is still out");
+    }
+
+    /// **Cherry asks before they board anyone**, as their v96 script does. Refusals come before
+    /// the question; No keeps the passenger and the ticket with their v96 line; Yes boards.
+    #[test]
+    fn cherry_asks_first_and_no_keeps_you_and_your_ticket() {
+        let (_, _, mut ss) = station(&["Rider"], 50_000);
+        let (s, id) = &mut ss[0];
+        let id = *id;
+        let _ = s.buy_ticket(Ticket::Basic);
+        let _ = s.buy_ticket(Ticket::Regular);
+        let departs = boat::next_departure(Store::unix_now()) + boat::DEPARTURE_EVERY_S;
+
+        // Basic, closing: refused outright, no question parked.
+        let out = s.cherry_choice(Ticket::Basic, departs - 30);
+        assert!(said(&out).contains("getting ready for takeoff"), "{}", said(&out));
+        assert!(s.conversation.is_none(), "nothing to answer");
+        // Basic, too early: the v96 wait-for-boarding line.
+        let out = s.cherry_choice(Ticket::Basic, departs - 400);
+        assert!(said(&out).contains("We will begin boarding 5 minutes before the takeoff"), "{}", said(&out));
+
+        // Basic, open: their question, then No.
+        let out = s.cherry_choice(Ticket::Basic, departs - 200);
+        assert!(said(&out).contains("This will not be a short flight"), "{}", said(&out));
+        let out = s.cherry_board_answer(boat::CHERRY_BASIC_PATH, net::script::SCRIPT_ACTION_NO, departs - 199).unwrap();
+        assert!(said(&out).contains("You must have some business"), "{}", said(&out));
+        assert_eq!((map_of(s), s.held_count(id, boat::BASIC_TICKET)), (boat::STATION, 1), "No: nobody moved, nothing taken");
+
+        // ...and Yes.
+        let _ = s.cherry_choice(Ticket::Basic, departs - 200);
+        let _ = s.cherry_board_answer(boat::CHERRY_BASIC_PATH, net::script::SCRIPT_ACTION_YES, departs - 199).unwrap();
+        assert_eq!((map_of(s), s.held_count(id, boat::BASIC_TICKET)), (boat::WAITING_ROOM, 0));
+
+        // Regular, through the real packets - it does not depend on the clock. No, then Yes.
+        let mut chr = s.claimed_character().unwrap();
+        let _ = s.go_to_map(&mut chr, boat::STATION, 0, "back to the station".to_string());
+        let _ = s.on_field_entered();
+        let _ = s.handle(&click(CHERRY_OBJECT));
+        let out = s.handle(&pick(Ticket::Regular.line()));
+        assert!(said(&out).contains("private ship will take off"), "{}", said(&out));
+        let out = s.handle(&no());
+        assert!(said(&out).contains("You must have some business"), "{}", said(&out));
+        assert_eq!((map_of(s), s.held_count(id, boat::REGULAR_TICKET)), (boat::STATION, 1));
+        let _ = s.handle(&click(CHERRY_OBJECT));
+        let _ = s.handle(&pick(Ticket::Regular.line()));
+        let _ = s.handle(&yes());
+        assert_eq!((map_of(s), s.held_count(id, boat::REGULAR_TICKET)), (boat::DECK, 0), "Yes: aboard");
     }
 
     /// Cherry without the ticket refuses; Purin takes a waiting passenger back to the station
@@ -508,8 +639,16 @@ mod tests {
         let departs = boat::next_departure(Store::unix_now()) + boat::DEPARTURE_EVERY_S;
         let _ = s.board_ship(Ticket::Basic, departs - 100);
         assert_eq!(map_of(s), boat::WAITING_ROOM);
+        // No first: their v96 line, and they stay aboard the same voyage.
         let out = s.handle(&click(PURIN_OBJECT));
+        assert!(said(&out).contains("Are you sure you want to get off the ship?"), "{}", said(&out));
         assert!(said(&out).contains("not#k be returned"), "{}", said(&out));
+        let out = s.handle(&no());
+        assert!(said(&out).contains("You'll get to your destination in a short while"), "{}", said(&out));
+        assert_eq!(map_of(s), boat::WAITING_ROOM, "No: still aboard");
+        assert!(fields.voyages().voyage_of(id).is_some(), "and still on the voyage");
+        // Then Yes: off the ship, before it leaves.
+        let _ = s.handle(&click(PURIN_OBJECT));
         let _ = s.handle(&yes());
         assert_eq!(map_of(s), boat::STATION);
         assert_eq!(fields.voyages().voyage_of(id), None);

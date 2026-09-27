@@ -80,10 +80,16 @@ pub const BOARDING_CLOSES_S: i64 = 60;
 /// The Regular ticket's private crossing takes one minute.
 pub const PRIVATE_RIDE_S: i64 = 60;
 
+/// The conversation path Joel's opening line (a Say with Next) is parked under.
+pub const JOEL_INTRO_PATH: &str = "boat.joel.intro";
 /// The conversation path Joel's menu is parked under.
 pub const JOEL_PATH: &str = "boat.joel";
 /// The conversation path Cherry's menu is parked under.
 pub const CHERRY_PATH: &str = "boat.cherry";
+/// The conversation path Cherry's "do you still wish to board?" is parked under, per ticket.
+pub const CHERRY_BASIC_PATH: &str = "boat.cherry.basic";
+/// The Regular ticket's.
+pub const CHERRY_REGULAR_PATH: &str = "boat.cherry.regular";
 /// The conversation path Purin's yes/no is parked under.
 pub const PURIN_PATH: &str = "boat.purin";
 
@@ -326,32 +332,50 @@ impl Voyages {
 // The words. ASCII only: `PacketWriter::str` sends one byte per char.
 // ---------------------------------------------------------------------------------------
 
-/// Joel's menu: both tickets, their prices, and what each one buys.
+// **The wording follows the v96 scripts the owner pasted, 2026-09-26** - Joel `1032007` and
+// Cherry `1032008` - changed only where this server's rules differ: a ship every 10 minutes,
+// not 15; boarding opens 5 minutes before, not 10; and the tickets are paid for, so Joel's
+// page about the flights having become free is not here and a ticket menu is. Cherry's "the
+// ride schedule is available through the guide at the ticketing booth" names a guide this
+// station does not have, so the next ship's time is said instead.
+
+/// Joel's opening line, a Say with Next. The v96 text with this server's timetable.
+pub fn joel_intro() -> String {
+    format!(
+        "Hi there! I'm Joel, and I work in this station. Are you thinking of leaving Victoria \
+         Island for other places? This station is where you'll find the ship that heads to \
+         #bOrbis Station#k of Ossyria leaving #bat the top of the hour, and every {} minutes \
+         afterwards#k.",
+        DEPARTURE_EVERY_S / 60
+    )
+}
+
+/// Joel's menu, after Next: both tickets, their prices, and what each one buys.
 pub fn joel_menu() -> String {
     format!(
-        "Hello, I'm in charge of selling tickets for the ship to #bOrbis Station#k in Ossyria. \
-         Which ticket would you like?\r\n\
+        "To get on board you'll need a ticket, and I sell them right here. Which one would you like?\r\n\
          #d#L{}#{} - {} mesos#l\r\n\
          #L{}#{} - {} mesos#l#k\r\n\r\n\
-         The #bBasic#k ticket boards the ship that leaves every 10 minutes with the other \
-         passengers; the crossing takes 5 minutes. The #bRegular#k ticket is a private ship, \
-         just for you, that leaves as soon as you board and arrives in 1 minute.",
+         With a #bBasic#k ticket you ride the next ship with the other passengers, and the flight \
+         takes {} minutes. A #bRegular#k ticket is a private ship, just for you, that takes off as \
+         soon as you board and arrives in {} minute.",
         Ticket::Basic.line(),
         Ticket::Basic.name(),
         thousands(BASIC_PRICE),
         Ticket::Regular.line(),
         Ticket::Regular.name(),
         thousands(REGULAR_PRICE),
+        RIDE_S / 60,
+        PRIVATE_RIDE_S / 60,
     )
 }
 
-/// Joel, after a sale.
+/// Joel, after a sale - ending on their own v96 line about Cherry.
 pub fn joel_sold(ticket: Ticket) -> String {
-    let how = match ticket {
-        Ticket::Basic => "Give it to #bCherry#k while the ship is boarding - boarding opens 5 minutes before each departure.",
-        Ticket::Regular => "Give it to #bCherry#k and your private ship will leave right away.",
-    };
-    format!("Here is your #b{}#k. {how}", ticket.name())
+    format!(
+        "Here is your #b{}#k. If you are thinking of going to Orbis, please go talk to #bCherry#k on the right.",
+        ticket.name()
+    )
 }
 
 /// Joel, when the purse is short.
@@ -362,22 +386,12 @@ pub fn joel_short(ticket: Ticket) -> String {
 /// Joel, when the Etc tab is full.
 pub const JOEL_BAG_FULL: &str = "Please make some room in your #bEtc#k inventory first.";
 
-/// Cherry's menu. The timetable line is live: it names the next departure and whether it is
-/// boarding.
-pub fn cherry_menu(now: i64) -> String {
-    let status = match boarding(now) {
-        Boarding::Open { departs } => format!("The ship leaving at #b{}#k is boarding now.", hh_mm(departs)),
-        Boarding::Closing { departs } => {
-            format!("The ship leaving at #b{}#k is about to leave and is not taking new passengers.", hh_mm(departs))
-        }
-        Boarding::NotYet { departs, opens } => {
-            format!("The next ship leaves at #b{}#k, and boarding opens at #b{}#k.", hh_mm(departs), hh_mm(opens))
-        }
-    };
+/// Cherry's menu: which ticket. Their opening is their own `String.wz` line.
+pub fn cherry_menu() -> String {
     format!(
-        "If you want to get on board the ship that heads to Orbis Station, please give me the ticket. {status}\r\n\
-         #d#L{}#Board with a #b{}#d#l\r\n\
-         #L{}#Take a private ship with a #b{}#d#l#k",
+        "If you want to get on board the ship that heads to Orbis Station, please give me the ticket.\r\n\
+         #d#L{}#I have a #b{}#d.#l\r\n\
+         #L{}#I have a #b{}#d.#l#k",
         Ticket::Basic.line(),
         Ticket::Basic.name(),
         Ticket::Regular.line(),
@@ -390,28 +404,47 @@ pub fn cherry_no_ticket(ticket: Ticket) -> String {
     format!("You don't have a #b{}#k. You can buy one from #bJoel#k.", ticket.name())
 }
 
-/// Cherry, to a Basic passenger outside the boarding window. `None` while it is open.
+/// Cherry's yes/no before a Basic passenger boards - the v96 line.
+pub const CHERRY_ASK_BASIC: &str = "This will not be a short flight, so you need to take care of some things, I suggest you do \
+     that first before getting on board. Do you still wish to board the ship?";
+
+/// Cherry's yes/no before a Regular passenger boards. Not a v96 line - v96 had no private ship.
+pub const CHERRY_ASK_REGULAR: &str = "Your private ship will take off as soon as you are on board, and the flight takes only \
+     #b1 minute#k. Do you wish to board the ship?";
+
+/// Cherry, to a No - the v96 line.
+pub const CHERRY_DECLINED: &str = "You must have some business to take care of here, right?";
+
+/// Cherry, to a Basic passenger outside the boarding window - the v96 lines with this
+/// server's minutes. `None` while it is open.
 pub fn cherry_not_boarding(now: i64) -> Option<String> {
     match boarding(now) {
         Boarding::Open { .. } => None,
         Boarding::Closing { departs } => Some(format!(
-            "The ship is about to leave, so please wait~ It is not taking any more passengers. \
-             The next ship leaves at #b{}#k, and boarding opens at #b{}#k.",
+            "This ship is getting ready for takeoff. I'm sorry, but you'll have to get on the next \
+             ride. The next ship leaves at #b{}#k.",
             hh_mm(departs + DEPARTURE_EVERY_S),
-            hh_mm(departs + DEPARTURE_EVERY_S - BOARDING_OPENS_S),
         )),
-        Boarding::NotYet { departs, opens } => Some(format!(
-            "We are not boarding yet. The next ship leaves at #b{}#k, and boarding opens at #b{}#k, \
-             5 minutes before.",
+        Boarding::NotYet { departs, .. } => Some(format!(
+            "We will begin boarding {} minutes before the takeoff. Please be patient and wait for a \
+             few minutes. Be aware that the ship will take off right on time, and we stop boarding \
+             {} minute before that, so please make sure to be here on time. The next ship leaves \
+             at #b{}#k.",
+            BOARDING_OPENS_S / 60,
+            BOARDING_CLOSES_S / 60,
             hh_mm(departs),
-            hh_mm(opens),
         )),
     }
 }
 
-/// Purin's question in the waiting room. Their own line, then the fact that matters.
-pub const PURIN_ASK: &str = "Anyone that wants to leave the ship and return to the starting point, please come talk to me. \
-     Do you want to go back to #bEllinia Station#k? Your ticket will #rnot#k be returned.";
+/// Purin's question in the waiting room - the v96 line, then the one fact v96 did not have: the ticket is spent.
+pub const PURIN_ASK: &str = "We're just about to take off. Are you sure you want to get off the ship? You may do so, but \
+     then you'll have to wait until the next available flight. Do you still wish to get off board? \
+     Your ticket will #rnot#k be returned.";
+
+/// Purin, to a No - the v96 line.
+pub const PURIN_STAY: &str = "You'll get to your destination in a short while. Talk to other passengers and share your \
+     stories to them, and you'll be there before you know it.";
 
 /// The notice at the end of every crossing.
 pub const ARRIVED: &str = "The ship has arrived at Orbis Station.";
@@ -458,7 +491,10 @@ mod tests {
         assert_eq!(boarding(d), Boarding::NotYet { departs: d + 600, opens: d + 300 }, "00:10:00 gone");
         assert_eq!(cherry_not_boarding(d - 200), None);
         assert!(cherry_not_boarding(d - 30).unwrap().contains("00:20"), "the next one after the closing ship");
-        assert!(cherry_not_boarding(d - 30).unwrap().contains("00:15"));
+        assert!(cherry_not_boarding(d - 30).unwrap().starts_with("This ship is getting ready for takeoff"));
+        let early = cherry_not_boarding(d - 400).unwrap();
+        assert!(early.contains("begin boarding 5 minutes before") && early.contains("stop boarding 1 minute before"), "{early}");
+        assert!(early.contains("00:10"), "{early}");
     }
 
     /// Every Basic passenger for one departure shares a voyage; the next departure is another.
@@ -531,18 +567,32 @@ mod tests {
         for t in Ticket::ALL {
             assert_eq!(Ticket::from_line(t.line()), Some(t));
             assert!(joel_menu().contains(&format!("#L{}#{}", t.line(), t.name())), "{}", joel_menu());
-            assert!(cherry_menu(MIDNIGHT).contains(&format!("#L{}#", t.line())));
+            assert!(cherry_menu().contains(&format!("#L{}#I have a #b{}", t.line(), t.name())), "{}", cherry_menu());
         }
         assert_eq!(Ticket::from_line(2), None);
         assert!(joel_menu().contains("5,000 mesos") && joel_menu().contains("20,000 mesos"), "{}", joel_menu());
-        for text in [joel_menu(), cherry_menu(MIDNIGHT + 400), cherry_menu(MIDNIGHT + 100), cherry_menu(MIDNIGHT + 570), PURIN_ASK.to_string()] {
+        assert!(joel_intro().contains("every 10 minutes"), "{}", joel_intro());
+        let words = [
+            joel_intro(),
+            joel_menu(),
+            joel_sold(Ticket::Basic),
+            cherry_menu(),
+            cherry_not_boarding(MIDNIGHT + 100).unwrap(),
+            cherry_not_boarding(MIDNIGHT + 570).unwrap(),
+            CHERRY_ASK_BASIC.to_string(),
+            CHERRY_ASK_REGULAR.to_string(),
+            CHERRY_DECLINED.to_string(),
+            PURIN_ASK.to_string(),
+            PURIN_STAY.to_string(),
+        ];
+        for text in words {
             assert!(text.is_ascii(), "one byte per char on the wire: {text}");
         }
     }
 
     #[test]
     fn the_paths_are_this_modules_and_nobody_elses() {
-        for p in [JOEL_PATH, CHERRY_PATH, PURIN_PATH] {
+        for p in [JOEL_INTRO_PATH, JOEL_PATH, CHERRY_PATH, CHERRY_BASIC_PATH, CHERRY_REGULAR_PATH, PURIN_PATH] {
             assert!(is_boat_path(p));
         }
         for other in [crate::taxi::MENU_PATH, crate::firsttime::ASK_PATH, crate::firsttime::NELLA_PATH] {
