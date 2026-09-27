@@ -404,6 +404,27 @@ order. Found through the key strings' pointer table, since nothing `lea`s them:
 from `:x5:00` until the departure and `[2,0]` otherwise; the change itself goes to everyone on
 the station as `0x01BF`, once per channel (`Voyages::take_station_change`), and only within 5 s
 of it. 17 boat tests; 6 more mutations, each caught. Test plan 25(j). **Not on a screen.**
+**The Crimson Balrog invasion** (the owner: *"a 50% chance that any given trip will be invaded by 2
+Crimson Balrog ... at 1 minute into the 5 minute boat ride ... not on the 1 minute private
+rides"*). Rolled once per shared voyage at the departure; a minute in, one passenger standing on
+the deck sends `0x01BF [10, 4]` - `FUN_140d6b130`, which draws the deck's own `shipObj`
+(`ship/ossyria/97`) and only on a `shipKind 1` field **[L]** - and summons two `700005` in the air
+at that ship's position (the owner: they fly), controlled by that client. A latecomer on the deck gets
+`0x01C0 [3, 1]` and the Balrogs with the field. Leftover Balrogs stay in the finished instance's
+`Fields` entry (no instance teardown exists yet).
+**2026-09-27: the ship back, Orbis to Ellinia.** The owner: *"Agatha will sell the tickets"*, and the
+Platform Usher *"will offer the players a choice to be teleported to the correct tunnel to the
+ship."* `crate::boat` is now two `Route`s on one timetable. Orbis side: Agatha (1000) in the booth
+sells Ticket to Ellinia (Basic)/(Regular) - 4031084/5, the same 5,000/20,000 **[I]**; the Platform
+Usher (1001) offers Isa's platform menu - the booth's `east00` has no target **[L]** - and
+teleports to the Station Tunnel (20000011), which walks to Rini's platform (20000012, `fieldType
+2` with its own `shipObj`); their second line is still their ferry. Rini (1004), Erin (1006), the
+waiting room 20000013, deck 20000020 (Balrog ship at -590, -221) and cabin 20000021 mirror the
+Ellinia side; the ship lands in Ellinia Station. Wording from the v96 Agatha/Rini/Erin/Isa scripts
+The owner pasted (Rini's and Erin's are word for word Cherry's and Purin's). A login on a To Ellinia
+ship field lands on Rini's platform, the departure station, not the booth that `forcedReturn`
+names. 25 boat tests; 7 route mutations, each caught; net + world 1990 passed, 0 failed. Test plan
+25(k), 25(l). **Not on a screen.**
 
 **2026-09-25: Maple Island's quests are open to every job.** The owner: *"remove the requirement that
 quests on the island are only for Beginners, any class should be able to do them."* **The server
