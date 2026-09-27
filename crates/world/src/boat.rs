@@ -189,6 +189,34 @@ pub fn hh_mm(unix: i64) -> String {
 }
 
 // ---------------------------------------------------------------------------------------
+// The ship at the station - what `net::ship` animates
+// ---------------------------------------------------------------------------------------
+
+/// **Is the ship in at the station?** The owner, 2026-09-26: it *"arrives at xx:x5 to the station
+/// so players can board"* and is there *"up until the boat leaves"* - so from five minutes
+/// before a departure (inclusive) until the departure, the closing minute included.
+pub fn ship_docked(now: i64) -> bool {
+    next_departure(now) - now <= BOARDING_OPENS_S
+}
+
+/// The instant the station last changed - the ship coming in at `:x5` or leaving at `:x0` -
+/// and which way. `(docked, at)`: `docked` is [`ship_docked`] at `now`, `at` when it became so.
+pub fn station_changed(now: i64) -> (bool, i64) {
+    let departs = next_departure(now);
+    if ship_docked(now) {
+        (true, departs - BOARDING_OPENS_S)
+    } else {
+        (false, departs - DEPARTURE_EVERY_S)
+    }
+}
+
+/// How late a change may still be announced. The tick runs every 500 ms, so a live channel
+/// is always inside this; a channel nobody was ticking on when the ship moved stays quiet,
+/// because everyone who arrives on the station afterwards is told on entry, and a second
+/// animation on top of that one would restart the slide.
+pub const ANNOUNCE_WITHIN_S: i64 = 5;
+
+// ---------------------------------------------------------------------------------------
 // The voyages
 // ---------------------------------------------------------------------------------------
 
@@ -238,16 +266,31 @@ impl Voyage {
 pub struct Voyages {
     next_id: u32,
     live: Vec<Voyage>,
+    /// The last station change handled ([`station_changed`]'s `at`), so each one is
+    /// announced once on this channel however many sessions tick past it.
+    station_handled: i64,
 }
 
 impl Default for Voyages {
     /// Ids start at 1: 0 is `FieldKey`'s shared world and must never name a voyage.
     fn default() -> Self {
-        Self { next_id: 1, live: Vec::new() }
+        Self { next_id: 1, live: Vec::new(), station_handled: 0 }
     }
 }
 
 impl Voyages {
+    /// **The ship has just come in or just left - announce it?** `Some(docked)` exactly once
+    /// per change, and only within [`ANNOUNCE_WITHIN_S`] of it; `None` otherwise. The
+    /// test-and-set is here, under the registry's lock, for the same reason departures are.
+    pub fn take_station_change(&mut self, now: i64) -> Option<bool> {
+        let (docked, at) = station_changed(now);
+        if at <= self.station_handled {
+            return None;
+        }
+        self.station_handled = at;
+        (now - at <= ANNOUNCE_WITHIN_S).then_some(docked)
+    }
+
     fn new_id(&mut self) -> u32 {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1).max(1);
@@ -588,6 +631,29 @@ mod tests {
         for text in words {
             assert!(text.is_ascii(), "one byte per char on the wire: {text}");
         }
+    }
+
+    /// The ship is in from `:x5:00` until the departure, closing minute included, and out
+    /// from the departure until `:x5:00`. Each change is announced once, and only while fresh.
+    #[test]
+    fn the_ship_is_in_from_x5_until_it_leaves_and_each_change_is_announced_once() {
+        let d = MIDNIGHT + 600; // 00:10
+        assert!(!ship_docked(d - 301), "00:04:59 - out");
+        assert!(ship_docked(d - 300), "00:05:00 - in");
+        assert!(ship_docked(d - 30), "00:09:30 - in, though boarding has closed");
+        assert!(!ship_docked(d), "00:10:00 - gone");
+        assert_eq!(station_changed(d - 200), (true, d - 300));
+        assert_eq!(station_changed(d + 10), (false, d));
+
+        let mut v = Voyages::default();
+        assert_eq!(v.take_station_change(d - 298), Some(true), "two seconds after it came in");
+        assert_eq!(v.take_station_change(d - 297), None, "once");
+        assert_eq!(v.take_station_change(d + 1), Some(false), "and it leaves");
+        assert_eq!(v.take_station_change(d + 2), None);
+        // A channel nobody ticked on: the next change it sees is stale, and it stays quiet
+        // rather than restarting the slide for people the entry packet already told.
+        assert_eq!(v.take_station_change(d + 300 + 60), None, "a minute late - too late");
+        assert_eq!(v.take_station_change(d + 600 + 1), Some(false), "the next one is fresh again");
     }
 
     #[test]

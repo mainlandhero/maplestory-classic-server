@@ -229,15 +229,23 @@ impl Session {
     /// **On every field entry.** On a ship field with a voyage: the countdown. Anywhere else:
     /// off whatever voyage they were on - a return scroll, a death or a GM warp all end the
     /// crossing, and a stale membership would put them back in that ship's instance later.
+    /// And at the station, the ship.
     pub(super) fn boat_field_entry(&mut self) -> Vec<Reply> {
+        self.boat_field_entry_at(store::Store::unix_now())
+    }
+
+    pub(super) fn boat_field_entry_at(&mut self, now: i64) -> Vec<Reply> {
         let Some(chr) = self.claimed_character() else { return Vec::new() };
         if !boat::is_ship_map(chr.map_id) {
             let _ = self.fields.voyages().drop_member(chr.id);
+            if chr.map_id == boat::STATION {
+                return vec![station_ship_on_entry(chr.id, now)];
+            }
             return Vec::new();
         }
         let voyage = self.fields.voyages().voyage_of(chr.id);
         let Some(voyage) = voyage else { return Vec::new() };
-        let left = voyage.remaining_s(store::Store::unix_now());
+        let left = voyage.remaining_s(now);
         vec![Reply {
             opcode: net::clock::FIELD_CLOCK,
             body: net::clock::clock_seconds(left),
@@ -256,6 +264,22 @@ impl Session {
     /// Sail what is due and land what has arrived. Both takes are test-and-set in the
     /// registry, so whichever session ticks first moves everyone and the rest see nothing.
     pub(super) fn boat_tick_at(&mut self, now: i64) -> Vec<Reply> {
+        // **The ship coming in at `:x5` or leaving at `:x0`, to everyone on the station** -
+        // once per channel, by whichever session ticks first. `publish_to_map` leaves nobody
+        // out, so a ticker standing on the station hears it through its own mailbox.
+        let change = self.fields.voyages().take_station_change(now);
+        if let Some(docked) = change {
+            let (body, what) = if docked {
+                (net::ship::ship_arrives(), "the ship ARRIVES (type 12, state 6)")
+            } else {
+                (net::ship::ship_leaves(), "the ship LEAVES (type 8, state 2)")
+            };
+            let n = self.bus().publish_to_map(
+                crate::fields::FieldKey::world(boat::STATION),
+                Reply { opcode: net::ship::CONTI_MOVE, body, what: format!("ContiMove 0x01BF: {what} at Ellinia Station, {}", boat::hh_mm(now)) },
+            );
+            crate::server::log(&format!("   boat: {what} at Ellinia Station - told {n} player(s) there"));
+        }
         let departing = self.fields.voyages().take_departures(now);
         let arriving = self.fields.voyages().take_arrivals(now);
         let mut out = Vec::new();
@@ -331,6 +355,23 @@ impl Session {
     pub(super) fn leave_ship_on_disconnect(&mut self) {
         let Some(chr) = self.claimed_character() else { return };
         let _ = self.fields.voyages().drop_member(chr.id);
+    }
+}
+
+/// **The ship, for someone arriving at the station**: the arrive animation from `:x5` until the
+/// departure, the leave animation at any other time - the owner, 2026-09-26. `0x01C0`, whose
+/// state-1 and state-2 arms call the same two routines as the live `0x01BF` announcements.
+fn station_ship_on_entry(chr_id: u32, now: i64) -> Reply {
+    let docked = boat::ship_docked(now);
+    Reply {
+        opcode: net::ship::CONTI_STATE,
+        body: net::ship::station_state(docked),
+        what: format!(
+            "ContiState 0x01C0 to character {chr_id}: the ship {} at {} (next departure {})",
+            if docked { "ARRIVES - it is in for boarding" } else { "LEAVES - it is not in" },
+            boat::hh_mm(now),
+            boat::hh_mm(boat::next_departure(now)),
+        ),
     }
 }
 
@@ -621,6 +662,43 @@ mod tests {
         let _ = s.handle(&pick(Ticket::Regular.line()));
         let _ = s.handle(&yes());
         assert_eq!((map_of(s), s.held_count(id, boat::REGULAR_TICKET)), (boat::DECK, 0), "Yes: aboard");
+    }
+
+    /// **The station ship.** Arriving on the station between `:x5` and the departure gets the
+    /// arrive animation, any other time the leave one; the ship coming in and leaving is
+    /// announced to everyone standing there once, by one session. The waiting room is the
+    /// control: nobody there is told anything about the station's ship.
+    #[test]
+    fn the_station_ship_arrives_at_x5_and_leaves_at_departure_for_everyone_there() {
+        let (_, _, mut ss) = station(&["Watcher", "Ticker", "Waiter"], 10_000);
+        let d = boat::next_departure(Store::unix_now()) + boat::DEPARTURE_EVERY_S;
+        let ship = |out: &[Reply], op: u16| -> Vec<Vec<u8>> { out.iter().filter(|r| r.opcode == op).map(|r| r.body.clone()).collect() };
+
+        // Entry: in at :x5:00 and in the closing minute; out a second before :x5 and at :x0.
+        for (at, docked) in [(d - 300, true), (d - 30, true), (d - 301, false), (d, false)] {
+            let out = ss[0].0.boat_field_entry_at(at);
+            assert_eq!(ship(&out, net::ship::CONTI_STATE), vec![net::ship::station_state(docked)], "entering at d{:+}", at - d);
+        }
+
+        // Waiter is in the waiting room: the control.
+        let _ = ss[2].0.buy_ticket(Ticket::Basic);
+        let _ = ss[2].0.board_ship(Ticket::Basic, d - 200);
+        let _ = ss[2].0.on_field_entered();
+        assert_eq!(map_of(&ss[2].0), boat::WAITING_ROOM);
+        assert!(ship(&ss[2].0.boat_field_entry_at(d - 200), net::ship::CONTI_STATE).is_empty(), "no station ship in the waiting room");
+
+        // The ship comes in: one session's tick tells both people on the station, once.
+        let _ = ss[1].0.boat_tick_at(d - 299);
+        let _ = ss[0].0.boat_tick_at(d - 299); // a second ticker: nothing more
+        let heard = |s: &mut Session| s.tick(1_000).into_iter().filter(|r| r.opcode == net::ship::CONTI_MOVE).map(|r| r.body).collect::<Vec<_>>();
+        assert_eq!(heard(&mut ss[0].0), vec![net::ship::ship_arrives()], "the watcher sees it come in, once");
+        assert_eq!(heard(&mut ss[1].0), vec![net::ship::ship_arrives()], "and so does the ticker, through its own mailbox");
+        assert!(heard(&mut ss[2].0).is_empty(), "not the waiting room");
+
+        // And leaves.
+        let _ = ss[0].0.boat_tick_at(d + 1);
+        assert_eq!(heard(&mut ss[1].0), vec![net::ship::ship_leaves()]);
+        assert_eq!(heard(&mut ss[0].0), vec![net::ship::ship_leaves()]);
     }
 
     /// Cherry without the ticket refuses; Purin takes a waiting passenger back to the station
