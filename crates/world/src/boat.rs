@@ -80,6 +80,25 @@ pub const BOARDING_CLOSES_S: i64 = 60;
 /// The Regular ticket's private crossing takes one minute.
 pub const PRIVATE_RIDE_S: i64 = 60;
 
+/// **The Crimson Balrog invasion.** The owner, 2026-09-26: *"There's a 50% chance that any given
+/// trip will be invaded by 2 Crimson Balrog with the server spawning the two monster and the
+/// accompanying background boat that Crimson Balrog arrives on. The invasion happens at 1
+/// minute into the 5 minute boat ride ... it does not happen on the 1 minute private rides."*
+pub const INVASION_CHANCE_PERCENT: u64 = 50;
+/// One minute into the crossing.
+pub const INVASION_AFTER_S: i64 = 60;
+/// `700005` Crimson Balrog [L] `gm-handbook/mobnames.txt` - level 100, 741,240 HP, a boss
+/// (`gm-handbook/mobtemplates.txt`). The same template summon sack `2100007` lists twice.
+pub const CRIMSON_BALROG: u32 = 700_005;
+/// **Where the Balrog's ship is**: the deck's own `shipObj` - `ship/ossyria/97`, the layer
+/// `FUN_140d6b130` draws - at `x 485, y -221` [L] (`Map0_000.wz/020000022.img`).
+pub const ENEMY_SHIP_AT: (i16, i16) = (485, -221);
+/// Where the two appear: at the Balrog's ship. The owner, 2026-09-26: *"The Crimson Balrog should
+/// spawn where the flying ship of the invasion is. Since Crimson Balrog can fly, spawning off
+/// of a foothold is not a concern."* So no foothold - they are put in the air where the ship
+/// is, 40 px either side of its point so the two do not stack into one sprite. The 40 is [I].
+pub const INVADERS_AT: [(i16, i16); 2] = [(ENEMY_SHIP_AT.0 - 40, ENEMY_SHIP_AT.1), (ENEMY_SHIP_AT.0 + 40, ENEMY_SHIP_AT.1)];
+
 /// The conversation path Joel's opening line (a Say with Next) is parked under.
 pub const JOEL_INTRO_PATH: &str = "boat.joel.intro";
 /// The conversation path Joel's menu is parked under.
@@ -246,6 +265,11 @@ pub struct Voyage {
     pub ride: Ride,
     pub phase: Phase,
     pub members: Vec<u32>,
+    /// When the Crimson Balrogs come, if they do - rolled once, at the departure, and only for
+    /// a shared ship. `None` is a quiet crossing.
+    pub invasion_at: Option<i64>,
+    /// Whether they have come. Set once, by [`Voyages::take_invasion`].
+    pub invaded: bool,
 }
 
 impl Voyage {
@@ -307,7 +331,7 @@ impl Voyages {
             Some(at) => at,
             None => {
                 let id = self.new_id();
-                self.live.push(Voyage { id, ride: Ride::Shared, phase: waiting, members: Vec::new() });
+                self.live.push(Voyage { id, ride: Ride::Shared, phase: waiting, members: Vec::new(), invasion_at: None, invaded: false });
                 self.live.len() - 1
             }
         };
@@ -324,6 +348,9 @@ impl Voyages {
             ride: Ride::Private,
             phase: Phase::Sailing { arrives: now + PRIVATE_RIDE_S },
             members: vec![character],
+            // The owner: the invasion "does not happen on the 1 minute private rides."
+            invasion_at: None,
+            invaded: false,
         };
         self.live.push(voyage.clone());
         voyage
@@ -336,18 +363,35 @@ impl Voyages {
 
     /// **Every waiting voyage whose departure has come**, switched to sailing as it is handed
     /// over - the test-and-set, so two sessions ticking at once cannot both sail the same
-    /// ship and warp its passengers twice.
-    pub fn take_departures(&mut self, now: i64) -> Vec<Voyage> {
+    /// ship and warp its passengers twice. `roll` decides each one's invasion, once:
+    /// [`INVASION_CHANCE_PERCENT`] of its values mod 100 are an invasion.
+    pub fn take_departures(&mut self, now: i64, mut roll: impl FnMut() -> u64) -> Vec<Voyage> {
         let mut out = Vec::new();
         for v in &mut self.live {
             if let Phase::Waiting { departs } = v.phase {
                 if now >= departs {
                     v.phase = Phase::Sailing { arrives: departs + RIDE_S };
+                    if v.ride == Ride::Shared && roll() % 100 < INVASION_CHANCE_PERCENT {
+                        v.invasion_at = Some(departs + INVASION_AFTER_S);
+                    }
                     out.push(v.clone());
                 }
             }
         }
         out
+    }
+
+    /// **Is it time for this voyage's Balrogs?** `true` exactly once - the first call at or
+    /// after `invasion_at` while the ship is still sailing - so however many passengers tick
+    /// past the minute, one of them spawns the two.
+    pub fn take_invasion(&mut self, voyage: u32, now: i64) -> bool {
+        let Some(v) = self.live.iter_mut().find(|v| v.id == voyage) else { return false };
+        let due = matches!(v.phase, Phase::Sailing { arrives } if now < arrives) && v.invasion_at.is_some_and(|at| now >= at);
+        if !due || v.invaded {
+            return false;
+        }
+        v.invaded = true;
+        true
     }
 
     /// **Every sailing voyage that has arrived**, removed as it is handed over, for the same
@@ -566,12 +610,12 @@ mod tests {
         let d = MIDNIGHT + 600;
         let ship = v.board_shared(200, d);
         assert_eq!(ship.remaining_s(d - 250), 250, "the waiting room counts to the departure");
-        assert!(v.take_departures(d - 1).is_empty(), "not before");
-        let gone = v.take_departures(d);
+        assert!(v.take_departures(d - 1, || 0).is_empty(), "not before");
+        let gone = v.take_departures(d, || 99);
         assert_eq!(gone.len(), 1);
         assert_eq!(gone[0].phase, Phase::Sailing { arrives: d + 300 });
         assert_eq!(gone[0].remaining_s(d), 300, "five minutes on the new clock");
-        assert!(v.take_departures(d + 1).is_empty(), "a second tick sails nothing");
+        assert!(v.take_departures(d + 1, || 0).is_empty(), "a second tick sails nothing");
         assert!(v.take_arrivals(d + 299).is_empty());
         let there = v.take_arrivals(d + 300);
         assert_eq!(there.len(), 1);
@@ -587,7 +631,7 @@ mod tests {
         let mut v = Voyages::default();
         let d = MIDNIGHT + 600;
         let first = v.board_shared(200, d);
-        let _ = v.take_departures(d);
+        let _ = v.take_departures(d, || 0);
         let late = v.board_shared(201, d);
         assert_ne!(late.id, first.id);
         assert_eq!(v.voyage_of(200).unwrap().members, vec![200]);
@@ -602,7 +646,7 @@ mod tests {
         assert_eq!(v.drop_member(200).map(|x| x.id), Some(a.id));
         assert_eq!(v.voyage_of(201).unwrap().members, vec![201]);
         let _ = v.board_private(201, d);
-        assert!(v.take_departures(d).is_empty(), "201 left the shared ship, which was then empty and gone");
+        assert!(v.take_departures(d, || 0).is_empty(), "201 left the shared ship, which was then empty and gone");
     }
 
     #[test]
@@ -654,6 +698,41 @@ mod tests {
         // rather than restarting the slide for people the entry packet already told.
         assert_eq!(v.take_station_change(d + 300 + 60), None, "a minute late - too late");
         assert_eq!(v.take_station_change(d + 600 + 1), Some(false), "the next one is fresh again");
+    }
+
+    /// Half the shared crossings are invaded, a minute in, once; a private ship never is.
+    #[test]
+    fn half_the_shared_crossings_are_invaded_a_minute_in_and_never_a_private_one() {
+        let d = MIDNIGHT + 600;
+        let mut v = Voyages::default();
+        let quiet = v.board_shared(200, d);
+        let loud = v.board_shared(201, d + 600);
+        let solo = v.board_private(202, d);
+        let _ = v.take_departures(d, || 50); // 50 of 100: not under 50, quiet
+        let _ = v.take_departures(d + 600, || 49); // under 50: invaded
+        assert_eq!(v.voyage_of(200).unwrap().invasion_at, None);
+        assert_eq!(v.voyage_of(201).unwrap().invasion_at, Some(d + 660), "one minute into the crossing");
+        assert_eq!(v.voyage_of(202).unwrap().invasion_at, None, "the private ride never rolls");
+
+        assert!(!v.take_invasion(loud.id, d + 659), "not before the minute");
+        assert!(v.take_invasion(loud.id, d + 660));
+        assert!(!v.take_invasion(loud.id, d + 661), "once");
+        assert!(v.voyage_of(201).unwrap().invaded);
+        assert!(!v.take_invasion(quiet.id, d + 60), "a quiet crossing stays quiet");
+        assert!(!v.take_invasion(solo.id, d + 60));
+
+        // Over many rolls, exactly the values under 50 invade: the chance is the constant.
+        let mut n = 0u64;
+        let invaded = (0..1000)
+            .filter(|_| {
+                let mut w = Voyages::default();
+                let _ = w.board_shared(1, d);
+                n += 1;
+                let _ = w.take_departures(d, || n.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 7);
+                w.voyage_of(1).unwrap().invasion_at.is_some()
+            })
+            .count();
+        assert!((400..600).contains(&invaded), "{invaded} of 1000");
     }
 
     #[test]

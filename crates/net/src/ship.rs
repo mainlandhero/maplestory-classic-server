@@ -34,6 +34,27 @@ pub fn station_state(docked: bool) -> Vec<u8> {
     vec![if docked { 1 } else { 2 }, 0]
 }
 
+/// `0x01BF` type 10, state 4 -> `FUN_140d6b130` plus a sound: **the Crimson Balrog's ship
+/// comes alongside.** It needs a `shipKind 1` field - the deck, `20000022` - and loads that
+/// field's own `shipObj` (`ship/ossyria/97`) as a layer at its `x`/`y` **[L]**
+/// (`research/ship-contimove-2026-09-26.md`). At the station (`shipKind 0`) it returns at once.
+pub fn enemy_ship_arrives() -> Vec<u8> {
+    vec![10, 4]
+}
+
+/// `0x01BF` type 10, state 5 -> `FUN_140d6bdb0`: the Balrog's ship goes. Not sent today: the
+/// passengers leave the deck at the arrival, and the instance with them.
+pub fn enemy_ship_leaves() -> Vec<u8> {
+    vec![10, 5]
+}
+
+/// `0x01C0` for a player arriving on an invaded deck: states 3 and 4 share one arm, which calls
+/// the same `FUN_140d6b130` **only when `shipKind == 1` and the flag byte is 1** **[L]**
+/// (`140d6cd1e`..`140d6cd33`). 3 is used; 4 would be indistinguishable.
+pub fn deck_invaded() -> Vec<u8> {
+    vec![3, 1]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -46,5 +67,8 @@ mod tests {
         assert_eq!(station_state(true), [1, 0], "states 0, 1, 6 arrive");
         assert_eq!(station_state(false), [2, 0], "states 2, 5 leave");
         assert_eq!((CONTI_MOVE, CONTI_STATE), (0x01BF, 0x01C0), "140d6cca2 sub ecx,0x1bf; then cmp ecx,1");
+        assert_eq!(enemy_ship_arrives(), [10, 4], "type 10: state 4 brings the Balrog's ship");
+        assert_eq!(enemy_ship_leaves(), [10, 5], "and 5 takes it away");
+        assert_eq!(deck_invaded(), [3, 1], "the flag must be 1 or the arm does nothing");
     }
 }
