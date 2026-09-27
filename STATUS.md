@@ -392,6 +392,18 @@ have some business" line; Purin asks "Are you sure you want to get off the ship?
 10/5/1-minute timetable and the paid tickets. The owner also asked that a disconnect mid-journey or
 before departure put the player back in the departure station - that was already the login rule
 above, tested through the real migration hello. 15 tests; 6 more mutations, each caught.
+**The ship at the station animates** (the owner: arrive at `:x5` *"so players can board"*, and
+*"all other times ... the opcode that animates the boat leaving"*). Ellinia Station is
+`fieldType 2` with a `shipObj` (`x 1545`, `x0 2100`, `tMove 15`, `shipKind 0`), and a
+`fieldType 2` field has its own handler `FUN_140d6cc90` that takes **`0x01BF`** (ship move:
+type 12/state 6 arrive, type 8/state 2 leave) and **`0x01C0`** (ship state: 0/1/6 arrive, 2/5
+leave) before `CField::OnPacket` **[L]**. The arrive routine plays `Whistle` and slides the ship
+from `x0` to `x` over `tMove` seconds; leave is the reverse **[D]**, from the loader's store
+order. Found through the key strings' pointer table, since nothing `lea`s them:
+`research/ship-contimove-2026-09-26.md`. `net::ship`. Entering the station sends `0x01C0 [1,0]`
+from `:x5:00` until the departure and `[2,0]` otherwise; the change itself goes to everyone on
+the station as `0x01BF`, once per channel (`Voyages::take_station_change`), and only within 5 s
+of it. 17 boat tests; 6 more mutations, each caught. Test plan 25(j). **Not on a screen.**
 
 **2026-09-25: Maple Island's quests are open to every job.** The owner: *"remove the requirement that
 quests on the island are only for Beginners, any class should be able to do them."* **The server

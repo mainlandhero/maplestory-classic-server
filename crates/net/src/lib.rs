@@ -75,6 +75,7 @@ pub mod upgrade;
 pub mod useitem;
 pub mod script;
 pub mod session;
+pub mod ship;
 pub mod shop;
 pub mod skills;
 pub mod stats;
