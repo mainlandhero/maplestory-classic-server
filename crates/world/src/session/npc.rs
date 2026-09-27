@@ -2500,13 +2500,9 @@ impl Session {
         if convo.path == crate::firsttime::NELLA_PATH {
             return self.nella_answer(reply.action);
         }
-        if convo.path == crate::boat::PURIN_PATH {
-            return self.purin_answer(reply.action);
-        }
-        if convo.path == crate::boat::JOEL_INTRO_PATH {
-            return self.joel_intro_answer(reply.action);
-        }
-        if let Some(replies) = self.cherry_board_answer(&convo.path, reply.action, store::Store::unix_now()) {
+        // The ships: a seller's Next, a boarder's or steward's yes/no, the Platform Usher's.
+        // `boat.` paths, both routes. session/boat.rs.
+        if let Some(replies) = self.boat_script_answer(reply.action, store::Store::unix_now()) {
             return replies;
         }
         if convo.path == crate::shanks::ASK_PATH {

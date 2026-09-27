@@ -1,5 +1,11 @@
-//! **The ship from Ellinia Station to Orbis** - the timetable, the tickets, and each channel's
-//! voyages. `session/boat.rs` puts it on the wire.
+//! **The ships between Ellinia Station and Orbis**, both ways - the timetable, the tickets, and
+//! each channel's voyages. `session/boat.rs` puts it on the wire.
+//!
+//! The owner, 2026-09-27: *"We'll need to implement the boat going from Orbis back to Ellinia as
+//! well. Agatha will sell the tickets ... The boat ride will still be 10 minutes."* And, for
+//! reaching the platform: *"Platform Usher on the right side of the Orbis Station map will
+//! offer the players a choice to be teleported to the correct tunnel to the ship."* So the
+//! route is a [`Route`], and everything below is written once for both.
 //!
 //! The owner, 2026-09-26: *"Players can purchase two different types of tickets from Joel the
 //! ticketing Usher: Ticket to Orbis (Basic) - 5000 mesos, Ticket to Orbis (Regular) 20000
@@ -18,11 +24,24 @@
 //!   10002091  Before Takeoff <To Orbis>  Purin (324)                  no clock node
 //!   20000022  To Orbis                   in00/under00 -> 20000023     no clock node
 //!   20000023  Cabin <To Orbis>           out00/out01  -> 20000022     no clock node
-//!   20000010  Orbis Ticketing Booth                                   declares a clock node
+//!   20000010  Orbis Ticketing Booth      Agatha (1000), Platform Usher (1001)   clock node
+//!   20000011  Station Tunnel <To Ellinia>  west00 -> the booth, east00 -> 20000012
+//!   20000012  Station<To Ellinia>        Rini (1004)          fieldType 2, shipObj, clock node
+//!   20000013  Before Takeoff <To Ellinia>  Erin (1006)
+//!   20000020  To Ellinia                 in00/under00 -> 20000021, shipObj (shipKind 1)
+//!   20000021  Cabin <To Ellinia>         out00/out01  -> 20000020
 //! ```
 //!
-//! The three ship fields have `returnMap` and `forcedReturn` both `10002090`
-//! (`gm-handbook/returnmaps.txt`), which is where a login on one of them is sent.
+//! The booth's `east00` has **no target** (`tm 999999999`) [L] - it is only the landing point
+//! for the tunnel's `west00`. Nothing walks from the booth to the platform, which is why the
+//! Platform Usher takes you. Their own line agrees: *"Orbis Station is huge. I'll take you to the
+//! station platform, so talk to me."*
+//!
+//! The To Orbis ship fields have `returnMap` and `forcedReturn` both `10002090`; the To Ellinia
+//! ones have both `20000010` (`gm-handbook/returnmaps.txt`). A login on a ship field goes to the
+//! route's **departure station** instead - the owner, 2026-09-26: *"put the player back to the
+//! respective station before their departure"* - which on the Orbis side is `20000012`, where
+//! Rini stands, not the booth.
 //!
 //! # The timetable is the wall clock, so every channel agrees about it
 //!
@@ -55,16 +74,45 @@ pub const WAITING_ROOM: u32 = 10_002_091;
 pub const DECK: u32 = 20_000_022;
 /// Cabin <To Orbis> - below deck, reached by the deck's own portals.
 pub const CABIN: u32 = 20_000_023;
-/// Orbis Ticketing Booth - where every voyage ends.
+/// Orbis Ticketing Booth - where the ship to Orbis lands, and where Agatha sells the tickets
+/// back.
 pub const ORBIS: u32 = 20_000_010;
+
+/// Agatha, in the Orbis Ticketing Booth: *"You need to purchase a ticket to get on the ride to
+/// Victoria Island."* (`String.wz`, their own line.) Sells the tickets to Ellinia.
+pub const AGATHA: u32 = 1_000;
+/// The Platform Usher, on the right of the booth. Takes you to the tunnel to the platform;
+/// also this server's ferry to El Nath and Sleepywood (`crate::taxi`), which they still are.
+pub const PLATFORM_USHER: u32 = 1_001;
+/// Rini, on the platform: *"If you want to get on the ride to Victoria Island, please give me
+/// the ticket for it."*
+pub const RINI: u32 = 1_004;
+/// Erin, in the waiting room: *"If you want to leave the ship and go back to the place of
+/// takeoff, please come talk to me."*
+pub const ERIN: u32 = 1_006;
+/// Station Tunnel <To Ellinia>. Where the Platform Usher puts you; it walks to the platform.
+pub const ORBIS_TUNNEL: u32 = 20_000_011;
+/// Station<To Ellinia> - Rini's platform. `fieldType 2` with its own `shipObj`.
+pub const ORBIS_STATION: u32 = 20_000_012;
+/// Before Takeoff <To Ellinia>.
+pub const ORBIS_WAITING_ROOM: u32 = 20_000_013;
+/// To Ellinia - the deck.
+pub const ELLINIA_DECK: u32 = 20_000_020;
+/// Cabin <To Ellinia>.
+pub const ELLINIA_CABIN: u32 = 20_000_021;
 
 /// `Ticket to Orbis (Basic)`, [L] `gm-handbook/items.txt`.
 pub const BASIC_TICKET: u32 = 4_031_082;
 /// `Ticket to Orbis (Regular)`, [L] `gm-handbook/items.txt`.
 pub const REGULAR_TICKET: u32 = 4_031_083;
-/// The owner's price for the Basic ticket.
+/// `Ticket to Ellinia (Basic)`, [L] `gm-handbook/items.txt`.
+pub const ELLINIA_BASIC_TICKET: u32 = 4_031_084;
+/// `Ticket to Ellinia (Regular)`, [L] `gm-handbook/items.txt`.
+pub const ELLINIA_REGULAR_TICKET: u32 = 4_031_085;
+/// The owner's price for the Basic ticket. **The same both ways** [I]: the owner gave the To Orbis
+/// prices and said of the way back only that it is the same ride.
 pub const BASIC_PRICE: u32 = 5_000;
-/// The owner's price for the Regular ticket.
+/// The owner's price for the Regular ticket, both ways.
 pub const REGULAR_PRICE: u32 = 20_000;
 
 /// A ship leaves every ten minutes, on the ten.
@@ -90,40 +138,175 @@ pub const INVASION_AFTER_S: i64 = 60;
 /// `700005` Crimson Balrog [L] `gm-handbook/mobnames.txt` - level 100, 741,240 HP, a boss
 /// (`gm-handbook/mobtemplates.txt`). The same template summon sack `2100007` lists twice.
 pub const CRIMSON_BALROG: u32 = 700_005;
-/// **Where the Balrog's ship is**: the deck's own `shipObj` - `ship/ossyria/97`, the layer
-/// `FUN_140d6b130` draws - at `x 485, y -221` [L] (`Map0_000.wz/020000022.img`).
-pub const ENEMY_SHIP_AT: (i16, i16) = (485, -221);
-/// Where the two appear: at the Balrog's ship. The owner, 2026-09-26: *"The Crimson Balrog should
-/// spawn where the flying ship of the invasion is. Since Crimson Balrog can fly, spawning off
-/// of a foothold is not a concern."* So no foothold - they are put in the air where the ship
-/// is, 40 px either side of its point so the two do not stack into one sprite. The 40 is [I].
-pub const INVADERS_AT: [(i16, i16); 2] = [(ENEMY_SHIP_AT.0 - 40, ENEMY_SHIP_AT.1), (ENEMY_SHIP_AT.0 + 40, ENEMY_SHIP_AT.1)];
+/// Where the Crimson Balrogs appear: at the Balrog's ship, [`Route::enemy_ship_at`]. The owner,
+/// 2026-09-26: *"The Crimson Balrog should spawn where the flying ship of the invasion is.
+/// Since Crimson Balrog can fly, spawning off of a foothold is not a concern."* So no
+/// foothold - in the air, 40 px either side of the ship's point so the two do not stack into
+/// one sprite. The 40 is [I].
+pub const INVADER_SPREAD: i16 = 40;
 
-/// The conversation path Joel's opening line (a Say with Next) is parked under.
-pub const JOEL_INTRO_PATH: &str = "boat.joel.intro";
-/// The conversation path Joel's menu is parked under.
-pub const JOEL_PATH: &str = "boat.joel";
-/// The conversation path Cherry's menu is parked under.
-pub const CHERRY_PATH: &str = "boat.cherry";
-/// The conversation path Cherry's "do you still wish to board?" is parked under, per ticket.
-pub const CHERRY_BASIC_PATH: &str = "boat.cherry.basic";
+// ---------------------------------------------------------------------------------------
+// The two routes
+// ---------------------------------------------------------------------------------------
+
+/// **One direction of the crossing.** Everything that differs between the two ships is here;
+/// the timetable, the prices, the boarding window and the invasion are the same both ways.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Route {
+    /// [`Voyage::route`]. 0 to Orbis, 1 to Ellinia.
+    pub id: u8,
+    /// Where it goes, as the ticket names it: `Ticket to <to> (Basic)`.
+    pub to: &'static str,
+    /// The arrival, as the notice says it.
+    pub arrival_name: &'static str,
+    pub seller: u32,
+    pub seller_name: &'static str,
+    pub seller_map: u32,
+    pub boarder: u32,
+    /// The departure platform, where the boarder stands and the ship docks. A `fieldType 2`
+    /// map with a `shipKind 0` `shipObj`, so it takes the station animations.
+    pub station: u32,
+    pub steward: u32,
+    pub waiting_room: u32,
+    pub deck: u32,
+    pub cabin: u32,
+    pub arrival: u32,
+    pub basic_ticket: u32,
+    pub regular_ticket: u32,
+    /// The deck's own `shipObj` - the Balrog's ship, `ship/ossyria/97` - which
+    /// `FUN_140d6b130` draws [L].
+    pub enemy_ship_at: (i16, i16),
+}
+
+/// Ellinia Station to Orbis.
+pub const TO_ORBIS: Route = Route {
+    id: 0,
+    to: "Orbis",
+    arrival_name: "Orbis Station",
+    seller: JOEL,
+    seller_name: "Joel",
+    seller_map: STATION,
+    boarder: CHERRY,
+    station: STATION,
+    steward: PURIN,
+    waiting_room: WAITING_ROOM,
+    deck: DECK,
+    cabin: CABIN,
+    arrival: ORBIS,
+    basic_ticket: BASIC_TICKET,
+    regular_ticket: REGULAR_TICKET,
+    // `Map0_000.wz/020000022.img` shipObj x 485, y -221 [L].
+    enemy_ship_at: (485, -221),
+};
+
+/// Orbis to Ellinia Station.
+pub const TO_ELLINIA: Route = Route {
+    id: 1,
+    to: "Ellinia",
+    arrival_name: "Ellinia Station",
+    seller: AGATHA,
+    seller_name: "Agatha",
+    seller_map: ORBIS,
+    boarder: RINI,
+    station: ORBIS_STATION,
+    steward: ERIN,
+    waiting_room: ORBIS_WAITING_ROOM,
+    deck: ELLINIA_DECK,
+    cabin: ELLINIA_CABIN,
+    arrival: STATION,
+    basic_ticket: ELLINIA_BASIC_TICKET,
+    regular_ticket: ELLINIA_REGULAR_TICKET,
+    // `Map0_000.wz/020000020.img` shipObj x -590, y -221, f 1 [L] - the Balrog's ship comes
+    // from the left on this side.
+    enemy_ship_at: (-590, -221),
+};
+
+pub const ROUTES: [Route; 2] = [TO_ORBIS, TO_ELLINIA];
+
+impl Route {
+    /// The ticket's item id on this route.
+    pub fn item(&self, t: Ticket) -> u32 {
+        match t {
+            Ticket::Basic => self.basic_ticket,
+            Ticket::Regular => self.regular_ticket,
+        }
+    }
+
+    /// `Ticket to Orbis (Basic)` - the client's own item name, rebuilt.
+    pub fn ticket_name(&self, t: Ticket) -> String {
+        format!("Ticket to {} ({})", self.to, match t {
+            Ticket::Basic => "Basic",
+            Ticket::Regular => "Regular",
+        })
+    }
+
+    /// Where the two Crimson Balrogs appear on this route's deck.
+    pub fn invaders_at(&self) -> [(i16, i16); 2] {
+        let (x, y) = self.enemy_ship_at;
+        [(x - INVADER_SPREAD, y), (x + INVADER_SPREAD, y)]
+    }
+
+    /// One of this route's three ship fields.
+    pub fn owns_ship_map(&self, map: u32) -> bool {
+        map == self.waiting_room || map == self.deck || map == self.cabin
+    }
+}
+
+/// The route by [`Voyage::route`].
+pub fn route(id: u8) -> &'static Route {
+    ROUTES.iter().find(|r| r.id == id).unwrap_or(&ROUTES[0])
+}
+
+/// The route a ship field belongs to.
+pub fn route_of_ship_map(map: u32) -> Option<&'static Route> {
+    ROUTES.iter().find(|r| r.owns_ship_map(map))
+}
+
+/// The route whose seller, boarder or steward this template is.
+pub fn route_of_npc(template: u32) -> Option<&'static Route> {
+    ROUTES.iter().find(|r| [r.seller, r.boarder, r.steward].contains(&template))
+}
+
+/// A departure platform - a map that shows the station ship.
+pub fn is_station(map: u32) -> bool {
+    ROUTES.iter().any(|r| r.station == map)
+}
+
+/// The seller's opening line (a Say with Next) - Joel, or Agatha. Every path below is shared by
+/// both routes; the conversation's NPC template says which route it is ([`route_of_npc`]).
+pub const SELLER_INTRO_PATH: &str = "boat.seller.intro";
+/// The seller's ticket menu.
+pub const SELLER_PATH: &str = "boat.seller";
+/// The boarder's menu - Cherry, or Rini.
+pub const BOARDER_PATH: &str = "boat.boarder";
+/// The boarder's "do you still wish to board?", per ticket.
+pub const BOARDER_BASIC_PATH: &str = "boat.boarder.basic";
 /// The Regular ticket's.
-pub const CHERRY_REGULAR_PATH: &str = "boat.cherry.regular";
-/// The conversation path Purin's yes/no is parked under.
-pub const PURIN_PATH: &str = "boat.purin";
+pub const BOARDER_REGULAR_PATH: &str = "boat.boarder.regular";
+/// The steward's yes/no in the waiting room - Purin, or Erin.
+pub const STEWARD_PATH: &str = "boat.steward";
+/// The Platform Usher's menu.
+pub const USHER_PATH: &str = "boat.usher";
+/// The Platform Usher's yes/no before the tunnel.
+pub const USHER_ASK_PATH: &str = "boat.usher.ask";
+/// Usher menu line: the platform to Victoria Island.
+pub const USHER_TO_VICTORIA: u32 = 0;
+/// Usher menu line: their ferry, as before.
+pub const USHER_FERRY: u32 = 1;
 
 /// Is `path` one of this module's conversations?
 pub fn is_boat_path(path: &str) -> bool {
     path.starts_with("boat.")
 }
 
-/// One of the three fields a voyage owns.
+/// One of the six fields a voyage owns - three per route.
 pub fn is_ship_map(map: u32) -> bool {
-    matches!(map, WAITING_ROOM | DECK | CABIN)
+    route_of_ship_map(map).is_some()
 }
 
-/// The two tickets. The `#L` number of each line in Joel's and Cherry's menus is
-/// [`Ticket::line`], so the menu and the answer cannot disagree about what "1" meant.
+/// The two tickets, on either route ([`Route::item`]). The `#L` number of each line in the
+/// seller's and the boarder's menus is [`Ticket::line`], so the menu and the answer cannot
+/// disagree about what "1" meant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ticket {
     Basic,
@@ -133,24 +316,10 @@ pub enum Ticket {
 impl Ticket {
     pub const ALL: [Ticket; 2] = [Ticket::Basic, Ticket::Regular];
 
-    pub fn item(self) -> u32 {
-        match self {
-            Ticket::Basic => BASIC_TICKET,
-            Ticket::Regular => REGULAR_TICKET,
-        }
-    }
-
     pub fn price(self) -> u32 {
         match self {
             Ticket::Basic => BASIC_PRICE,
             Ticket::Regular => REGULAR_PRICE,
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Ticket::Basic => "Ticket to Orbis (Basic)",
-            Ticket::Regular => "Ticket to Orbis (Regular)",
         }
     }
 
@@ -262,6 +431,8 @@ pub enum Phase {
 pub struct Voyage {
     /// The field instance. Never 0, which is `FieldKey`'s shared world.
     pub id: u32,
+    /// [`Route::id`].
+    pub route: u8,
     pub ride: Ride,
     pub phase: Phase,
     pub members: Vec<u32>,
@@ -321,17 +492,17 @@ impl Voyages {
         id
     }
 
-    /// **A Basic passenger boards the ship leaving at `departs`.** Everyone boarding the same
-    /// departure lands in the same voyage; the first one opens it. A character is on one
-    /// voyage at a time, so any other they were on is left first.
-    pub fn board_shared(&mut self, character: u32, departs: i64) -> Voyage {
+    /// **A Basic passenger boards `route`'s ship leaving at `departs`.** Everyone boarding the
+    /// same departure of the same route lands in the same voyage; the first one opens it. A
+    /// character is on one voyage at a time, so any other they were on is left first.
+    pub fn board_shared(&mut self, character: u32, route: u8, departs: i64) -> Voyage {
         self.drop_member(character);
         let waiting = Phase::Waiting { departs };
-        let at = match self.live.iter().position(|v| v.ride == Ride::Shared && v.phase == waiting) {
+        let at = match self.live.iter().position(|v| v.ride == Ride::Shared && v.route == route && v.phase == waiting) {
             Some(at) => at,
             None => {
                 let id = self.new_id();
-                self.live.push(Voyage { id, ride: Ride::Shared, phase: waiting, members: Vec::new(), invasion_at: None, invaded: false });
+                self.live.push(Voyage { id, route, ride: Ride::Shared, phase: waiting, members: Vec::new(), invasion_at: None, invaded: false });
                 self.live.len() - 1
             }
         };
@@ -339,12 +510,14 @@ impl Voyages {
         self.live[at].clone()
     }
 
-    /// **A Regular passenger's own ship**, sailing from `now` for [`PRIVATE_RIDE_S`].
-    pub fn board_private(&mut self, character: u32, now: i64) -> Voyage {
+    /// **A Regular passenger's own ship** on `route`, sailing from `now` for
+    /// [`PRIVATE_RIDE_S`].
+    pub fn board_private(&mut self, character: u32, route: u8, now: i64) -> Voyage {
         self.drop_member(character);
         let id = self.new_id();
         let voyage = Voyage {
             id,
+            route,
             ride: Ride::Private,
             phase: Phase::Sailing { arrives: now + PRIVATE_RIDE_S },
             members: vec![character],
@@ -419,26 +592,38 @@ impl Voyages {
 // The words. ASCII only: `PacketWriter::str` sends one byte per char.
 // ---------------------------------------------------------------------------------------
 
-// **The wording follows the v96 scripts the owner pasted, 2026-09-26** - Joel `1032007` and
-// Cherry `1032008` - changed only where this server's rules differ: a ship every 10 minutes,
-// not 15; boarding opens 5 minutes before, not 10; and the tickets are paid for, so Joel's
-// page about the flights having become free is not here and a ticket menu is. Cherry's "the
-// ride schedule is available through the guide at the ticketing booth" names a guide this
-// station does not have, so the next ship's time is said instead.
+// **The wording follows the v96 scripts the owner pasted** - Joel `1032007`, Cherry `1032008` and
+// Purin on 2026-09-26; Agatha, Rini, Erin and Isa on 2026-09-27 - changed only where this
+// server's rules differ: a ship every 10 minutes, not 15; boarding opens 5 minutes before, not
+// 10; and the tickets are paid for, so Joel's page about the flights having become free is not
+// here and a ticket menu is. "The ride schedule is available through the guide at the ticketing
+// booth" names a guide neither station has, so the next ship's time is said instead. Rini's and
+// Erin's v96 lines are word for word Cherry's and Purin's, so each is written once. Isa is not
+// in this client; the Platform Usher speaks their lines.
 
-/// Joel's opening line, a Say with Next. The v96 text with this server's timetable.
-pub fn joel_intro() -> String {
+/// The seller's opening line, a Say with Next.
+pub fn seller_intro(r: &Route) -> String {
+    let every = DEPARTURE_EVERY_S / 60;
+    if r.id == TO_ELLINIA.id {
+        // Agatha's v96 answer for "Victoria Island", without their menu of six destinations,
+        // of which only one exists here.
+        return format!(
+            "Hello, I'm the information guide for Orbis Station. Are you trying to go to Victoria \
+             Island? Oh, it's a beautiful island with an abundance of beautiful forests. The ship \
+             that goes to Victoria #bleaves at the top of the hour, and every {every} minutes \
+             afterwards#k."
+        );
+    }
     format!(
         "Hi there! I'm Joel, and I work in this station. Are you thinking of leaving Victoria \
          Island for other places? This station is where you'll find the ship that heads to \
-         #bOrbis Station#k of Ossyria leaving #bat the top of the hour, and every {} minutes \
-         afterwards#k.",
-        DEPARTURE_EVERY_S / 60
+         #bOrbis Station#k of Ossyria leaving #bat the top of the hour, and every {every} minutes \
+         afterwards#k."
     )
 }
 
-/// Joel's menu, after Next: both tickets, their prices, and what each one buys.
-pub fn joel_menu() -> String {
+/// The seller's menu, after Next: both tickets, their prices, and what each one buys.
+pub fn seller_menu(r: &Route) -> String {
     format!(
         "To get on board you'll need a ticket, and I sell them right here. Which one would you like?\r\n\
          #d#L{}#{} - {} mesos#l\r\n\
@@ -447,64 +632,78 @@ pub fn joel_menu() -> String {
          takes {} minutes. A #bRegular#k ticket is a private ship, just for you, that takes off as \
          soon as you board and arrives in {} minute.",
         Ticket::Basic.line(),
-        Ticket::Basic.name(),
+        r.ticket_name(Ticket::Basic),
         thousands(BASIC_PRICE),
         Ticket::Regular.line(),
-        Ticket::Regular.name(),
+        r.ticket_name(Ticket::Regular),
         thousands(REGULAR_PRICE),
         RIDE_S / 60,
         PRIVATE_RIDE_S / 60,
     )
 }
 
-/// Joel, after a sale - ending on their own v96 line about Cherry.
-pub fn joel_sold(ticket: Ticket) -> String {
+/// The seller, after a sale - Joel's own v96 line about Cherry, or Isa's about themself spoken
+/// of the Platform Usher.
+pub fn seller_sold(r: &Route, ticket: Ticket) -> String {
+    let next = if r.id == TO_ELLINIA.id {
+        "Talk to the #bPlatform Usher#k on the right if you would like to take the airship to \
+         Victoria. The Platform Usher will guide you to the Station to Victoria."
+    } else {
+        "If you are thinking of going to Orbis, please go talk to #bCherry#k on the right."
+    };
+    format!("Here is your #b{}#k. {next}", r.ticket_name(ticket))
+}
+
+/// The seller, when the purse is short.
+pub fn seller_short(r: &Route, ticket: Ticket) -> String {
     format!(
-        "Here is your #b{}#k. If you are thinking of going to Orbis, please go talk to #bCherry#k on the right.",
-        ticket.name()
+        "I'm sorry, but the #b{}#k costs #b{} mesos#k, and you don't have enough.",
+        r.ticket_name(ticket),
+        thousands(ticket.price())
     )
 }
 
-/// Joel, when the purse is short.
-pub fn joel_short(ticket: Ticket) -> String {
-    format!("I'm sorry, but the #b{}#k costs #b{} mesos#k, and you don't have enough.", ticket.name(), thousands(ticket.price()))
-}
+/// The seller, when the Etc tab is full.
+pub const SELLER_BAG_FULL: &str = "Please make some room in your #bEtc#k inventory first.";
 
-/// Joel, when the Etc tab is full.
-pub const JOEL_BAG_FULL: &str = "Please make some room in your #bEtc#k inventory first.";
-
-/// Cherry's menu: which ticket. Their opening is their own `String.wz` line.
-pub fn cherry_menu() -> String {
+/// The boarder's menu: which ticket. Their opening is their own `String.wz` line.
+pub fn boarder_menu(r: &Route) -> String {
+    let opening = if r.id == TO_ELLINIA.id {
+        "If you want to get on the ride to Victoria Island, please give me the ticket for it."
+    } else {
+        "If you want to get on board the ship that heads to Orbis Station, please give me the ticket."
+    };
     format!(
-        "If you want to get on board the ship that heads to Orbis Station, please give me the ticket.\r\n\
+        "{opening}\r\n\
          #d#L{}#I have a #b{}#d.#l\r\n\
          #L{}#I have a #b{}#d.#l#k",
         Ticket::Basic.line(),
-        Ticket::Basic.name(),
+        r.ticket_name(Ticket::Basic),
         Ticket::Regular.line(),
-        Ticket::Regular.name(),
+        r.ticket_name(Ticket::Regular),
     )
 }
 
-/// Cherry, to somebody without the ticket they chose.
-pub fn cherry_no_ticket(ticket: Ticket) -> String {
-    format!("You don't have a #b{}#k. You can buy one from #bJoel#k.", ticket.name())
+/// The boarder, to somebody without the ticket they chose.
+pub fn boarder_no_ticket(r: &Route, ticket: Ticket) -> String {
+    format!("You don't have a #b{}#k. You can buy one from #b{}#k.", r.ticket_name(ticket), r.seller_name)
 }
 
-/// Cherry's yes/no before a Basic passenger boards - the v96 line.
-pub const CHERRY_ASK_BASIC: &str = "This will not be a short flight, so you need to take care of some things, I suggest you do \
+/// The boarder's yes/no before a Basic passenger boards - the v96 line.
+pub const BOARD_ASK_BASIC: &str = "This will not be a short flight, so you need to take care of some things, I suggest you do \
      that first before getting on board. Do you still wish to board the ship?";
 
-/// Cherry's yes/no before a Regular passenger boards. Not a v96 line - v96 had no private ship.
-pub const CHERRY_ASK_REGULAR: &str = "Your private ship will take off as soon as you are on board, and the flight takes only \
+/// The boarder's yes/no before a Regular passenger boards. Not a v96 line - v96 had no
+/// private ship.
+pub const BOARD_ASK_REGULAR: &str = "Your private ship will take off as soon as you are on board, and the flight takes only \
      #b1 minute#k. Do you wish to board the ship?";
 
-/// Cherry, to a No - the v96 line.
-pub const CHERRY_DECLINED: &str = "You must have some business to take care of here, right?";
+/// The boarder, to a No - the v96 line.
+pub const BOARD_DECLINED: &str = "You must have some business to take care of here, right?";
 
-/// Cherry, to a Basic passenger outside the boarding window - the v96 lines with this
+/// The boarder, to a Basic passenger outside the boarding window - the v96 lines with this
 /// server's minutes. `None` while it is open.
-pub fn cherry_not_boarding(now: i64) -> Option<String> {
+pub fn not_boarding(now: i64) -> Option<String> {
     match boarding(now) {
         Boarding::Open { .. } => None,
         Boarding::Closing { departs } => Some(format!(
@@ -524,17 +723,40 @@ pub fn cherry_not_boarding(now: i64) -> Option<String> {
     }
 }
 
-/// Purin's question in the waiting room - the v96 line, then the one fact v96 did not have: the ticket is spent.
-pub const PURIN_ASK: &str = "We're just about to take off. Are you sure you want to get off the ship? You may do so, but \
+/// The steward's question in the waiting room - the v96 line, then the one fact v96 did not
+/// have: the ticket is spent.
+pub const STEWARD_ASK: &str = "We're just about to take off. Are you sure you want to get off the ship? You may do so, but \
      then you'll have to wait until the next available flight. Do you still wish to get off board? \
      Your ticket will #rnot#k be returned.";
 
-/// Purin, to a No - the v96 line.
-pub const PURIN_STAY: &str = "You'll get to your destination in a short while. Talk to other passengers and share your \
+/// The steward, to a No - the v96 line.
+pub const STEWARD_STAY: &str = "You'll get to your destination in a short while. Talk to other passengers and share your \
      stories to them, and you'll be there before you know it.";
 
 /// The notice at the end of every crossing.
-pub const ARRIVED: &str = "The ship has arrived at Orbis Station.";
+pub fn arrived(r: &Route) -> String {
+    format!("The ship has arrived at {}.", r.arrival_name)
+}
+
+/// The Platform Usher's menu - Isa's v96 opening, with the one platform this client has, and
+/// their ferry as the other line.
+pub fn usher_menu() -> String {
+    format!(
+        "There are many Platforms at the Orbis Station. You must find the correct Platform for your \
+         destination. Which Platform would you like to go to?\r\n\
+         #d#L{USHER_TO_VICTORIA}##bPlatform to Board a Ship to Victoria Island#d#l\r\n\
+         #L{USHER_FERRY}#I would rather take the ferry.#l#k"
+    )
+}
+
+/// The Platform Usher's yes/no - Isa's v96 line. The tunnel's `west00` does lead back to the
+/// booth [L], so "you can always get back" is true here.
+pub const USHER_ASK: &str = "Even if you've entered a wrong Tunnel, you can always get back to where I am, via the Portal, \
+     so don't worry. Would you like to go to the #bPlatform to the Ship that heads to Victoria Island#k?";
+
+/// The Platform Usher, to a No - Isa's v96 line.
+pub const USHER_DECLINED: &str = "Please make sure you know where you are going and then go to the platform through me. The \
+     ride is on schedule so you better not miss it!";
 
 fn thousands(n: u32) -> String {
     let s = n.to_string();
@@ -576,30 +798,72 @@ mod tests {
         assert_eq!(boarding(d - 60), Boarding::Closing { departs: d }, "00:09:00 closed");
         assert_eq!(boarding(d - 1), Boarding::Closing { departs: d }, "00:09:59 still in, still closed");
         assert_eq!(boarding(d), Boarding::NotYet { departs: d + 600, opens: d + 300 }, "00:10:00 gone");
-        assert_eq!(cherry_not_boarding(d - 200), None);
-        assert!(cherry_not_boarding(d - 30).unwrap().contains("00:20"), "the next one after the closing ship");
-        assert!(cherry_not_boarding(d - 30).unwrap().starts_with("This ship is getting ready for takeoff"));
-        let early = cherry_not_boarding(d - 400).unwrap();
+        assert_eq!(not_boarding(d - 200), None);
+        assert!(not_boarding(d - 30).unwrap().contains("00:20"), "the next one after the closing ship");
+        assert!(not_boarding(d - 30).unwrap().starts_with("This ship is getting ready for takeoff"));
+        let early = not_boarding(d - 400).unwrap();
         assert!(early.contains("begin boarding 5 minutes before") && early.contains("stop boarding 1 minute before"), "{early}");
         assert!(early.contains("00:10"), "{early}");
     }
 
-    /// Every Basic passenger for one departure shares a voyage; the next departure is another.
+    /// Every Basic passenger for one departure of one route shares a voyage; the next
+    /// departure is another, and so is the same departure the other way.
     #[test]
-    fn one_departure_is_one_voyage_and_the_next_is_another() {
+    fn one_departure_is_one_voyage_per_route() {
         let mut v = Voyages::default();
         let d = MIDNIGHT + 600;
-        let a = v.board_shared(200, d);
-        let b = v.board_shared(201, d);
+        let a = v.board_shared(200, TO_ORBIS.id, d);
+        let b = v.board_shared(201, TO_ORBIS.id, d);
         assert_eq!(a.id, b.id, "one ship for one departure");
         assert_ne!(a.id, 0, "0 is the shared world");
         assert_eq!(v.voyage_of(200).unwrap().members, vec![200, 201]);
-        let later = v.board_shared(202, d + 600);
+        let later = v.board_shared(202, TO_ORBIS.id, d + 600);
         assert_ne!(later.id, a.id, "the next departure is its own ship");
-        let private = v.board_private(203, d - 200);
-        assert!(private.id != a.id && private.id != later.id, "and a private ship is nobody else's");
+        let back = v.board_shared(204, TO_ELLINIA.id, d);
+        assert_ne!(back.id, a.id, "the same minute the other way is the other ship");
+        assert_eq!(back.route, TO_ELLINIA.id);
+        let private = v.board_private(203, TO_ORBIS.id, d - 200);
+        assert!(private.id != a.id && private.id != later.id && private.id != back.id, "and a private ship is nobody else's");
         assert_eq!(private.members, vec![203]);
         assert_eq!(private.remaining_s(d - 200), 60, "one minute");
+    }
+
+    /// The two routes, read against the map data they were typed from: every map a route
+    /// names is its own and no other route's, and the NPCs find their route.
+    #[test]
+    fn the_two_routes_are_mirror_images_and_share_nothing() {
+        assert_eq!((TO_ORBIS.arrival, TO_ELLINIA.arrival), (ORBIS, STATION), "each lands where the other's seller is, or near it");
+        assert_eq!(TO_ELLINIA.seller_map, TO_ORBIS.arrival, "Agatha sells in the booth the ship to Orbis lands in");
+        for r in ROUTES {
+            for map in [r.waiting_room, r.deck, r.cabin] {
+                assert_eq!(route_of_ship_map(map).map(|x| x.id), Some(r.id), "{map}");
+            }
+            assert!(!is_ship_map(r.station) && is_station(r.station), "the platform is not a ship field");
+            assert!(!is_ship_map(r.arrival));
+            for npc in [r.seller, r.boarder, r.steward] {
+                assert_eq!(route_of_npc(npc).map(|x| x.id), Some(r.id), "{npc}");
+            }
+            assert_eq!(route(r.id).id, r.id);
+        }
+        assert_eq!(TO_ORBIS.ticket_name(Ticket::Basic), "Ticket to Orbis (Basic)");
+        assert_eq!(TO_ELLINIA.ticket_name(Ticket::Regular), "Ticket to Ellinia (Regular)");
+        assert_eq!((TO_ELLINIA.item(Ticket::Basic), TO_ELLINIA.item(Ticket::Regular)), (4_031_084, 4_031_085));
+        assert_eq!(TO_ELLINIA.invaders_at(), [(-630, -221), (-550, -221)], "at the To Ellinia deck's own shipObj");
+        assert_eq!(TO_ORBIS.invaders_at(), [(445, -221), (525, -221)]);
+        assert!(!is_station(ORBIS) && !is_station(ORBIS_TUNNEL), "the booth and the tunnel are not platforms");
+    }
+
+    /// The route names in the ticket text are the client's own item names - checked against
+    /// the generated table when it is on disk.
+    #[test]
+    fn the_ticket_names_are_the_clients() {
+        let Ok(items) = std::fs::read_to_string("../../gm-handbook/items.txt") else { return };
+        for r in ROUTES {
+            for t in Ticket::ALL {
+                let row = format!("{}, {}", r.item(t), r.ticket_name(t));
+                assert!(items.lines().any(|l| l == row), "{row} is not in items.txt");
+            }
+        }
     }
 
     /// Departure turns a waiting voyage into a sailing one exactly once, with five minutes on
@@ -608,7 +872,7 @@ mod tests {
     fn a_voyage_departs_once_and_arrives_once() {
         let mut v = Voyages::default();
         let d = MIDNIGHT + 600;
-        let ship = v.board_shared(200, d);
+        let ship = v.board_shared(200, TO_ORBIS.id, d);
         assert_eq!(ship.remaining_s(d - 250), 250, "the waiting room counts to the departure");
         assert!(v.take_departures(d - 1, || 0).is_empty(), "not before");
         let gone = v.take_departures(d, || 99);
@@ -630,9 +894,9 @@ mod tests {
     fn a_sailing_ship_takes_no_new_passengers() {
         let mut v = Voyages::default();
         let d = MIDNIGHT + 600;
-        let first = v.board_shared(200, d);
+        let first = v.board_shared(200, TO_ORBIS.id, d);
         let _ = v.take_departures(d, || 0);
-        let late = v.board_shared(201, d);
+        let late = v.board_shared(201, TO_ORBIS.id, d);
         assert_ne!(late.id, first.id);
         assert_eq!(v.voyage_of(200).unwrap().members, vec![200]);
     }
@@ -641,37 +905,47 @@ mod tests {
     fn leaving_a_voyage_forgets_an_empty_one_and_boarding_again_moves_you() {
         let mut v = Voyages::default();
         let d = MIDNIGHT + 600;
-        let a = v.board_shared(200, d);
-        let _ = v.board_shared(201, d);
+        let a = v.board_shared(200, TO_ORBIS.id, d);
+        let _ = v.board_shared(201, TO_ORBIS.id, d);
         assert_eq!(v.drop_member(200).map(|x| x.id), Some(a.id));
         assert_eq!(v.voyage_of(201).unwrap().members, vec![201]);
-        let _ = v.board_private(201, d);
+        let _ = v.board_private(201, TO_ORBIS.id, d);
         assert!(v.take_departures(d, || 0).is_empty(), "201 left the shared ship, which was then empty and gone");
     }
 
     #[test]
     fn the_menus_number_their_lines_as_the_answers_read_them() {
-        for t in Ticket::ALL {
-            assert_eq!(Ticket::from_line(t.line()), Some(t));
-            assert!(joel_menu().contains(&format!("#L{}#{}", t.line(), t.name())), "{}", joel_menu());
-            assert!(cherry_menu().contains(&format!("#L{}#I have a #b{}", t.line(), t.name())), "{}", cherry_menu());
+        for r in ROUTES {
+            for t in Ticket::ALL {
+                assert_eq!(Ticket::from_line(t.line()), Some(t));
+                assert!(seller_menu(&r).contains(&format!("#L{}#{}", t.line(), r.ticket_name(t))), "{}", seller_menu(&r));
+                assert!(boarder_menu(&r).contains(&format!("#L{}#I have a #b{}", t.line(), r.ticket_name(t))), "{}", boarder_menu(&r));
+            }
+            assert!(seller_menu(&r).contains("5,000 mesos") && seller_menu(&r).contains("20,000 mesos"), "{}", seller_menu(&r));
+            assert!(seller_intro(&r).contains("every 10 minutes"), "{}", seller_intro(&r));
+            assert!(boarder_no_ticket(&r, Ticket::Basic).contains(r.seller_name));
         }
+        assert!(seller_intro(&TO_ELLINIA).starts_with("Hello, I'm the information guide for Orbis Station"));
+        assert!(seller_sold(&TO_ELLINIA, Ticket::Basic).contains("Platform Usher"));
+        assert!(seller_sold(&TO_ORBIS, Ticket::Basic).contains("Cherry"));
+        assert!(boarder_menu(&TO_ELLINIA).starts_with("If you want to get on the ride to Victoria Island"));
+        assert!(usher_menu().contains(&format!("#L{USHER_TO_VICTORIA}#")) && usher_menu().contains(&format!("#L{USHER_FERRY}#")));
         assert_eq!(Ticket::from_line(2), None);
-        assert!(joel_menu().contains("5,000 mesos") && joel_menu().contains("20,000 mesos"), "{}", joel_menu());
-        assert!(joel_intro().contains("every 10 minutes"), "{}", joel_intro());
-        let words = [
-            joel_intro(),
-            joel_menu(),
-            joel_sold(Ticket::Basic),
-            cherry_menu(),
-            cherry_not_boarding(MIDNIGHT + 100).unwrap(),
-            cherry_not_boarding(MIDNIGHT + 570).unwrap(),
-            CHERRY_ASK_BASIC.to_string(),
-            CHERRY_ASK_REGULAR.to_string(),
-            CHERRY_DECLINED.to_string(),
-            PURIN_ASK.to_string(),
-            PURIN_STAY.to_string(),
+        let mut words = vec![
+            not_boarding(MIDNIGHT + 100).unwrap(),
+            not_boarding(MIDNIGHT + 570).unwrap(),
+            BOARD_ASK_BASIC.to_string(),
+            BOARD_ASK_REGULAR.to_string(),
+            BOARD_DECLINED.to_string(),
+            STEWARD_ASK.to_string(),
+            STEWARD_STAY.to_string(),
+            usher_menu(),
+            USHER_ASK.to_string(),
+            USHER_DECLINED.to_string(),
         ];
+        for r in ROUTES {
+            words.extend([seller_intro(&r), seller_menu(&r), seller_sold(&r, Ticket::Basic), boarder_menu(&r), arrived(&r)]);
+        }
         for text in words {
             assert!(text.is_ascii(), "one byte per char on the wire: {text}");
         }
@@ -705,13 +979,13 @@ mod tests {
     fn half_the_shared_crossings_are_invaded_a_minute_in_and_never_a_private_one() {
         let d = MIDNIGHT + 600;
         let mut v = Voyages::default();
-        let quiet = v.board_shared(200, d);
-        let loud = v.board_shared(201, d + 600);
-        let solo = v.board_private(202, d);
+        let quiet = v.board_shared(200, TO_ORBIS.id, d);
+        let loud = v.board_shared(201, TO_ELLINIA.id, d + 600);
+        let solo = v.board_private(202, TO_ORBIS.id, d);
         let _ = v.take_departures(d, || 50); // 50 of 100: not under 50, quiet
         let _ = v.take_departures(d + 600, || 49); // under 50: invaded
         assert_eq!(v.voyage_of(200).unwrap().invasion_at, None);
-        assert_eq!(v.voyage_of(201).unwrap().invasion_at, Some(d + 660), "one minute into the crossing");
+        assert_eq!(v.voyage_of(201).unwrap().invasion_at, Some(d + 660), "one minute into the crossing, either way");
         assert_eq!(v.voyage_of(202).unwrap().invasion_at, None, "the private ride never rolls");
 
         assert!(!v.take_invasion(loud.id, d + 659), "not before the minute");
@@ -726,7 +1000,7 @@ mod tests {
         let invaded = (0..1000)
             .filter(|_| {
                 let mut w = Voyages::default();
-                let _ = w.board_shared(1, d);
+                let _ = w.board_shared(1, TO_ORBIS.id, d);
                 n += 1;
                 let _ = w.take_departures(d, || n.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 7);
                 w.voyage_of(1).unwrap().invasion_at.is_some()
@@ -737,7 +1011,7 @@ mod tests {
 
     #[test]
     fn the_paths_are_this_modules_and_nobody_elses() {
-        for p in [JOEL_INTRO_PATH, JOEL_PATH, CHERRY_PATH, CHERRY_BASIC_PATH, CHERRY_REGULAR_PATH, PURIN_PATH] {
+        for p in [SELLER_INTRO_PATH, SELLER_PATH, BOARDER_PATH, BOARDER_BASIC_PATH, BOARDER_REGULAR_PATH, STEWARD_PATH, USHER_PATH, USHER_ASK_PATH] {
             assert!(is_boat_path(p));
         }
         for other in [crate::taxi::MENU_PATH, crate::firsttime::ASK_PATH, crate::firsttime::NELLA_PATH] {
