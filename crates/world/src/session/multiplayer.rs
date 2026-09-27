@@ -120,6 +120,9 @@ impl Session {
                 crate::broadcast::Event::PartyQuestEnter { map, why } => {
                     out.extend(self.enter_party_quest(map, &why));
                 }
+                crate::broadcast::Event::BoatWarp { voyage, map } => {
+                    out.extend(self.boat_warp(voyage, map));
+                }
                 crate::broadcast::Event::PartyQuestReward { item, why } => {
                     out.extend(self.receive_party_quest_reward(item, &why));
                 }

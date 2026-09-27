@@ -207,6 +207,12 @@ pub enum Event {
     /// else assembled on their behalf.
     PartyQuestEnter { map: u32, why: String },
 
+    /// **The ship to Orbis moves this passenger** to `map` - the deck when `voyage` departs,
+    /// the Orbis Ticketing Booth when it arrives. `crate::boat`. Crosses as a fact for the
+    /// same reason the party quest's warp does: only the passenger's own session can build
+    /// their `SetField`. The receiver checks they are still aboard before it moves anyone.
+    BoatWarp { voyage: u32, map: u32 },
+
     /// **A party-quest reward for this character** - `item`, because the stage their run
     /// was on has just been cleared. Crosses as a fact for the same reason the warp does:
     /// only the member's own session holds their bag and their client.
@@ -1214,6 +1220,7 @@ mod tests {
                 Event::PartyMesos { picker, .. } => panic!("not an EXP share: mesos from {picker}"),
                 Event::GiftDrop => panic!("not an EXP share: a gift drop"),
                 Event::PartyQuestEnter { map, .. } => panic!("not an EXP share: a warp to {map}"),
+                Event::BoatWarp { map, .. } => panic!("not an EXP share: a ship to {map}"),
                 Event::PartyQuestReward { item, .. } => panic!("not an EXP share: a reward of {item}"),
                 Event::PartyQuestExp { percent, .. } => panic!("not an EXP share: a stage clear's {percent}%"),
             Event::FriendRequest => panic!("not an EXP share: a friend request"),
