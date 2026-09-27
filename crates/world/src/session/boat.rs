@@ -246,6 +246,14 @@ impl Session {
         let voyage = self.fields.voyages().voyage_of(chr.id);
         let Some(voyage) = voyage else { return Vec::new() };
         let left = voyage.remaining_s(now);
+        // **An invaded deck shows the Balrog's ship** to whoever arrives on it after the
+        // minute - up from the cabin, or a controller handing over. The Balrogs themselves come
+        // with the ordinary field entry, like any mob alive on the field.
+        let enemy = (chr.map_id == boat::DECK && voyage.invaded).then(|| Reply {
+            opcode: net::ship::CONTI_STATE,
+            body: net::ship::deck_invaded(),
+            what: format!("ContiState 0x01C0 to character {}: voyage {} is invaded - the Balrog's ship is alongside (state 3, flag 1)", chr.id, voyage.id),
+        });
         vec![Reply {
             opcode: net::clock::FIELD_CLOCK,
             body: net::clock::clock_seconds(left),
@@ -254,6 +262,9 @@ impl Session {
                 chr.id, voyage.id, voyage.ride, voyage.phase
             ),
         }]
+        .into_iter()
+        .chain(enemy)
+        .collect()
     }
 
     /// The ships' clock, on the session tick.
@@ -280,7 +291,9 @@ impl Session {
             );
             crate::server::log(&format!("   boat: {what} at Ellinia Station - told {n} player(s) there"));
         }
-        let departing = self.fields.voyages().take_departures(now);
+        let fields = self.fields.clone();
+        let rng = &mut self.rng;
+        let departing = fields.voyages().take_departures(now, || rng.next());
         let arriving = self.fields.voyages().take_arrivals(now);
         let mut out = Vec::new();
         for (voyages, map, what) in [(departing, boat::DECK, "departs"), (arriving, boat::ORBIS, "arrives")] {
@@ -298,7 +311,77 @@ impl Session {
                         crate::server::log(&format!("   boat: passenger {member} of voyage {} is not reachable on this channel; not moved to {map}", voyage.id));
                     }
                 }
+                if what == "departs" && voyage.invasion_at.is_some() {
+                    crate::server::log(&format!("   boat: voyage {} will be INVADED by two Crimson Balrogs a minute in", voyage.id));
+                }
             }
+        }
+        out.extend(self.boat_invasion_at(now));
+        out
+    }
+
+    /// **The Crimson Balrogs, a minute into an invaded crossing.** Done by a passenger's own
+    /// session, and only one standing on the deck: the mobs need a controller, and the
+    /// controller has to be a client that can see them (`crate::mobshare`). `take_invasion`
+    /// is the test-and-set, so two passengers on the deck cannot both summon a pair. If every
+    /// passenger is below in the cabin at the minute, the first to step back onto the deck
+    /// brings them.
+    fn boat_invasion_at(&mut self, now: i64) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        if chr.map_id != boat::DECK {
+            return Vec::new();
+        }
+        let voyage = self.fields.voyages().voyage_of(chr.id);
+        let Some(voyage) = voyage else { return Vec::new() };
+        let invade = self.fields.voyages().take_invasion(voyage.id, now);
+        if !invade {
+            return Vec::new();
+        }
+        let map = crate::fields::FieldKey::instanced(boat::DECK, voyage.id);
+        crate::server::log(&format!(
+            "   boat: voyage {} is INVADED - the Balrog's ship and two Crimson Balrogs, by {} ({})",
+            voyage.id, chr.name, chr.id
+        ));
+        // The ship first, so the Balrogs come out of something.
+        let ship = Reply {
+            opcode: net::ship::CONTI_MOVE,
+            body: net::ship::enemy_ship_arrives(),
+            what: format!("ContiMove 0x01BF: the Crimson Balrog's ship comes alongside voyage {} (type 10, state 4)", voyage.id),
+        };
+        self.bus().publish(self.subscriber, map, ship.clone(), None);
+        let mut out = vec![ship];
+        for at in boat::INVADERS_AT {
+            out.extend(self.spawn_invader(map, at));
+        }
+        out
+    }
+
+    /// One Crimson Balrog at `at` on the deck `map`, for everyone there, controlled by this
+    /// client. The summon sack's path (`session/summonsack.rs`) without the sack, and without
+    /// its summoning effect: that effect leaves a mob untargetable until a `0x03E8` follows,
+    /// and nothing here needs one. **No foothold**: the Balrog flies (the owner), so it is put in
+    /// the air where the Balrog's ship is, `fh` 0 - as the sack does when there is no floor.
+    fn spawn_invader(&mut self, map: crate::fields::FieldKey, at: (i16, i16)) -> Vec<Reply> {
+        let hp = self.config.mob_templates.get(&boat::CRIMSON_BALROG).map(|t| u64::from(t.max_hp)).unwrap_or(1);
+        let live = self.fields.summon_mob(map, boat::CRIMSON_BALROG, at, 0, hp);
+        let mut mob = live.as_seen();
+        mob.forced_stat = self.forced_stat_for(mob.template_id);
+        let spawn = Reply {
+            opcode: net::mob::MOB_ENTER_FIELD,
+            body: net::mob::mob_enter_field(&mob),
+            what: format!(
+                "MobEnterField: Crimson Balrog {} INVADES {map} at {at:?}, object id {}, hp {hp}",
+                mob.template_id, mob.object_id
+            ),
+        };
+        self.bus().publish(self.subscriber, map, spawn.clone(), None);
+        let mut out = vec![spawn];
+        if self.fields.controllers().claim_one(map, mob.object_id, self.subscriber.get()) {
+            out.push(Reply {
+                opcode: net::mobmove::MOB_CHANGE_CONTROLLER,
+                body: net::mobmove::mob_change_controller(&mob, net::mobmove::CONTROL_NORMAL),
+                what: format!("MobChangeController: invading Balrog {} to this client, which claimed it", mob.object_id),
+            });
         }
         out
     }
@@ -699,6 +782,76 @@ mod tests {
         let _ = ss[0].0.boat_tick_at(d + 1);
         assert_eq!(heard(&mut ss[1].0), vec![net::ship::ship_leaves()]);
         assert_eq!(heard(&mut ss[0].0), vec![net::ship::ship_leaves()]);
+    }
+
+    /// **The Crimson Balrog invasion**, a minute into an invaded crossing: one passenger on the
+    /// deck brings the Balrog's ship and two Balrogs at its position, both deck passengers see
+    /// all three, the one controlling client gets both, and the cabin sees nothing. Someone
+    /// coming up afterwards is shown the ship and the Balrogs on entry. A quiet crossing on
+    /// the same tick is the control.
+    #[test]
+    fn an_invaded_crossing_gets_the_balrog_ship_and_two_crimson_balrogs_a_minute_in() {
+        let (_, fields, mut ss) = station(&["Deckhand", "Lookout", "Stowaway", "Quietone"], 10_000);
+        let d = boat::next_departure(Store::unix_now()) + boat::DEPARTURE_EVERY_S;
+        let ids: Vec<u32> = ss.iter().map(|(_, id)| *id).collect();
+        for id in &ids[..3] {
+            let _ = fields.voyages().board_shared(*id, d);
+        }
+        let _ = fields.voyages().board_shared(ids[3], d + boat::DEPARTURE_EVERY_S);
+        // Sail the first ship with an invading roll, the way the tick would, and put everyone
+        // where the test wants them: two on the deck, one in the cabin.
+        let sailed = fields.voyages().take_departures(d, || 0);
+        assert_eq!(sailed.len(), 1);
+        assert_eq!(sailed[0].invasion_at, Some(d + boat::INVASION_AFTER_S));
+        for (n, map) in [(0, boat::DECK), (1, boat::DECK), (2, boat::CABIN)] {
+            let mut chr = ss[n].0.claimed_character().unwrap();
+            let _ = ss[n].0.go_to_map(&mut chr, map, 0, "aboard".to_string());
+            let _ = ss[n].0.on_field_entered();
+        }
+        let deck = ss[0].0.field();
+        assert_eq!(deck, FieldKey::instanced(boat::DECK, sailed[0].id));
+
+        let ops = |out: &[Reply], op: u16| out.iter().filter(|r| r.opcode == op).count();
+        // Not before the minute.
+        let out = ss[0].0.boat_tick_at(d + boat::INVASION_AFTER_S - 1);
+        assert_eq!(ops(&out, net::mob::MOB_ENTER_FIELD), 0, "not yet");
+
+        // The minute: the ship, then two Balrogs, controlled here.
+        let out = ss[0].0.boat_tick_at(d + boat::INVASION_AFTER_S);
+        assert_eq!(
+            out.iter().filter(|r| r.opcode == net::ship::CONTI_MOVE).map(|r| r.body.clone()).collect::<Vec<_>>(),
+            vec![net::ship::enemy_ship_arrives()]
+        );
+        assert_eq!(ops(&out, net::mob::MOB_ENTER_FIELD), 2, "two Crimson Balrogs");
+        assert_eq!(ops(&out, net::mobmove::MOB_CHANGE_CONTROLLER), 2, "and this client runs both");
+        let mobs = fields.mobs_on(deck);
+        assert_eq!(mobs.len(), 2);
+        let mut at: Vec<(i16, i16)> = mobs.iter().map(|m| (m.spawn.x, m.spawn.y)).collect();
+        at.sort();
+        assert_eq!(at, boat::INVADERS_AT.to_vec(), "at the Balrog's ship, in the air");
+        assert!(mobs.iter().all(|m| m.spawn.template_id == boat::CRIMSON_BALROG && m.spawn.fh == 0));
+        assert!(ss[1].0.boat_tick_at(d + boat::INVASION_AFTER_S + 1).iter().all(|r| r.opcode != net::mob::MOB_ENTER_FIELD), "once");
+
+        // The other deck passenger sees all three; the cabin sees nothing.
+        let lookout = ss[1].0.tick(1_000);
+        assert_eq!(ops(&lookout, net::ship::CONTI_MOVE), 1);
+        assert_eq!(ops(&lookout, net::mob::MOB_ENTER_FIELD), 2);
+        let cabin = ss[2].0.tick(1_000);
+        assert_eq!(ops(&cabin, net::ship::CONTI_MOVE) + ops(&cabin, net::mob::MOB_ENTER_FIELD), 0, "not below deck");
+        // Quietone's crossing was not invaded: their ship has nothing to take.
+        let quiet = fields.voyages().voyage_of(ids[3]).unwrap();
+        assert!(!fields.voyages().take_invasion(quiet.id, d + 600 + boat::INVASION_AFTER_S));
+
+        // Up from the cabin: the ship on entry, and the Balrogs with the field.
+        let mut chr = ss[2].0.claimed_character().unwrap();
+        let _ = ss[2].0.go_to_map(&mut chr, boat::DECK, 0, "up to the deck".to_string());
+        let entry = ss[2].0.boat_field_entry_at(d + 120);
+        assert_eq!(
+            entry.iter().filter(|r| r.opcode == net::ship::CONTI_STATE).map(|r| r.body.clone()).collect::<Vec<_>>(),
+            vec![net::ship::deck_invaded()]
+        );
+        let entry = ss[2].0.on_field_entered();
+        assert_eq!(ops(&entry, net::mob::MOB_ENTER_FIELD), 2, "the Balrogs are on the field for a latecomer");
     }
 
     /// Cherry without the ticket refuses; Purin takes a waiting passenger back to the station
