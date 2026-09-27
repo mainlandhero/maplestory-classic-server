@@ -927,6 +927,10 @@ impl Session {
         if let Some(replies) = self.open_nella(template) {
             return replies;
         }
+        // Joel, Cherry and Purin - the ship to Orbis. session/boat.rs.
+        if let Some(replies) = self.open_boat_npc(template) {
+            return replies;
+        }
 
         if let Some(replies) = self.open_taxi_for(template) {
             return replies;
@@ -2429,6 +2433,10 @@ impl Session {
         if let Some(replies) = self.lakelis_menu_answer(body) {
             return replies;
         }
+        // Joel's tickets and Cherry's boarding - `boat.` paths. session/boat.rs.
+        if let Some(replies) = self.boat_menu_answer(body) {
+            return replies;
+        }
         if let Some(replies) = self.salon_menu_answer(body) {
             return replies;
         }
@@ -2491,6 +2499,9 @@ impl Session {
         }
         if convo.path == crate::firsttime::NELLA_PATH {
             return self.nella_answer(reply.action);
+        }
+        if convo.path == crate::boat::PURIN_PATH {
+            return self.purin_answer(reply.action);
         }
         if convo.path == crate::shanks::ASK_PATH {
             return self.shanks_reply(reply.action);

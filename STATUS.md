@@ -365,6 +365,25 @@ the `0x0224` (`world-ch0.log`), and a `0x0224` for an id already in the pool is 
 research had recorded. `broadcast_look_change` now sends `0x0225` then `0x0224` then the pets
 for that one character, the sequence a fresh sighting gets (§8.1). Unverified on the observer.
 
+**2026-09-26: the ship from Ellinia Station to Orbis.** The owner: tickets from Joel, *"Ticket to Orbis
+(Basic) - 5000 mesos, Ticket to Orbis (Regular) 20000 mesos"*, *"via NPC dialogue and selection,
+not a shop window"*; a ship every 10 minutes, a 5-minute crossing, boarding *"from 5 minutes before
+departure time up until 1 minute before"*; every Basic passenger for one departure in one instance
+per channel; Regular is *"a private ride that only lasts 1 minute"*. `crate::boat` holds the
+timetable (departures on every Unix multiple of 600 s - `:x0` on the station's UTC wall clock) and
+each channel's voyages (`Fields::voyages`); `session/boat.rs` puts it on the wire. **Joel** is a
+type-6 menu and sells through `Store::buy_item`, one transaction, with a grey meso line and a grey
+item line. **Cherry** takes a Basic ticket only inside the window (the ticket goes after every
+refusal is ruled out) into `10002091` Before Takeoff, or a Regular one straight onto `20000022`.
+**A voyage is a `FieldKey` instance** on `10002091`/`20000022`/`20000023`, derived in `field_of`
+exactly as the party quest's is, so the cabin portals keep it; every field entry there sends a
+type-2 countdown (none of the three declares a clock node). The session tick sails what is due and
+lands what has arrived at `20000010` (`Event::BoatWarp` for other passengers; the take is
+test-and-set). **Purin** in the waiting room - their own line promises it - sends a passenger back to
+the station, ticket not returned. A login on a ship field lands in the station (its
+`forcedReturn`); a disconnect or any non-ship field entry leaves the voyage. 14 tests, 8 mutations
+each caught. Test plan step 25. **Not on a screen.**
+
 **2026-09-25: Maple Island's quests are open to every job.** The owner: *"remove the requirement that
 quests on the island are only for Beginners, any class should be able to do them."* **The server
 never checked a quest's job - the client does**, from its own `Quest.wz`: it decides what an NPC

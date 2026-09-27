@@ -541,6 +541,8 @@ impl Drop for Session {
         }
         // Out of any party-quest run, a channel change included. session/firsttime.rs.
         self.leave_party_quest_on_disconnect();
+        // And off any ship to Orbis. session/boat.rs.
+        self.leave_ship_on_disconnect();
         // The hub's directory: this character no longer plays on this channel. Before
         // `part`, which is the local equivalent. `session/worldlink.rs`.
         self.announce_offline_to_link();
@@ -576,6 +578,7 @@ impl Drop for Session {
 }
 
 mod ability;
+mod boat;
 mod firsttime;
 mod buff;
 mod chair;
@@ -786,6 +789,8 @@ impl Session {
         self.party_hp_tick();
         // The party quest's clock. Before the buffs for no reason beyond a stable order.
         out.extend(self.party_quest_timer_tick());
+        // The ships to Orbis: sail what is due, land what has arrived. session/boat.rs.
+        out.extend(self.boat_tick());
         // Buffs whose time is up. After regen so a `0x007C` and a `0x007E` in the same
         // tick arrive in the order the client draws them.
         out.extend(self.buff_tick(now_ms));
@@ -1216,6 +1221,8 @@ impl Session {
         // Never log in onto a party-quest stage: the Exit instead. Before the record is
         // read, so the SetField below carries it. session/firsttime.rs.
         self.keep_out_of_party_quest_on_login();
+        // Nor onto a ship: Ellinia Station instead. session/boat.rs.
+        self.keep_off_ship_on_login();
         // Always answer. An unanswered packet freezes the client's whole UI - every
         // button, including the quit prompt - and reads on screen as a crash. So a
         // character we cannot load falls back to the minimal record rather than silence.
@@ -1303,6 +1310,15 @@ impl Session {
     /// is no cached copy to go stale when somebody is warped out by the timer or by leaving
     /// the party.
     pub(super) fn field_of(&self, chr: &net::opcode::Character) -> crate::fields::FieldKey {
+        // **The three ship fields are instanced by voyage** - the same derivation, from
+        // `crate::boat`'s registry instead of the runs'. Off a voyage, the shared copy.
+        if crate::boat::is_ship_map(chr.map_id) {
+            let voyage = self.fields.voyages().voyage_of(chr.id);
+            return match voyage {
+                Some(v) => crate::fields::FieldKey::instanced(chr.map_id, v.id),
+                None => crate::fields::FieldKey::world(chr.map_id),
+            };
+        }
         if !crate::firsttime::is_quest_map(chr.map_id) {
             return crate::fields::FieldKey::world(chr.map_id);
         }

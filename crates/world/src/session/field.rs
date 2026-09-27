@@ -255,6 +255,9 @@ impl Session {
         out.extend(self.restore_bag_and_mesos());
         // The party quest's countdown, if this entry is into one. session/firsttime.rs.
         out.extend(self.party_quest_clock());
+        // The ship to Orbis's countdown on a ship field, or off the voyage anywhere else.
+        // session/boat.rs.
+        out.extend(self.boat_field_entry());
         // And its gate, if this run already cleared the stage being entered.
         out.extend(self.party_quest_gate());
 

@@ -370,6 +370,8 @@ pub struct Fields {
     parties: Mutex<crate::party::Parties>,
     /// This channel's party-quest runs. See [`crate::firsttime::Runs`].
     runs: Mutex<crate::firsttime::Runs>,
+    /// This channel's ships to Orbis. See [`crate::boat::Voyages`].
+    voyages: Mutex<crate::boat::Voyages>,
 }
 
 impl Default for Fields {
@@ -386,6 +388,7 @@ impl Fields {
             controllers: crate::mobshare::Controllers::new(),
             parties: Mutex::new(crate::party::Parties::new()),
             runs: Mutex::new(crate::firsttime::Runs::default()),
+            voyages: Mutex::new(crate::boat::Voyages::default()),
         }
     }
 
@@ -413,6 +416,12 @@ impl Fields {
     /// anything else** - a guard held across a second `runs()` in one expression deadlocks.
     pub fn runs(&self) -> std::sync::MutexGuard<'_, crate::firsttime::Runs> {
         self.runs.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// This channel's ships to Orbis. Same rule as [`Fields::runs`]: bind what you read to a
+    /// local before locking anything else.
+    pub fn voyages(&self) -> std::sync::MutexGuard<'_, crate::boat::Voyages> {
+        self.voyages.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Register a map's spawn points the first time anyone sets foot on it.

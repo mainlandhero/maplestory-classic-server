@@ -27,6 +27,7 @@
 //! identifies a pending migration rather than proving who is on the far end. What the
 //! store gives is **single use**. See `store::migration`.
 
+pub mod boat;
 pub mod broadcast;
 pub mod chairs;
 pub mod commodity;
