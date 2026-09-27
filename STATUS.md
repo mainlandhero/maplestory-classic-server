@@ -383,6 +383,15 @@ test-and-set). **Purin** in the waiting room - their own line promises it - send
 the station, ticket not returned. A login on a ship field lands in the station (its
 `forcedReturn`); a disconnect or any non-ship field entry leaves the voyage. 14 tests, 8 mutations
 each caught. Test plan step 25. **Not on a screen.**
+*Later the same day*, from the v96 scripts the owner pasted (Joel `1032007`, Cherry `1032008`, Purin):
+Joel opens with their station introduction and Next brings up the tickets; Cherry refuses in the v96
+words ("We will begin boarding 5 minutes before the takeoff...", "This ship is getting ready for
+takeoff...") and otherwise asks "Do you still wish to board the ship?", No getting them "You must
+have some business" line; Purin asks "Are you sure you want to get off the ship?", No getting them
+"You'll get to your destination in a short while" line. Wording changed only for this server's
+10/5/1-minute timetable and the paid tickets. The owner also asked that a disconnect mid-journey or
+before departure put the player back in the departure station - that was already the login rule
+above, tested through the real migration hello. 15 tests; 6 more mutations, each caught.
 
 **2026-09-25: Maple Island's quests are open to every job.** The owner: *"remove the requirement that
 quests on the island are only for Beginners, any class should be able to do them."* **The server
