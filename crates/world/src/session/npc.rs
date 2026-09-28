@@ -931,6 +931,10 @@ impl Session {
         if let Some(replies) = self.open_boat_npc(template) {
             return replies;
         }
+        // The Sleepywood Hotel Receptionist's two saunas. session/hotel.rs.
+        if let Some(replies) = self.open_hotel_receptionist(template) {
+            return replies;
+        }
 
         if let Some(replies) = self.open_taxi_for(template) {
             return replies;
@@ -2435,6 +2439,9 @@ impl Session {
         }
         // Joel's tickets and Cherry's boarding - `boat.` paths. session/boat.rs.
         if let Some(replies) = self.boat_menu_answer(body) {
+            return replies;
+        }
+        if let Some(replies) = self.hotel_menu_answer(body) {
             return replies;
         }
         if let Some(replies) = self.salon_menu_answer(body) {
