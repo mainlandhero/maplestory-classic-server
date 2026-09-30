@@ -46,6 +46,19 @@ pub fn is_weather_item(item_id: u32) -> bool {
     item_id / 10_000 == 512
 }
 
+/// **The GM weather that goes with a GM's Blessing**: `2023000` Wind -> `5121000` (`GMevent1`),
+/// `2023001` Precision -> `5121001` (`GMevent2`). **[L]** from the client's own data: each Cash
+/// item in `Item/Cash/0512.img` names its blessing as `info/stateChangeItem`. The weather
+/// routine does not apply that item itself - `stateChangeItem` is read only by the item-info
+/// loader (`FUN_142ccc3a0`), so the server grants the buff.
+pub fn blessing_weather(blessing_item: u32) -> Option<u32> {
+    match blessing_item {
+        2_023_000 => Some(5_121_000),
+        2_023_001 => Some(5_121_001),
+        _ => None,
+    }
+}
+
 /// A decoded weather-item use.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WeatherUse {

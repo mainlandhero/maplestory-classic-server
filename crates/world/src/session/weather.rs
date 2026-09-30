@@ -74,6 +74,88 @@ impl Session {
     }
 }
 
+impl Session {
+    /// **A GM's Blessing, given to the whole map.** The owner, 2026-09-30: *"these two items should
+    /// also be atmospheric effects that gives all players a buff."* The giver's own buff is the
+    /// caller's (`consume.rs` `buff_from_item`); this does everyone else's and the effect:
+    ///
+    /// * every other character on the map is sent `Event::ItemBlessing`, and applies it
+    ///   through their own session ([`Session::receive_item_blessing`]);
+    /// * the whole map gets the GM weather that goes with it (`net::weather::blessing_weather`)
+    ///   for thirty seconds, carrying who gave it, and the same line in the chat log.
+    ///
+    /// A blessing replaces an effect already running rather than waiting behind it: it is a GM
+    /// item, and its buff has been given either way.
+    pub(super) fn bless_the_map(&mut self, item_id: u32, map: crate::fields::FieldKey) -> Vec<Reply> {
+        self.bless_the_map_at(item_id, map, store::Store::unix_now())
+    }
+
+    pub(super) fn bless_the_map_at(&mut self, item_id: u32, map: crate::fields::FieldKey, now: i64) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let line = crate::consumables::blessing_announcement(&chr.name, item_id);
+        let others: Vec<u32> = self.bus().everyone_here().into_iter().filter(|(id, m)| *m == map && *id != chr.id).map(|(id, _)| id).collect();
+        for id in &others {
+            self.bus().publish_event_to_character(*id, crate::broadcast::Event::ItemBlessing { item_id, giver: chr.name.clone() });
+        }
+        crate::server::log(&format!("   blessing: {} ({}) used {item_id} on {map} - {} other(s) blessed", chr.name, chr.id, others.len()));
+
+        let mut out = Vec::new();
+        if let Some(weather) = net::weather::blessing_weather(item_id) {
+            let seconds = net::weather::SECONDS;
+            self.fields.weather().insert(map, (weather, line.clone(), now + i64::from(seconds)));
+            let reply = weather_reply(weather, &line, seconds, &format!("the GM weather for {item_id}, given by {}", chr.name));
+            self.bus().publish(self.subscriber, map, reply.clone(), None);
+            out.push(reply);
+        }
+        let notice = Reply {
+            opcode: net::notice::CHAT_NOTICE,
+            body: net::notice::chat_notice(&line),
+            what: format!("ChatNotice: {line}"),
+        };
+        self.bus().publish(self.subscriber, map, notice.clone(), None);
+        out.push(notice);
+        out
+    }
+
+    /// **A GM's Blessing arriving** from `giver`: the item's timed stats on this character,
+    /// recorded like the giver's own, so the icon counts down and the tick expires it. Nothing
+    /// is consumed - the giver's item was.
+    pub(super) fn receive_item_blessing(&mut self, item_id: u32, giver: &str) -> Vec<Reply> {
+        let Some(restores) = self.config.consumables.get(item_id) else { return Vec::new() };
+        if restores.duration_ms == 0 {
+            return Vec::new();
+        }
+        let stats: Vec<net::buff::TemporaryStat> = restores
+            .buffs()
+            .iter()
+            .map(|&(bit, value)| net::buff::TemporaryStat {
+                bit,
+                value: i16::try_from(value).unwrap_or(i16::MAX),
+                reason: net::buff::item_reason(item_id),
+                duration_ms: restores.duration_ms,
+            })
+            .collect();
+        if stats.is_empty() {
+            return Vec::new();
+        }
+        let expires_ms = self.clock_ms.saturating_add(u64::from(restores.duration_ms));
+        for stat in &stats {
+            self.buffs.retain(|b| b.bit != stat.bit);
+            self.buffs.push(super::buff::ActiveBuff { bit: stat.bit, skill_id: item_id, expires_ms, value: stat.value });
+        }
+        let described: Vec<String> = stats.iter().map(|s| format!("CTS {} = {}", s.bit, s.value)).collect();
+        vec![Reply {
+            opcode: net::buff::TEMPORARY_STAT_SET,
+            body: net::buff::temporary_stat_set_with_tail(&stats, net::buff::TAIL_LEN),
+            what: format!(
+                "TemporaryStatSet: {giver}'s {item_id} blesses this character with {} for {} ms",
+                described.join(", "),
+                restores.duration_ms
+            ),
+        }]
+    }
+}
+
 fn weather_reply(item: u32, text: &str, seconds: u32, why: &str) -> Reply {
     Reply {
         opcode: net::weather::BLOW_WEATHER,
@@ -128,6 +210,51 @@ mod tests {
 
     fn effects(out: &[Reply]) -> Vec<Vec<u8>> {
         out.iter().filter(|r| r.opcode == net::weather::BLOW_WEATHER).map(|r| r.body.clone()).collect()
+    }
+
+    /// **A GM's Blessing of Wind**, used from the Use tab through the real `0x010E`: the giver
+    /// and the other player on the map both get Speed 30 and Jump 10 for an hour, recorded in
+    /// their own sessions; both see the GM weather `5121000` with the giver's name; the third
+    /// player, on another map, gets nothing.
+    #[test]
+    fn a_gms_blessing_buffs_the_map_and_shows_its_weather() {
+        const WIND: u32 = 2_023_000;
+        let (store, mut ss, id) = three(0);
+        let mut cfg = (*ss[0].config).clone();
+        // The client's own row for it, as `gm-handbook/consumables.txt` carries it.
+        cfg.consumables = crate::consumables::Consumables::parse("2023000, 0, 0, 0, 0, 3600000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 30, 10\n");
+        let cfg = Arc::new(cfg);
+        for s in ss.iter_mut() {
+            s.config = cfg.clone();
+        }
+        store.add_item(id, store::InventoryType::Use, &store::Item::bundle(WIND, 1), 100).unwrap();
+        let slot = store.bag_items(id, store::InventoryType::Use).unwrap()[0].slot;
+        let mut packet = net::useitem::CLIENT_USE_ITEM.to_le_bytes().to_vec();
+        packet.extend_from_slice(&0u32.to_le_bytes());
+        packet.extend_from_slice(&slot.to_le_bytes());
+        packet.extend_from_slice(&WIND.to_le_bytes());
+        packet.extend_from_slice(&0u32.to_le_bytes());
+        let out = ss[0].handle(&packet);
+
+        let wind = net::buff::temporary_stat_set_with_tail(
+            &[
+                net::buff::TemporaryStat { bit: net::buff::CTS_SPEED, value: 30, reason: net::buff::item_reason(WIND), duration_ms: 3_600_000 },
+                net::buff::TemporaryStat { bit: net::buff::CTS_JUMP, value: 10, reason: net::buff::item_reason(WIND), duration_ms: 3_600_000 },
+            ],
+            net::buff::TAIL_LEN,
+        );
+        let stat_sets = |out: &[Reply]| out.iter().filter(|r| r.opcode == net::buff::TEMPORARY_STAT_SET).map(|r| r.body.clone()).collect::<Vec<_>>();
+        assert_eq!(stat_sets(&out), vec![wind.clone()], "the giver: Speed 30, Jump 10, with the item's icon");
+        let weather = effects(&out);
+        assert_eq!(weather.len(), 1, "the giver sees the GM weather");
+        assert_eq!(&weather[0][..4], &5_121_000u32.to_le_bytes(), "GMevent1, the Wind's stateChangeItem partner");
+
+        let theirs = ss[1].tick(1_000);
+        assert_eq!(stat_sets(&theirs), vec![wind], "the other player on the map, from their own session");
+        assert_eq!(effects(&theirs).len(), 1, "and the weather");
+        assert!(ss[1].buffs.iter().any(|b| b.bit == net::buff::CTS_JUMP && b.skill_id == WIND), "recorded, so their tick expires it");
+        let elsewhere = ss[2].tick(1_000);
+        assert!(stat_sets(&elsewhere).is_empty() && effects(&elsewhere).is_empty(), "nobody on another map");
     }
 
     /// Through the real dispatch: one spent, the effect for thirty seconds on the user's screen
