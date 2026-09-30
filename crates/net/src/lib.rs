@@ -51,6 +51,7 @@ pub mod lookupdate;
 pub mod message;
 pub mod groupmessage;
 pub mod whisper;
+pub mod megaphone;
 pub mod messenger;
 pub mod mob;
 pub mod mobdamage;

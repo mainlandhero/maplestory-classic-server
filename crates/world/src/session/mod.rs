@@ -580,6 +580,7 @@ impl Drop for Session {
 mod ability;
 mod boat;
 mod hotel;
+mod megaphone;
 mod firsttime;
 mod buff;
 mod chair;

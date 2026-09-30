@@ -158,6 +158,9 @@ impl Session {
             // reset scroll". session/pet.rs.
             id if net::bag::pet_skill_bit_for_item(id).is_some() => self.use_pet_skill_item(opcode, &req),
             net::bag::PET_NAME_TAG => self.use_pet_name_tag(opcode, &req),
+            // **The megaphones**, with their text and whisper choice after the ten bytes.
+            // The owner, 2026-09-29. session/megaphone.rs.
+            net::megaphone::MEGAPHONE | net::megaphone::SUPER_MEGAPHONE => self.use_megaphone(opcode, body),
             other => {
                 crate::server::log(&format!(
                     "   reset scroll: {other} arrived on 0x0116, which this server knows for the \
