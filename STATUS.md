@@ -365,6 +365,19 @@ the `0x0224` (`world-ch0.log`), and a `0x0224` for an id already in the pool is 
 research had recorded. `broadcast_look_change` now sends `0x0225` then `0x0224` then the pets
 for that one character, the sequence a fresh sighting gets (§8.1). Unverified on the observer.
 
+**2026-09-30: the GM's Blessings are weather and a buff for the whole map.** The owner: *"these two items
+should also be atmospheric effects that gives all players a buff ... it does not give players the
+appropriate buff icon with a duration."* Three gaps, all closed: **Wind sent no buff at all** - its
+`indieSpeed 30`/`indieJump 10` had no bit and were logged as unsupported; they now ride Speed (92) and
+Jump (93, `Jump` in the client's own CTS name table), the Magic Armor precedent for `indie*` **[D]**.
+**The other players got the giver's raw `0x007D`** and their sessions never recorded it; they now get
+`Event::ItemBlessing` and apply it through their own session (`receive_item_blessing`), so the icon
+counts down and their tick expires it. **No weather was shown**; the map now gets `0x01B7` with the
+Cash item whose `stateChangeItem` is the blessing - `5121000` (GMevent1) for Wind, `5121001` (GMevent2)
+for Precision **[L]** - carrying "<giver>'s blessing" line, for 30 s. `stateChangeItem` is read only by
+the item-info loader, so the client does not apply the buff itself. No capture of either blessing
+being used exists in any archived log. Test plan 27(d). **Not on a screen.**
+
 **2026-09-30: weather items show on the map.** The owner: *"display my chosen message with the particular
 item effect as an atmospheric effect for everyone present in the map for 30 seconds then gradually
 fade out."* Their Sprinkled Chocolate arrived on `0x0116` as `tick, slot, item, str text` (the client

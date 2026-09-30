@@ -123,6 +123,9 @@ impl Session {
                 crate::broadcast::Event::BoatWarp { voyage, map } => {
                     out.extend(self.boat_warp(voyage, map));
                 }
+                crate::broadcast::Event::ItemBlessing { item_id, giver } => {
+                    out.extend(self.receive_item_blessing(item_id, &giver));
+                }
                 crate::broadcast::Event::PartyQuestReward { item, why } => {
                     out.extend(self.receive_party_quest_reward(item, &why));
                 }

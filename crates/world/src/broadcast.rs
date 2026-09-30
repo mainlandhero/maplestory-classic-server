@@ -213,6 +213,12 @@ pub enum Event {
     /// their `SetField`. The receiver checks they are still aboard before it moves anyone.
     BoatWarp { voyage: u32, map: u32 },
 
+    /// **A GM's Blessing reaches this character** - `item` (`2023000` Wind, `2023001`
+    /// Precision), given by `giver` on the map they share. The recipient applies the item's
+    /// stats through its own session, so the buff is recorded, drawn with its icon and
+    /// countdown, and expired by its own tick. `session/weather.rs`.
+    ItemBlessing { item_id: u32, giver: String },
+
     /// **A party-quest reward for this character** - `item`, because the stage their run
     /// was on has just been cleared. Crosses as a fact for the same reason the warp does:
     /// only the member's own session holds their bag and their client.
@@ -1221,6 +1227,7 @@ mod tests {
                 Event::GiftDrop => panic!("not an EXP share: a gift drop"),
                 Event::PartyQuestEnter { map, .. } => panic!("not an EXP share: a warp to {map}"),
                 Event::BoatWarp { map, .. } => panic!("not an EXP share: a ship to {map}"),
+                Event::ItemBlessing { item_id, .. } => panic!("not an EXP share: a blessing {item_id}"),
                 Event::PartyQuestReward { item, .. } => panic!("not an EXP share: a reward of {item}"),
                 Event::PartyQuestExp { percent, .. } => panic!("not an EXP share: a stage clear's {percent}%"),
             Event::FriendRequest => panic!("not an EXP share: a friend request"),

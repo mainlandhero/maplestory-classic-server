@@ -115,6 +115,11 @@ pub const CLIENT_SKILL_CANCEL_LEN: usize = CANCEL_MASK_OFFSET + MASK_LEN;
 /// while Speed is already held - which reads this bit and raises string `0x14DA`.
 pub const CTS_SPEED: u32 = 92;
 
+/// The character-temporary-stat bit for **jump**: **93, `Jump`**, the entry after Speed in this
+/// client's own CTS name table (`research/first-job-buffs.md`, Appendix A: *"92 Speed  93
+/// Jump"*). **[L]** for the name; nothing here has watched a jump change on screen from it.
+pub const CTS_JUMP: u32 = 93;
+
 /// The character-temporary-stat bit an EXP coupon rides: **163, `ExpBuffRate`**.
 ///
 /// **The bit is [L]**: it is what this client calls index 163 in its own CTS name table

@@ -89,13 +89,16 @@ impl Restores {
     ///   88 ACC   89 EVA           90 crit rate      91 crit damage      92 Speed
     /// ```
     ///
-    /// **`jump`, `indie_speed`, `indie_jump` and `exp_percent` are deliberately not here.**
-    /// There is no measured CTS bit for any of them in this repo, and the Indie names are a
-    /// *separate index space* that the `0x007D` decoder shows no sign of carrying
-    /// (`research/magic-damage.md` §7.3's named blind spot). Guessing a bit would send a
-    /// number to an unknown stat, which is worse than the item doing nothing, because a wrong
-    /// stat is indistinguishable from a right one until somebody reads the stat window.
-    /// [`Restores::unsupported`] names them instead so the server can say so out loud.
+    /// **`jump` is bit 93** - [`net::buff::CTS_JUMP`], named `Jump` in the client's own CTS
+    /// table. **`indie_speed` and `indie_jump` ride the ordinary Speed and Jump bits**, added to
+    /// any plain `speed`/`jump` the row also has. The Indie names are a *separate index space*
+    /// the `0x007D` decoder shows no sign of carrying (`research/magic-damage.md` §7.3), and
+    /// this is the choice already made for Magic Armor's `indiePdd`/`indieMdd`, sent on the
+    /// ordinary defence bits (`net::buff::CTS_WEAPON_DEFENCE`) - **[D]**, the same chain. The owner,
+    /// 2026-09-30, of GM's Blessing of Wind: *"it does not give players the appropriate buff
+    /// icon with a duration"*; it sent no `0x007D` at all while these were unsupported.
+    ///
+    /// `exp_percent` is still not here: it is a rate on its own bit (163), sent by the caller.
     pub fn buffs(&self) -> Vec<(u32, u32)> {
         let mut out = Vec::new();
         for (bit, value) in [
@@ -107,7 +110,8 @@ impl Restores {
             (net::buff::CTS_EVASION, self.eva),
             (net::buff::CTS_CRIT_RATE, self.crt),
             (net::buff::CTS_CRIT_DAMAGE, self.crd),
-            (net::buff::CTS_SPEED, self.speed),
+            (net::buff::CTS_SPEED, self.speed + self.indie_speed),
+            (net::buff::CTS_JUMP, self.jump + self.indie_jump),
         ] {
             if value > 0 {
                 out.push((bit, value));
@@ -122,11 +126,9 @@ impl Restores {
     /// that half works looks exactly like an item that works, until someone counts.
     pub fn unsupported(&self) -> Vec<&'static str> {
         let mut out = Vec::new();
-        for (name, value) in [
-            ("jump", self.jump),
-            ("indieSpeed", self.indie_speed),
-            ("indieJump", self.indie_jump),
-        ] {
+        // Every stat this table reads now has a bit (see `buffs`). Kept so a column added to
+        // the table later has somewhere to be named out loud rather than dropped.
+        for (name, value) in [("none", 0u32)] {
             if value > 0 {
                 out.push(name);
             }
@@ -442,13 +444,12 @@ mod tests {
         assert_eq!(precision.buffs(), vec![(net::buff::CTS_ACCURACY, 20)]);
         assert!(blesses_the_whole_map(2_023_001));
 
-        // **Wind is the honest gap.** Its stats are `indieSpeed`/`indieJump`, the Indie index
-        // space, and this repo has no measured CTS bit for either. It must report them as
-        // unsupported rather than quietly send them to a guessed bit.
+        // **Wind**: `indieSpeed`/`indieJump`, sent on the ordinary Speed (92) and Jump (93)
+        // bits - the Magic Armor precedent. Until 2026-09-30 it sent nothing at all.
         let wind = c.get(2_023_000).expect("GM's Blessing of Wind");
         assert_eq!((wind.indie_speed, wind.indie_jump), (30, 10));
-        assert!(wind.buffs().is_empty(), "no measured bit, so nothing is sent");
-        assert_eq!(wind.unsupported(), vec!["indieSpeed", "indieJump"]);
+        assert_eq!(wind.buffs(), vec![(net::buff::CTS_SPEED, 30), (net::buff::CTS_JUMP, 10)]);
+        assert!(wind.unsupported().is_empty());
         assert!(blesses_the_whole_map(2_023_000));
 
         // The EXP coupon is a rate, not a stat, and carries no CTS bit here either.

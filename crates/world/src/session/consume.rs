@@ -230,7 +230,7 @@ impl Session {
         &mut self,
         item_id: u32,
         restores: &crate::consumables::Restores,
-        character_id: u32,
+        _character_id: u32,
         map: crate::fields::FieldKey,
     ) -> Vec<Reply> {
         // **Every stat an item grants names the item as a NEGATIVE reason.** The owner,
@@ -340,29 +340,10 @@ impl Session {
         }
         out.push(mine);
         if crate::consumables::blesses_the_whole_map(item_id) {
-            let name = self.claimed_character().map(|c| c.name).unwrap_or_default();
-            self.bus().publish(
-                self.subscriber,
-                map,
-                Reply {
-                    opcode: net::buff::TEMPORARY_STAT_SET,
-                    body,
-                    what: format!(
-                        "TemporaryStatSet: character {character_id}'s {item_id} blesses the \
-                         whole of map {map} with {}",
-                        described.join(", ")
-                    ),
-                },
-                None,
-            );
-            let line = crate::consumables::blessing_announcement(&name, item_id);
-            let notice = Reply {
-                opcode: net::notice::CHAT_NOTICE,
-                body: net::notice::chat_notice(&line),
-                what: format!("ChatNotice: {line}"),
-            };
-            self.bus().publish(self.subscriber, map, notice.clone(), None);
-            out.push(notice);
+            // Everyone else on the map applies it through their own session - recorded, iconed
+            // and expired there - and the whole map gets the GM weather with the giver's name.
+            // session/weather.rs.
+            out.extend(self.bless_the_map(item_id, map));
         }
         out
     }
