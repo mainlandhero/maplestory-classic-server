@@ -1,0 +1,1513 @@
+23:31:58.045 instance: ARMING in pid 189696 - marker maplecw-hook.multiclient present, this is the FIRST client on this desktop, so the guard will be LOGGED ONLY (first client behaves exactly as before)
+23:31:58.045 instance: hooked user32.dll!FindWindowW at 0x7ff83c7c3bc0, stole 14 bytes (48 89 5c 24 08 48 89 7c 24 10 55 48 8b ec 48 83)
+23:31:58.045 instance: hooked user32.dll!FindWindowA at 0x7ff83c81ab90, stole 12 bytes (48 83 ec 38 4c 8b ca 4c 8b c1 33 d2 33 c9 e8 75)
+23:31:58.045 instance: redirected kernel32.dll!CreateMutexW by rewriting its forwarder slot at 0x7ff83d9355f0 (0x7ff83b6e7230 -> 0x7fffcab485d0). No code was modified; callers that reach kernelbase by another route are unaffected
+23:31:58.046 instance: redirected kernel32.dll!CreateMutexA by rewriting its forwarder slot at 0x7ff83d935520 (0x7ff83b737460 -> 0x7fffcab48270). No code was modified; callers that reach kernelbase by another route are unaffected
+23:31:58.246 instance: CreateMutexA(name="Global\\WvsClientMtx") already_existed=false -> we are the first to create it
+23:32:00.018 install_once: our code IS running. env=false marker=true -> installing
+23:32:00.071 install: .text settled after 52 ms (deadline 5000 ms) - the client's login dialog fires around 4.5 s after connect, so this margin is what decides whether the suppression lands
+23:32:00.071 install: base=0x140000000 target=0x1415d60e0
+23:32:00.071 probe: entries to 0x1415db360 will RETURN IMMEDIATELY - THIS IS A CLIENT PATCH
+23:32:00.071 probe: watching 0x1415db360 (slot 0), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+23:32:00.071 probe: will FORCE rdx=0x0 on every entry to 0x141b2a280
+23:32:00.071 session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="mode=2,create=on,guardpage=0x20+0x40"
+23:32:00.071 probe: watching 0x141b2a280 (slot 1), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+23:32:00.072 probe: watch on 0x142ef3e44 will log up to 8 hits
+23:32:00.072 probe: watching 0x142ef3e44 (slot 2), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 8)
+23:32:00.072 probe: watch on 0x141177790 will log up to 6 hits
+23:32:00.072 probe: watching 0x141177790 (slot 3), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 6)
+23:32:00.072 probe: watch on 0x141177e80 will log up to 16 hits
+23:32:00.072 probe: watching 0x141177e80 (slot 4), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 16)
+23:32:00.072 BEAUTYTEXT: patched 0x1432e8f2e - string 0x0464 now reads 'Would you like to use #fc0xff000000#%s?', so the Beauty Coupon dialog draws the item name in BLACK. If it is still white on screen, the client decrypted the table before this hook ran; the fallback is the same six bytes in the exe file
+23:32:00.073 FAMETEXT: string 0x00fa now reads "You have raised %s's level of fame." (was "You have raised '%s''s level of fame.")
+23:32:00.073 FAMETEXT: string 0x00fb now reads "You have dropped %s's level of fame." (was "You have dropped '%s''s level of fame.")
+23:32:00.073 FAMETEXT: string 0x0103 now reads "%s raised %s's level of fame." (was "'%s' has raised '%s''s level of fame.")
+23:32:00.073 FAMETEXT: string 0x0104 now reads "%s has dropped %s's level of fame." (was "'%s' has dropped '%s''s level of fame.")
+23:32:00.073 LOOKGATE: patched 0x14039e688 - CItemInfo's id gate is `id / 10000 <= 6` instead of `<= 3`, so a backported hair (42540..42607) resolves under Character/Hair like a classic one: its info/icon draws in lists and its tooltip has an image
+23:32:00.073 identity: maplecw-hook.identity read and DELETED - the token now exists only in this process, and cannot be picked up by a later run
+23:32:00.108 identity: armed on FUN_142c50400 at 0x142c50400 (trampoline 0x15d00000), 26 byte token from maplecw-hook.identity. It was a PLAIN-TEXT LOCAL SECRET on disk until the line above deleted it: anything running as this user could have read it, which is the same power as being this launch. It is one-time, and the server keeps only its SHA-256
+23:32:00.109 install: hook active
+23:32:00.144 ***** GUARD PAGE ARMED: size class(es) 0x20+0x40 are served one-slot-per-page from a 64 GB reserve (16777216 slots) at 0x180060000 and DECOMMITTED on free, each address held back for 200s - one full firing of the writer's 180 s clock plus 20 s - before it can be handed out again. SIZED FROM THE 16:46 RUN OF 2026-09-16, which spent an 8388608-slot reserve in 254 s: 0x20 burst to 877768 in its first minute then ran at 34173/s (22x the 12:01 run it was sized from), 0x40 at 3396/s, and the two classes share ONE cursor. The 2 class(es) armed need 6358665 slots for their first retirement window and 7513800 once they are turning over; against the larger of those this reserve has 2.2x of headroom. 0x10 and 0x80 are unmeasured and modelled at 0x20's rate, so read the 'pool allocations seen by class' counters in the heartbeat - and read FELL BACK first: a fallen-back run looks exactly like a protected one. Metadata is committed lazily, so arming costs 65 MB now and grows with the cursor, which stops growing once recycling holds. Committed PAGE memory is bounded by the LIVE set, not by the cursor: 0x20 held ~54000 live slots all run, which is 210 MB, so expect roughly that per class. A stale write or read into a freed slot faults at the instruction that makes it, which the handler logs (RIP, target, who allocated, who freed, how long ago) and recommits so the client continues. control PASS. The pool's own chain, free list and counters are untouched - our slots take the HeapFree arm, and that arm is chosen by the header value ALONE, so one stamp 0x100 covers every class at once *****
+23:32:00.272 session: object at 0x5db47e8 is now readable
+23:32:00.272 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:32:00.642 guard page: the FIRST free of class 0x20 came back through our HeapFree shim - that class's free path IS intercepted and its slots are being decommitted. (This is the control: a class that is served and never freed would leak and the heartbeat would say so.)
+23:32:00.643 guard page: the FIRST free of class 0x40 came back through our HeapFree shim - that class's free path IS intercepted and its slots are being decommitted. (This is the control: a class that is served and never freed would leak and the heartbeat would say so.)
+23:32:01.181     0 opcode=0x0032 elapsed_us=57.4 ret=106876896 flag=0->1 state=0->2
+23:32:01.181 ***** OPCODE 0x0032 RELEASED THE STARTUP LOOP (conn+0x150 0->1, Data.wz hash now 0x00000000) *****
+23:32:01.275 ***** SOCKET conn=0x5a7c9b8 +0x20=0x65c - the client holds a socket *****
+23:32:01.491 ***** C++ THROW #1 at 0x7ff83b6e5369 in KERNELBASE.dll on tid 189700 at +1422ms
+      stack: 0x145173000(?) 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x140001000<-TEXT 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x1432abe30(?) 0x1403da5d3<-TEXT 0x143d87000(vm) *****
+23:32:01.574     1 opcode=0x0032 elapsed_us=54.8 ret=1 flag=1->1 state=2->2
+23:32:02.077 ***** SOCKET 0x65c is now VALID (client still holds it) *****
+23:32:02.116 ***** POOL SENTRY ARMED: pool ctx 0x143ad68a0, every 100 ms (all four buckets every 10), heartbeat 60 s, up to 0 dump(s). REPAIR IS ON: a confirmed damaged header is put back to the slot size, which is the ONE client byte this module ever writes - it turns a fatal free into a correct one and does NOT stop the writer. No lock is taken either way. The writer runs on a 180-SECOND CLOCK - six catches, four intervals, all 180.0 s within 0.12 s (research/the-180-second-clock-2026-09-07.md) - so after the first catch the next one is predictable, and silence for longer than that is itself the news.
+      bucket 0 slot 0x10: 692 chunks, 44288 slots, 0 not equal to the slot size; walk ended ListEnd; carve identity 44288 vs carved 44416 [FAIL]
+      bucket 1 slot 0x20: 1042 chunks, 33344 slots, 0 not equal to the slot size; walk ended ListEnd; carve identity 33344 vs carved 33344 [PASS]
+      bucket 2 slot 0x40: 316 chunks, 5056 slots, 0 not equal to the slot size; walk ended ListEnd; carve identity 5056 vs carved 5056 [PASS]
+      bucket 3 slot 0x80: 889 chunks, 7112 slots, 0 not equal to the slot size; walk ended ListEnd; carve identity 7112 vs carved 7112 [PASS] *****
+23:32:02.231 ***** C++ THROW #2 at 0x7ff83b6e5369 in KERNELBASE.dll on tid 190348 at +2156ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x1433d3650(?) 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x1417810d0<-TEXT 0x140001000<-TEXT 0x143ad68a0(?) 0x141780d4c<-TEXT *****
+23:32:03.080 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:32:03.623 ***** IDENTITY wrote 26 bytes into 0x14f9f0+0x1b8 on getter entry #1 (block 0x35001968, refcount held at 2 so the session destructor cannot free it). The token itself is NOT logged. login.log should now show `0x0073 IDENTITY: ... identity length=26` - if it shows 0, the client dropped it between here and w_str *****
+23:32:03.680     2 opcode=0x0000 elapsed_us=417.4 ret=1 flag=1->1 state=2->2
+23:32:03.680 ***** SESSION mode patched at 0x14f9f0+0x68: 5 -> 2 - the tick should no longer auto-login, and Login should transition to CharSelect *****
+23:32:03.680     3 opcode=0x000B elapsed_us=284.4 ret=1 flag=1->1 state=2->2
+23:32:03.681     4 opcode=0x000B elapsed_us=207.3 ret=1 flag=1->1 state=2->2
+23:32:04.089 ***** SESSION called FUN_140c9e230 at 0x140c9e230 - the create-character flag should now read 1. THIS IS A CLIENT PATCH: the real service sets it from virtualised code, so this proves the button's gate, not the protocol *****
+23:32:04.090 ***** SELECTFILL: the select UI is not built yet after this 0x0010 - the build will fill from the decoded list; nothing called *****
+23:32:04.090     5 opcode=0x0010 elapsed_us=1713.6 ret=1 flag=1->1 state=2->2
+23:32:04.184 ***** WATCH #1: 0x141177790 ENTERED on tid 189700 while dispatching opcode 0x0010 rcx=0x668921d8 [0x43387f80] rdx=0x0 (as i32 0) r8=0x1533fd530 r9=0x4e (as i32 78) called-from=0x142bf3cce
+      stack: 0x142bf3cce<-TEXT 0x142ef4541<-TEXT 0x143ad68a0(?) 0x14117c9e0<-TEXT 0x14117ca35<-TEXT 0x140331540<-TEXT 0x142ef4541<-TEXT 0x141177613<-TEXT 0x143271f04(?) 0x143271f04(?) 0x141b28059<-TEXT 0x141b3f300<-TEXT 0x140e0b2a0<-TEXT 0x143d87000(vm) 0x141b3f010<-TEXT 0x141b24fb8<-TEXT *****
+23:32:04.193 ***** WATCH #1: 0x141177e80 ENTERED on tid 189700 while dispatching opcode 0x0010 rcx=0x668921d8 [0x43387f80] rdx=0x0 (as i32 0) r8=0x14dd40 r9=0x286a5730 (as i32 678057776) called-from=0x14117784d
+      stack: 0x14117784d<-TEXT 0x142bf3cce<-TEXT 0x142ef4541<-TEXT 0x143ad68a0(?) 0x14117c9e0<-TEXT 0x14117ca35<-TEXT 0x140331540<-TEXT 0x142ef4541<-TEXT 0x141177613<-TEXT 0x143271f04(?) 0x143271f04(?) 0x141b28059<-TEXT 0x141b3f300<-TEXT 0x140e0b2a0<-TEXT 0x143d87000(vm) 0x141b3f010<-TEXT *****
+23:32:04.260 ***** WATCH #2: 0x141177e80 ENTERED on tid 189700 while dispatching opcode 0x0010 rcx=0x668921d8 [0x43387f80] rdx=0x1 (as i32 1) r8=0x14dda8 r9=0xfffb (as i32 65531) called-from=0x14117784d
+      stack: 0x14117784d<-TEXT 0x142bf3cce<-TEXT 0x142ef4541<-TEXT 0x143ad68a0(?) 0x14117c9e0<-TEXT 0x14117ca35<-TEXT 0x140331540<-TEXT 0x142ef4541<-TEXT 0x141177613<-TEXT 0x143271f04(?) 0x143271f04(?) 0x141b28059<-TEXT 0x141b3f300<-TEXT 0x140e0b2a0<-TEXT 0x143d87000(vm) 0x141b3f010<-TEXT *****
+23:32:04.304 ***** WATCH #3: 0x141177e80 ENTERED on tid 189700 while dispatching opcode 0x0010 rcx=0x668921d8 [0x43387f80] rdx=0x2 (as i32 2) r8=0x14dda8 r9=0xfffb (as i32 65531) called-from=0x14117784d
+      stack: 0x14117784d<-TEXT 0x142bf3cce<-TEXT 0x142ef4541<-TEXT 0x143ad68a0(?) 0x14117c9e0<-TEXT 0x14117ca35<-TEXT 0x140331540<-TEXT 0x142ef4541<-TEXT 0x141177613<-TEXT 0x143271f04(?) 0x143271f04(?) 0x141b28059<-TEXT 0x141b3f300<-TEXT 0x140e0b2a0<-TEXT 0x143d87000(vm) 0x141b3f010<-TEXT *****
+23:32:04.738 ***** SESSION re-armed the create-character flag on a later login result - the handshake zeroes it on every success, so this has to run per login, not once per launch *****
+23:32:04.739 ***** WATCH #4: 0x141177e80 ENTERED on tid 189700 while dispatching opcode 0x0010 rcx=0x668921d8 [0x43387f80] rdx=0x0 (as i32 0) r8=0x14e628 r9=0x14e6f0 (as i32 1369840) called-from=0x141177e5a
+      stack: 0x141177e5a<-TEXT 0x141177e40<-TEXT 0x143aca790(?) 0x141177e40<-TEXT 0x141177000<-TEXT 0x143d87000(vm) 0x1415d3946<-TEXT 0x143d87000(vm) 0x1415d33aa<-TEXT 0x142c8d6eb<-TEXT *****
+23:32:04.746 ***** WATCH #5: 0x141177e80 ENTERED on tid 189700 while dispatching opcode 0x0010 rcx=0x668921d8 [0x43387f80] rdx=0x1 (as i32 1) r8=0x14e0f8 r9=0xfffb (as i32 65531) called-from=0x141177e5a
+      stack: 0x141177e5a<-TEXT 0x141177e40<-TEXT 0x143aca790(?) 0x141177e40<-TEXT 0x141177000<-TEXT 0x143d87000(vm) 0x1415d3946<-TEXT 0x143d87000(vm) 0x1415d33aa<-TEXT 0x142c8d6eb<-TEXT *****
+23:32:04.753 ***** WATCH #6: 0x141177e80 ENTERED on tid 189700 while dispatching opcode 0x0010 rcx=0x668921d8 [0x43387f80] rdx=0x2 (as i32 2) r8=0x14e0f8 r9=0xfffb (as i32 65531) called-from=0x141177e5a
+      stack: 0x141177e5a<-TEXT 0x141177e40<-TEXT 0x143aca790(?) 0x141177e40<-TEXT 0x141177000<-TEXT 0x143d87000(vm) 0x1415d3946<-TEXT 0x143d87000(vm) 0x1415d33aa<-TEXT 0x142c8d6eb<-TEXT *****
+23:32:04.758 ***** SELECTFILL: called FUN_141177e40(0x668921d8) after 0x0010 - the select UI existed before the list was decoded, so its three slots were built EMPTY; they are now refilled from the decoded list. THIS IS A CLIENT PATCH: it is the call the mode-5 login handler makes and the mode-2 handler does not (research/charselect-avatar-fade-race.md sec 8) *****
+23:32:04.758     6 opcode=0x0010 elapsed_us=20208.0 ret=1 flag=1->1 state=2->2
+23:32:06.087 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:32:07.790     7 opcode=0x0011 elapsed_us=1833.7 ret=1 flag=1->1 state=2->2
+23:32:08.314 ***** C++ THROW #3 at 0x7ff83b6e5369 in KERNELBASE.dll on tid 189700 at +8234ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x140001000<-TEXT 0x14326194a(?) 0x143d87000(vm) 0x145173000(?) 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x140403f6c<-TEXT *****
+23:32:08.315 ***** C++ THROW #4 at 0x7ff83b6e5369 in KERNELBASE.dll on tid 189700 at +8234ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x140001000<-TEXT 0x14326194a(?) 0x143d87000(vm) 0x145173000(?) 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x140403f6c<-TEXT *****
+23:32:08.316 ***** C++ THROW #5 at 0x7ff83b6e5369 in KERNELBASE.dll on tid 189700 at +8234ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x140001000<-TEXT 0x14326194a(?) 0x143d87000(vm) 0x145173000(?) 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x140403f6c<-TEXT *****
+23:32:08.316 ***** C++ THROW #6 at 0x7ff83b6e5369 in KERNELBASE.dll on tid 189700 at +8234ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x140001000<-TEXT 0x14326194a(?) 0x143d87000(vm) 0x145173000(?) 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x140403f6c<-TEXT *****
+23:32:08.317 ***** C++ THROW #7 at 0x7ff83b6e5369 in KERNELBASE.dll on tid 189700 at +8234ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x140001000<-TEXT 0x14326194a(?) 0x143d87000(vm) 0x145173000(?) 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x140403f6c<-TEXT *****
+23:32:08.366 ***** WATCH #1: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x01A0 rcx=0x5db7340 [0x00000000] rdx=0x0 (as i32 0) r8=0x0 r9=0x34269dd8 (as i32 874946008) called-from=0x144ec8f72
+      stack: 0x144ec8f72(vm) 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1406ed625<-TEXT 0x141601433<-TEXT *****
+23:32:08.375     8 opcode=0x01A0 elapsed_us=576474.2 ret=890227096 flag=1->1 state=2->2
+23:32:08.375     9 opcode=0x05F1 elapsed_us=94.5 ret=1 flag=1->1 state=2->2
+23:32:08.375    10 opcode=0x007C elapsed_us=158.7 ret=1 flag=1->1 state=2->2
+23:32:08.376    11 opcode=0x0198 elapsed_us=44.6 ret=1 flag=1->1 state=2->2
+23:32:08.379    12 opcode=0x044F elapsed_us=2566.9 ret=1 flag=1->1 state=2->2
+23:32:08.379    13 opcode=0x044F elapsed_us=711.2 ret=1 flag=1->1 state=2->2
+23:32:08.380    14 opcode=0x044F elapsed_us=654.7 ret=1 flag=1->1 state=2->2
+23:32:08.381    15 opcode=0x044F elapsed_us=587.5 ret=1 flag=1->1 state=2->2
+23:32:08.382    16 opcode=0x044F elapsed_us=632.4 ret=1 flag=1->1 state=2->2
+23:32:08.382    17 opcode=0x0070 elapsed_us=153.7 ret=1 flag=1->1 state=2->2
+23:32:08.383    18 opcode=0x0070 elapsed_us=118.2 ret=1 flag=1->1 state=2->2
+23:32:08.383    19 opcode=0x0070 elapsed_us=112.1 ret=1 flag=1->1 state=2->2
+23:32:08.383    20 opcode=0x0070 elapsed_us=115.3 ret=1 flag=1->1 state=2->2
+23:32:08.384    21 opcode=0x0070 elapsed_us=113.6 ret=1 flag=1->1 state=2->2
+23:32:08.384    22 opcode=0x0070 elapsed_us=108.7 ret=1 flag=1->1 state=2->2
+23:32:08.384    23 opcode=0x0070 elapsed_us=122.5 ret=1 flag=1->1 state=2->2
+23:32:08.385    24 opcode=0x0070 elapsed_us=114.3 ret=1 flag=1->1 state=2->2
+23:32:08.385    25 opcode=0x0070 elapsed_us=126.5 ret=1 flag=1->1 state=2->2
+23:32:08.385    26 opcode=0x0070 elapsed_us=116.6 ret=1 flag=1->1 state=2->2
+23:32:08.386    27 opcode=0x0070 elapsed_us=117.2 ret=1 flag=1->1 state=2->2
+23:32:08.386    28 opcode=0x0070 elapsed_us=114.9 ret=1 flag=1->1 state=2->2
+23:32:08.386    29 opcode=0x0070 elapsed_us=113.9 ret=1 flag=1->1 state=2->2
+23:32:08.387    30 opcode=0x0070 elapsed_us=116.0 ret=1 flag=1->1 state=2->2
+23:32:08.387    31 opcode=0x0070 elapsed_us=117.3 ret=1 flag=1->1 state=2->2
+23:32:08.387    32 opcode=0x0070 elapsed_us=107.9 ret=1 flag=1->1 state=2->2
+23:32:08.387    33 opcode=0x0070 elapsed_us=116.2 ret=1 flag=1->1 state=2->2
+23:32:08.388    34 opcode=0x0070 elapsed_us=119.9 ret=1 flag=1->1 state=2->2
+23:32:08.388    35 opcode=0x0070 elapsed_us=113.9 ret=1 flag=1->1 state=2->2
+23:32:08.388    36 opcode=0x0070 elapsed_us=106.9 ret=1 flag=1->1 state=2->2
+23:32:08.389    37 opcode=0x0070 elapsed_us=118.0 ret=1 flag=1->1 state=2->2
+23:32:08.389    38 opcode=0x0070 elapsed_us=112.8 ret=1 flag=1->1 state=2->2
+23:32:08.389    39 opcode=0x0070 elapsed_us=147.3 ret=1 flag=1->1 state=2->2
+23:32:08.390    40 opcode=0x0070 elapsed_us=128.7 ret=1 flag=1->1 state=2->2
+23:32:08.390    41 opcode=0x0070 elapsed_us=113.7 ret=1 flag=1->1 state=2->2
+23:32:08.390    42 opcode=0x0070 elapsed_us=115.5 ret=1 flag=1->1 state=2->2
+23:32:08.391    43 opcode=0x0070 elapsed_us=125.8 ret=1 flag=1->1 state=2->2
+23:32:08.391    44 opcode=0x0070 elapsed_us=115.1 ret=1 flag=1->1 state=2->2
+23:32:08.391    45 opcode=0x0070 elapsed_us=114.6 ret=1 flag=1->1 state=2->2
+23:32:08.392    46 opcode=0x0070 elapsed_us=113.2 ret=1 flag=1->1 state=2->2
+23:32:08.392    47 opcode=0x0070 elapsed_us=113.6 ret=1 flag=1->1 state=2->2
+23:32:08.392    48 opcode=0x0070 elapsed_us=112.8 ret=1 flag=1->1 state=2->2
+23:32:08.393    49 opcode=0x0070 elapsed_us=109.3 ret=1 flag=1->1 state=2->2
+23:32:08.393    50 opcode=0x0070 elapsed_us=114.7 ret=1 flag=1->1 state=2->2
+23:32:08.393    51 opcode=0x0070 elapsed_us=110.4 ret=1 flag=1->1 state=2->2
+23:32:08.394    52 opcode=0x0070 elapsed_us=110.4 ret=1 flag=1->1 state=2->2
+23:32:08.394    53 opcode=0x0070 elapsed_us=108.6 ret=1 flag=1->1 state=2->2
+23:32:08.394    54 opcode=0x0070 elapsed_us=115.0 ret=1 flag=1->1 state=2->2
+23:32:08.395    55 opcode=0x0070 elapsed_us=110.2 ret=1 flag=1->1 state=2->2
+23:32:08.395    56 opcode=0x0070 elapsed_us=113.4 ret=1 flag=1->1 state=2->2
+23:32:08.395    57 opcode=0x0070 elapsed_us=112.3 ret=1 flag=1->1 state=2->2
+23:32:08.396    58 opcode=0x0070 elapsed_us=112.8 ret=1 flag=1->1 state=2->2
+23:32:08.396    59 opcode=0x0070 elapsed_us=123.3 ret=1 flag=1->1 state=2->2
+23:32:08.396    60 opcode=0x0070 elapsed_us=111.0 ret=1 flag=1->1 state=2->2
+23:32:08.397    61 opcode=0x0070 elapsed_us=110.4 ret=1 flag=1->1 state=2->2
+23:32:08.397    62 opcode=0x0070 elapsed_us=109.9 ret=1 flag=1->1 state=2->2
+23:32:08.397    63 opcode=0x0070 elapsed_us=111.6 ret=1 flag=1->1 state=2->2
+23:32:08.397    64 opcode=0x0070 elapsed_us=111.6 ret=1 flag=1->1 state=2->2
+23:32:08.398    65 opcode=0x0070 elapsed_us=110.6 ret=1 flag=1->1 state=2->2
+23:32:08.398    66 opcode=0x0070 elapsed_us=108.4 ret=1 flag=1->1 state=2->2
+23:32:08.398    67 opcode=0x0070 elapsed_us=127.3 ret=1 flag=1->1 state=2->2
+23:32:08.399    68 opcode=0x0070 elapsed_us=111.9 ret=1 flag=1->1 state=2->2
+23:32:08.399    69 opcode=0x0070 elapsed_us=110.8 ret=1 flag=1->1 state=2->2
+23:32:08.399    70 opcode=0x0070 elapsed_us=110.4 ret=1 flag=1->1 state=2->2
+23:32:08.400    71 opcode=0x0070 elapsed_us=121.0 ret=1 flag=1->1 state=2->2
+23:32:08.400    72 opcode=0x0070 elapsed_us=117.9 ret=1 flag=1->1 state=2->2
+23:32:08.400    73 opcode=0x0070 elapsed_us=109.7 ret=1 flag=1->1 state=2->2
+23:32:08.401    74 opcode=0x0070 elapsed_us=112.0 ret=1 flag=1->1 state=2->2
+23:32:08.401    75 opcode=0x0070 elapsed_us=112.8 ret=1 flag=1->1 state=2->2
+23:32:08.401    76 opcode=0x0070 elapsed_us=112.3 ret=1 flag=1->1 state=2->2
+23:32:08.402    77 opcode=0x0070 elapsed_us=111.9 ret=1 flag=1->1 state=2->2
+23:32:08.402    78 opcode=0x0070 elapsed_us=112.7 ret=1 flag=1->1 state=2->2
+23:32:08.402    79 opcode=0x0070 elapsed_us=111.6 ret=1 flag=1->1 state=2->2
+23:32:08.403    80 opcode=0x0070 elapsed_us=116.0 ret=1 flag=1->1 state=2->2
+23:32:08.403    81 opcode=0x0070 elapsed_us=112.0 ret=1 flag=1->1 state=2->2
+23:32:08.403    82 opcode=0x0070 elapsed_us=113.1 ret=1 flag=1->1 state=2->2
+23:32:08.403    83 opcode=0x0070 elapsed_us=112.4 ret=1 flag=1->1 state=2->2
+23:32:08.404    84 opcode=0x0070 elapsed_us=114.9 ret=1 flag=1->1 state=2->2
+23:32:08.404    85 opcode=0x0070 elapsed_us=114.1 ret=1 flag=1->1 state=2->2
+23:32:08.404    86 opcode=0x0070 elapsed_us=114.1 ret=1 flag=1->1 state=2->2
+23:32:08.405    87 opcode=0x0070 elapsed_us=194.6 ret=1 flag=1->1 state=2->2
+23:32:08.405    88 opcode=0x0070 elapsed_us=199.7 ret=1 flag=1->1 state=2->2
+23:32:08.406    89 opcode=0x0070 elapsed_us=154.8 ret=1 flag=1->1 state=2->2
+23:32:08.406    90 opcode=0x0070 elapsed_us=144.2 ret=1 flag=1->1 state=2->2
+23:32:08.407    91 opcode=0x007C elapsed_us=173.5 ret=1 flag=1->1 state=2->2
+23:32:08.411    92 opcode=0x0089 elapsed_us=4467.2 ret=1 flag=1->1 state=2->2
+23:32:08.412    93 opcode=0x0089 elapsed_us=172.9 ret=1 flag=1->1 state=2->2
+23:32:08.412    94 opcode=0x00A7 elapsed_us=42.2 ret=1 flag=1->1 state=2->2
+23:32:08.412    95 opcode=0x00A7 elapsed_us=48.8 ret=1 flag=1->1 state=2->2
+23:32:09.095 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:32:12.102 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:32:14.871    96 opcode=0x055B elapsed_us=3821366.2 ret=1 flag=1->1 state=2->2
+23:32:14.894 ***** C++ THROW #8 at 0x7ff83b6e5369 in KERNELBASE.dll on tid 189700 at +14812ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x140399d81<-TEXT 0x142aa1a07<-TEXT 0x1402c8cc7<-TEXT 0x1432b3ec0(?) 0x1410decb2<-TEXT *****
+23:32:15.111 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:32:18.116 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:32:18.362    97 opcode=0x0089 elapsed_us=2244.8 ret=2 flag=1->1 state=2->2
+23:32:18.363    98 opcode=0x0089 elapsed_us=176.8 ret=2 flag=1->1 state=2->2
+23:32:18.363    99 opcode=0x0089 elapsed_us=149.2 ret=2 flag=1->1 state=2->2
+23:32:18.363   100 opcode=0x0089 elapsed_us=138.6 ret=2 flag=1->1 state=2->2
+23:32:18.364   101 opcode=0x0089 elapsed_us=136.8 ret=2 flag=1->1 state=2->2
+23:32:18.382   102 opcode=0x00BB elapsed_us=18058.1 ret=2 flag=1->1 state=2->2
+23:32:18.382   103 opcode=0x055B elapsed_us=71.6 ret=2 flag=1->1 state=2->2
+23:32:20.621   104 opcode=0x055B elapsed_us=5741128.5 ret=1 flag=1->1 state=2->2
+23:32:21.122 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:32:24.128 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:32:26.902   105 opcode=0x007C elapsed_us=242.6 ret=2 flag=1->1 state=2->2
+23:32:26.903   106 opcode=0x0089 elapsed_us=466.7 ret=2 flag=1->1 state=2->2
+23:32:26.906   107 opcode=0x0089 elapsed_us=2518.7 ret=2 flag=1->1 state=2->2
+23:32:26.906   108 opcode=0x0089 elapsed_us=172.8 ret=2 flag=1->1 state=2->2
+23:32:26.907   109 opcode=0x0089 elapsed_us=160.4 ret=2 flag=1->1 state=2->2
+23:32:26.907   110 opcode=0x0089 elapsed_us=140.5 ret=2 flag=1->1 state=2->2
+23:32:26.907   111 opcode=0x0089 elapsed_us=142.5 ret=2 flag=1->1 state=2->2
+23:32:26.915   112 opcode=0x02D1 elapsed_us=7106.3 ret=2 flag=1->1 state=2->2
+23:32:26.915   113 opcode=0x00BB elapsed_us=387.8 ret=2 flag=1->1 state=2->2
+23:32:26.916   114 opcode=0x055B elapsed_us=41.9 ret=2 flag=1->1 state=2->2
+23:32:27.135 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:32:29.173   115 opcode=0x055B elapsed_us=5551110.8 ret=1 flag=1->1 state=2->2
+23:32:30.142 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:32:32.213 ***** WATCH #2: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x055B rcx=0xfd6802d [0x60629c78] rdx=0x7530 (as i32 30000) r8=0x7545 r9=0xe5f437b2 (as i32 -436979790) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:32:33.149 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:32:33.674   116 opcode=0x0070 elapsed_us=235.0 ret=1 flag=1->1 state=2->2
+23:32:33.674   117 opcode=0x0070 elapsed_us=153.2 ret=1 flag=1->1 state=2->2
+23:32:36.155 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:32:39.163 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:32:41.448   118 opcode=0x055D elapsed_us=253399.7 ret=1 flag=1->1 state=2->2
+23:32:42.169 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:32:45.177 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:32:48.183 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:32:51.190 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:32:52.027   119 opcode=0x00AC elapsed_us=494.9 ret=2 flag=1->1 state=2->2
+23:32:52.029   120 opcode=0x055B elapsed_us=1302555.8 ret=1 flag=1->1 state=2->2
+23:32:52.897   121 opcode=0x055D elapsed_us=9771.3 ret=1 flag=1->1 state=2->2
+23:32:54.194 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:32:57.203 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:32:59.358   122 opcode=0x055D elapsed_us=10194.9 ret=1 flag=1->1 state=2->2
+23:33:00.209 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:02.136 POOL SENTRY alive 60s: 0 confirmed finding(s) | b0:839ch 53696slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:2536ch 20288slots carve PASS | 0 header(s) repaired | guard page: 0x20: 1435138 served, 1401578 freed, 33560 live, 0 recycled, 0 fell back | 0x40: 236834 served, 217489 freed, 19345 live, 0 recycled, 0 fell back | 1671972 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 591399, 0x20 1435138, 0x40 236834, 0x80 198552 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 329 us avg, 3069 us max over 596 walks
+23:33:02.200 ***** WATCH #3: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x055D rcx=0xfd6f54e [0xaa40bfb3] rdx=0xea60 (as i32 60000) r8=0xea66 r9=0xd6db (as i32 55003) called-from=0x144e6aecb
+      stack: 0x144e6aecb(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) *****
+23:33:02.249 ***** WATCH #4: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x055D rcx=0xfd6f580 [0xdd01ffff] rdx=0x7530 (as i32 30000) r8=0x7553 r9=0x1a4bfff6 (as i32 441188342) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:33:03.216 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:06.221 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:08.090   123 opcode=0x055D elapsed_us=10310.6 ret=1 flag=1->1 state=2->2
+23:33:09.229 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:12.237 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:15.243 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:18.251 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:21.258 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:24.267 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:27.275 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:30.280 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:32.315 ***** WATCH #5: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x055D rcx=0xfd76af1 [0xda0cf981] rdx=0x7530 (as i32 30000) r8=0x7571 r9=0xedde562c (as i32 -304196052) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:33:33.292 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:36.299 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:39.306 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:42.314 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:45.319 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:48.327 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:51.333 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:53.059   124 opcode=0x055B elapsed_us=880199.1 ret=1 flag=1->1 state=2->2
+23:33:53.074 ***** C++ THROW #12 at 0x7ff83b6e5369 in KERNELBASE.dll on tid 189700 at +113000ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x140399d81<-TEXT 0x142aa1a07<-TEXT 0x1402c8cc7<-TEXT 0x1432b3ec0(?) 0x1410decb2<-TEXT *****
+23:33:53.075 ***** C++ THROW #13 at 0x7ff83b6e5369 in KERNELBASE.dll on tid 189700 at +113000ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x140399d81<-TEXT 0x142aa1a07<-TEXT 0x1402c8cc7<-TEXT 0x1432b3ec0(?) 0x1410dfc16<-TEXT *****
+23:33:54.200   125 opcode=0x0089 elapsed_us=2171.4 ret=2 flag=1->1 state=2->2
+23:33:54.201   126 opcode=0x0089 elapsed_us=173.9 ret=2 flag=1->1 state=2->2
+23:33:54.201   127 opcode=0x0089 elapsed_us=162.9 ret=2 flag=1->1 state=2->2
+23:33:54.202   128 opcode=0x0089 elapsed_us=176.7 ret=2 flag=1->1 state=2->2
+23:33:54.202   129 opcode=0x0089 elapsed_us=172.9 ret=2 flag=1->1 state=2->2
+23:33:54.202   130 opcode=0x00BB elapsed_us=216.1 ret=2 flag=1->1 state=2->2
+23:33:54.203   131 opcode=0x055B elapsed_us=44.3 ret=2 flag=1->1 state=2->2
+23:33:54.341 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:56.480   132 opcode=0x055B elapsed_us=3411152.4 ret=1 flag=1->1 state=2->2
+23:33:57.347 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:33:57.549   133 opcode=0x055D elapsed_us=9673.8 ret=1 flag=1->1 state=2->2
+23:33:59.230   134 opcode=0x055D elapsed_us=9748.9 ret=1 flag=1->1 state=2->2
+23:34:00.354 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:01.680   135 opcode=0x055D elapsed_us=10116.9 ret=1 flag=1->1 state=2->2
+23:34:02.211 ***** WATCH #6: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x055D rcx=0xfd7dfb7 [0xe2d8b67b] rdx=0xea60 (as i32 60000) r8=0xea69 r9=0x5790 (as i32 22416) called-from=0x144e6aecb
+      stack: 0x144e6aecb(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) *****
+23:34:02.232 POOL SENTRY alive 120s: 0 confirmed finding(s) | b0:839ch 53696slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:2546ch 20368slots carve PASS | 0 header(s) repaired | guard page: 0x20: 3371473 served, 3337879 freed, 33594 live, 0 recycled, 0 fell back | 0x40: 454097 served, 434743 freed, 19354 live, 0 recycled, 0 fell back | 3825570 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 1199752, 0x20 3371473, 0x40 454097, 0x80 441433 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 342 us avg, 1407 us max over 596 walks
+23:34:02.371 ***** WATCH #7: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x055D rcx=0xfd7e057 [0xeba80aeb] rdx=0x7530 (as i32 30000) r8=0x7566 r9=0xab7bcfe5 (as i32 -1417949211) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:34:03.359 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:03.892   136 opcode=0x055B elapsed_us=1142193.2 ret=1 flag=1->1 state=2->2
+23:34:06.366 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:09.379 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:12.392 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:15.398 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:18.407 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:21.416 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:24.436 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:27.441 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:30.448 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:32.456 ***** WATCH #8: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x055B rcx=0xfd855d7 [0xf0308700] rdx=0x7530 (as i32 30000) r8=0x7580 r9=0x3a0e47fb (as i32 974014459) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:34:33.456 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:36.464 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:39.472 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:42.478 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:45.484 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:48.491 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:51.499 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:52.040   137 opcode=0x00AC elapsed_us=205.6 ret=1 flag=1->1 state=2->2
+23:34:54.516 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:34:57.525 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:00.538 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:02.212 ***** WATCH #9: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfd8ca18 [0x00000001] rdx=0xea60 (as i32 60000) r8=0xea61 r9=0xd3ef (as i32 54255) called-from=0x144e6aecb
+      stack: 0x144e6aecb(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) *****
+23:35:02.292 POOL SENTRY alive 180s: 0 confirmed finding(s) | b0:839ch 53696slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:2546ch 20368slots carve PASS | 0 header(s) repaired | guard page: 0x20: 3468814 served, 3436164 freed, 32650 live, 0 recycled, 0 fell back | 0x40: 503182 served, 484586 freed, 18596 live, 0 recycled, 0 fell back | 3971996 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 1271978, 0x20 3468814, 0x40 503182, 0x80 453679 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 338 us avg, 1218 us max over 596 walks
+23:35:02.491 ***** WATCH #10: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfd8cb30 [0x00660000] rdx=0x7530 (as i32 30000) r8=0x7559 r9=0x27fe9421 (as i32 670995489) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:35:03.546 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:06.556 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:09.561 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:12.568 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:15.576 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:18.583 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:21.591 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:24.598 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:27.602 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:30.611 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:32.668 ***** WATCH #11: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfd9410b [0x010e0c00] rdx=0x7530 (as i32 30000) r8=0x75db r9=0x3ef90c52 (as i32 1056509010) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:35:33.617 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:36.622 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:39.639 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:42.647 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:45.656 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:48.660 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:51.668 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:54.674 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:35:57.679 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:00.689 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:02.224 ***** WATCH #12: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfd9b480 [0x697c2aeb] rdx=0xea60 (as i32 60000) r8=0xea68 r9=0xfdf0 (as i32 65008) called-from=0x144e6aecb
+      stack: 0x144e6aecb(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) *****
+23:36:02.367 POOL SENTRY alive 240s: 0 confirmed finding(s) | b0:839ch 53696slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:2546ch 20368slots carve PASS | 0 header(s) repaired | guard page: 0x20: 3562859 served, 3530208 freed, 32651 live, 64728 recycled, 0 fell back | 0x40: 551873 served, 533279 freed, 18594 live, 33439 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 1343020, 0x20 3562859, 0x40 551873, 0x80 465432 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 337 us avg, 1317 us max over 596 walks
+23:36:02.873 ***** WATCH #13: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfd9b70a [0x8ec36127] rdx=0x7530 (as i32 30000) r8=0x75ff r9=0xdb307669 (as i32 -617580951) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:36:03.695 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:06.700 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:09.707 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:12.712 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:15.720 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:18.727 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:21.733 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:24.740 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:27.745 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:30.754 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:32.918 ***** WATCH #14: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfda2c61 [0x0003c201] rdx=0x7530 (as i32 30000) r8=0x7557 r9=0x5ffb3ea8 (as i32 1610301096) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:36:33.763 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:36.771 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:39.777 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:42.783 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:45.790 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:48.796 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:51.804 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:54.809 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:36:57.815 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:00.825 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:02.234 ***** WATCH #15: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfda9ee6 [0x00000000] rdx=0xea60 (as i32 60000) r8=0xea66 r9=0xfedb (as i32 65243) called-from=0x144e6aecb
+      stack: 0x144e6aecb(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) *****
+23:37:02.424 POOL SENTRY alive 300s: 0 confirmed finding(s) | b0:839ch 53696slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:2546ch 20368slots carve PASS | 0 header(s) repaired | guard page: 0x20: 3657329 served, 3626881 freed, 30448 live, 159198 recycled, 0 fell back | 0x40: 600536 served, 583786 freed, 16750 live, 82102 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 1414148, 0x20 3657329, 0x40 600536, 0x80 477214 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 338 us avg, 1204 us max over 596 walks
+23:37:03.015 ***** WATCH #16: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfdaa1f2 [0x034e0102] rdx=0x7530 (as i32 30000) r8=0x7591 r9=0x125d8cf7 (as i32 308120823) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:37:03.830 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:06.835 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:09.845 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:12.854 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:15.863 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:18.875 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:21.883 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:24.891 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:27.902 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:30.909 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:33.012 ***** WATCH #17: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfdb1724 [0x5fc37852] rdx=0x7530 (as i32 30000) r8=0x7532 r9=0x4381a1d4 (as i32 1132569044) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:37:33.915 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:36.919 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:39.925 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:42.931 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:45.947 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:49.040 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:52.114   138 opcode=0x00AC elapsed_us=499.1 ret=1 flag=1->1 state=2->2
+23:37:52.232 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:55.349 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:37:58.447 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:01.571 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:02.230 ***** WATCH #18: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfdb894b [0xf9ad5b12] rdx=0xea60 (as i32 60000) r8=0xea65 r9=0xff91 (as i32 65425) called-from=0x144e6aecb
+      stack: 0x144e6aecb(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) *****
+23:38:02.502 POOL SENTRY alive 360s: 0 confirmed finding(s) | b0:839ch 53696slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:2546ch 20368slots carve PASS | 0 header(s) repaired | guard page: 0x20: 3751956 served, 3721509 freed, 30447 live, 253825 recycled, 0 fell back | 0x40: 649280 served, 632529 freed, 16751 live, 130846 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 1485366, 0x20 3751956, 0x40 649280, 0x80 489024 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 410 us avg, 26268 us max over 585 walks
+23:38:03.037 ***** WATCH #19: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfdb8c76 [0x00000069] rdx=0x7530 (as i32 30000) r8=0x7552 r9=0xf6cab45b (as i32 -154487717) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:38:04.719 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:07.856 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:10.989 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:14.108 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:17.201 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:20.258 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:23.271 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:26.277 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:29.284 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:32.291 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:33.061 ***** WATCH #20: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfdc01b4 [0x1b000000] rdx=0x7530 (as i32 30000) r8=0x753e r9=0x3e782114 (as i32 1048060180) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:38:35.296 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:38.301 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:41.307 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:44.316 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:47.321 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:50.325 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:53.332 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:56.338 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:38:59.345 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:02.247 ***** WATCH #21: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfdc73b2 [0x00000000] rdx=0xea60 (as i32 60000) r8=0xea67 r9=0x5dce (as i32 24014) called-from=0x144e6aecb
+      stack: 0x144e6aecb(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) *****
+23:39:02.353 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:02.598 POOL SENTRY alive 420s: 0 confirmed finding(s) | b0:839ch 53696slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:2546ch 20368slots carve PASS | 0 header(s) repaired | guard page: 0x20: 3845999 served, 3815552 freed, 30447 live, 347868 recycled, 0 fell back | 0x40: 697958 served, 681196 freed, 16762 live, 179524 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 1556393, 0x20 3845999, 0x40 697959, 0x80 500778 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 353 us avg, 3174 us max over 587 walks
+23:39:03.108 ***** WATCH #22: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfdc770e [0xff00ffff] rdx=0x7530 (as i32 30000) r8=0x755a r9=0x6167e67b (as i32 1634199163) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:39:05.359 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:08.365 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:11.371 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:14.376 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:17.384 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:20.391 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:23.399 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:26.405 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:29.410 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:32.416 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:33.163 ***** WATCH #23: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfdcec76 [0x9c780000] rdx=0x7530 (as i32 30000) r8=0x7568 r9=0x72bcd909 (as i32 1924978953) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:39:35.420 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:38.424 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:41.431 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:44.437 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:47.446 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:50.453 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:52.007   139 opcode=0x00AC elapsed_us=180.1 ret=1 flag=1->1 state=2->2
+23:39:53.458 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:56.463 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:39:59.471 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:40:02.249 ***** WATCH #24: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfdd5e14 [0x09441883] rdx=0xea60 (as i32 60000) r8=0xea62 r9=0xfed1 (as i32 65233) called-from=0x144e6aecb
+      stack: 0x144e6aecb(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) *****
+23:40:02.478 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:40:02.612 POOL SENTRY alive 480s: 0 confirmed finding(s) | b0:839ch 53696slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:2546ch 20368slots carve PASS | 0 header(s) repaired | guard page: 0x20: 3939995 served, 3913273 freed, 26722 live, 441864 recycled, 0 fell back | 0x40: 746618 served, 733410 freed, 13208 live, 228184 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 1627314, 0x20 3939995, 0x40 746618, 0x80 512528 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 332 us avg, 1215 us max over 596 walks
+23:40:03.170 ***** WATCH #25: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfdd61ac [0xbb7753fb] rdx=0x7530 (as i32 30000) r8=0x7536 r9=0x7a689c30 (as i32 2053676080) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:40:05.483 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:40:08.491 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:40:11.496 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:40:14.503 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:40:17.509 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:40:20.550 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:40:23.556 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:40:26.562 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:40:29.571 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:40:32.578 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:40:33.245 ***** WATCH #26: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfddd735 [0x002c1b00] rdx=0x7530 (as i32 30000) r8=0x7589 r9=0x1a8e3bcf (as i32 445529039) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:40:35.582 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:40:38.589 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:40:41.595 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:40:44.615 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:40:47.633 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:40:50.732 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:40:53.819 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:40:56.933 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:00.029 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:02.250 ***** WATCH #27: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfde487e [0xfafb371b] rdx=0xea60 (as i32 60000) r8=0xea6a r9=0xd7da (as i32 55258) called-from=0x144e6aecb
+      stack: 0x144e6aecb(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) *****
+23:41:02.708 POOL SENTRY alive 540s: 0 confirmed finding(s) | b0:839ch 53696slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:2546ch 20368slots carve PASS | 0 header(s) repaired | guard page: 0x20: 4034373 served, 4007645 freed, 26728 live, 536242 recycled, 0 fell back | 0x40: 795330 served, 782125 freed, 13205 live, 276896 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 1698457, 0x20 4034373, 0x40 795330, 0x80 524309 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 354 us avg, 1872 us max over 587 walks
+23:41:03.131 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:03.281 ***** WATCH #28: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfde4c85 [0x002c1b00] rdx=0x7530 (as i32 30000) r8=0x7550 r9=0x1f81cdb4 (as i32 528600500) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:41:06.231 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:09.363 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:12.496 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:15.595 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:18.670 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:21.702 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:24.711 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:27.718 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:30.723 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:33.356 ***** WATCH #29: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfdec203 [0x3ac41041] rdx=0x7530 (as i32 30000) r8=0x757e r9=0xb1ee5670 (as i32 -1309780368) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:41:33.728 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:36.732 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:39.738 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:42.741 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:45.746 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:48.754 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:51.762 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:54.769 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:41:57.776 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:00.784 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:02.251 ***** WATCH #30: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfdf32e0 [0x78000000] rdx=0xea60 (as i32 60000) r8=0xea62 r9=0x73cd (as i32 29645) called-from=0x144e6aecb
+      stack: 0x144e6aecb(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) *****
+23:42:02.764 POOL SENTRY alive 600s: 0 confirmed finding(s) | b0:839ch 53696slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:2546ch 20368slots carve PASS | 0 header(s) repaired | guard page: 0x20: 4128660 served, 4101956 freed, 26704 live, 630529 recycled, 0 fell back | 0x40: 843960 served, 830907 freed, 13053 live, 325526 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 1769600, 0x20 4128660, 0x40 843960, 0x80 536097 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 358 us avg, 4581 us max over 587 walks
+23:42:03.372 ***** WATCH #31: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfdf3740 [0x7ff64062] rdx=0x7530 (as i32 30000) r8=0x753d r9=0x644548ed (as i32 1682262253) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:42:03.790 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:06.797 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:09.804 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:12.811 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:15.816 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:18.821 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:21.828 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:24.833 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:27.839 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:30.845 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:33.517 ***** WATCH #32: 0x1415db360 ENTERED on tid 189700 while dispatching opcode 0x00AC rcx=0xfdfad00 [0x00047e01] rdx=0x7530 (as i32 30000) r8=0x75c0 r9=0xd99a4c09 (as i32 -644199415) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:42:33.518 probe: watch hit limit reached, further calls will not be logged
+23:42:33.850 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:36.856 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:39.861 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:42.866 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:45.870 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:48.879 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:51.885 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:52.051   140 opcode=0x00AC elapsed_us=231.5 ret=1 flag=1->1 state=2->2
+23:42:54.890 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:42:57.896 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:00.901 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:02.793 POOL SENTRY alive 660s: 0 confirmed finding(s) | b0:839ch 53696slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:2546ch 20368slots carve PASS | 0 header(s) repaired | guard page: 0x20: 4231036 served, 4204050 freed, 26986 live, 732905 recycled, 0 fell back | 0x40: 894416 served, 881056 freed, 13360 live, 375982 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 1843791, 0x20 4231036, 0x40 894416, 0x80 549942 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 331 us avg, 1127 us max over 596 walks
+23:43:03.906 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:06.915 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:09.921 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:12.928 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:15.933 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:18.939 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:21.943 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:24.950 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:27.958 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:30.965 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:33.972 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:36.980 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:39.986 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:42.995 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:46.004 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:49.010 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:52.017 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:55.024 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:43:58.032 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:01.038 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:02.849 POOL SENTRY alive 720s: 0 confirmed finding(s) | b0:839ch 53696slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:2546ch 20368slots carve PASS | 0 header(s) repaired | guard page: 0x20: 4325068 served, 4298081 freed, 26987 live, 826937 recycled, 0 fell back | 0x40: 943082 served, 929722 freed, 13360 live, 424648 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 1914747, 0x20 4325068, 0x40 943082, 0x80 561694 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 340 us avg, 1347 us max over 596 walks
+23:44:04.046 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:07.053 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:10.059 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:13.066 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:16.074 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:19.084 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:22.092 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:25.095 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:28.103 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:31.106 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:34.114 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:37.119 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:40.128 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:43.136 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:46.142 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:49.149 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:52.113   141 opcode=0x00AC elapsed_us=232.7 ret=1 flag=1->1 state=2->2
+23:44:52.158 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:55.166 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:44:58.172 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:01.180 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:02.853 POOL SENTRY alive 780s: 0 confirmed finding(s) | b0:839ch 53696slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:2546ch 20368slots carve PASS | 0 header(s) repaired | guard page: 0x20: 4419081 served, 4392218 freed, 26863 live, 920950 recycled, 0 fell back | 0x40: 991695 served, 978391 freed, 13304 live, 473261 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 1985702, 0x20 4419081, 0x40 991695, 0x80 573445 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 349 us avg, 2495 us max over 595 walks
+23:45:04.186 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:07.193 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:10.200 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:13.208 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:16.217 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:19.225 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:22.232 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:25.241 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:28.248 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:31.256 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:34.264 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:37.269 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:40.276 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:43.281 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:46.289 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:49.296 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:52.304 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:53.010   142 opcode=0x01A3 elapsed_us=685152.9 ret=1741594104 flag=1->1 state=2->2
+23:45:53.011   143 opcode=0x0070 elapsed_us=250.5 ret=1 flag=1->1 state=2->2
+23:45:53.012   144 opcode=0x0070 elapsed_us=173.8 ret=1 flag=1->1 state=2->2
+23:45:53.012   145 opcode=0x0070 elapsed_us=133.7 ret=1 flag=1->1 state=2->2
+23:45:53.012   146 opcode=0x0070 elapsed_us=111.3 ret=1 flag=1->1 state=2->2
+23:45:53.013   147 opcode=0x0070 elapsed_us=115.8 ret=1 flag=1->1 state=2->2
+23:45:53.013   148 opcode=0x0070 elapsed_us=122.3 ret=1 flag=1->1 state=2->2
+23:45:53.014   149 opcode=0x0070 elapsed_us=167.7 ret=1 flag=1->1 state=2->2
+23:45:53.014   150 opcode=0x0070 elapsed_us=145.9 ret=1 flag=1->1 state=2->2
+23:45:53.015   151 opcode=0x0070 elapsed_us=151.2 ret=1 flag=1->1 state=2->2
+23:45:53.015   152 opcode=0x0070 elapsed_us=120.8 ret=1 flag=1->1 state=2->2
+23:45:53.015   153 opcode=0x0070 elapsed_us=109.1 ret=1 flag=1->1 state=2->2
+23:45:53.016   154 opcode=0x0070 elapsed_us=119.4 ret=1 flag=1->1 state=2->2
+23:45:53.016   155 opcode=0x0070 elapsed_us=103.5 ret=1 flag=1->1 state=2->2
+23:45:53.016   156 opcode=0x0070 elapsed_us=108.3 ret=1 flag=1->1 state=2->2
+23:45:53.016   157 opcode=0x0070 elapsed_us=101.8 ret=1 flag=1->1 state=2->2
+23:45:53.017   158 opcode=0x0070 elapsed_us=103.9 ret=1 flag=1->1 state=2->2
+23:45:53.017   159 opcode=0x0070 elapsed_us=103.4 ret=1 flag=1->1 state=2->2
+23:45:53.017   160 opcode=0x0070 elapsed_us=103.2 ret=1 flag=1->1 state=2->2
+23:45:53.018   161 opcode=0x0070 elapsed_us=108.5 ret=1 flag=1->1 state=2->2
+23:45:53.018   162 opcode=0x0070 elapsed_us=102.2 ret=1 flag=1->1 state=2->2
+23:45:53.018   163 opcode=0x0070 elapsed_us=102.6 ret=1 flag=1->1 state=2->2
+23:45:53.019   164 opcode=0x0070 elapsed_us=101.4 ret=1 flag=1->1 state=2->2
+23:45:53.019   165 opcode=0x0070 elapsed_us=101.9 ret=1 flag=1->1 state=2->2
+23:45:53.019   166 opcode=0x0070 elapsed_us=103.3 ret=1 flag=1->1 state=2->2
+23:45:53.020   167 opcode=0x0070 elapsed_us=113.0 ret=1 flag=1->1 state=2->2
+23:45:53.020   168 opcode=0x0070 elapsed_us=104.8 ret=1 flag=1->1 state=2->2
+23:45:53.020   169 opcode=0x0070 elapsed_us=103.0 ret=1 flag=1->1 state=2->2
+23:45:53.021   170 opcode=0x0070 elapsed_us=106.7 ret=1 flag=1->1 state=2->2
+23:45:53.021   171 opcode=0x0070 elapsed_us=102.4 ret=1 flag=1->1 state=2->2
+23:45:53.021   172 opcode=0x0070 elapsed_us=137.7 ret=1 flag=1->1 state=2->2
+23:45:53.022   173 opcode=0x0070 elapsed_us=107.7 ret=1 flag=1->1 state=2->2
+23:45:53.022   174 opcode=0x0070 elapsed_us=104.5 ret=1 flag=1->1 state=2->2
+23:45:53.022   175 opcode=0x0070 elapsed_us=117.8 ret=1 flag=1->1 state=2->2
+23:45:53.023   176 opcode=0x0070 elapsed_us=105.0 ret=1 flag=1->1 state=2->2
+23:45:53.023   177 opcode=0x0070 elapsed_us=102.7 ret=1 flag=1->1 state=2->2
+23:45:53.023   178 opcode=0x0070 elapsed_us=116.7 ret=1 flag=1->1 state=2->2
+23:45:53.024   179 opcode=0x0070 elapsed_us=158.8 ret=1 flag=1->1 state=2->2
+23:45:53.024   180 opcode=0x0070 elapsed_us=121.5 ret=1 flag=1->1 state=2->2
+23:45:53.025   181 opcode=0x0070 elapsed_us=140.0 ret=1 flag=1->1 state=2->2
+23:45:53.025   182 opcode=0x0070 elapsed_us=110.1 ret=1 flag=1->1 state=2->2
+23:45:53.025   183 opcode=0x0070 elapsed_us=111.0 ret=1 flag=1->1 state=2->2
+23:45:53.026   184 opcode=0x0070 elapsed_us=113.5 ret=1 flag=1->1 state=2->2
+23:45:53.026   185 opcode=0x0070 elapsed_us=107.4 ret=1 flag=1->1 state=2->2
+23:45:53.026   186 opcode=0x0070 elapsed_us=111.5 ret=1 flag=1->1 state=2->2
+23:45:53.027   187 opcode=0x0070 elapsed_us=104.1 ret=1 flag=1->1 state=2->2
+23:45:53.027   188 opcode=0x0070 elapsed_us=113.3 ret=1 flag=1->1 state=2->2
+23:45:53.027   189 opcode=0x0070 elapsed_us=105.4 ret=1 flag=1->1 state=2->2
+23:45:53.028   190 opcode=0x0070 elapsed_us=104.4 ret=1 flag=1->1 state=2->2
+23:45:53.028   191 opcode=0x0070 elapsed_us=112.8 ret=1 flag=1->1 state=2->2
+23:45:53.028   192 opcode=0x0070 elapsed_us=109.1 ret=1 flag=1->1 state=2->2
+23:45:53.029   193 opcode=0x0070 elapsed_us=111.4 ret=1 flag=1->1 state=2->2
+23:45:53.029   194 opcode=0x0070 elapsed_us=107.0 ret=1 flag=1->1 state=2->2
+23:45:53.029   195 opcode=0x0070 elapsed_us=107.2 ret=1 flag=1->1 state=2->2
+23:45:53.030   196 opcode=0x0070 elapsed_us=107.7 ret=1 flag=1->1 state=2->2
+23:45:53.030   197 opcode=0x0070 elapsed_us=109.4 ret=1 flag=1->1 state=2->2
+23:45:53.030   198 opcode=0x0070 elapsed_us=105.8 ret=1 flag=1->1 state=2->2
+23:45:53.031   199 opcode=0x0070 elapsed_us=104.5 ret=1 flag=1->1 state=2->2
+23:45:53.031   200 opcode=0x0070 elapsed_us=106.8 ret=1 flag=1->1 state=2->2
+23:45:53.031   201 opcode=0x0070 elapsed_us=105.8 ret=1 flag=1->1 state=2->2
+23:45:53.032   202 opcode=0x0070 elapsed_us=127.9 ret=1 flag=1->1 state=2->2
+23:45:53.032   203 opcode=0x0070 elapsed_us=140.2 ret=1 flag=1->1 state=2->2
+23:45:53.032   204 opcode=0x0070 elapsed_us=136.3 ret=1 flag=1->1 state=2->2
+23:45:53.033   205 opcode=0x0070 elapsed_us=114.1 ret=1 flag=1->1 state=2->2
+23:45:53.033   206 opcode=0x0070 elapsed_us=110.3 ret=1 flag=1->1 state=2->2
+23:45:53.033   207 opcode=0x0070 elapsed_us=112.8 ret=1 flag=1->1 state=2->2
+23:45:53.034   208 opcode=0x0070 elapsed_us=146.0 ret=1 flag=1->1 state=2->2
+23:45:53.034   209 opcode=0x0070 elapsed_us=138.9 ret=1 flag=1->1 state=2->2
+23:45:53.035   210 opcode=0x0070 elapsed_us=146.0 ret=1 flag=1->1 state=2->2
+23:45:53.035   211 opcode=0x0070 elapsed_us=112.4 ret=1 flag=1->1 state=2->2
+23:45:53.035   212 opcode=0x0070 elapsed_us=124.2 ret=1 flag=1->1 state=2->2
+23:45:53.036   213 opcode=0x0070 elapsed_us=115.7 ret=1 flag=1->1 state=2->2
+23:45:53.036   214 opcode=0x0070 elapsed_us=110.9 ret=1 flag=1->1 state=2->2
+23:45:53.036   215 opcode=0x0070 elapsed_us=130.3 ret=1 flag=1->1 state=2->2
+23:45:53.037   216 opcode=0x007C elapsed_us=96.1 ret=1 flag=1->1 state=2->2
+23:45:53.037   217 opcode=0x0089 elapsed_us=110.9 ret=1 flag=1->1 state=2->2
+23:45:53.037   218 opcode=0x0089 elapsed_us=112.6 ret=1 flag=1->1 state=2->2
+23:45:53.038   219 opcode=0x00A7 elapsed_us=224.9 ret=1 flag=1->1 state=2->2
+23:45:53.038   220 opcode=0x00A7 elapsed_us=37.2 ret=1 flag=1->1 state=2->2
+23:45:53.038   221 opcode=0x05AE elapsed_us=47.8 ret=1 flag=1->1 state=2->2
+23:45:53.039   222 opcode=0x05B9 elapsed_us=126.3 ret=1 flag=1->1 state=2->2
+23:45:53.039   223 opcode=0x05AD elapsed_us=35.0 ret=1 flag=1->1 state=2->2
+23:45:55.309 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:45:58.314 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:01.327 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:02.922 POOL SENTRY alive 840s: 0 confirmed finding(s) | b0:839ch 53696slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:2546ch 20368slots carve PASS | 0 header(s) repaired | guard page: 0x20: 4741048 served, 4700172 freed, 40876 live, 1242917 recycled, 0 fell back | 0x40: 1084064 served, 1064919 freed, 19145 live, 565630 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 2133471, 0x20 4741048, 0x40 1084064, 0x80 609442 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 341 us avg, 1161 us max over 596 walks
+23:46:04.334 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:07.339 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:10.345 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:13.353 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:16.361 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:19.368 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:22.375 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:25.384 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:28.391 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:31.397 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:34.405 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:37.411 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:40.418 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:43.425 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:46.434 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:48.398   224 opcode=0x05AD elapsed_us=98.5 ret=1 flag=1->1 state=2->2
+23:46:49.443 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:52.449 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:55.457 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:58.463 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:46:59.768   225 opcode=0x05AE elapsed_us=10431.8 ret=1 flag=1->1 state=2->2
+23:46:59.773   226 opcode=0x05AE elapsed_us=79.7 ret=2 flag=1->1 state=2->2
+23:47:00.561   227 opcode=0x05AD elapsed_us=792595.0 ret=1 flag=1->1 state=2->2
+23:47:01.398   228 opcode=0x05AE elapsed_us=136.0 ret=1 flag=1->1 state=2->2
+23:47:01.469 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:47:02.986 POOL SENTRY alive 900s: 0 confirmed finding(s) | b0:839ch 53696slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:2546ch 20368slots carve PASS | 0 header(s) repaired | guard page: 0x20: 4965693 served, 4923961 freed, 41732 live, 1467562 recycled, 0 fell back | 0x40: 1159848 served, 1139839 freed, 20009 live, 641414 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 2246614, 0x20 4965693, 0x40 1159848, 0x80 632938 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 342 us avg, 1361 us max over 596 walks
+23:47:04.477 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:47:07.484 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:47:10.489 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:47:12.520   229 opcode=0x05AE elapsed_us=10159.3 ret=1 flag=1->1 state=2->2
+23:47:12.524   230 opcode=0x05AE elapsed_us=80.9 ret=2 flag=1->1 state=2->2
+23:47:13.323   231 opcode=0x05AD elapsed_us=802390.3 ret=1 flag=1->1 state=2->2
+23:47:13.495 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:47:15.202   232 opcode=0x05AE elapsed_us=10914.0 ret=1 flag=1->1 state=2->2
+23:47:15.205   233 opcode=0x05AE elapsed_us=89.8 ret=2 flag=1->1 state=2->2
+23:47:15.953   234 opcode=0x05AD elapsed_us=751193.1 ret=1 flag=1->1 state=2->2
+23:47:16.499 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:47:16.651   235 opcode=0x05AE elapsed_us=154.3 ret=1 flag=1->1 state=2->2
+23:47:17.321   236 opcode=0x05AE elapsed_us=146.4 ret=1 flag=1->1 state=2->2
+23:47:19.505 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:47:22.511 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:47:25.521 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:47:28.528 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:47:29.278   237 opcode=0x05AE elapsed_us=4334.2 ret=1 flag=1->1 state=2->2
+23:47:29.279   238 opcode=0x05AE elapsed_us=61.2 ret=2 flag=1->1 state=2->2
+23:47:30.004   239 opcode=0x05AD elapsed_us=726153.8 ret=1 flag=1->1 state=2->2
+23:47:30.774   240 opcode=0x05AE elapsed_us=120.9 ret=1 flag=1->1 state=2->2
+23:47:31.535 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:47:34.543 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:47:37.551 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:47:40.559 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:47:43.599 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:47:46.609 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:47:49.615 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:47:52.038   241 opcode=0x00AC elapsed_us=527.3 ret=1 flag=1->1 state=2->2
+23:47:52.625 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:47:55.643 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:47:58.652 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:48:01.657 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:48:03.006 POOL SENTRY alive 960s: 0 confirmed finding(s) | b0:839ch 53696slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:3573ch 28584slots carve PASS | 0 header(s) repaired | guard page: 0x20: 5473091 served, 5421119 freed, 51972 live, 1974960 recycled, 0 fell back | 0x40: 1319204 served, 1288747 freed, 30457 live, 800770 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 2448976, 0x20 5473091, 0x40 1319204, 0x80 717738 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 367 us avg, 8472 us max over 595 walks
+23:48:04.663 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:48:07.672 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:48:10.677 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:48:13.684 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:48:16.733 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:48:19.780 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:48:22.941 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:48:26.048 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:48:29.129 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:48:32.258 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:48:35.360 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:48:38.470 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:48:41.569 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:48:44.638 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:48:47.757 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:48:50.868 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:48:53.984 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:48:57.094 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:00.246 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:03.014 POOL SENTRY alive 1020s: 0 confirmed finding(s) | b0:899ch 57536slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:4058ch 32464slots carve PASS | 0 header(s) repaired | guard page: 0x20: 5669220 served, 5615914 freed, 53306 live, 2171089 recycled, 0 fell back | 0x40: 1380657 served, 1348584 freed, 32073 live, 862223 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 2538111, 0x20 5669220, 0x40 1380657, 0x80 749692 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 452 us avg, 6189 us max over 566 walks
+23:49:03.383 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:06.522 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:09.676 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:12.808 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:15.867 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:18.880 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:21.887 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:24.893 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:27.901 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:30.910 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:33.918 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:36.924 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:39.931 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:42.937 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:45.947 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:48.954 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:51.962 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:52.101   242 opcode=0x00AC elapsed_us=211.3 ret=1 flag=1->1 state=2->2
+23:49:54.966 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:49:57.972 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:00.979 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:03.056 POOL SENTRY alive 1080s: 0 confirmed finding(s) | b0:899ch 57536slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:4058ch 32464slots carve PASS | 0 header(s) repaired | guard page: 0x20: 5677870 served, 5624565 freed, 53305 live, 2179739 recycled, 0 fell back | 0x40: 1394797 served, 1362725 freed, 32072 live, 876363 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 2563200, 0x20 5677870, 0x40 1394797, 0x80 749692 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 390 us avg, 5210 us max over 588 walks
+23:50:03.985 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:06.994 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:10.003 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:13.008 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:16.015 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:19.022 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:22.029 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:25.038 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:28.043 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:31.046 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:34.053 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:37.060 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:40.065 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:43.068 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:46.074 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:49.078 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:52.086 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:53.113   243 opcode=0x05AD elapsed_us=94.9 ret=1 flag=1->1 state=2->2
+23:50:55.019   244 opcode=0x01A0 elapsed_us=110598.3 ret=1845441184 flag=1->1 state=2->2
+23:50:55.020   245 opcode=0x05F1 elapsed_us=118.9 ret=1 flag=1->1 state=2->2
+23:50:55.020   246 opcode=0x007C elapsed_us=182.0 ret=1 flag=1->1 state=2->2
+23:50:55.021   247 opcode=0x0198 elapsed_us=40.3 ret=1 flag=1->1 state=2->2
+23:50:55.023   248 opcode=0x044F elapsed_us=2292.6 ret=1 flag=1->1 state=2->2
+23:50:55.024   249 opcode=0x044F elapsed_us=611.0 ret=1 flag=1->1 state=2->2
+23:50:55.025   250 opcode=0x044F elapsed_us=637.0 ret=1 flag=1->1 state=2->2
+23:50:55.026   251 opcode=0x044F elapsed_us=563.5 ret=1 flag=1->1 state=2->2
+23:50:55.027   252 opcode=0x044F elapsed_us=584.0 ret=1 flag=1->1 state=2->2
+23:50:55.027   253 opcode=0x0070 elapsed_us=126.0 ret=1 flag=1->1 state=2->2
+23:50:55.027   254 opcode=0x0070 elapsed_us=111.2 ret=1 flag=1->1 state=2->2
+23:50:55.028   255 opcode=0x0070 elapsed_us=110.1 ret=1 flag=1->1 state=2->2
+23:50:55.028   256 opcode=0x0070 elapsed_us=108.3 ret=1 flag=1->1 state=2->2
+23:50:55.028   257 opcode=0x0070 elapsed_us=107.0 ret=1 flag=1->1 state=2->2
+23:50:55.028   258 opcode=0x0070 elapsed_us=107.9 ret=1 flag=1->1 state=2->2
+23:50:55.029   259 opcode=0x0070 elapsed_us=107.9 ret=1 flag=1->1 state=2->2
+23:50:55.029   260 opcode=0x0070 elapsed_us=107.6 ret=1 flag=1->1 state=2->2
+23:50:55.029   261 opcode=0x0070 elapsed_us=107.8 ret=1 flag=1->1 state=2->2
+23:50:55.030   262 opcode=0x0070 elapsed_us=116.3 ret=1 flag=1->1 state=2->2
+23:50:55.030   263 opcode=0x0070 elapsed_us=107.6 ret=1 flag=1->1 state=2->2
+23:50:55.030   264 opcode=0x0070 elapsed_us=123.0 ret=1 flag=1->1 state=2->2
+23:50:55.031   265 opcode=0x0070 elapsed_us=108.9 ret=1 flag=1->1 state=2->2
+23:50:55.031   266 opcode=0x0070 elapsed_us=109.0 ret=1 flag=1->1 state=2->2
+23:50:55.031   267 opcode=0x0070 elapsed_us=108.8 ret=1 flag=1->1 state=2->2
+23:50:55.032   268 opcode=0x0070 elapsed_us=108.5 ret=1 flag=1->1 state=2->2
+23:50:55.032   269 opcode=0x0070 elapsed_us=108.5 ret=1 flag=1->1 state=2->2
+23:50:55.032   270 opcode=0x0070 elapsed_us=106.9 ret=1 flag=1->1 state=2->2
+23:50:55.033   271 opcode=0x0070 elapsed_us=108.5 ret=1 flag=1->1 state=2->2
+23:50:55.033   272 opcode=0x0070 elapsed_us=108.5 ret=1 flag=1->1 state=2->2
+23:50:55.033   273 opcode=0x0070 elapsed_us=107.9 ret=1 flag=1->1 state=2->2
+23:50:55.034   274 opcode=0x0070 elapsed_us=108.0 ret=1 flag=1->1 state=2->2
+23:50:55.034   275 opcode=0x0070 elapsed_us=108.1 ret=1 flag=1->1 state=2->2
+23:50:55.034   276 opcode=0x0070 elapsed_us=122.1 ret=1 flag=1->1 state=2->2
+23:50:55.034   277 opcode=0x0070 elapsed_us=110.2 ret=1 flag=1->1 state=2->2
+23:50:55.035   278 opcode=0x0070 elapsed_us=107.8 ret=1 flag=1->1 state=2->2
+23:50:55.035   279 opcode=0x0070 elapsed_us=108.0 ret=1 flag=1->1 state=2->2
+23:50:55.035   280 opcode=0x0070 elapsed_us=109.0 ret=1 flag=1->1 state=2->2
+23:50:55.036   281 opcode=0x0070 elapsed_us=131.5 ret=1 flag=1->1 state=2->2
+23:50:55.036   282 opcode=0x0070 elapsed_us=130.8 ret=1 flag=1->1 state=2->2
+23:50:55.036   283 opcode=0x0070 elapsed_us=115.0 ret=1 flag=1->1 state=2->2
+23:50:55.037   284 opcode=0x0070 elapsed_us=110.4 ret=1 flag=1->1 state=2->2
+23:50:55.037   285 opcode=0x0070 elapsed_us=108.4 ret=1 flag=1->1 state=2->2
+23:50:55.037   286 opcode=0x0070 elapsed_us=108.8 ret=1 flag=1->1 state=2->2
+23:50:55.038   287 opcode=0x0070 elapsed_us=111.1 ret=1 flag=1->1 state=2->2
+23:50:55.038   288 opcode=0x0070 elapsed_us=109.9 ret=1 flag=1->1 state=2->2
+23:50:55.038   289 opcode=0x0070 elapsed_us=109.7 ret=1 flag=1->1 state=2->2
+23:50:55.039   290 opcode=0x0070 elapsed_us=109.6 ret=1 flag=1->1 state=2->2
+23:50:55.039   291 opcode=0x0070 elapsed_us=108.3 ret=1 flag=1->1 state=2->2
+23:50:55.039   292 opcode=0x0070 elapsed_us=108.4 ret=1 flag=1->1 state=2->2
+23:50:55.040   293 opcode=0x0070 elapsed_us=108.7 ret=1 flag=1->1 state=2->2
+23:50:55.040   294 opcode=0x0070 elapsed_us=108.6 ret=1 flag=1->1 state=2->2
+23:50:55.040   295 opcode=0x0070 elapsed_us=109.0 ret=1 flag=1->1 state=2->2
+23:50:55.040   296 opcode=0x0070 elapsed_us=109.5 ret=1 flag=1->1 state=2->2
+23:50:55.041   297 opcode=0x0070 elapsed_us=108.7 ret=1 flag=1->1 state=2->2
+23:50:55.041   298 opcode=0x0070 elapsed_us=109.3 ret=1 flag=1->1 state=2->2
+23:50:55.041   299 opcode=0x0070 elapsed_us=108.6 ret=1 flag=1->1 state=2->2
+23:50:55.042   300 opcode=0x0070 elapsed_us=108.6 ret=1 flag=1->1 state=2->2
+23:50:55.042   301 opcode=0x0070 elapsed_us=109.5 ret=1 flag=1->1 state=2->2
+23:50:55.042   302 opcode=0x0070 elapsed_us=108.4 ret=1 flag=1->1 state=2->2
+23:50:55.043   303 opcode=0x0070 elapsed_us=124.9 ret=1 flag=1->1 state=2->2
+23:50:55.043   304 opcode=0x0070 elapsed_us=111.8 ret=1 flag=1->1 state=2->2
+23:50:55.043   305 opcode=0x0070 elapsed_us=108.7 ret=1 flag=1->1 state=2->2
+23:50:55.044   306 opcode=0x0070 elapsed_us=113.8 ret=1 flag=1->1 state=2->2
+23:50:55.044   307 opcode=0x0070 elapsed_us=109.6 ret=1 flag=1->1 state=2->2
+23:50:55.044   308 opcode=0x0070 elapsed_us=110.6 ret=1 flag=1->1 state=2->2
+23:50:55.045   309 opcode=0x0070 elapsed_us=108.9 ret=1 flag=1->1 state=2->2
+23:50:55.045   310 opcode=0x0070 elapsed_us=110.5 ret=1 flag=1->1 state=2->2
+23:50:55.045   311 opcode=0x0070 elapsed_us=109.5 ret=1 flag=1->1 state=2->2
+23:50:55.046   312 opcode=0x0070 elapsed_us=111.6 ret=1 flag=1->1 state=2->2
+23:50:55.046   313 opcode=0x0070 elapsed_us=112.5 ret=1 flag=1->1 state=2->2
+23:50:55.046   314 opcode=0x0070 elapsed_us=112.5 ret=1 flag=1->1 state=2->2
+23:50:55.046   315 opcode=0x0070 elapsed_us=112.6 ret=1 flag=1->1 state=2->2
+23:50:55.047   316 opcode=0x0070 elapsed_us=111.6 ret=1 flag=1->1 state=2->2
+23:50:55.047   317 opcode=0x0070 elapsed_us=112.2 ret=1 flag=1->1 state=2->2
+23:50:55.047   318 opcode=0x0070 elapsed_us=111.4 ret=1 flag=1->1 state=2->2
+23:50:55.048   319 opcode=0x0070 elapsed_us=115.0 ret=1 flag=1->1 state=2->2
+23:50:55.048   320 opcode=0x0070 elapsed_us=113.4 ret=1 flag=1->1 state=2->2
+23:50:55.048   321 opcode=0x0070 elapsed_us=112.1 ret=1 flag=1->1 state=2->2
+23:50:55.049   322 opcode=0x0070 elapsed_us=113.2 ret=1 flag=1->1 state=2->2
+23:50:55.049   323 opcode=0x0070 elapsed_us=114.1 ret=1 flag=1->1 state=2->2
+23:50:55.049   324 opcode=0x0070 elapsed_us=112.8 ret=1 flag=1->1 state=2->2
+23:50:55.050   325 opcode=0x0070 elapsed_us=115.7 ret=1 flag=1->1 state=2->2
+23:50:55.050   326 opcode=0x0070 elapsed_us=119.3 ret=1 flag=1->1 state=2->2
+23:50:55.050   327 opcode=0x0070 elapsed_us=113.2 ret=1 flag=1->1 state=2->2
+23:50:55.051   328 opcode=0x0070 elapsed_us=114.3 ret=1 flag=1->1 state=2->2
+23:50:55.051   329 opcode=0x0070 elapsed_us=114.6 ret=1 flag=1->1 state=2->2
+23:50:55.051   330 opcode=0x007C elapsed_us=148.3 ret=1 flag=1->1 state=2->2
+23:50:55.056   331 opcode=0x0089 elapsed_us=4426.8 ret=1 flag=1->1 state=2->2
+23:50:55.056   332 opcode=0x0089 elapsed_us=166.8 ret=1 flag=1->1 state=2->2
+23:50:55.057   333 opcode=0x00A7 elapsed_us=180.5 ret=1 flag=1->1 state=2->2
+23:50:55.057   334 opcode=0x00A7 elapsed_us=37.3 ret=1 flag=1->1 state=2->2
+23:50:55.092 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:50:58.098 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:01.106 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:03.112 POOL SENTRY alive 1141s: 0 confirmed finding(s) | b0:900ch 57600slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:4058ch 32464slots carve PASS | 0 header(s) repaired | guard page: 0x20: 5754389 served, 5702839 freed, 51550 live, 2256258 recycled, 0 fell back | 0x40: 1423807 served, 1393408 freed, 30399 live, 905373 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 2619271, 0x20 5754389, 0x40 1423807, 0x80 758738 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 353 us avg, 1577 us max over 596 walks
+23:51:04.111 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:07.118 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:10.125 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:13.131 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:16.136 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:19.143 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:22.153 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:25.162 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:28.169 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:31.177 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:34.184 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:37.189 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:40.197 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:43.204 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:46.209 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:49.217 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:52.225 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:54.948   335 opcode=0x01A3 elapsed_us=664241.3 ret=881439624 flag=1->1 state=2->2
+23:51:54.948   336 opcode=0x0070 elapsed_us=212.5 ret=1 flag=1->1 state=2->2
+23:51:54.949   337 opcode=0x0070 elapsed_us=127.5 ret=1 flag=1->1 state=2->2
+23:51:54.949   338 opcode=0x0070 elapsed_us=109.8 ret=1 flag=1->1 state=2->2
+23:51:54.949   339 opcode=0x0070 elapsed_us=106.0 ret=1 flag=1->1 state=2->2
+23:51:54.950   340 opcode=0x0070 elapsed_us=102.5 ret=1 flag=1->1 state=2->2
+23:51:54.950   341 opcode=0x0070 elapsed_us=104.8 ret=1 flag=1->1 state=2->2
+23:51:54.950   342 opcode=0x0070 elapsed_us=99.5 ret=1 flag=1->1 state=2->2
+23:51:54.951   343 opcode=0x0070 elapsed_us=100.8 ret=1 flag=1->1 state=2->2
+23:51:54.951   344 opcode=0x0070 elapsed_us=100.6 ret=1 flag=1->1 state=2->2
+23:51:54.951   345 opcode=0x0070 elapsed_us=99.9 ret=1 flag=1->1 state=2->2
+23:51:54.952   346 opcode=0x0070 elapsed_us=99.4 ret=1 flag=1->1 state=2->2
+23:51:54.952   347 opcode=0x0070 elapsed_us=103.8 ret=1 flag=1->1 state=2->2
+23:51:54.952   348 opcode=0x0070 elapsed_us=98.6 ret=1 flag=1->1 state=2->2
+23:51:54.952   349 opcode=0x0070 elapsed_us=100.9 ret=1 flag=1->1 state=2->2
+23:51:54.953   350 opcode=0x0070 elapsed_us=99.7 ret=1 flag=1->1 state=2->2
+23:51:54.953   351 opcode=0x0070 elapsed_us=99.4 ret=1 flag=1->1 state=2->2
+23:51:54.953   352 opcode=0x0070 elapsed_us=99.0 ret=1 flag=1->1 state=2->2
+23:51:54.954   353 opcode=0x0070 elapsed_us=101.8 ret=1 flag=1->1 state=2->2
+23:51:54.954   354 opcode=0x0070 elapsed_us=101.0 ret=1 flag=1->1 state=2->2
+23:51:54.954   355 opcode=0x0070 elapsed_us=100.1 ret=1 flag=1->1 state=2->2
+23:51:54.955   356 opcode=0x0070 elapsed_us=99.4 ret=1 flag=1->1 state=2->2
+23:51:54.955   357 opcode=0x0070 elapsed_us=101.6 ret=1 flag=1->1 state=2->2
+23:51:54.955   358 opcode=0x0070 elapsed_us=99.9 ret=1 flag=1->1 state=2->2
+23:51:54.956   359 opcode=0x0070 elapsed_us=99.3 ret=1 flag=1->1 state=2->2
+23:51:54.956   360 opcode=0x0070 elapsed_us=102.4 ret=1 flag=1->1 state=2->2
+23:51:54.956   361 opcode=0x0070 elapsed_us=101.8 ret=1 flag=1->1 state=2->2
+23:51:54.956   362 opcode=0x0070 elapsed_us=99.0 ret=1 flag=1->1 state=2->2
+23:51:54.957   363 opcode=0x0070 elapsed_us=100.2 ret=1 flag=1->1 state=2->2
+23:51:54.957   364 opcode=0x0070 elapsed_us=180.8 ret=1 flag=1->1 state=2->2
+23:51:54.958   365 opcode=0x0070 elapsed_us=175.9 ret=1 flag=1->1 state=2->2
+23:51:54.958   366 opcode=0x0070 elapsed_us=111.9 ret=1 flag=1->1 state=2->2
+23:51:54.958   367 opcode=0x0070 elapsed_us=101.9 ret=1 flag=1->1 state=2->2
+23:51:54.959   368 opcode=0x0070 elapsed_us=101.0 ret=1 flag=1->1 state=2->2
+23:51:54.959   369 opcode=0x0070 elapsed_us=101.0 ret=1 flag=1->1 state=2->2
+23:51:54.959   370 opcode=0x0070 elapsed_us=102.3 ret=1 flag=1->1 state=2->2
+23:51:54.960   371 opcode=0x0070 elapsed_us=99.6 ret=1 flag=1->1 state=2->2
+23:51:54.960   372 opcode=0x0070 elapsed_us=101.0 ret=1 flag=1->1 state=2->2
+23:51:54.960   373 opcode=0x0070 elapsed_us=101.0 ret=1 flag=1->1 state=2->2
+23:51:54.961   374 opcode=0x0070 elapsed_us=102.1 ret=1 flag=1->1 state=2->2
+23:51:54.961   375 opcode=0x0070 elapsed_us=101.3 ret=1 flag=1->1 state=2->2
+23:51:54.961   376 opcode=0x0070 elapsed_us=100.6 ret=1 flag=1->1 state=2->2
+23:51:54.962   377 opcode=0x0070 elapsed_us=100.7 ret=1 flag=1->1 state=2->2
+23:51:54.962   378 opcode=0x0070 elapsed_us=104.6 ret=1 flag=1->1 state=2->2
+23:51:54.962   379 opcode=0x0070 elapsed_us=101.3 ret=1 flag=1->1 state=2->2
+23:51:54.962   380 opcode=0x0070 elapsed_us=100.2 ret=1 flag=1->1 state=2->2
+23:51:54.963   381 opcode=0x0070 elapsed_us=100.2 ret=1 flag=1->1 state=2->2
+23:51:54.963   382 opcode=0x0070 elapsed_us=101.0 ret=1 flag=1->1 state=2->2
+23:51:54.963   383 opcode=0x0070 elapsed_us=100.7 ret=1 flag=1->1 state=2->2
+23:51:54.964   384 opcode=0x0070 elapsed_us=100.7 ret=1 flag=1->1 state=2->2
+23:51:54.964   385 opcode=0x0070 elapsed_us=101.6 ret=1 flag=1->1 state=2->2
+23:51:54.964   386 opcode=0x0070 elapsed_us=101.3 ret=1 flag=1->1 state=2->2
+23:51:54.965   387 opcode=0x0070 elapsed_us=100.3 ret=1 flag=1->1 state=2->2
+23:51:54.965   388 opcode=0x0070 elapsed_us=107.4 ret=1 flag=1->1 state=2->2
+23:51:54.965   389 opcode=0x0070 elapsed_us=102.7 ret=1 flag=1->1 state=2->2
+23:51:54.965   390 opcode=0x0070 elapsed_us=101.7 ret=1 flag=1->1 state=2->2
+23:51:54.966   391 opcode=0x0070 elapsed_us=102.1 ret=1 flag=1->1 state=2->2
+23:51:54.966   392 opcode=0x0070 elapsed_us=101.7 ret=1 flag=1->1 state=2->2
+23:51:54.966   393 opcode=0x0070 elapsed_us=101.4 ret=1 flag=1->1 state=2->2
+23:51:54.967   394 opcode=0x0070 elapsed_us=101.1 ret=1 flag=1->1 state=2->2
+23:51:54.967   395 opcode=0x0070 elapsed_us=105.1 ret=1 flag=1->1 state=2->2
+23:51:54.967   396 opcode=0x0070 elapsed_us=103.9 ret=1 flag=1->1 state=2->2
+23:51:54.968   397 opcode=0x0070 elapsed_us=103.0 ret=1 flag=1->1 state=2->2
+23:51:54.968   398 opcode=0x0070 elapsed_us=109.5 ret=1 flag=1->1 state=2->2
+23:51:54.968   399 opcode=0x0070 elapsed_us=103.7 ret=1 flag=1->1 state=2->2
+23:51:54.969   400 opcode=0x0070 elapsed_us=103.6 ret=1 flag=1->1 state=2->2
+23:51:54.969   401 opcode=0x0070 elapsed_us=102.9 ret=1 flag=1->1 state=2->2
+23:51:54.969   402 opcode=0x0070 elapsed_us=104.1 ret=1 flag=1->1 state=2->2
+23:51:54.969   403 opcode=0x0070 elapsed_us=105.5 ret=1 flag=1->1 state=2->2
+23:51:54.970   404 opcode=0x0070 elapsed_us=104.3 ret=1 flag=1->1 state=2->2
+23:51:54.970   405 opcode=0x0070 elapsed_us=106.0 ret=1 flag=1->1 state=2->2
+23:51:54.970   406 opcode=0x0070 elapsed_us=106.1 ret=1 flag=1->1 state=2->2
+23:51:54.971   407 opcode=0x0070 elapsed_us=106.8 ret=1 flag=1->1 state=2->2
+23:51:54.971   408 opcode=0x0070 elapsed_us=113.4 ret=1 flag=1->1 state=2->2
+23:51:54.971   409 opcode=0x0070 elapsed_us=105.5 ret=1 flag=1->1 state=2->2
+23:51:54.972   410 opcode=0x0070 elapsed_us=105.5 ret=1 flag=1->1 state=2->2
+23:51:54.972   411 opcode=0x0070 elapsed_us=113.6 ret=1 flag=1->1 state=2->2
+23:51:54.972   412 opcode=0x0070 elapsed_us=138.5 ret=1 flag=1->1 state=2->2
+23:51:54.973   413 opcode=0x007C elapsed_us=94.8 ret=1 flag=1->1 state=2->2
+23:51:54.973   414 opcode=0x0089 elapsed_us=129.5 ret=1 flag=1->1 state=2->2
+23:51:54.974   415 opcode=0x0089 elapsed_us=114.9 ret=1 flag=1->1 state=2->2
+23:51:54.974   416 opcode=0x00A7 elapsed_us=230.8 ret=1 flag=1->1 state=2->2
+23:51:54.974   417 opcode=0x00A7 elapsed_us=39.4 ret=1 flag=1->1 state=2->2
+23:51:54.975   418 opcode=0x05AE elapsed_us=40.4 ret=1 flag=1->1 state=2->2
+23:51:54.975   419 opcode=0x05B9 elapsed_us=135.7 ret=1 flag=1->1 state=2->2
+23:51:54.975   420 opcode=0x05AD elapsed_us=44.5 ret=1 flag=1->1 state=2->2
+23:51:55.233 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:51:58.242 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:01.250 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:03.170 POOL SENTRY alive 1201s: 0 confirmed finding(s) | b0:900ch 57600slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:4058ch 32464slots carve PASS | 0 header(s) repaired | guard page: 0x20: 5958738 served, 5907059 freed, 51679 live, 2460607 recycled, 0 fell back | 0x40: 1498433 served, 1467609 freed, 30824 live, 979999 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 2718781, 0x20 5958738, 0x40 1498433, 0x80 778119 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 361 us avg, 1873 us max over 596 walks
+23:52:03.786   421 opcode=0x05AE elapsed_us=10560.6 ret=1 flag=1->1 state=2->2
+23:52:03.789   422 opcode=0x05AE elapsed_us=84.2 ret=2 flag=1->1 state=2->2
+23:52:04.257 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:04.658   423 opcode=0x05AD elapsed_us=872260.8 ret=1 flag=1->1 state=2->2
+23:52:05.466   424 opcode=0x05AE elapsed_us=108.7 ret=1 flag=1->1 state=2->2
+23:52:07.266 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:07.881   425 opcode=0x01A0 elapsed_us=99277.7 ret=1723835984 flag=1->1 state=2->2
+23:52:07.882   426 opcode=0x05F1 elapsed_us=102.2 ret=1 flag=1->1 state=2->2
+23:52:07.883   427 opcode=0x007C elapsed_us=190.4 ret=1 flag=1->1 state=2->2
+23:52:07.883   428 opcode=0x0198 elapsed_us=62.6 ret=1 flag=1->1 state=2->2
+23:52:07.886   429 opcode=0x044F elapsed_us=2556.1 ret=1 flag=1->1 state=2->2
+23:52:07.887   430 opcode=0x044F elapsed_us=649.0 ret=1 flag=1->1 state=2->2
+23:52:07.888   431 opcode=0x044F elapsed_us=576.9 ret=1 flag=1->1 state=2->2
+23:52:07.889   432 opcode=0x044F elapsed_us=504.1 ret=1 flag=1->1 state=2->2
+23:52:07.890   433 opcode=0x044F elapsed_us=531.1 ret=1 flag=1->1 state=2->2
+23:52:07.890   434 opcode=0x0070 elapsed_us=219.3 ret=1 flag=1->1 state=2->2
+23:52:07.891   435 opcode=0x0070 elapsed_us=166.0 ret=1 flag=1->1 state=2->2
+23:52:07.891   436 opcode=0x0070 elapsed_us=144.0 ret=1 flag=1->1 state=2->2
+23:52:07.891   437 opcode=0x0070 elapsed_us=128.8 ret=1 flag=1->1 state=2->2
+23:52:07.892   438 opcode=0x0070 elapsed_us=132.2 ret=1 flag=1->1 state=2->2
+23:52:07.892   439 opcode=0x0070 elapsed_us=122.6 ret=1 flag=1->1 state=2->2
+23:52:07.892   440 opcode=0x0070 elapsed_us=149.4 ret=1 flag=1->1 state=2->2
+23:52:07.893   441 opcode=0x0070 elapsed_us=119.8 ret=1 flag=1->1 state=2->2
+23:52:07.893   442 opcode=0x0070 elapsed_us=126.4 ret=1 flag=1->1 state=2->2
+23:52:07.894   443 opcode=0x0070 elapsed_us=127.1 ret=1 flag=1->1 state=2->2
+23:52:07.894   444 opcode=0x0070 elapsed_us=119.9 ret=1 flag=1->1 state=2->2
+23:52:07.894   445 opcode=0x0070 elapsed_us=152.7 ret=1 flag=1->1 state=2->2
+23:52:07.895   446 opcode=0x0070 elapsed_us=126.9 ret=1 flag=1->1 state=2->2
+23:52:07.895   447 opcode=0x0070 elapsed_us=120.2 ret=1 flag=1->1 state=2->2
+23:52:07.895   448 opcode=0x0070 elapsed_us=115.9 ret=1 flag=1->1 state=2->2
+23:52:07.896   449 opcode=0x0070 elapsed_us=134.7 ret=1 flag=1->1 state=2->2
+23:52:07.897   450 opcode=0x0070 elapsed_us=580.4 ret=1 flag=1->1 state=2->2
+23:52:07.898   451 opcode=0x0070 elapsed_us=133.5 ret=1 flag=1->1 state=2->2
+23:52:07.899   452 opcode=0x0070 elapsed_us=139.0 ret=1 flag=1->1 state=2->2
+23:52:07.901   453 opcode=0x0070 elapsed_us=622.2 ret=1 flag=1->1 state=2->2
+23:52:07.901   454 opcode=0x0070 elapsed_us=149.5 ret=1 flag=1->1 state=2->2
+23:52:07.902   455 opcode=0x0070 elapsed_us=127.0 ret=1 flag=1->1 state=2->2
+23:52:07.902   456 opcode=0x0070 elapsed_us=180.8 ret=1 flag=1->1 state=2->2
+23:52:07.903   457 opcode=0x0070 elapsed_us=278.7 ret=1 flag=1->1 state=2->2
+23:52:07.904   458 opcode=0x0070 elapsed_us=131.8 ret=1 flag=1->1 state=2->2
+23:52:07.904   459 opcode=0x0070 elapsed_us=115.3 ret=1 flag=1->1 state=2->2
+23:52:07.904   460 opcode=0x0070 elapsed_us=121.0 ret=1 flag=1->1 state=2->2
+23:52:07.905   461 opcode=0x0070 elapsed_us=167.6 ret=1 flag=1->1 state=2->2
+23:52:07.905   462 opcode=0x0070 elapsed_us=132.6 ret=1 flag=1->1 state=2->2
+23:52:07.906   463 opcode=0x0070 elapsed_us=128.2 ret=1 flag=1->1 state=2->2
+23:52:07.906   464 opcode=0x0070 elapsed_us=180.6 ret=1 flag=1->1 state=2->2
+23:52:07.907   465 opcode=0x0070 elapsed_us=130.4 ret=1 flag=1->1 state=2->2
+23:52:07.907   466 opcode=0x0070 elapsed_us=155.4 ret=1 flag=1->1 state=2->2
+23:52:07.907   467 opcode=0x0070 elapsed_us=131.1 ret=1 flag=1->1 state=2->2
+23:52:07.908   468 opcode=0x0070 elapsed_us=138.5 ret=1 flag=1->1 state=2->2
+23:52:07.908   469 opcode=0x0070 elapsed_us=121.3 ret=1 flag=1->1 state=2->2
+23:52:07.908   470 opcode=0x0070 elapsed_us=119.6 ret=1 flag=1->1 state=2->2
+23:52:07.909   471 opcode=0x0070 elapsed_us=141.1 ret=1 flag=1->1 state=2->2
+23:52:07.909   472 opcode=0x0070 elapsed_us=139.2 ret=1 flag=1->1 state=2->2
+23:52:07.910   473 opcode=0x0070 elapsed_us=139.2 ret=1 flag=1->1 state=2->2
+23:52:07.910   474 opcode=0x0070 elapsed_us=125.1 ret=1 flag=1->1 state=2->2
+23:52:07.910   475 opcode=0x0070 elapsed_us=120.4 ret=1 flag=1->1 state=2->2
+23:52:07.911   476 opcode=0x0070 elapsed_us=117.6 ret=1 flag=1->1 state=2->2
+23:52:07.911   477 opcode=0x0070 elapsed_us=115.8 ret=1 flag=1->1 state=2->2
+23:52:07.911   478 opcode=0x0070 elapsed_us=113.1 ret=1 flag=1->1 state=2->2
+23:52:07.912   479 opcode=0x0070 elapsed_us=111.4 ret=1 flag=1->1 state=2->2
+23:52:07.912   480 opcode=0x0070 elapsed_us=117.6 ret=1 flag=1->1 state=2->2
+23:52:07.912   481 opcode=0x0070 elapsed_us=116.1 ret=1 flag=1->1 state=2->2
+23:52:07.913   482 opcode=0x0070 elapsed_us=184.8 ret=1 flag=1->1 state=2->2
+23:52:07.913   483 opcode=0x0070 elapsed_us=126.4 ret=1 flag=1->1 state=2->2
+23:52:07.913   484 opcode=0x0070 elapsed_us=120.7 ret=1 flag=1->1 state=2->2
+23:52:07.914   485 opcode=0x0070 elapsed_us=154.8 ret=1 flag=1->1 state=2->2
+23:52:07.914   486 opcode=0x0070 elapsed_us=141.2 ret=1 flag=1->1 state=2->2
+23:52:07.915   487 opcode=0x0070 elapsed_us=130.3 ret=1 flag=1->1 state=2->2
+23:52:07.915   488 opcode=0x0070 elapsed_us=130.1 ret=1 flag=1->1 state=2->2
+23:52:07.916   489 opcode=0x0070 elapsed_us=130.8 ret=1 flag=1->1 state=2->2
+23:52:07.916   490 opcode=0x0070 elapsed_us=128.7 ret=1 flag=1->1 state=2->2
+23:52:07.916   491 opcode=0x0070 elapsed_us=130.8 ret=1 flag=1->1 state=2->2
+23:52:07.917   492 opcode=0x0070 elapsed_us=158.3 ret=1 flag=1->1 state=2->2
+23:52:07.917   493 opcode=0x0070 elapsed_us=126.0 ret=1 flag=1->1 state=2->2
+23:52:07.918   494 opcode=0x0070 elapsed_us=130.2 ret=1 flag=1->1 state=2->2
+23:52:07.918   495 opcode=0x0070 elapsed_us=130.7 ret=1 flag=1->1 state=2->2
+23:52:07.919   496 opcode=0x0070 elapsed_us=134.5 ret=1 flag=1->1 state=2->2
+23:52:07.919   497 opcode=0x0070 elapsed_us=123.0 ret=1 flag=1->1 state=2->2
+23:52:07.919   498 opcode=0x0070 elapsed_us=121.3 ret=1 flag=1->1 state=2->2
+23:52:07.920   499 opcode=0x0070 elapsed_us=119.9 ret=1 flag=1->1 state=2->2
+23:52:07.920   500 opcode=0x0070 elapsed_us=137.1 ret=1 flag=1->1 state=2->2
+23:52:07.921   501 opcode=0x0070 elapsed_us=129.7 ret=1 flag=1->1 state=2->2
+23:52:07.921   502 opcode=0x0070 elapsed_us=134.6 ret=1 flag=1->1 state=2->2
+23:52:07.921   503 opcode=0x0070 elapsed_us=150.2 ret=1 flag=1->1 state=2->2
+23:52:07.922   504 opcode=0x0070 elapsed_us=128.3 ret=1 flag=1->1 state=2->2
+23:52:07.922   505 opcode=0x0070 elapsed_us=120.3 ret=1 flag=1->1 state=2->2
+23:52:07.922   506 opcode=0x0070 elapsed_us=122.7 ret=1 flag=1->1 state=2->2
+23:52:07.923   507 opcode=0x0070 elapsed_us=145.0 ret=1 flag=1->1 state=2->2
+23:52:07.923   508 opcode=0x0070 elapsed_us=135.3 ret=1 flag=1->1 state=2->2
+23:52:07.924   509 opcode=0x0070 elapsed_us=126.5 ret=1 flag=1->1 state=2->2
+23:52:07.924   510 opcode=0x0070 elapsed_us=122.6 ret=1 flag=1->1 state=2->2
+23:52:07.924   511 opcode=0x0070 elapsed_us=121.4 ret=1 flag=1->1 state=2->2
+23:52:07.925   512 opcode=0x007C elapsed_us=156.4 ret=1 flag=1->1 state=2->2
+23:52:07.929   513 opcode=0x0089 elapsed_us=4476.8 ret=1 flag=1->1 state=2->2
+23:52:07.930   514 opcode=0x0089 elapsed_us=195.2 ret=1 flag=1->1 state=2->2
+23:52:07.930   515 opcode=0x00A7 elapsed_us=242.2 ret=1 flag=1->1 state=2->2
+23:52:07.931   516 opcode=0x00A7 elapsed_us=53.6 ret=1 flag=1->1 state=2->2
+23:52:10.273 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:13.282 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:15.999   517 opcode=0x007C elapsed_us=182.6 ret=1 flag=1->1 state=2->2
+23:52:16.290 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:19.297 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:22.304 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:25.311 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:28.319 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:31.324 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:34.343 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:37.348 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:40.355 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:43.359 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:46.366 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:49.371 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:52.005   518 opcode=0x00AC elapsed_us=384.3 ret=1 flag=1->1 state=2->2
+23:52:52.379 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:55.387 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:52:58.393 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:01.399 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:03.261 POOL SENTRY alive 1261s: 0 confirmed finding(s) | b0:959ch 61376slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:4058ch 32464slots carve PASS | 0 header(s) repaired | guard page: 0x20: 6136646 served, 6080379 freed, 56267 live, 2638515 recycled, 0 fell back | 0x40: 1568339 served, 1534750 freed, 33589 live, 1049905 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 2836213, 0x20 6136646, 0x40 1568339, 0x80 796028 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 365 us avg, 1542 us max over 596 walks
+23:53:04.405 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:07.412 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:10.421 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:13.429 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:16.434 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:19.442 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:22.448 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:25.456 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:28.465 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:31.469 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:34.489 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:37.496 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:40.502 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:43.510 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:46.547 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:49.325   519 opcode=0x007C elapsed_us=232.2 ret=1 flag=1->1 state=2->2
+23:53:49.556 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:51.356   520 opcode=0x007C elapsed_us=206.5 ret=1 flag=1->1 state=2->2
+23:53:52.565 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:55.571 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:53:58.578 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:01.583 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:03.312 POOL SENTRY alive 1321s: 0 confirmed finding(s) | b0:959ch 61376slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:4058ch 32464slots carve PASS | 0 header(s) repaired | guard page: 0x20: 6250421 served, 6206204 freed, 44217 live, 2752290 recycled, 0 fell back | 0x40: 1622329 served, 1602651 freed, 19678 live, 1103895 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 2913888, 0x20 6250421, 0x40 1622329, 0x80 809353 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 369 us avg, 1724 us max over 596 walks
+23:54:04.591 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:07.598 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:10.606 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:13.616 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:16.622 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:19.631 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:22.638 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:25.645 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:28.651 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:31.656 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:34.664 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:37.673 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:40.687 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:43.694 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:46.894 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:50.029 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:52.057   521 opcode=0x00AC elapsed_us=226.9 ret=1 flag=1->1 state=2->2
+23:54:53.129 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:56.318 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:54:59.493 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:55:02.628 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:55:03.362 POOL SENTRY alive 1381s: 0 confirmed finding(s) | b0:959ch 61376slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:4058ch 32464slots carve PASS | 0 header(s) repaired | guard page: 0x20: 6344688 served, 6301517 freed, 43171 live, 2846557 recycled, 0 fell back | 0x40: 1670894 served, 1652474 freed, 18420 live, 1152460 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 2984960, 0x20 6344688, 0x40 1670894, 0x80 821142 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 393 us avg, 3309 us max over 582 walks
+23:55:05.742 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:55:08.867 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:55:12.026 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:55:15.145 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:55:18.185 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:55:21.200 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:55:24.207 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:55:27.213 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:55:30.223 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:55:33.229 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:55:36.234 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:55:39.239 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:55:42.246 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:55:45.253 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:55:48.260 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:55:51.265 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:55:54.273 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:55:57.276 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:00.285 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:03.289 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:03.417 POOL SENTRY alive 1441s: 0 confirmed finding(s) | b0:959ch 61376slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:4058ch 32464slots carve PASS | 0 header(s) repaired | guard page: 0x20: 6450063 served, 6406418 freed, 43645 live, 2951932 recycled, 0 fell back | 0x40: 1722837 served, 1703999 freed, 18838 live, 1204403 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 3059826, 0x20 6450063, 0x40 1722837, 0x80 833610 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 381 us avg, 4985 us max over 588 walks
+23:56:06.296 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:09.305 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:12.313 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:15.319 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:18.327 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:21.334 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:24.340 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:27.349 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:30.355 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:33.362 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:36.368 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:39.374 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:42.385 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:45.392 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:48.397 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:51.406 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:54.413 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:56:57.419 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:00.425 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:03.429 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:03.492 POOL SENTRY alive 1501s: 0 confirmed finding(s) | b0:959ch 61376slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:4058ch 32464slots carve PASS | 0 header(s) repaired | guard page: 0x20: 6551044 served, 6513011 freed, 38033 live, 3052913 recycled, 0 fell back | 0x40: 1773296 served, 1758375 freed, 14921 live, 1254862 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 3133174, 0x20 6551044, 0x40 1773296, 0x80 845852 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 362 us avg, 1756 us max over 596 walks
+23:57:06.437 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:09.444 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:12.451 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:15.458 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:18.463 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:21.469 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:24.474 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:27.482 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:30.488 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:33.495 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:36.502 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:39.507 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:42.515 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:45.544 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:48.551 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:51.559 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:52.023   522 opcode=0x00AC elapsed_us=403.8 ret=1 flag=1->1 state=2->2
+23:57:54.566 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:57:57.569 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:00.576 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:03.581 POOL SENTRY alive 1561s: 0 confirmed finding(s) | b0:959ch 61376slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:4058ch 32464slots carve PASS | 0 header(s) repaired | guard page: 0x20: 6645406 served, 6607373 freed, 38033 live, 3147275 recycled, 0 fell back | 0x40: 1821989 served, 1807078 freed, 14911 live, 1303555 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 3204299, 0x20 6645406, 0x40 1821989, 0x80 857628 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 368 us avg, 2813 us max over 596 walks
+23:58:03.584 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:06.589 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:09.598 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:12.602 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:15.606 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:18.614 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:21.622 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:24.629 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:27.636 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:30.644 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:33.648 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:36.654 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:39.658 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:42.666 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:45.674 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:48.683 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:51.688 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:54.696 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:58:57.704 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:00.711 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:03.670 POOL SENTRY alive 1621s: 0 confirmed finding(s) | b0:959ch 61376slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:4058ch 32464slots carve PASS | 0 header(s) repaired | guard page: 0x20: 6740027 served, 6702187 freed, 37840 live, 3241896 recycled, 0 fell back | 0x40: 1870694 served, 1856326 freed, 14368 live, 1352260 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 3275555, 0x20 6740027, 0x40 1870694, 0x80 869433 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 374 us avg, 8160 us max over 596 walks
+23:59:03.718 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:06.752 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:09.759 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:12.768 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:15.776 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:18.781 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:21.790 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:24.798 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:27.805 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:30.813 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:33.822 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:36.829 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:39.836 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:42.841 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:45.847 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:48.854 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:51.862 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:52.045   523 opcode=0x00AC elapsed_us=263.4 ret=1 flag=1->1 state=2->2
+23:59:54.872 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:59:57.879 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:00.887 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:03.694 POOL SENTRY alive 1681s: 0 confirmed finding(s) | b0:959ch 61376slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:4058ch 32464slots carve PASS | 0 header(s) repaired | guard page: 0x20: 6836602 served, 6798996 freed, 37606 live, 3338471 recycled, 0 fell back | 0x40: 1919974 served, 1905337 freed, 14637 live, 1401540 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 3347478, 0x20 6836602, 0x40 1919974, 0x80 881603 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 367 us avg, 1648 us max over 595 walks
+00:00:03.896 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:06.903 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:09.913 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:12.921 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:15.929 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:18.937 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:21.944 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:24.977 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:27.984 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:30.991 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:33.998 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:37.044 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:40.050 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:41.452   524 opcode=0x01A3 elapsed_us=699194.1 ret=881440648 flag=1->1 state=2->2
+00:00:41.453   525 opcode=0x0070 elapsed_us=249.9 ret=1 flag=1->1 state=2->2
+00:00:41.453   526 opcode=0x0070 elapsed_us=170.4 ret=1 flag=1->1 state=2->2
+00:00:41.454   527 opcode=0x0070 elapsed_us=122.9 ret=1 flag=1->1 state=2->2
+00:00:41.454   528 opcode=0x0070 elapsed_us=118.1 ret=1 flag=1->1 state=2->2
+00:00:41.454   529 opcode=0x0070 elapsed_us=107.6 ret=1 flag=1->1 state=2->2
+00:00:41.455   530 opcode=0x0070 elapsed_us=101.4 ret=1 flag=1->1 state=2->2
+00:00:41.455   531 opcode=0x0070 elapsed_us=101.3 ret=1 flag=1->1 state=2->2
+00:00:41.455   532 opcode=0x0070 elapsed_us=99.9 ret=1 flag=1->1 state=2->2
+00:00:41.456   533 opcode=0x0070 elapsed_us=130.6 ret=1 flag=1->1 state=2->2
+00:00:41.456   534 opcode=0x0070 elapsed_us=124.2 ret=1 flag=1->1 state=2->2
+00:00:41.457   535 opcode=0x0070 elapsed_us=129.2 ret=1 flag=1->1 state=2->2
+00:00:41.457   536 opcode=0x0070 elapsed_us=121.3 ret=1 flag=1->1 state=2->2
+00:00:41.457   537 opcode=0x0070 elapsed_us=125.2 ret=1 flag=1->1 state=2->2
+00:00:41.458   538 opcode=0x0070 elapsed_us=124.5 ret=1 flag=1->1 state=2->2
+00:00:41.458   539 opcode=0x0070 elapsed_us=146.0 ret=1 flag=1->1 state=2->2
+00:00:41.458   540 opcode=0x0070 elapsed_us=113.6 ret=1 flag=1->1 state=2->2
+00:00:41.459   541 opcode=0x0070 elapsed_us=109.6 ret=1 flag=1->1 state=2->2
+00:00:41.459   542 opcode=0x0070 elapsed_us=101.8 ret=1 flag=1->1 state=2->2
+00:00:41.459   543 opcode=0x0070 elapsed_us=101.9 ret=1 flag=1->1 state=2->2
+00:00:41.460   544 opcode=0x0070 elapsed_us=150.6 ret=1 flag=1->1 state=2->2
+00:00:41.460   545 opcode=0x0070 elapsed_us=129.9 ret=1 flag=1->1 state=2->2
+00:00:41.460   546 opcode=0x0070 elapsed_us=150.7 ret=1 flag=1->1 state=2->2
+00:00:41.461   547 opcode=0x0070 elapsed_us=111.6 ret=1 flag=1->1 state=2->2
+00:00:41.461   548 opcode=0x0070 elapsed_us=104.2 ret=1 flag=1->1 state=2->2
+00:00:41.461   549 opcode=0x0070 elapsed_us=106.2 ret=1 flag=1->1 state=2->2
+00:00:41.462   550 opcode=0x0070 elapsed_us=160.5 ret=1 flag=1->1 state=2->2
+00:00:41.462   551 opcode=0x0070 elapsed_us=145.0 ret=1 flag=1->1 state=2->2
+00:00:41.463   552 opcode=0x0070 elapsed_us=117.4 ret=1 flag=1->1 state=2->2
+00:00:41.463   553 opcode=0x0070 elapsed_us=110.1 ret=1 flag=1->1 state=2->2
+00:00:41.463   554 opcode=0x0070 elapsed_us=110.2 ret=1 flag=1->1 state=2->2
+00:00:41.464   555 opcode=0x0070 elapsed_us=114.6 ret=1 flag=1->1 state=2->2
+00:00:41.464   556 opcode=0x0070 elapsed_us=107.1 ret=1 flag=1->1 state=2->2
+00:00:41.464   557 opcode=0x0070 elapsed_us=114.1 ret=1 flag=1->1 state=2->2
+00:00:41.465   558 opcode=0x0070 elapsed_us=114.0 ret=1 flag=1->1 state=2->2
+00:00:41.465   559 opcode=0x0070 elapsed_us=100.4 ret=1 flag=1->1 state=2->2
+00:00:41.465   560 opcode=0x0070 elapsed_us=100.4 ret=1 flag=1->1 state=2->2
+00:00:41.465   561 opcode=0x0070 elapsed_us=105.2 ret=1 flag=1->1 state=2->2
+00:00:41.466   562 opcode=0x0070 elapsed_us=115.7 ret=1 flag=1->1 state=2->2
+00:00:41.466   563 opcode=0x0070 elapsed_us=105.1 ret=1 flag=1->1 state=2->2
+00:00:41.466   564 opcode=0x0070 elapsed_us=106.0 ret=1 flag=1->1 state=2->2
+00:00:41.467   565 opcode=0x0070 elapsed_us=101.1 ret=1 flag=1->1 state=2->2
+00:00:41.467   566 opcode=0x0070 elapsed_us=124.2 ret=1 flag=1->1 state=2->2
+00:00:41.467   567 opcode=0x0070 elapsed_us=107.7 ret=1 flag=1->1 state=2->2
+00:00:41.468   568 opcode=0x0070 elapsed_us=101.7 ret=1 flag=1->1 state=2->2
+00:00:41.468   569 opcode=0x0070 elapsed_us=112.7 ret=1 flag=1->1 state=2->2
+00:00:41.468   570 opcode=0x0070 elapsed_us=107.9 ret=1 flag=1->1 state=2->2
+00:00:41.469   571 opcode=0x0070 elapsed_us=111.4 ret=1 flag=1->1 state=2->2
+00:00:41.469   572 opcode=0x0070 elapsed_us=114.8 ret=1 flag=1->1 state=2->2
+00:00:41.469   573 opcode=0x0070 elapsed_us=151.4 ret=1 flag=1->1 state=2->2
+00:00:41.470   574 opcode=0x0070 elapsed_us=147.8 ret=1 flag=1->1 state=2->2
+00:00:41.470   575 opcode=0x0070 elapsed_us=139.5 ret=1 flag=1->1 state=2->2
+00:00:41.471   576 opcode=0x0070 elapsed_us=131.5 ret=1 flag=1->1 state=2->2
+00:00:41.471   577 opcode=0x0070 elapsed_us=113.2 ret=1 flag=1->1 state=2->2
+00:00:41.471   578 opcode=0x0070 elapsed_us=105.5 ret=1 flag=1->1 state=2->2
+00:00:41.472   579 opcode=0x0070 elapsed_us=142.2 ret=1 flag=1->1 state=2->2
+00:00:41.472   580 opcode=0x0070 elapsed_us=114.8 ret=1 flag=1->1 state=2->2
+00:00:41.472   581 opcode=0x0070 elapsed_us=106.6 ret=1 flag=1->1 state=2->2
+00:00:41.473   582 opcode=0x0070 elapsed_us=110.2 ret=1 flag=1->1 state=2->2
+00:00:41.473   583 opcode=0x0070 elapsed_us=113.6 ret=1 flag=1->1 state=2->2
+00:00:41.473   584 opcode=0x0070 elapsed_us=104.1 ret=1 flag=1->1 state=2->2
+00:00:41.474   585 opcode=0x0070 elapsed_us=114.2 ret=1 flag=1->1 state=2->2
+00:00:41.474   586 opcode=0x0070 elapsed_us=116.4 ret=1 flag=1->1 state=2->2
+00:00:41.474   587 opcode=0x0070 elapsed_us=111.2 ret=1 flag=1->1 state=2->2
+00:00:41.475   588 opcode=0x0070 elapsed_us=106.4 ret=1 flag=1->1 state=2->2
+00:00:41.475   589 opcode=0x0070 elapsed_us=106.3 ret=1 flag=1->1 state=2->2
+00:00:41.475   590 opcode=0x0070 elapsed_us=106.2 ret=1 flag=1->1 state=2->2
+00:00:41.475   591 opcode=0x0070 elapsed_us=105.4 ret=1 flag=1->1 state=2->2
+00:00:41.476   592 opcode=0x0070 elapsed_us=106.4 ret=1 flag=1->1 state=2->2
+00:00:41.476   593 opcode=0x0070 elapsed_us=110.0 ret=1 flag=1->1 state=2->2
+00:00:41.476   594 opcode=0x0070 elapsed_us=105.7 ret=1 flag=1->1 state=2->2
+00:00:41.477   595 opcode=0x0070 elapsed_us=108.4 ret=1 flag=1->1 state=2->2
+00:00:41.477   596 opcode=0x0070 elapsed_us=105.4 ret=1 flag=1->1 state=2->2
+00:00:41.477   597 opcode=0x0070 elapsed_us=106.8 ret=1 flag=1->1 state=2->2
+00:00:41.478   598 opcode=0x0070 elapsed_us=139.5 ret=1 flag=1->1 state=2->2
+00:00:41.478   599 opcode=0x0070 elapsed_us=106.7 ret=1 flag=1->1 state=2->2
+00:00:41.478   600 opcode=0x0070 elapsed_us=105.7 ret=1 flag=1->1 state=2->2
+00:00:41.479   601 opcode=0x0070 elapsed_us=106.0 ret=1 flag=1->1 state=2->2
+00:00:41.479   602 opcode=0x0070 elapsed_us=106.5 ret=1 flag=1->1 state=2->2
+00:00:41.479   603 opcode=0x007C elapsed_us=87.7 ret=1 flag=1->1 state=2->2
+00:00:41.479   604 opcode=0x0089 elapsed_us=99.6 ret=1 flag=1->1 state=2->2
+00:00:41.480   605 opcode=0x0089 elapsed_us=92.3 ret=1 flag=1->1 state=2->2
+00:00:41.480   606 opcode=0x00A7 elapsed_us=214.7 ret=1 flag=1->1 state=2->2
+00:00:41.480   607 opcode=0x00A7 elapsed_us=36.4 ret=1 flag=1->1 state=2->2
+00:00:41.481   608 opcode=0x05AE elapsed_us=39.5 ret=1 flag=1->1 state=2->2
+00:00:41.481   609 opcode=0x05B9 elapsed_us=108.5 ret=1 flag=1->1 state=2->2
+00:00:41.481   610 opcode=0x05AD elapsed_us=33.3 ret=1 flag=1->1 state=2->2
+00:00:43.057 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:46.066 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:46.564   611 opcode=0x05AE elapsed_us=10078.0 ret=1 flag=1->1 state=2->2
+00:00:46.568   612 opcode=0x05AE elapsed_us=89.8 ret=2 flag=1->1 state=2->2
+00:00:47.517   613 opcode=0x05AD elapsed_us=952385.0 ret=1 flag=1->1 state=2->2
+00:00:49.072 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:50.785   614 opcode=0x05AE elapsed_us=10343.6 ret=1 flag=1->1 state=2->2
+00:00:50.788   615 opcode=0x05AE elapsed_us=123.4 ret=2 flag=1->1 state=2->2
+00:00:51.658   616 opcode=0x05AD elapsed_us=872372.9 ret=1 flag=1->1 state=2->2
+00:00:52.079 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:52.506   617 opcode=0x05AE elapsed_us=145.3 ret=1 flag=1->1 state=2->2
+00:00:53.056   618 opcode=0x05AE elapsed_us=149.0 ret=1 flag=1->1 state=2->2
+00:00:54.521   619 opcode=0x01A0 elapsed_us=101227.9 ret=1795736488 flag=1->1 state=2->2
+00:00:54.522   620 opcode=0x05F1 elapsed_us=98.3 ret=1 flag=1->1 state=2->2
+00:00:54.522   621 opcode=0x007C elapsed_us=138.3 ret=1 flag=1->1 state=2->2
+00:00:54.522   622 opcode=0x0198 elapsed_us=41.9 ret=1 flag=1->1 state=2->2
+00:00:54.525   623 opcode=0x044F elapsed_us=2666.6 ret=1 flag=1->1 state=2->2
+00:00:54.526   624 opcode=0x044F elapsed_us=541.7 ret=1 flag=1->1 state=2->2
+00:00:54.527   625 opcode=0x044F elapsed_us=460.8 ret=1 flag=1->1 state=2->2
+00:00:54.527   626 opcode=0x044F elapsed_us=443.1 ret=1 flag=1->1 state=2->2
+00:00:54.528   627 opcode=0x044F elapsed_us=419.0 ret=1 flag=1->1 state=2->2
+00:00:54.528   628 opcode=0x0070 elapsed_us=149.5 ret=1 flag=1->1 state=2->2
+00:00:54.529   629 opcode=0x0070 elapsed_us=117.8 ret=1 flag=1->1 state=2->2
+00:00:54.529   630 opcode=0x0070 elapsed_us=127.3 ret=1 flag=1->1 state=2->2
+00:00:54.529   631 opcode=0x0070 elapsed_us=134.8 ret=1 flag=1->1 state=2->2
+00:00:54.530   632 opcode=0x0070 elapsed_us=144.2 ret=1 flag=1->1 state=2->2
+00:00:54.530   633 opcode=0x0070 elapsed_us=145.6 ret=1 flag=1->1 state=2->2
+00:00:54.531   634 opcode=0x0070 elapsed_us=120.7 ret=1 flag=1->1 state=2->2
+00:00:54.531   635 opcode=0x0070 elapsed_us=147.4 ret=1 flag=1->1 state=2->2
+00:00:54.532   636 opcode=0x0070 elapsed_us=139.4 ret=1 flag=1->1 state=2->2
+00:00:54.532   637 opcode=0x0070 elapsed_us=144.1 ret=1 flag=1->1 state=2->2
+00:00:54.532   638 opcode=0x0070 elapsed_us=114.0 ret=1 flag=1->1 state=2->2
+00:00:54.533   639 opcode=0x0070 elapsed_us=112.7 ret=1 flag=1->1 state=2->2
+00:00:54.533   640 opcode=0x0070 elapsed_us=111.0 ret=1 flag=1->1 state=2->2
+00:00:54.533   641 opcode=0x0070 elapsed_us=120.0 ret=1 flag=1->1 state=2->2
+00:00:54.534   642 opcode=0x0070 elapsed_us=114.3 ret=1 flag=1->1 state=2->2
+00:00:54.534   643 opcode=0x0070 elapsed_us=179.1 ret=1 flag=1->1 state=2->2
+00:00:54.535   644 opcode=0x0070 elapsed_us=342.7 ret=1 flag=1->1 state=2->2
+00:00:54.535   645 opcode=0x0070 elapsed_us=132.1 ret=1 flag=1->1 state=2->2
+00:00:54.535   646 opcode=0x0070 elapsed_us=115.6 ret=1 flag=1->1 state=2->2
+00:00:54.536   647 opcode=0x0070 elapsed_us=113.5 ret=1 flag=1->1 state=2->2
+00:00:54.536   648 opcode=0x0070 elapsed_us=117.6 ret=1 flag=1->1 state=2->2
+00:00:54.536   649 opcode=0x0070 elapsed_us=113.0 ret=1 flag=1->1 state=2->2
+00:00:54.537   650 opcode=0x0070 elapsed_us=112.1 ret=1 flag=1->1 state=2->2
+00:00:54.537   651 opcode=0x0070 elapsed_us=135.5 ret=1 flag=1->1 state=2->2
+00:00:54.538   652 opcode=0x0070 elapsed_us=142.6 ret=1 flag=1->1 state=2->2
+00:00:54.538   653 opcode=0x0070 elapsed_us=118.9 ret=1 flag=1->1 state=2->2
+00:00:54.538   654 opcode=0x0070 elapsed_us=123.7 ret=1 flag=1->1 state=2->2
+00:00:54.539   655 opcode=0x0070 elapsed_us=115.7 ret=1 flag=1->1 state=2->2
+00:00:54.539   656 opcode=0x0070 elapsed_us=112.6 ret=1 flag=1->1 state=2->2
+00:00:54.539   657 opcode=0x0070 elapsed_us=121.8 ret=1 flag=1->1 state=2->2
+00:00:54.540   658 opcode=0x0070 elapsed_us=116.1 ret=1 flag=1->1 state=2->2
+00:00:54.540   659 opcode=0x0070 elapsed_us=130.7 ret=1 flag=1->1 state=2->2
+00:00:54.540   660 opcode=0x0070 elapsed_us=126.8 ret=1 flag=1->1 state=2->2
+00:00:54.541   661 opcode=0x0070 elapsed_us=117.1 ret=1 flag=1->1 state=2->2
+00:00:54.541   662 opcode=0x0070 elapsed_us=114.4 ret=1 flag=1->1 state=2->2
+00:00:54.542   663 opcode=0x0070 elapsed_us=124.2 ret=1 flag=1->1 state=2->2
+00:00:54.542   664 opcode=0x0070 elapsed_us=138.2 ret=1 flag=1->1 state=2->2
+00:00:54.542   665 opcode=0x0070 elapsed_us=124.3 ret=1 flag=1->1 state=2->2
+00:00:54.543   666 opcode=0x0070 elapsed_us=133.1 ret=1 flag=1->1 state=2->2
+00:00:54.543   667 opcode=0x0070 elapsed_us=121.1 ret=1 flag=1->1 state=2->2
+00:00:54.543   668 opcode=0x0070 elapsed_us=115.7 ret=1 flag=1->1 state=2->2
+00:00:54.544   669 opcode=0x0070 elapsed_us=114.9 ret=1 flag=1->1 state=2->2
+00:00:54.544   670 opcode=0x0070 elapsed_us=111.8 ret=1 flag=1->1 state=2->2
+00:00:54.544   671 opcode=0x0070 elapsed_us=132.5 ret=1 flag=1->1 state=2->2
+00:00:54.545   672 opcode=0x0070 elapsed_us=125.9 ret=1 flag=1->1 state=2->2
+00:00:54.545   673 opcode=0x0070 elapsed_us=117.9 ret=1 flag=1->1 state=2->2
+00:00:54.546   674 opcode=0x0070 elapsed_us=117.7 ret=1 flag=1->1 state=2->2
+00:00:54.546   675 opcode=0x0070 elapsed_us=120.5 ret=1 flag=1->1 state=2->2
+00:00:54.546   676 opcode=0x0070 elapsed_us=115.9 ret=1 flag=1->1 state=2->2
+00:00:54.547   677 opcode=0x0070 elapsed_us=129.4 ret=1 flag=1->1 state=2->2
+00:00:54.547   678 opcode=0x0070 elapsed_us=116.2 ret=1 flag=1->1 state=2->2
+00:00:54.547   679 opcode=0x0070 elapsed_us=115.8 ret=1 flag=1->1 state=2->2
+00:00:54.548   680 opcode=0x0070 elapsed_us=119.5 ret=1 flag=1->1 state=2->2
+00:00:54.548   681 opcode=0x0070 elapsed_us=123.2 ret=1 flag=1->1 state=2->2
+00:00:54.548   682 opcode=0x0070 elapsed_us=117.6 ret=1 flag=1->1 state=2->2
+00:00:54.549   683 opcode=0x0070 elapsed_us=113.4 ret=1 flag=1->1 state=2->2
+00:00:54.549   684 opcode=0x0070 elapsed_us=118.6 ret=1 flag=1->1 state=2->2
+00:00:54.550   685 opcode=0x0070 elapsed_us=196.8 ret=1 flag=1->1 state=2->2
+00:00:54.550   686 opcode=0x0070 elapsed_us=121.4 ret=1 flag=1->1 state=2->2
+00:00:54.550   687 opcode=0x0070 elapsed_us=115.3 ret=1 flag=1->1 state=2->2
+00:00:54.551   688 opcode=0x0070 elapsed_us=124.1 ret=1 flag=1->1 state=2->2
+00:00:54.551   689 opcode=0x0070 elapsed_us=115.6 ret=1 flag=1->1 state=2->2
+00:00:54.551   690 opcode=0x0070 elapsed_us=134.3 ret=1 flag=1->1 state=2->2
+00:00:54.552   691 opcode=0x0070 elapsed_us=117.8 ret=1 flag=1->1 state=2->2
+00:00:54.552   692 opcode=0x0070 elapsed_us=119.0 ret=1 flag=1->1 state=2->2
+00:00:54.552   693 opcode=0x0070 elapsed_us=115.9 ret=1 flag=1->1 state=2->2
+00:00:54.553   694 opcode=0x0070 elapsed_us=119.1 ret=1 flag=1->1 state=2->2
+00:00:54.553   695 opcode=0x0070 elapsed_us=115.0 ret=1 flag=1->1 state=2->2
+00:00:54.553   696 opcode=0x0070 elapsed_us=118.9 ret=1 flag=1->1 state=2->2
+00:00:54.554   697 opcode=0x0070 elapsed_us=125.4 ret=1 flag=1->1 state=2->2
+00:00:54.554   698 opcode=0x0070 elapsed_us=166.6 ret=1 flag=1->1 state=2->2
+00:00:54.555   699 opcode=0x0070 elapsed_us=129.9 ret=1 flag=1->1 state=2->2
+00:00:54.555   700 opcode=0x0070 elapsed_us=130.1 ret=1 flag=1->1 state=2->2
+00:00:54.555   701 opcode=0x0070 elapsed_us=127.6 ret=1 flag=1->1 state=2->2
+00:00:54.556   702 opcode=0x0070 elapsed_us=134.4 ret=1 flag=1->1 state=2->2
+00:00:54.556   703 opcode=0x0070 elapsed_us=123.6 ret=1 flag=1->1 state=2->2
+00:00:54.557   704 opcode=0x0070 elapsed_us=129.1 ret=1 flag=1->1 state=2->2
+00:00:54.557   705 opcode=0x0070 elapsed_us=119.6 ret=1 flag=1->1 state=2->2
+00:00:54.557   706 opcode=0x0070 elapsed_us=133.1 ret=1 flag=1->1 state=2->2
+00:00:54.558   707 opcode=0x0070 elapsed_us=131.2 ret=1 flag=1->1 state=2->2
+00:00:54.558   708 opcode=0x007C elapsed_us=166.8 ret=1 flag=1->1 state=2->2
+00:00:54.563   709 opcode=0x0089 elapsed_us=4336.8 ret=1 flag=1->1 state=2->2
+00:00:54.563   710 opcode=0x0089 elapsed_us=200.1 ret=1 flag=1->1 state=2->2
+00:00:54.564   711 opcode=0x00A7 elapsed_us=231.7 ret=1 flag=1->1 state=2->2
+00:00:54.564   712 opcode=0x00A7 elapsed_us=40.6 ret=1 flag=1->1 state=2->2
+00:00:55.088 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:00:58.093 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:01.100 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:03.734 POOL SENTRY alive 1741s: 0 confirmed finding(s) | b0:959ch 61376slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:4058ch 32464slots carve PASS | 0 header(s) repaired | guard page: 0x20: 7112812 served, 7074687 freed, 38125 live, 3614681 recycled, 0 fell back | 0x40: 2011289 served, 1995450 freed, 15839 live, 1492855 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 3478847, 0x20 7112812, 0x40 2011289, 0x80 910411 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 377 us avg, 1605 us max over 595 walks
+00:01:04.110 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:07.117 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:07.572   713 opcode=0x007C elapsed_us=204.8 ret=1 flag=1->1 state=2->2
+00:01:10.124 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:13.129 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:16.138 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:19.145 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:22.151 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:25.159 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:28.167 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:31.174 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:34.185 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:37.193 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:40.201 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:43.219 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:46.251 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:49.301 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:52.365 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:55.549 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:01:58.715 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:01.812 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:03.791 POOL SENTRY alive 1801s: 0 confirmed finding(s) | b0:959ch 61376slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:4058ch 32464slots carve PASS | 0 header(s) repaired | guard page: 0x20: 7208874 served, 7170718 freed, 38156 live, 3710743 recycled, 0 fell back | 0x40: 2060454 served, 2044588 freed, 15866 live, 1542020 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 3550548, 0x20 7208874, 0x40 2060454, 0x80 922349 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 406 us avg, 7771 us max over 587 walks
+00:02:04.964 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:08.205 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:11.307 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:14.462 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:17.608 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:20.825 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:23.965 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:27.000 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:30.035 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:33.041 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:36.048 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:39.057 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:42.067 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:45.073 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:48.080 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:51.087 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:52.058   714 opcode=0x00AC elapsed_us=388.7 ret=1 flag=1->1 state=2->2
+00:02:54.094 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:57.100 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:03:00.108 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:03:03.116 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:03:03.835 POOL SENTRY alive 1861s: 0 confirmed finding(s) | b0:959ch 61376slots carve PASS | b1:1042ch 33344slots carve PASS | b2:316ch 5056slots carve PASS | b3:4058ch 32464slots carve PASS | 0 header(s) repaired | guard page: 0x20: 7306627 served, 7269765 freed, 36862 live, 3808496 recycled, 0 fell back | 0x40: 2110319 served, 2095961 freed, 14358 live, 1591885 recycled, 0 fell back | 4016565 of 16777216 fresh pages used, 0 STALE-ACCESS CATCH(es) | pool allocations seen by class: 0x10 3622715, 0x20 7306627, 0x40 2110319, 0x80 934310 | adaptive armed (2000 ms) but NO period learned yet - still walking every 100 ms | walk 424 us avg, 10601 us max over 581 walks
+00:03:06.122 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:03:09.163 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:03:12.168 ***** SESSION obj=0x5db47e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****

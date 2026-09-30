@@ -87,6 +87,7 @@ pub mod userchat;
 pub mod userhit;
 pub mod usermove;
 pub mod userpool;
+pub mod weather;
 
 pub use codec::{
     shift_body, ByteShiftCipher, Cipher, Direction, MapleCipher, PlainCipher, Shift,
