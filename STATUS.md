@@ -365,6 +365,20 @@ the `0x0224` (`world-ch0.log`), and a `0x0224` for an id already in the pool is 
 research had recorded. `broadcast_look_change` now sends `0x0225` then `0x0224` then the pets
 for that one character, the sequence a fresh sighting gets (§8.1). Unverified on the observer.
 
+**2026-09-30: Megaphones and Super Megaphones speak.** The owner: Super Megaphone *"across all channels
+(with a pink background), and display the whisper icon depending on client selection"*; Megaphone
+*"on the same channel (without the pink background)"*, whisper icon likewise. Both arrive on
+`0x0116` as `tick, slot, item, str text, u8 whisper` (their capture, 03:52:15, and the builder
+`FUN_141a50140`) and were answered with the unlock only, item kept. Now one is spent and one
+`0x00AC` line goes out: **type 3** for the Super Megaphone (chat kind `0xd`, the pink one) to
+everyone in `Link::everyone` via `deliver_anywhere`, the whisper path; **type 8** for the
+Megaphone (kind `0xf`, no item) to this channel's bus. Both carry the sender chat-info block the
+client reads - `str, str, u32, u32, u8, u32, u32, str, u32, str, u32` **[L]**, named by the v214
+reference - then channel and whisper. **[D]**: type 8 is used because it is the only non-pink type
+whose whisper icon follows the byte; type 2, the classic channel megaphone, reads no whisper byte.
+Whether kind `0xf` draws without the pink background is unmeasured. `net::megaphone`,
+`session/megaphone.rs`, `research/msexe-megaphone*.c`. Test plan 26. **Not on a screen.**
+
 **2026-09-26: the ship from Ellinia Station to Orbis.** The owner: tickets from Joel, *"Ticket to Orbis
 (Basic) - 5000 mesos, Ticket to Orbis (Regular) 20000 mesos"*, *"via NPC dialogue and selection,
 not a shop window"*; a ship every 10 minutes, a 5-minute crossing, boarding *"from 5 minutes before
