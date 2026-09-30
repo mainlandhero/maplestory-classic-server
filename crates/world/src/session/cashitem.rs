@@ -161,6 +161,9 @@ impl Session {
             // **The megaphones**, with their text and whisper choice after the ten bytes.
             // The owner, 2026-09-29. session/megaphone.rs.
             net::megaphone::MEGAPHONE | net::megaphone::SUPER_MEGAPHONE => self.use_megaphone(opcode, body),
+            // **The weather items** - Sprinkled Chocolate and the rest of 0512.img, with the
+            // player's message. The owner, 2026-09-30. session/weather.rs.
+            id if net::weather::is_weather_item(id) => self.use_weather_item(opcode, body),
             other => {
                 crate::server::log(&format!(
                     "   reset scroll: {other} arrived on 0x0116, which this server knows for the \

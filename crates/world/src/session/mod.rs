@@ -581,6 +581,7 @@ mod ability;
 mod boat;
 mod hotel;
 mod megaphone;
+mod weather;
 mod firsttime;
 mod buff;
 mod chair;

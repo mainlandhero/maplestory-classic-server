@@ -365,6 +365,17 @@ the `0x0224` (`world-ch0.log`), and a `0x0224` for an id already in the pool is 
 research had recorded. `broadcast_look_change` now sends `0x0225` then `0x0224` then the pets
 for that one character, the sequence a fresh sighting gets (§8.1). Unverified on the observer.
 
+**2026-09-30: weather items show on the map.** The owner: *"display my chosen message with the particular
+item effect as an atmospheric effect for everyone present in the map for 30 seconds then gradually
+fade out."* Their Sprinkled Chocolate arrived on `0x0116` as `tick, slot, item, str text` (the client
+wrote "the owner's Chocolatey Message: " itself) and was answered with the unlock only. Now one is spent
+and everyone on the map gets **`0x01B7`** - `u32 item, str message, u32 seconds, u8 0` **[L]**,
+`FUN_141853820`, which hands `seconds * 1000` to the weather routine `FUN_14185b1c0`; the art and
+the fall come from the item's own `path`/`floatType`. 30 seconds; the fade is the client's own
+**[I]**. One effect per map at a time (a second is refused and kept); a player arriving mid-effect
+gets the remainder on field entry (`Fields::weather`). All of `0512.img` (512xxxx) is routed.
+`net::weather`, `session/weather.rs`, `research/msexe-weather*.c`. Test plan 27. **Not on a screen.**
+
 **2026-09-30: Megaphones and Super Megaphones speak.** The owner: Super Megaphone *"across all channels
 (with a pink background), and display the whisper icon depending on client selection"*; Megaphone
 *"on the same channel (without the pink background)"*, whisper icon likewise. Both arrive on

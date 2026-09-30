@@ -372,6 +372,10 @@ pub struct Fields {
     runs: Mutex<crate::firsttime::Runs>,
     /// This channel's ships to Orbis. See [`crate::boat::Voyages`].
     voyages: Mutex<crate::boat::Voyages>,
+    /// The weather effect running on each map, if any: `(item, message, until_unix)`. So one
+    /// runs at a time per map, and someone arriving mid-effect gets the rest of it.
+    /// `session/weather.rs`.
+    weather: Mutex<HashMap<FieldKey, (u32, String, i64)>>,
 }
 
 impl Default for Fields {
@@ -389,6 +393,7 @@ impl Fields {
             parties: Mutex::new(crate::party::Parties::new()),
             runs: Mutex::new(crate::firsttime::Runs::default()),
             voyages: Mutex::new(crate::boat::Voyages::default()),
+            weather: Mutex::new(HashMap::new()),
         }
     }
 
@@ -422,6 +427,11 @@ impl Fields {
     /// local before locking anything else.
     pub fn voyages(&self) -> std::sync::MutexGuard<'_, crate::boat::Voyages> {
         self.voyages.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The weather effect running on each map. Same rule as [`Fields::runs`].
+    pub fn weather(&self) -> std::sync::MutexGuard<'_, HashMap<FieldKey, (u32, String, i64)>> {
+        self.weather.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Register a map's spawn points the first time anyone sets foot on it.

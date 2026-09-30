@@ -258,6 +258,8 @@ impl Session {
         // The ship to Orbis's countdown on a ship field, or off the voyage anywhere else.
         // session/boat.rs.
         out.extend(self.boat_field_entry());
+        // A weather effect still running on this map: the rest of it. session/weather.rs.
+        out.extend(self.weather_on_entry());
         // And its gate, if this run already cleared the stage being entered.
         out.extend(self.party_quest_gate());
 
