@@ -335,6 +335,16 @@ pub struct LiveDrop {
     /// (the owner, 2026-09-23: *"Players should only see Slime Shoes that they can pick up, and
     /// each member of the party gets one."*). Set by [`DropTable::personal_drop_from_mob`].
     pub personal: bool,
+    /// **An untradeable item a player put down: it is not a drop, it is a disposal.**
+    ///
+    /// The owner, 2026-09-23: *"Untradeable items when dropped should just disappear, there should
+    /// be an animation for it on client side and also broadcasted to other clients as well."*
+    /// Such a drop is placed like any other - so every client on the field draws it leaving the
+    /// player's hand - nobody may take it, **the owner included**, and it fades after
+    /// [`VANISH_MS`] through the ordinary expiry path, which already sends the fade to the
+    /// whole field. Only [`DropTable::drop_item`] sets it: a quest item a *mob* drops keeps the
+    /// owner-only rule, because the killer has to be able to pick it up.
+    pub vanishes: bool,
     /// The party this drop belongs to, or `0` for none. The owner, 2026-09-05: *"All members of a
     /// party should see all drops killed by members of the party ... Once someone leaves the
     /// party, they can no longer pick up the party's drops unless they were the killer."* So
@@ -399,6 +409,15 @@ pub struct LiveDrop {
 /// snaps into place, this is the first thing to change.
 pub const DROP_FLIGHT_MS: u32 = 500;
 
+/// **How long an untradeable item a player dropped stays visible before it fades.**
+///
+/// Long enough for the drop's own arc ([`DROP_FLIGHT_MS`]) to finish and the item to be seen
+/// landing, so the fade reads as the item vanishing rather than as a packet that never arrived.
+/// The fade itself is the client's: it is the same `0x046F` an expiring drop gets, sent by the
+/// sweep to the whole field. A choice, not a measurement - the owner asked for "an animation", and
+/// this is the one the client already owns.
+pub const VANISH_MS: u64 = 1_500;
+
 impl LiveDrop {
     /// The item template id.
     pub fn item_id(&self) -> u32 {
@@ -414,9 +433,11 @@ impl LiveDrop {
         self.item.kind.quantity()
     }
 
-    /// When this drop stops existing, given the table's lifetime.
+    /// When this drop stops existing, given the table's lifetime. A [`LiveDrop::vanishes`]
+    /// drop ignores the table and goes after [`VANISH_MS`].
     pub fn expires_at_ms(&self, lifetime_ms: u64) -> u64 {
-        self.dropped_at_ms.saturating_add(lifetime_ms)
+        let life = if self.vanishes { VANISH_MS } else { lifetime_ms };
+        self.dropped_at_ms.saturating_add(life)
     }
 
     /// May `character_id` take this drop at `now_ms`?
@@ -439,6 +460,11 @@ impl LiveDrop {
         owner_lock_ms: u64,
         party_members: &[u32],
     ) -> bool {
+        // A disposal belongs to nobody - checked before the owner rule, or the dropper could
+        // catch their own untradeable item in the second before it fades.
+        if self.vanishes {
+            return false;
+        }
         if character_id == self.owner_id {
             return true;
         }
@@ -479,16 +505,31 @@ impl LiveDrop {
             source_y: self.source_y,
             delay: self.delay_ms,
             pet_may_take: self.from_mob,
+            // **A public drop has to SAY it is public.** Every drop went out as
+            // `OWN_TYPE_USER` with the dropper as `ownerId`, which tells every other client on
+            // the field that the item is somebody else's - and the report was exactly that:
+            // *"nobody except themselves were able to pick up what was dropped"* (the owner,
+            // 2026-09-23). The server's own rule (`may_be_taken_by`, `public`) had allowed it
+            // all along; the packet contradicted it. `research/item-drop.md` claimed `ownType`
+            // is "stored and never tested"; a scan of the drop code finds two dword reads of
+            // `drop+0x70` after the store (`1417910ee`, `1417a93eb`), so that claim was an
+            // absence, not a measurement.
+            own_type: if self.public && !self.vanishes {
+                net::drops::OWN_TYPE_EVERYONE
+            } else {
+                net::drops::OWN_TYPE_USER
+            },
             ..base
         }
     }
 
     /// `0x046E`, as the reply that puts it on screen.
     ///
-    /// `enter_type` must be [`net::drops::ENTER_FLOATING`] or [`net::drops::ENTER_INSTANT`]:
-    /// `drop+0x61`, the gate every pick-up sweep in the client tests, is set for those two
-    /// values and no others, so any other enter type produces a drop that is drawn and can
-    /// never be collected.
+    /// `enter_type` is [`net::drops::ENTER_FLOATING`] or [`net::drops::ENTER_INSTANT`] for
+    /// anything that is meant to be collected: `drop+0x61`, the gate every pick-up sweep in the
+    /// client tests, is set for those two values and no others. The one deliberate exception
+    /// is [`net::drops::ENTER_DISAPPEARING`] for a [`LiveDrop::vanishes`] drop, which is
+    /// meant never to be collected.
     pub fn enter_reply(&self, enter_type: u8) -> Reply {
         let body = net::drops::drop_enter_field(&self.field_drop(), enter_type);
         Reply {
@@ -726,6 +767,13 @@ pub enum PickUp {
         /// The only character who may take it.
         owner_id: u32,
     },
+    /// An untradeable item a player dropped, in the moment before it fades
+    /// ([`LiveDrop::vanishes`]). Nobody may take it; the answer is the unlock and nothing on
+    /// screen, because the item is already on its way out and a chat line would be noise.
+    Vanishing {
+        /// What was asked for.
+        object_id: u32,
+    },
     /// A pet asked, and the drop is not a mob's. The drop went out with `canBePickedUpByPet`
     /// clear, so a well-behaved client never sends this; the answer is the unlock alone, with
     /// no line on screen - a pet brushing past a coin should not be a chat message each time.
@@ -780,14 +828,14 @@ impl PickUp {
             PickUp::Untradeable { .. } => {
                 Some("That item cannot be picked up by anyone but its owner.".to_string())
             }
-            PickUp::NotForPets { .. } => None,
+            PickUp::NotForPets { .. } | PickUp::Vanishing { .. } => None,
             PickUp::Expired { .. } => Some("That item is no longer there.".to_string()),
         }
     }
 
     /// A refusal that owes the client the unlock and nothing to read: the pet case.
     pub fn is_silent_refusal(&self) -> bool {
-        matches!(self, PickUp::NotForPets { .. })
+        matches!(self, PickUp::NotForPets { .. } | PickUp::Vanishing { .. })
     }
 
     /// A log line naming the outcome, for `world.log`.
@@ -810,6 +858,9 @@ impl PickUp {
             ),
             PickUp::NotForPets { object_id } => format!(
                 "pick-up: drop {object_id} did not come from a mob, so a pet may not take it"
+            ),
+            PickUp::Vanishing { object_id } => format!(
+                "pick-up: drop {object_id} is an untradeable item a player threw away; it is fading and nobody may take it"
             ),
             PickUp::Expired { object_id, .. } => {
                 format!("pick-up: drop {object_id} had already expired and has been swept")
@@ -1022,6 +1073,9 @@ impl DropTable {
             item: d.item,
             inv_type: d.inv_type,
             owner_id: d.owner_id,
+            // A mob's drop is never a disposal: a quest item the killer needs is trade-blocked
+            // too, and it has to stay pickable by them.
+            vanishes: false,
             party_id: d.party_id,
             public: false,
             x: d.x,
@@ -1089,9 +1143,13 @@ impl DropTable {
             inv_type: d.inv_type,
             owner_id: d.character_id,
             party_id: 0,
-            // A player's own ground drop is public: anyone on the map may see and take it.
-            // An untradeable item overrides this in `may_be_taken_by` and stays owner-only.
+            // A player's own ground drop is public: anyone on the map may see and take it,
+            // until it expires. The owner, 2026-09-23: *"as long as it is not untradeable, it should
+            // remain on the ground until drop expiry and available for anyone to pick up."*
             public: true,
+            // ...and an untradeable one is a disposal: drawn landing, taken by nobody, gone
+            // after VANISH_MS. See `LiveDrop::vanishes`.
+            vanishes: drop_is_locked_to_owner_forever(d.item.item_id),
             x: d.x,
             y: d.y,
             meso: 0, // a bag drop is always an item
@@ -1144,7 +1202,13 @@ impl DropTable {
                 ),
             },
         };
-        let enter = drop.enter_reply(net::drops::ENTER_FLOATING);
+        // **A disposal plays the client's own disappearing animation** (enter type 3) on every
+        // screen that is sent this - the dropper directly, the field through the bus.
+        let enter = drop.enter_reply(if drop.vanishes {
+            net::drops::ENTER_DISAPPEARING
+        } else {
+            net::drops::ENTER_FLOATING
+        });
         self.live.insert(object_id, drop);
         PlacedDrop { object_id, removed, enter }
     }
@@ -1184,6 +1248,7 @@ impl DropTable {
             item: store::Item::bundle(0, 1),
             inv_type: store::InventoryType::Etc,
             owner_id: d.character_id,
+            vanishes: false, // mesos are always tradeable
             party_id: 0,
             public: true,
             x: d.x,
@@ -1250,6 +1315,9 @@ impl DropTable {
             return PickUp::Expired { object_id, leave: fade_reply(&drop, "it had expired") };
         }
         if !drop.may_be_taken_by(character_id, now_ms, self.owner_lock_ms, party_members) {
+            if drop.vanishes {
+                return PickUp::Vanishing { object_id };
+            }
             if drop_is_locked_to_owner_forever(drop.item_id()) {
                 return PickUp::Untradeable { object_id, owner_id: drop.owner_id };
             }
@@ -1397,12 +1465,22 @@ impl DropTable {
         for id in stale {
             self.live.remove(&id);
         }
+        // **A public drop is shown to whoever walks in, not only to its owner.** This used to
+        // filter every drop on `may_see_drop(owner, viewer, party)`, which knows nothing of
+        // `public` - so a player who arrived after somebody dropped an item was never sent it,
+        // and on their screen there was nothing to pick up. Half of the owner's 2026-09-23 report
+        // (*"nobody except themselves were able to pick up what was dropped"*); the other half
+        // was the `ownType` on the packet the players already there were sent.
+        //
+        // A disposal is not re-sent at all: it is on its way out, and re-sent as INSTANT it
+        // would be drawn lying there with no animation and then vanish.
         self.on_field(map_id)
+            .filter(|d| !d.vanishes)
             .filter(|d| {
                 if d.personal {
                     return d.owner_id == viewer;
                 }
-                crate::mobshare::may_see_drop(d.owner_id, viewer, party)
+                d.public || crate::mobshare::may_see_drop(d.owner_id, viewer, party)
             })
             .map(|d| d.enter_reply(net::drops::ENTER_INSTANT))
             .collect()
@@ -1501,12 +1579,28 @@ mod tests {
     /// A trade-blocked item stays owner-only even on a public floor - the untradeable rule
     /// gates the transfer, and the floor is a transfer waiting to happen.
     #[test]
-    fn an_untradeable_ground_drop_is_still_owner_only() {
+    fn an_untradeable_ground_drop_is_taken_by_nobody_and_says_it_is_nobodys() {
+        // **The rule changed on 2026-09-23.** It used to be "owner-only forever"; the owner: *"Untradeable
+        // items when dropped should just disappear."* So nobody may take it - the dropper
+        // included - and the wire must not advertise it as public.
         let mut t = DropTable::with_lifetime(60_000, 15_000);
         t.drop_item(dropping(Item::equip(TRADE_BLOCKED_SWORD), 0));
         let id = t.on_field(MAP).next().unwrap().object_id;
-        assert!(matches!(t.take(id, SOMEBODY_ELSE, 1, &[]), PickUp::Untradeable { .. }));
-        assert!(t.take(id, WISP, 1, &[]).taken().is_some(), "the owner always may");
+        let drop = *t.get(id).unwrap();
+        assert!(drop.vanishes);
+        assert!(!drop.may_be_taken_by(SOMEBODY_ELSE, 1, t.owner_lock_ms(), &[]));
+        assert!(!drop.may_be_taken_by(WISP, 1, t.owner_lock_ms(), &[]), "not even the owner");
+        assert_eq!(drop.field_drop().own_type, net::drops::OWN_TYPE_USER);
+
+        // And a TRADEABLE ground drop is the opposite on both counts: public, and says so.
+        t.drop_item(dropping(Item::equip(SWORD), 0));
+        let open = t.on_field(MAP).find(|d| d.item_id() == SWORD).copied().unwrap();
+        assert!(!open.vanishes);
+        assert_eq!(
+            open.field_drop().own_type,
+            net::drops::OWN_TYPE_EVERYONE,
+            "OWN_TYPE_USER here is exactly what told every other client the item was not theirs"
+        );
     }
 
     /// A party drop: a current member may take it, a non-member may not, and a member who has
@@ -1653,7 +1747,7 @@ mod tests {
     /// A scrolled equip must come back the same object, not the same item id.
     #[test]
     fn an_equip_keeps_its_rolled_stats_across_the_round_trip() {
-        let scrolled = Item { item_id: SWORD, kind: ItemKind::Equip(Some(rolled())), failed_slots: 0, pet_id: None };
+        let scrolled = Item { item_id: SWORD, kind: ItemKind::Equip(Some(rolled())), failed_slots: 0, pet_id: None, rolled_base: None };
         let mut t = DropTable::new();
         t.drop_item(dropping(scrolled, 0));
         let id = t.on_field(MAP).next().unwrap().object_id;
@@ -1671,7 +1765,7 @@ mod tests {
     /// `None` stats mean "derive from the WZ template" and are NOT the same as zeros.
     #[test]
     fn a_fresh_equip_stays_fresh_rather_than_becoming_all_zero_stats() {
-        let fresh = Item { item_id: SWORD, kind: ItemKind::FRESH_EQUIP, failed_slots: 0, pet_id: None };
+        let fresh = Item { item_id: SWORD, kind: ItemKind::FRESH_EQUIP, failed_slots: 0, pet_id: None, rolled_base: None };
         let mut t = DropTable::new();
         t.drop_item(dropping(fresh, 0));
         let id = t.on_field(MAP).next().unwrap().object_id;
@@ -1777,9 +1871,13 @@ mod tests {
         );
         assert!(!drop_is_locked_to_owner_forever(SWORD), "and this one really is not");
 
+        // **A MOB's trade-blocked drop keeps the owner-only rule** - the killer of a quest mob
+        // has to be able to take its quest item, and nobody else ever may. Only a player's own
+        // ground drop of such an item is a disposal (`vanishes`).
         let mut t = DropTable::with_lifetime(600_000, 15_000);
-        t.drop_item(dropping(Item::equip(TRADE_BLOCKED_SWORD), 0));
+        t.drop_from_mob(party_mob(Item::equip(TRADE_BLOCKED_SWORD), 0, 0));
         let id = t.on_field(MAP).next().unwrap().object_id;
+        assert!(!t.get(id).unwrap().vanishes);
 
         for now in [1_000, 100_000, 500_000] {
             assert_eq!(
@@ -1788,8 +1886,29 @@ mod tests {
                 "long past the owner lock at {now} ms, and still nobody else's"
             );
         }
-        // The owner always may, which is the half of the decision that keeps it droppable.
-        assert!(t.take(id, WISP, 500_000, &[]).taken().is_some());
+        assert!(t.take(id, WISP, 500_000, &[]).taken().is_some(), "the killer always may");
+    }
+
+    /// **A player's untradeable drop fades for the whole field after [`VANISH_MS`]**, through
+    /// the same sweep an expiring drop uses - so every client that drew it landing also draws
+    /// it going. The owner: *"there should be an animation for it on client side and also
+    /// broadcasted to other clients as well."*
+    #[test]
+    fn a_dropped_untradeable_item_fades_for_the_field_after_vanish_ms() {
+        let mut t = DropTable::with_lifetime(600_000, 15_000);
+        t.drop_item(dropping(Item::equip(TRADE_BLOCKED_SWORD), 1_000));
+        t.sweep(MAP, 1_000 + VANISH_MS - 1);
+        assert_eq!(t.len(), 1, "still in the air / on the floor for the arc");
+        assert_eq!(t.addressed_len(), 0);
+
+        t.sweep(MAP, 1_000 + VANISH_MS);
+        assert_eq!(t.len(), 0, "gone");
+        assert_eq!(t.addressed_len(), 1, "and the fade is addressed to the field, once");
+        // A tradeable drop dropped at the same moment is untouched: it lasts the table's lifetime.
+        let mut u = DropTable::with_lifetime(600_000, 15_000);
+        u.drop_item(dropping(Item::equip(SWORD), 1_000));
+        u.sweep(MAP, 1_000 + VANISH_MS);
+        assert_eq!(u.len(), 1);
     }
 
     // ------------------------------------------------------------------------------
@@ -1906,52 +2025,45 @@ mod tests {
         );
     }
 
-    /// **The floor is private.** Walking in must not show - and therefore must not hand over,
-    /// since visibility is the only thing the server controls - somebody else's loot.
+    /// **Mob loot is private; a player's own drop is public.** Walking in must not show - and
+    /// therefore must not hand over - somebody else's *kill*, but it must show what a player put
+    /// down on purpose. The owner, 2026-09-23: a tradeable drop *"should remain on the ground until
+    /// drop expiry and available for anyone to pick up."*
     ///
-    /// Both directions are asserted in one test. A `field_entry` that returned nothing to
-    /// anybody would pass "the bystander sees none of the owner's", and that is a different bug:
-    /// an item the owner cannot see either.
+    /// This test used to assert "the floor is private" with two *player* drops, which is
+    /// precisely the rule that hid a public drop from anyone who arrived after it was made. Both
+    /// directions are still asserted: a `field_entry` that returned nothing to anybody would pass
+    /// "the bystander sees none of the owner's loot", and that is a different bug.
     #[test]
-    fn only_the_owner_is_shown_the_floor() {
+    fn mob_loot_is_shown_to_its_owner_and_a_player_drop_to_everyone() {
         let mut t = DropTable::with_lifetime(100_000, 1_000);
-        t.drop_item(dropping(Item::equip(SWORD), 0));
+        // The owner's kill: private to the owner.
+        t.drop_from_mob(from_mob_owned(Item::equip(SWORD), 0));
+        // Somebody else put three potions down by hand: public.
         t.drop_item(DropFromBag {
             character_id: SOMEBODY_ELSE,
             ..dropping(Item::bundle(2_000_000, 3), 0)
         });
+        let owner_of = |r: &Reply| u32::from_le_bytes([r.body[23], r.body[24], r.body[25], r.body[26]]);
 
         let wisp = t.field_entry(MAP, 5_000, WISP, &crate::mobshare::Party::solo(WISP));
-        assert_eq!(wisp.len(), 1, "the owner sees their own and only their own");
-        assert_eq!(
-            u32::from_le_bytes([
-                wisp[0].body[23],
-                wisp[0].body[24],
-                wisp[0].body[25],
-                wisp[0].body[26]
-            ]),
-            WISP,
-            "ownerId - the same offset a_drop_answers_with_the_remove_first pins"
-        );
+        assert_eq!(wisp.len(), 2, "the owner sees their own loot AND the public drop");
 
         let other =
             t.field_entry(MAP, 5_000, SOMEBODY_ELSE, &crate::mobshare::Party::solo(SOMEBODY_ELSE));
-        assert_eq!(other.len(), 1, "and the other player sees theirs");
-        assert_eq!(
-            u32::from_le_bytes([
-                other[0].body[23],
-                other[0].body[24],
-                other[0].body[25],
-                other[0].body[26]
-            ]),
-            SOMEBODY_ELSE
-        );
+        assert_eq!(other.len(), 1, "the other player sees their own drop, and NOT the owner's kill");
+        assert_eq!(owner_of(&other[0]), SOMEBODY_ELSE);
+
+        // A third player who is neither: the public drop and nothing else.
+        let stranger = t.field_entry(MAP, 5_000, 999, &crate::mobshare::Party::solo(999));
+        assert_eq!(stranger.len(), 1);
+        assert_eq!(stranger[0].body[27], net::drops::OWN_TYPE_EVERYONE);
 
         assert_eq!(t.len(), 2, "listing the floor still does not change it");
 
-        // A party sees both, which is the seam and the reason the predicate takes one.
+        // A party sees the owner's kill too, which is the seam and the reason the predicate takes one.
         let together = crate::mobshare::Party::of(WISP, [SOMEBODY_ELSE]);
-        assert_eq!(t.field_entry(MAP, 5_000, WISP, &together).len(), 2);
+        assert_eq!(t.field_entry(MAP, 5_000, SOMEBODY_ELSE, &together).len(), 2);
     }
 
     #[test]
@@ -2094,7 +2206,7 @@ mod tests {
     #[test]
     fn drop_walk_away_come_back_and_pick_it_up() {
         let mut t = DropTable::new();
-        let sword = Item { item_id: SWORD, kind: ItemKind::Equip(Some(rolled())), failed_slots: 0, pet_id: None };
+        let sword = Item { item_id: SWORD, kind: ItemKind::Equip(Some(rolled())), failed_slots: 0, pet_id: None, rolled_base: None };
 
         // The owner drags the sword out of the window on map 1.
         let answer = t.drop_item(dropping(sword, 1_000));

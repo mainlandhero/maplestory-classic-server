@@ -60,7 +60,8 @@ COLLECTION_PRICE_LP = 800
 # The pets and pet equipment, in Leaf Points. The owner, 2026-09-17: *"All pets from these
 # collaboration should be 1000 LP. Pet equipment should remain 100 LP each."* The classic
 # eleven pets stay at the shipped rows' 100.
-COLLAB_PET_PRICE_LP = 1000
+COLLAB_PET_PRICE_LP = 1000  # an exception to the shop-wide 100 LP rule - the owner, 2026-09-24:
+#                             "collab pets should remain at 1000 LP" (cash_wares.price_rule)
 PET_EQUIP_PRICE_LP = 100
 
 # The classic client's ten pet hats, `Character/PetEquip/PetEquip_000.wz` [L], with the
@@ -1136,8 +1137,67 @@ def main():
                 ("PbGift", 0), ("Refundable", 0), ("WebShop", 0), ("IsGift", 0),
             ]:
                 fh.write("%d/%s\tint\t%d\n" % (row, field, value))
+    # 4f. Every named cash item the classic shop never listed. The owner, 2026-09-23: *"Add all of
+    #     the items that are not listed but named except those that are part of the
+    #     collaboration signature sets since they come from the Cash Coupons instead."*
+    #
+    #     `tools/cash_wares.py` has the whole argument. In short: the wares come from the
+    #     PRISTINE client (so this build does not depend on what an earlier install left, and
+    #     `--check` stays byte-exact), every placement copies the classic rows for the same kind
+    #     of item (tab, price, period, gender), and the SNs continue each tab's shipped range in
+    #     id order. The pets and pet hats this script already sells above are passed in so they
+    #     are not listed twice. The collaboration items do not exist in the pristine client at
+    #     all; the manifest check below must therefore come out empty, and stops the build if
+    #     it does not - a collaboration piece in the shop would bypass the coupon.
+    import cash_wares
+    collaboration = set()
+
+    def _ids(node):
+        if isinstance(node, dict):
+            if isinstance(node.get("id"), int):
+                collaboration.add(node["id"])
+            for v in node.values():
+                _ids(v)
+        elif isinstance(node, list):
+            for v in node:
+                _ids(v)
+    _ids(manifest)
+    collaboration |= {RENAMES.get(i, i) for i in collaboration} | {HAIR_HAT_RENAMES.get(i, i) for i in collaboration}
+    already = [pid for pid, _name, _price in priced_pets] + [item_id for item_id, _name in pet_equips]
+    ware_rows, unplaced, leaked = cash_wares.wares(also_sold=already, collaboration=collaboration)
+    if leaked:
+        raise SystemExit("step 4f: collaboration items would be sold outright: %s" % leaked)
+    if unplaced:
+        raise SystemExit("step 4f: no classic row says where these go: %s" % unplaced)
+    wares_patch = os.path.join(args.build_dir, "patch-Commodity-classic-wares.tsv")
+    with open(wares_patch, "w", encoding="utf-8", newline="\n") as fh:
+        for sn, item_id, scope, price, period, gender, name in ware_rows:
+            row = classic_rows + len(wares) + n
+            n += 1
+            fh.write("# %s (scope %d)\n" % (name, scope))
+            for field, value in [
+                ("SN", sn), ("ItemId", item_id), ("Count", 1), ("Price", price), ("Bonus", 0),
+                ("Period", period), ("Priority", 100), ("ReqPOP", 0), ("ReqLEV", 0), ("Gender", gender),
+                ("OnSale", 1), ("originalPrice", price), ("PbCash", 0), ("PbPoint", 0),
+                ("PbGift", 0), ("Refundable", 0), ("WebShop", 0), ("IsGift", 0),
+            ]:
+                fh.write("%d/%s\tint\t%d\n" % (row, field, value))
+        # And the classic shop's OWN rows, under the shop-wide rule (the owner, 2026-09-24):
+        # everything 100 LP and permanent, except the hired merchants (7 days 700, 1 day 100)
+        # and the Signature Style packages, which keep their prices. `cash_wares.price_rule`.
+        # The server never applied a period, so the durations only change what the shop draws;
+        # the prices are what the server debits, via the regenerated commodity.txt.
+        shipped = cash_wares.shipped_row_fixes()
+        for row, sn, item_id, fields in shipped:
+            fh.write("# shipped SN %d, item %d: %s\n" % (sn, item_id, fields))
+            for field, value in fields:
+                fh.write("%d/%s\tint\t%d\n" % (row, field, value))
+    print("  commodity  %d classic wares added, %d shipped rows brought under the price rule (step 4f)"
+          % (len(ware_rows), len(shipped)))
+
     add("Etc", "patch\tCommodity.img\t%s" % commodity_patch)
     add("Etc", "patch\tCommodity.img\t%s" % pet_rows_patch)
+    add("Etc", "patch\tCommodity.img\t%s" % wares_patch)
     add("Etc", "patch\tCashShopCategory.img\t%s" % category_patch)
     del rows
 

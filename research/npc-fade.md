@@ -417,3 +417,23 @@ five are self-diagnosing from `world.log` without a second launch.
 
 Not used: `tools/encodes.py` (misses loop-written fields, still unfixed).
 `ModernMapleSource` was **not consulted at all** for anything in this document.
+
+## 2026-09-23 - "can players be drawn in front of NPCs?" - investigated, deliberately left alone
+
+The owner asked, then answered it themself: *"I think there's a reason why some NPCs show up in front
+of the players, it's so that players are not blocking NPCs and other clients will always know
+where important NPCs are."* So **nothing was changed**, and bytes 12..19 still go out as `-1/-1`.
+
+What the look found, so nobody has to find it again:
+
+* The client's z ladder is deliberate. A byte scan for the `-(2^30 - 30000 + k)` constant finds
+  57 sites: drops `k=1`, **NPCs `k=5`**, mobs `k=9`, most other classes `10..20`, and the user
+  code's own pairs `4/9` and `2/7` (`1427b9626`, `1427c6a7f`; what selects between them was not
+  read). Larger z is drawn in front, so at the same layer and depth an NPC outranks almost
+  everything - consistent with the owner's reading that it is on purpose.
+* On map 10005000 the player and the Arcane Station / Chrishrama share **foothold page 1,
+  zMass 21** (the whole y=-375 ledge, fh 1..16), so it is the tie-break, not a bad foothold
+  from this server - fh 9 and fh 6 are the map's own `life` entries.
+* If it is ever wanted: override `(page, zMass + 1)` per NPC, **after** a probe watch at
+  `141e4a622` confirms the client's default A/B are (page, zMass). Unmeasured today, and a
+  wrong value hides NPCs (see the hazard above).

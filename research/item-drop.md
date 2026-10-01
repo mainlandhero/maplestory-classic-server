@@ -208,7 +208,7 @@ on it, so every row below is from the listing.
 | 7 | u32 | `1417a32d6` | `float(v)/k` -> `drop+0x1d8` | *(unknown - a speed or a scale)* | [L] |
 | 8 | u32 | `1417a3310` | obfuscated at `drop+0x90` / `drop+0x98` | **itemId**, or the meso amount | [L] store, [I] name |
 | 9 | u32 | `1417a3513` | `drop+0x68` | **ownerId** | [L] store, [I] name |
-| 10 | u8 | `1417a3539` | `drop+0x70` (as a dword) | **ownType**. Stored and never tested | [L] |
+| 10 | u8 | `1417a3539` | `drop+0x70` (as a dword) | **ownType**. ~~Stored and never tested~~ **Read again after the store** - see the 2026-09-23 note below | [L] store, [L] two later reads |
 | 11 | i16 | `1417a3560` | -> obfuscated point `drop+0x128`, then `drop+0xf8` and `drop+0x20` | **x** | [L] |
 | 12 | i16 | `1417a356f` | as above | **y** | [L] |
 | 13 | i16 | `1417a3597` | `drop+0x218` | *(unknown)* | [L] |
@@ -656,3 +656,65 @@ table turns that into an address.
 Site 2 (`0x3d1`) is the one to expect first: it is the only site whose null comes from a
 **lookup by an id** rather than from a field of the packet, so an item id the client cannot
 resolve is the leading candidate. **[I]**
+
+## 2026-09-23 - `ownType` IS read, and sending `0` on a public drop was the bug
+
+The owner: *"users dropping items publicly in the field, but nobody except themselves were able to
+pick up what was dropped on the ground."* The server's own rule (`LiveDrop::may_be_taken_by`,
+`public`) had allowed it since 2026-09-05. The packet contradicted it: every drop went out with
+**`ownType = 0` (user) and `ownerId` = the dropper**, which tells every other client on the
+field that the item is somebody else's.
+
+Row 10 above said `ownType` is "stored and never tested". That was an absence. A scan of the
+drop code for the displacement -
+
+```text
+python tools/fieldrefs.py 0x70 --lo 0x141790000 --hi 0x1417c0000
+1417910ee  mov  ecx, dword ptr [rax + 0x70]    in FUN_141790f80  -> FUN_140311330(ownType)
+1417a93eb  mov  ecx, dword ptr [rax + 0x70]    in FUN_1417a2ee0  (the decoder, after the store)
+```
+
+- finds **two dword reads after the store**. The first feeds a predicate whose result is
+combined with `drop+0x168` (`isExplosiveDrop`) on a float-heavy path, so it is probably the
+drop's physics or animation rather than the pick-up gate. **[I]**: which read, if either, is
+what stopped the other clients; the fix does not depend on the answer.
+
+**The fix:** a public drop (a player's own tradeable ground drop, or their mesos) goes out as
+`OWN_TYPE_EVERYONE` (2). Everything else is unchanged: mob and party drops still send `0`, and
+the server still decides every pick-up. `session::tests::another_player_can_pick_up_a_tradeable_item_wisp_dropped`
+drives it end to end through the real handlers - the owner's drop, the `0x046E` the bus gives
+Tester2, Tester2's `0x032C`, the item in Tester2's bag.
+
+## 2026-09-23 - an untradeable item a player drops is a disposal
+
+The owner: *"Untradeable items when dropped should just disappear, there should be an animation for
+it on client side and also broadcasted to other clients as well."* This replaces the
+2026-09-05 decision above ("may be dropped, may only ever be picked up by the character who
+dropped it"). Now `DropTable::drop_item` marks a trade-blocked item `vanishes`: it is placed
+like any other drop, so every client on the field draws it leaving the player's hand; **nobody
+may take it, the dropper included**; and after `VANISH_MS` (1.5 s - the 0.5 s arc plus a
+second on the floor) the ordinary expiry sweep sends the client's own fade (`0x046F`
+leaveType 0) to the whole field. A trade-blocked item a **mob** drops keeps the owner-only
+rule, because the killer of a quest mob has to be able to take its quest item.
+
+### Enter type 3 is the disappearing animation - and the late-arrival bug
+
+The owner: *"There should be a separate animation that client should be able to animate where the
+drop fades out."* `tools/fieldrefs.py 0x60 --lo 0x141790000 --hi 0x1417c0000`:
+
+```text
+141793b6d  cmp byte ptr [rcx+0x60], 3  -> takes drop+0xa8 (the layer) into vtable +0x208
+141794ed7  cmp byte ptr [rax+0x60], 3  -> takes drop+0xa8 into FUN_140d5e600
+1417982c5  cmp byte ptr [rax+0x60], 3  -> SKIPS the ordinary floating-drop work
+141798f2b  cmp byte ptr [rax+0x60], 3  -> SKIPS it again
+```
+
+all in `FUN_141790f80`, the per-frame update. So type 3 is animated on its own path, reads the
+source block (it still arcs from the player), and leaves `drop+0x61` clear (unpickable). **[L]**
+on the branches, **[I]** that they draw the fade. A player's untradeable drop now goes out as
+type 3 to the dropper and the field; the `0x046F` after `VANISH_MS` stays as cleanup.
+
+The same pass found that `DropTable::field_entry` filtered on `may_see_drop(owner, viewer,
+party)` alone, so a **public** drop was never re-sent to a player who arrived after it was made.
+That is the other half of the 2026-09-23 report and is fixed; `session::tests::a_public_drop_is_resent_to_somebody_who_enters_the_map_later`
+pins it.

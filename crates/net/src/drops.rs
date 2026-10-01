@@ -86,8 +86,8 @@ pub const DROP_TYPE_ITEM: u8 = 1;
 ///   2** - and every pick-up sweep in the client gates on `drop+0x61 != 0`. Sending enter
 ///   type 0 or 3 produces a drop that is drawn and cannot be collected. **[L]**
 ///
-/// So the only two values worth sending are 1 and 2, and [`ENTER_FLOATING`] is the one that
-/// also animates.
+/// So the only two *pickable* values are 1 and 2, and [`ENTER_FLOATING`] is the one that also
+/// animates. Type 3 is the one that is meant NOT to be picked up - see [`ENTER_DISAPPEARING`].
 pub mod enter_type {
     /// Appears with no animation. **Not pickable** - see the module doc.
     pub const DEFAULT: u8 = 0;
@@ -95,9 +95,30 @@ pub mod enter_type {
     pub const FLOATING: u8 = 1;
     /// Already on the ground, pickable, and **skips the source-position block**.
     pub const INSTANT: u8 = 2;
-    /// Fades in. **Not pickable.**
+    /// **The disappearing item.** Arcs from the source like type 1 (the source block is read
+    /// for 0, 1 and 3), is **not pickable** (`drop+0x61` is clear), and has its own branches
+    /// in the drop's per-frame update - see [`super::ENTER_DISAPPEARING`].
     pub const FADE_AWAY: u8 = 3;
 }
+
+/// **The enter type for an untradeable item a player drops: the client's own "disappearing"
+/// animation.**
+///
+/// The owner, 2026-09-23: *"There should be a separate animation that client should be able to
+/// animate where the drop fades out."* There is, and it is this enter type. `FUN_141790f80`,
+/// the drop's per-frame update, tests `cmp byte ptr [drop+0x60], 3` **four times**
+/// (`141793b6d`, `141794ed7`, `1417982c5`, `141798f2b`, all from `tools/fieldrefs.py 0x60`):
+/// the first two take the drop's layer (`drop+0xa8`) into dedicated calls - a vtable `+0x208`
+/// and `FUN_140d5e600` - and the last two *skip* the ordinary floating-drop work for it. So
+/// type 3 is not "type 1 but unpickable"; the client animates it differently. **[L]** on the
+/// branches, **[I]** that what they draw is the fade - the reference names this mode
+/// "disappearing" and uses it for exactly this case, and the owner has seen the animation.
+///
+/// **[I] whether the client removes the drop itself when the animation ends.** The server
+/// sends the ordinary `0x046F` fade after `VANISH_MS` regardless, so the object cannot be left
+/// behind either way; if the client has already destroyed it, a leave for an unknown id is
+/// looked up and ignored.
+pub const ENTER_DISAPPEARING: u8 = enter_type::FADE_AWAY;
 
 /// The enter type to use for an item a player has just thrown out of the bag.
 ///
@@ -110,9 +131,11 @@ pub const ENTER_INSTANT: u8 = enter_type::INSTANT;
 
 /// `ownType`, body offset 27. Read at `0x1417a3539` into `drop+0x70`.
 ///
-/// The client stores it and never gates on it, so **ownership is entirely the server's job**
-/// here - the client will happily ask to pick up a drop it does not own. **[L]** for the
-/// store, **[I]** for the meaning of each value, which comes from the reference.
+/// **Corrected 2026-09-23:** this said the client "stores it and never gates on it". A scan of
+/// the drop code finds two dword reads after the store (`1417910ee`, `1417a93eb`), so that was
+/// an absence rather than a measurement - and a public drop sent as [`OWN_TYPE_USER`] is
+/// exactly what the "nobody else can pick it up" report looked like. **[L]** for the store and
+/// the two reads, **[I]** for the meaning of each value, which comes from the reference.
 pub const OWN_TYPE_USER: u8 = 0;
 /// See [`OWN_TYPE_USER`].
 pub const OWN_TYPE_PARTY: u8 = 1;

@@ -357,9 +357,15 @@ mod tests {
         // ...and 4 more are the collaboration pets (2026-09-17): SN 160000011..14 at 1000 LP,
         // and 11 more the pet equips the shipped table left out - seven classic hats and the
         // four collaboration weapons - SN 160100003..13 at 100 LP.
-        assert_eq!(t.len(), 191, "159 classic + 9 Special-tab + 12 pet + 11 pet-equip rows");
+        // ...and 483 more (2026-09-23) are every named cash item the classic shop never
+        // listed, minus the collaboration sets that come from the coupons - tools/cash_wares.py,
+        // written by backport_install.py step 4f. The owner: *"Add all of the items that are not
+        // listed but named except those that are part of the collaboration signature sets"*.
+        assert_eq!(t.len(), 674, "159 classic + 9 Special-tab + 12 pet + 11 pet-equip + 483 classic-ware rows");
         for (sn, item, price) in [
             (160_000_003u32, 5_000_000u32, 100), (160_000_010, 5_000_010, 100),
+            // The collaboration pets: 1000 LP, the one exception to the 100 LP rule besides the
+            // merchants and the Signature Style packages (the owner, 2026-09-24).
             (160_000_011, 5_002_828, 1_000), (160_000_014, 5_002_831, 1_000),
             (160_100_003, 1_802_000, 100), (160_100_010, 1_803_148, 100), (160_100_013, 1_803_151, 100),
         ] {
@@ -367,6 +373,48 @@ mod tests {
             assert_eq!((row.item_id, row.price, row.period_days, row.on_sale), (item, price, 0, true), "SN {sn}: permanent, on sale, the owner's price");
         }
         assert_eq!(t.problems, 0, "every row parses");
+
+        // Step 4f's rows, pinned at both ends of what it did. The Gloves tab (scope 407) was
+        // empty in the classic client; its first row is SN 140700000. The Effects tab (410)
+        // likewise, SN 141000000. Every new ware is 100 LP (the owner, 2026-09-23).
+        let glove = t.get(140_700_000).expect("the Gloves tab's first row");
+        assert_eq!((glove.item_id, glove.price, glove.period_days, glove.on_sale), (1_087_000, 100, 0, true));
+        let effect = t.get(141_000_000).expect("the Effects tab's first row");
+        assert_eq!((effect.item_id, effect.price, effect.on_sale), (5_010_000, 100, true));
+
+        // **No cash equipment has a duration** - the owner, 2026-09-23: *"Make sure all cash
+        // equipment items do not have time duration."* That includes the classic shop's own
+        // clothing, which shipped at 90 days and is zeroed in place by step 4f.
+        let timed: Vec<(u32, u32, u16)> = t
+            .rows
+            .values()
+            .filter(|c| c.item_id < 2_000_000 && c.period_days != 0)
+            .map(|c| (c.sn, c.item_id, c.period_days))
+            .collect();
+        assert!(timed.is_empty(), "equipment rows with a duration: {timed:?}");
+
+        // **The shop-wide rule, over every row on sale** - the owner, 2026-09-24: *"everything in the
+        // Cash Shop costs 100 LP and does not have duration with the exception of shop
+        // merchants. 7 day shop merchants should cost 700 LP, 1 day shop merchants should cost
+        // 100 LP. Collaboration signature style packages should maintain their price."*, and
+        // then *"collab pets should remain at 1000 LP"* - SN 160000011..14, pinned above.
+        // tools/cash_wares.py `price_rule` is the same sentence on the build side.
+        let broken: Vec<(u32, u32, u32, u16)> = t
+            .rows
+            .values()
+            .filter(|c| c.on_sale && !(120_000_000..=120_000_008).contains(&c.sn))
+            .filter(|c| !(160_000_011..=160_000_014).contains(&c.sn))
+            .filter(|c| {
+                let want = if c.item_id / 10_000 == 503 {
+                    (if c.period_days == 7 { 700 } else { 100 }, c.period_days)
+                } else {
+                    (100, 0)
+                };
+                (c.price, c.period_days) != want || (c.item_id / 10_000 == 503 && ![1, 7].contains(&c.period_days))
+            })
+            .map(|c| (c.sn, c.item_id, c.price, c.period_days))
+            .collect();
+        assert!(broken.is_empty(), "rows outside the price rule (sn, item, price, days): {broken:?}");
         let special = t.get(120_000_000).expect("the Signature Style Collection is on sale");
         // The box wears 5681599 in the classic client (family 568 opens on double-click;
         // 522 does not) - crate::signaturestyle::COLLECTION, and backport_install.py's BOX_ID.
