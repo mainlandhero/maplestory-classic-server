@@ -30,6 +30,8 @@
 pub mod boat;
 pub mod broadcast;
 pub mod chairs;
+pub mod citizenship;
+pub mod discordstatus;
 pub mod commodity;
 pub mod crafting;
 pub mod config;
@@ -61,6 +63,7 @@ pub mod leveleffect;
 pub mod link;
 pub mod magic;
 pub mod mesodrop;
+pub mod messenger;
 pub mod mobattack;
 pub mod mobshare;
 pub mod party;
@@ -86,6 +89,7 @@ pub mod shops;
 pub mod signaturestyle;
 pub mod taxi;
 pub mod thirdjob;
+pub mod variance;
 
 pub use config::Config;
 pub use server::serve;

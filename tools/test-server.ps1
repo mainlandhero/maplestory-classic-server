@@ -694,13 +694,13 @@
     T11 IS THE MEASUREMENT, and T10 is right behind it. Both are walks, not clicks.
 
     T11 crosses to ANOTHER CONTINENT - 87 maps, a separate portal component from
-    Victoria Island, reachable only by the ferry.
+    Victoria Island, reachable by the ship to Orbis (the ferry was removed 2026-09-29).
 
     **ORBIS ITSELF ALREADY LOADED, and this block claimed the opposite for a week.** Map
     20000000 was served twice on 2026-08-28, the client answered 0x00DC 526 ms later and
     four NPCs drew. So "no character has ever stood on them" was false when written, and
     the risky-sounding part of T11 - does the client survive an Orbis map - is already
-    answered YES. What is untested is EL NATH and the ferry that reaches it.
+    answered YES. What is untested is EL NATH.
 
     That correction matters more than the map: the sentence was repeated into the printed
     plan and into three conversations, and it made T11 sound like an expedition when the
@@ -1894,28 +1894,21 @@
 
           world-ch0.log discriminates all of this without a second launch - grep it for
           "mob control:", which names the count and the recipient on every handover.
-     T11. THE THIRD JOB ADVANCEMENT, AND THE FERRY. Set yourself up first:
-              !job 110   !exp 31545355   !map 10005000
-          That is a level-70 Fighter in Sleepywood. 31 545 355 is the exp curve summed 1 to
+     T11. THE THIRD JOB ADVANCEMENT. Set yourself up first:
+              !job 110   !exp 31545355   !map 20001000
+          That is a level-70 Fighter in El Nath. 31 545 355 is the exp curve summed 1 to
           70 and one !exp crosses every level in it. If the level comes out wrong, say what
           it actually was - the curve is ours and that would be a finding of its own.
+          THERE IS NO FERRY (the owner, 2026-09-29: "El Nath should only be accessible by foot or
+          teleport scroll"). A player gets here by the ship to Orbis and the Orbis Tower.
 
-          a) CLICK EUREK THE ALCHEMIST in Sleepywood (they are at the far right, x=1415).
-             A menu should offer TWO stops: Orbis Ticketing Booth and El Nath, at
-             #b1000 mesos#k - twice a cab fare, on purpose.
-               a menu with two lines -> the ferry works
-               their ordinary line about wandering the world -> the click never routed
-               a menu with SIX towns -> the network filter is broken and they are being
-                          treated as a cab. Say so; it means every cab is now also
-                          offering another continent
-          b) PICK EL NATH.
-               *** THIS IS THE MOMENT. No character has ever been on an Ossyria map. ***
-               you arrive in a snowy town -> 87 maps just became reachable. Say so
+          a) You arrive in a snowy town -> El Nath loads. Say so
                black screen, or the client dies -> THE finding of this run. world-ch0.log's
                           SetField line names the map; say whether the screen drew
                           anything first
-               1000 mesos gone but no warp -> the fare moved and the field did not.
-                          world-ch0.log will say which
+          b) CLICK EUREK THE ALCHEMIST (they stand here and in Sleepywood): their own line
+             about wandering the world, NO menu -> DONE
+               a menu of stops -> old build; the ferry is back
           c) WALK RIGHT and take the door into Chief's Residence. Four NPCs are inside:
              Tylus, Robeira, Rene and Arec.
                all four visible -> the NPC list crossed the continent too
@@ -1929,12 +1922,8 @@
           e) CLICK ROBEIRA, RENE OR AREC as the same character. They must all REFUSE
              and name the branch rather than the level. A Crusader they will refuse too,
              because the advancement is one-way.
-          f) CLICK EUREK AGAIN, in El Nath this time (they are there as well - they are the
-             only NPC in this client standing on both continents).
-               a menu offering Sleepywood and Orbis -> the way home works, and nobody
-                          can be stranded on the wrong continent
-               their ordinary line -> they are not a port there, and El Nath becomes a trap
-                          whose only exit is seventeen floors of the Orbis Tower
+          f) Orbis Ticketing Booth's Platform Usher: ONE line, the platform to Victoria
+             Island, no ferry line -> DONE
 
           FOR THE RECORD: there is NO third-job test in this client - no quest, no hidden
           field, no marbles. All 322 quests were enumerated. Level 70 and the right second
@@ -2379,16 +2368,28 @@
                a skill item on the pet WITHOUT summoning: (Learned) in the tooltip, item gone
                -> fixed. The old message again -> paste the "pet skill:" line (it prints the
                serial)
-            d. NO "CLOSENESS HAS INCREASED (+1)" ON A MAP CHANGE (2026-09-18, the owner's screenshot,
-               two lines in the lower right every map change). The live log: the pet had been
-               summoned from Cash slot 3, Consolidate slid it to slot 1, and every re-send
-               after that wrote the pet item over slot 3 - where a coupon was - while the
-               restore put the pet in slot 1. The client, handed a pet where it had none,
-               printed +1 (once for the entry re-send, once for the first-move re-summon).
-               The re-send names the slot the pet is in NOW. Summon, Consolidate or Sort the
-               Cash tab so the pet moves, change maps twice: no closeness line -> fixed. A
-               line -> paste the "re-sent as pet" 0x0070 lines and the "restored on field
-               entry" line for the pet's item; their slots should agree
+            d. NO "CLOSENESS HAS INCREASED (+N)" ON A MAP CHANGE - SECOND FIX (2026-09-21).
+               The slot fix of 2026-09-18 was real (two lines became one) but it was not the
+               cause. The owner: "if the pet has some sort of closeness, a message of +1 closeness
+               still erroneously show up ... despite not actually adding any closeness."
+               THE NUMBER IS THE CLOSENESS, not a constant: Lucy's is 1, read out of the
+               0x0070 body in the 21:20 log. The client's FUN_141ec4f60 prints string 0x1AC
+               with the DIFFERENCE between the pet's cached closeness and the one it re-reads
+               from the Cash item, on every local-user refresh - so any write that raises it
+               prints a line and there is no quiet path. A field entry clears the client's
+               bag, so the pet was being built with no item to read: cached 0, then our
+               post-summon write took it to 1.
+               The entry now sends the pet's item BEFORE the summon as well as after (the
+               second write is the vacuum re-read and must stay).
+               Feed the pet a few times so its closeness is > 1, then change maps:
+                 no closeness line at all -> DONE
+                 one line reading exactly the pet's closeness (+5, say) -> the pet does NOT
+                            read its item at construction; the next lever is to drop the
+                            post-summon write from the ENTRY batch only (the first-move
+                            re-summon is the one that fixed the vacuum). SAY THE NUMBER
+                 two lines -> the first-move re-summon prints one too; same lever
+                 the pet spawns sad/droopy or stops vacuuming -> the pre-write is not enough
+                            on its own; say which, it is the opposite regression
           THE COLLABORATION PETS AND EVERY PET EQUIP (2026-09-17, INSTALLED here - the
           client package must be rebuilt from client-patched\Data). The owner: "backport these
           pets ... as well as these pet equipment. All pets from these collaboration should
@@ -2604,6 +2605,419 @@
           c. wait either out, or !buff-cancel by right-clicking the icon: it goes away and
              the stat window drops the number. A coupon that outlives its icon or an icon
              that outlives its multiplier is a bug either way - say which.
+
+    27. WEATHER ITEMS (2026-09-30). Two clients on one map; Sprinkled Chocolate (or any 512xxxx).
+          a. use it with a message: chocolate falls and the message shows on BOTH screens, one
+             spent -> DONE. After ~30 s it fades out -> DONE
+               it stops dead instead of fading, or lasts ~10 s -> say which; 0x01B7 carries 30
+          b. use a second one while the first is running: refused with a notice, item kept -> DONE
+          c. a third client walking onto the map mid-effect sees the rest of it -> DONE
+          d. GM'S BLESSINGS (Use tab, !item 2023000 / 2023001), two clients on one map: the GM
+             weather with "<name> ..." on both screens; BOTH get a buff icon counting down from
+             60:00 - Wind: faster and higher jumps; Precision: accuracy +20 -> DONE
+               icon but no faster run / higher jump -> Wind's bits 92/93 are the [D]; say which
+               only the user gets it -> paste the "blessing:" log line
+
+    26. MEGAPHONES (2026-09-30). Two clients on DIFFERENT channels, both level 10+.
+          a. Super Megaphone with the whisper box ticked: "Name : text" on BOTH clients, pink,
+             with the whisper icon; one Super Megaphone gone from the Cash tab -> DONE
+          b. again with the box unticked: no whisper icon -> DONE
+          c. Megaphone: only the client on YOUR channel sees it, not pink, whisper icon as
+             ticked -> DONE
+               the Megaphone line comes out pink, or with an item box -> say which; it is sent
+                          as 0x00AC type 8 (kind 0xf), and that choice is the [D] in this
+               nothing on the other channel for (a) -> paste the "megaphone:" log line
+
+    25. SHIP TO ORBIS (2026-09-26). Ellinia Station (10002090) - Ellinia's station door.
+        Departures are every :x0 of the station's wall clock (UTC); boarding is from :x5 to
+        :x9, and the last minute before a departure is closed on purpose.
+          a. Joel: "Hi there! I'm Joel..." with Next, then a MENU with both tickets (not a shop
+             window). Buy one of each -> Basic costs 5,000 and Regular 20,000, each with a grey
+             meso line and a grey item line, and they send you to Cherry -> DONE
+               a shop window, or the menu with no introduction -> old build
+          b. Cherry OUTSIDE :x5-:x9, pick Basic: "We will begin boarding 5 minutes before the
+             takeoff..." (or in the last minute "This ship is getting ready for takeoff...") with
+             the next ship's time, and the ticket stays in the bag -> DONE
+          c. Cherry INSIDE the window, pick Basic: "This will not be a short flight... Do you
+             still wish to board the ship?" No -> "You must have some business..." and nothing
+             moves. Yes -> the ticket goes (grey line), you land in Before Takeoff with a
+             "Time Left" countdown to the departure -> DONE
+               no countdown -> paste the "FieldClock type 2" line, or its absence
+          d. at the departure you are moved to To Orbis with ~5:00 on the clock; walk into the
+             cabin and back - the clock carries on, it does not restart -> DONE
+          e. at 0:00 you land in the Orbis Ticketing Booth, "The ship has arrived" -> DONE
+          f. TWO CLIENTS, both Basic for the same departure: they see each other in the waiting
+             room, on the deck and in the cabin -> DONE. A third boarding the NEXT departure
+             sees neither -> DONE
+          g. Regular: Cherry any time -> Before Takeoff ALONE with 0:10 on the clock, then To
+             Orbis alone with 1:00, Orbis at 0:00 -> DONE (was straight on deck before
+             2026-09-29). The same from Rini on the way back -> DONE. A second client on its
+             own Regular ride sees nobody, in the waiting room or on deck -> DONE
+               straight onto the deck = old build
+          h. Purin in the waiting room: "Are you sure you want to get off the ship?" No -> "You'll
+             get to your destination in a short while..." and you stay. Yes -> back to Ellinia
+             Station before the ship leaves, ticket not returned -> DONE
+          i. disconnect (or change channel) in the waiting room, on deck or in the cabin, then log
+             in: you are in Ellinia Station -> DONE
+          j. THE SHIP AT THE STATION (0x01BF / 0x01C0, new). Enter the station between :x5 and
+             :x0: a whistle, and the ship slides in from the right over ~15 s -> DONE. Enter at
+             any other time: a whistle, and it slides out to the right -> DONE. Stand there
+             across :x5:00 - it comes in; across :x0:00 - it leaves -> DONE
+               no ship and no whistle -> paste the "ContiState 0x01C0" / "ContiMove 0x01BF"
+                          lines; present = the packet went and the client ignored it
+               the ship jumps into place instead of sliding -> say so; the arrive/leave
+                          reading of the two routines is the [D] in this
+               a crash on entering the station -> say so FIRST, before anything else
+          k. THE CRIMSON BALROG INVASION (half the Basic crossings, never a Regular one). A minute
+             into the ride, standing on the deck: the Balrog's ship comes alongside and two
+             Crimson Balrogs appear at it, in the air -> DONE. A second player on the deck sees
+             the same; one in the cabin sees nothing until they come up -> DONE
+               no invasion in several rides -> grep the log for "will be INVADED"; present and
+                          nothing on screen = paste the ContiMove / MobEnterField lines
+          l. THE WAY BACK (2026-09-27). Orbis Ticketing Booth: Agatha "Hello, I'm the information
+             guide..." + Next, then Ticket to Ellinia (Basic) / (Regular) -> DONE. The Platform
+             Usher: "Platform to Board a Ship to Victoria Island" -> Isa's question -> Yes puts
+             you in the Station Tunnel; walk right to Rini's platform -> DONE. They have NO second
+             line - no ferry since 2026-09-29 -> DONE. Rini, Erin and the ride are the same as (b)-(k); the
+             ship lands in Ellinia Station -> DONE. A disconnect aboard logs in on Rini's
+             platform -> DONE
+               a ferry line on the Platform Usher -> old build
+
+    26. EMOTES (2026-09-29). Two clients on the same map.
+          a. press an emote on A (F1-F7, or Queasy): B sees A's face change too -> DONE
+               nothing on B = grep B's channel log for "UserEmotion 0x02A6" (absent = not
+               relayed, present = the client did not draw it - say which)
+          b. B on a different map sees nothing, and A's own face works as before -> DONE
+          c. SHADOW STYLE (09-30): A double-clicks it ONCE (a second double-click switches it
+             OFF again - that is what the first try did) and WALKS: afterimages
+             behind A on A's screen AND on B's -> DONE. B changes map and comes back: still on
+             -> DONE. A double-clicks again: gone on both -> DONE
+               on A only = grep B's log for "UserEffectItem 0x02A8"
+
+    25. CITIZENSHIP (2026-09-28). A GM character of level 12+, no citizenship yet.
+          a. Henesys Town Hall, talk to Arthur: the "Oath of Citizenship" CONTRACT window (not a
+             chat box), Arthur's name on it -> press Sign: the STAMP plays, ~2 s later the
+             window closes, "You are now a citizen of Henesys" + the CitizenshipGet effect -> DONE
+               buttons grey and the window stays forever = old build (09-29 fix: the server
+               sends the force-close that starts the stamp) - paste the "force-close" log line
+               a plain line instead = old build or under level 12; blank name = say so;
+               a CRASH on opening = the window's layout is wrong - say so FIRST, nothing else
+          b. the Community Board in front of the hall: exactly ONE resident's "First Greeting"
+             and ONE "Donating to Henesys" are available, nothing else -> DONE
+               all of them available = the board record is not read (paste the "quest 510001"
+               log line); none available = the record's format is wrong (paste it too)
+          c. "!citizenship 1 contr 950", then do the resident quest: "You have gained ...
+             Contribution (+1000)" at 10x (+100 x the Quest rate), the grade-up effect, a notice to see Arthur -> DONE
+               no Contribution line = paste the "Message 35" log line
+          d. talk to Arthur: the "Citizenship Grade Update" certificate, rank Visitor -> DONE.
+             Talk again: a menu (standing / renounce) -> DONE
+          e. Flint (scroll shop, same hall): the Town Resident rows drawn LOCKED; buying one is
+             refused. "!citizenship 1 grade 5", reopen: they unlock and sell -> DONE
+               drawn open and refused = the row fields are not read; drawn locked at grade 5
+               = paste the "ClassicOpenShop" line
+          h. CITIZEN OF HONOR (09-29), two clients on different channels if you can:
+             "!citizenship 1 grade 9", "!citizenship 1 contr 9950", then do today's resident
+             quest -> grade 10: the Henesys Earrings appear in Equip, and BOTH clients get a blue
+             "[Notice]Let us all congratulate <name> for becoming a Citizen of Honor in Henesys!"
+             -> DONE. Doing it again gives no second earring and no second notice -> DONE
+               no line on the other channel = paste its log's "BroadcastMsg type 0" line (absent
+               = the hub did not deliver); a red/yellow line = the type's colour is not blue
+             Raymond / Max: EVERY row locked for a non-citizen, Fried Chicken etc. included
+             (Traveler+, 09-29); a Henesys Traveler buys them at Raymond, not at Max -> DONE
+          f. Kerning City Civic Center, Roxy: "Transfer of Citizenship" -> OK: you are Kerning's,
+             Henesys is frozen ("!citizenship" shows st1=2) -> DONE
+          g. QUEST RATE ("!rates" shows the Quest field, 10x live): in (c) the Contribution line
+             reads 10x the quest window's number, and "mesos (+n)" appears at 10x its meso
+             reward. ANY other quest turned in now pays its mesos too -> DONE
+               no mesos line = paste the "paid ... mesos" log line; 1x numbers = check !rates
+
+    24. CASH SHOP BEAUTY PREVIEW (2026-09-26). Cash Shop > Beauty > Hairstyles.
+          a. click Mystery Hair Coupon: the panel below fills with hairstyles for YOUR gender,
+             and the colour swatches recolour them -> DONE
+               still empty -> grep the channel log for "CashShopBeautyPreview 0x05B9"
+               absent = old build; present but empty panel = paste the log line
+          b. the same for Signature Hair Coupon, and for the two face coupons under Faces -> DONE
+          c. the client does not crash or eject you on entering the shop -> DONE (a wrong
+             layout would show here first)
+
+    23. SPAWN POINTS (2026-09-26).
+          a. walk to the far side of a big map (Kerning City), log off, log in: you appear at the
+             spawn point NEAREST where you stood, not at the map's first one -> DONE
+          b. same across a channel change, and in and out of the Cash Shop -> DONE
+               back at the usual spot -> paste the "spawn point:" log lines
+          c. Nella -> Kerning City (or a Return Scroll) several times: you land at DIFFERENT
+             spawn points around town -> DONE
+
+    22. 2ND JOB TEST OF QUALIFICATION (2026-09-26). A level-30 Magician who has handed Grendel's
+        letter to the Magician Job Instructor.
+          a. pick "Test of Qualification": three lines, the LAST with Accept/Decline. Accept ->
+             in the Magician's Tree Dungeon, and the quest book shows it in progress with 30 Dark
+             Marbles -> DONE
+               last line has only OK -> old build; Accept but no warp -> paste "second-job test:"
+          b. talk to the instructor inside: back out BESIDE the Magician Job Instructor, not at
+             the bottom of the map -> DONE
+          c. "Talk to Magician Job Instructor" with <30 marbles: asks to go back in; Yes -> in,
+             No -> stays -> DONE
+          d. with 30: pick the quest, hand them in, get The Proof of a Hero; Grendel advances -> DONE
+          e. as a 2nd job: "nothing more to teach"; before the quest: "not ready yet ... Grendel" -> DONE
+
+    21. LAUNCHER UPDATE DIALOGS + COPY LOGS (2026-09-25).
+          a. the post-update notice, without a real update - from the launcher's folder:
+               maplecw-launcher.exe --updated-from no-such-file.old
+             it opens with "Launcher updated ... please sign in again", nothing behind it
+             clickable until OK -> DONE
+          b. a real update (package once after changing the launcher): the OLD window shows
+             "Launcher updated ... will close and reopen ... sign in again"; OK closes it and
+             the new one opens with the notice from (a) -> DONE
+               closes with no dialog -> the player still has the old launcher build
+          c. open Log, press Copy logs, paste into Notepad: every line, with [info]/[WARN]
+             tags, under a header line -> DONE
+
+    20. PET FEED LINE, SAME ON EVERY SCREEN (2026-09-25). Two players on one map; one feeds
+        their pet by hand, several times.
+          a. both screens: the pet eats and shows the SAME bubble text each time -> DONE
+               different text -> paste the "pet line:" lines from the feeder's channel log
+          b. the watcher sees the EATING animation too, not only the bubble -> DONE
+               bubble but no eating -> the relay's second byte matters; say so, it is one line
+          c. nothing doubled: one bubble per feed on the watcher's screen -> DONE
+
+    19. PET AUTO HP / AUTO MP (2026-09-25). The pet's drink (0x0206) was never handled.
+          a. a pet with Auto HP, potions set in its slot, take damage below the threshold: the
+             pet drinks, HP rises, the stack drops by one -> DONE
+               nothing happens -> grep the channel log for "pet 0 drinks"; absent = old build
+          b. same for Auto MP -> DONE
+          c. afterwards, inventory / AP / Cash Shop still respond (the latch is cleared) -> DONE
+
+    18. ITEM VARIANCE (2026-09-24). Every equip a mob drops rolls around its template.
+          a. kill mobs until an equip with a level requirement drops; pick it up and hover it.
+             A stat differing from the item's base -> DONE (the log's "variance:" line
+             names the roll and the template side by side)
+               the tooltip shows the plain template on every drop -> paste the variance lines
+          b. a stat rolled BELOW the base: the tooltip still draws it, no crash -> DONE
+             (Chaos already does this; this confirms it for a fresh drop)
+          c. log out and back in: the same numbers -> DONE
+          d. the King Slime: each member's Squishy Shoes differ from each other -> DONE
+          e. wear a dropped equip, note its stats, Chaos it, then Innocence it: it returns to
+             the numbers it DROPPED with, not the plain item's -> DONE
+               the plain item's numbers -> paste the "variance:" line for that drop
+
+    17. FIRST TIME TOGETHER, LAST STAGE DROPS (2026-09-24). Two members, kill the King Slime.
+          a. each screen: the Pass and mesos, then ONE pair of Squishy Shoes at the end of the
+             row, evenly spaced - nothing stacked, no gap -> DONE
+               shoes on top of the Pass -> the server is the old build
+               a gap in the row -> paste the "is PERSONAL to" lines from the channel log
+          b. Jr. Necki / Curse Eye drop a Pass and mesos, never a Coupon -> DONE
+          c. on the Exit map, holding Passes/Coupons, talk to Nella: they go, one grey "lost"
+             line each, before they ask; other Etc items stay -> DONE
+
+    16. MAPLE CHAT ACROSS CHANNELS, AND BUDDY CHAT (2026-09-24). The deployed server's logs: a
+        room opened on channel 1 could not be joined from channel 0 ("result 1 - not here", the
+        "busy" message), and buddy chat went nowhere. Rooms now live in the hub, like parties.
+        NEEDS THE HUB (maplecw-chat) REBUILT TOO - an old hub drops the new frames silently.
+          a. The owner on channel 1, Tester2 on channel 2. The owner opens Maple Chat and invites Tester2;
+             Tester2 presses Accept: both windows show both avatars -> DONE
+               "busy" / nothing opens -> grep Tester2's channel log for "maple chat: hub echo";
+                          absent = the hub is the old build
+          b. type a line on each side: both see both lines -> DONE
+          c. Tester2 closes the window: the owner's window drops Tester2's avatar -> DONE
+          d. BUDDY CHAT: with the two as buddies, switch the chat box to Buddy and type: the
+             other side sees it as a buddy line, on the same channel AND across channels -> DONE
+               nothing arrives -> paste the "buddy chat:" line from the sender's log
+
+    15. THE CASH SHOP, 483 NEW WARES (2026-09-23). Every named cash item the classic shop never
+        listed, except the collaboration sets (they come from the coupons). All 100 LP; no
+        cash equipment has a duration any more, including the classic shop's own clothing.
+        Needs the NEW client data: tools/backport_install.py --install was run, so this
+        machine has it; restart the world servers so they load the new table.
+          a. Fashion / Gloves and Fashion / Effects, both EMPTY before, now list items -> DONE
+          b. any hat or top: the tag says 100 and there is NO "90 days" line -> DONE
+               a days line still shows -> the client is reading an old Etc_000.wz
+          c. BUY one new ware (e.g. Red Boxing Gloves): it arrives, 100 LP leaves, and the
+             server's log line names SN 140700000 -> DONE. "NOT on sale" / "no commodity
+             serial" -> the world server was not restarted
+          d. Frieren's Clothes / Himmel's Clothes are NOT in any tab - they still come only
+             from the Signature Style coupons -> DONE. Listed -> the exclusion failed; say so
+          e. DELETE (2026-09-24): select an item in Cash Inventory, press the trash button,
+             confirm. It disappears with "The cash item has been deleted." -> then BUY
+             something right after: it works -> DONE, the latch is released
+               the delete works but the next buy does nothing -> the wallet did not clear
+                          the latch; paste the two 0x05AE / 0x05AD lines
+               "Due to an unknown error" again -> the old build; restart the world servers
+
+    14. GROUND DROPS BELONG TO EVERYONE; UNTRADEABLE ONES VANISH (2026-09-23). The owner:
+        "nobody except themselves were able to pick up what was dropped on the ground." The
+        server had allowed it all along; the 0x046E told every other client the item was the
+        dropper's (ownType 0). A player's tradeable drop and their mesos now go out as ownType
+        2, "anyone". An untradeable item a player drops is drawn landing, then FADES for
+        everyone after 1.5 s, and nobody gets it. NO CAPTURE OF THE FAILURE EXISTS - this step
+        is the one that proves the client half. Two clients, same map:
+          a. The owner drops a TRADEABLE item (any sword). Tester2 walks onto it and presses the
+             pick-up key: it goes into TESTER2's bag -> DONE
+               nothing happens -> grep world-ch0.log for "<- [Tester2" and 0x032C:
+                 absent  -> Tester2's client still will not ask; the gate is client-side and
+                            the next suspect is ownerId (drop+0x68), not ownType
+                 present -> the server refused; paste the "pick-up:" line under it
+          b. the same with MESOS: Tester2 gets all of them (a player's mesos are not split)
+          c. drop one and wait: it stays for the whole drop lifetime, then fades on BOTH
+             screens -> DONE
+          d. The owner drops an UNTRADEABLE item (the Beginner's weapon, or anything that refuses
+             storage). It goes out as enter type 3, the client's OWN disappearing animation,
+             to both screens. Watch for TWO things and say which you saw:
+               it plays a distinct fade-out on BOTH screens, with no pick-up prompt -> DONE
+               it lands like a normal drop, sits ~1.5 s, then fades -> type 3 is not the
+                          animation; the 1.5 s fade is the server's cleanup
+               it fades, then REAPPEARS or blinks at ~1.5 s -> the client already destroyed
+                          it and the server's cleanup is redundant; say so and it goes
+               The owner's screen only -> the enter is not reaching the field
+          e. LATE ARRIVAL: the owner drops a tradeable item, THEN Tester2 portals in. Tester2 sees
+             it and can pick it up -> DONE. Invisible to Tester2 -> the entry re-send
+          f. a QUEST item a mob drops is unaffected: the killer can still take it, and it
+             does not vanish. If it does, the disposal rule has leaked onto mob drops
+
+    13. THE TRADE WINDOW - 0x0575 mode 4 (2026-09-22). The owner: "Tester2 just sent the owner a
+        trade request, but after the owner accepts it, the Trade window did not open." The invite
+        has worked since 2026-09-09; what was missing is the packet that OPENS the window,
+        whose payload runs through a virtual call on whichever miniroom class the room type
+        picks. For a trade that call is FUN_141C423D0 and its only packet read is
+        FUN_1402ee8d0 - the avatar decoder 0x0224 already uses. research/trade-2026-09-09.md.
+        THE WINDOW OPENS. PUTTING ITEMS IN IT DOES NOT - modes 0x0C and 0x10 are still
+        unhandled, so do not test dragging items or Confirm yet; step (e) is what to look at.
+          a. Tester2 invites the owner, the owner clicks Accept:
+               BOTH trade windows open, each showing the OTHER player's avatar and name in
+                          the far seat and itself in the near one -> DONE
+               only one side opens -> say WHICH; the other's copy goes over the field bus and
+                          the log says "has no live session on map"
+          b. IF THE CLIENT DIES ON ACCEPT: paste client-exit.log and the CLIENT FAULT line
+             from maplecw-hook.log. That is the one guess in this packet - after the member
+             list the client makes a last virtual call, resolved to a method that reads
+             NOTHING, and the resolution is [D] because the slot arithmetic lands in a region
+             shared with a second vtable. A fault means the body is short by whatever it does
+             read, and the fix is that function, not the rest of the body.
+          c. the avatars: the near seat is you, the far seat is them, dressed as they are.
+               a blank or naked seat -> the look block; say which seat and paste the mode 4
+                          line's byte count (it is 438 for two bare characters)
+               the NAMES swapped or both the same -> mySlot is inverted; the host is slot 0
+          d. TWO windows on one screen -> the creator should not have been sent a mode 4 at
+             all; mode 0xB (somebody entering a window that is already open) is undecoded and
+             that would be the packet to read next. Say so, it is a real outcome
+          e. whatever you do next in the window (drag an item, press Confirm) sends modes
+             0x0C / 0x10 and this server answers neither. Expect nothing to happen; if
+             something DOES, paste it, because that is a client-side behaviour nobody has
+             recorded
+
+    12. FRIENDS - THE BUDDY LIST DRAWS, AND THE LOOP IS GONE (2026-09-22, third pass).
+        Confirmed on the owner's screen: the popup appears, Yes/No work, and the Buddy tab lists
+        "Default Group (1/1)" with the owner in a NAME / JOB / LV row - so the 329-byte record is
+        right where it is measured. Two things fixed since that screenshot and one wanted:
+          * THE LOOP. Every list reply ends in a window refresh, and a refreshed window hands
+            its group names back as 0x0193 sub-op 0x14 - which this server answered with a
+            list. 32 566 round trips, a 42 MB log, "lagging a lot" and a frozen buddy list.
+            Sub-op 0x14 is a REPORT and is answered with nothing now.
+          * A TIMEOUT, 60 s, measured from when the BALLOON went up rather than from the ask -
+            otherwise every request made while the target was offline expires before its
+            balloon is drawn. Both sides get 0x2A "The request to add a Friend has been
+            canceled."
+          * STILL OPEN and all one packet (0x00A7 sub-op 0x2D, decompiled, not built): the
+            location check, the logout that leaves a friend showing online, the blank JOB and
+            LV columns, and "Tester2 is now your friend" as the client's own line.
+          a. Tester2 adds the owner, the owner presses Yes. THEN LEAVE BOTH CLIENTS SITTING FOR A MINUTE:
+               no lag, and opening either buddy list is instant -> THE LOOP IS DEAD, done
+               still laggy -> say WHICH action starts it, then grep world-ch0.log for 0x0193
+                          and count the sub-ops. A different one is looping and that number
+                          names it
+          b. the rows: the owner in Tester2's list and Tester2 in the owner's, under Default Group
+               both -> DONE
+               name blank or garbled -> offset 4 is measured, so that would be the string
+                          write, not the layout - say exactly what it shows
+          c. JOB and LV (2026-09-23): the row builder FUN_1411be0a0 was read, not guessed -
+             LV is rec+0x139, JOB is rec+0x13D into the client's own job-name lookup. Open the
+             list with Tester2 OFFLINE as well as online:
+               "Beginner" / "Magician" and the right level, both times -> DONE
+               the level right, JOB blank or wrong -> the job id is not what the lookup keys
+                          on; say what it shows
+               both still blank -> the server is the old build; rebuild
+          c2. LOCATION: select Tester2, the status line reads "Tester2 - Kerning City" (or
+             whatever map), NOT a chat line. On another channel it reads the channel.
+               a chat line "'Tester2' is currently at ..." -> the old build (mode 0x09)
+               "Channel 1" when they are on channel 2 -> the channel is off by one; say so
+          d. TIMEOUT: Tester2 adds the owner, the owner IGNORES the balloon. After one minute both read
+             "The request to add a Friend has been canceled." and the row is gone both sides
+               -> DONE
+               the balloon is still on screen after the sentence -> EXPECTED, [I]: whether
+                          0x2A also dismisses a live balloon is not decoded. Press its Yes
+                          anyway and say what happens - nothing should, and the log says
+                          "nothing is waiting"
+               no sentence at all -> the tick is not reaching it; paste the "friends:" lines
+          e. TIMEOUT DOES NOT FIRE ON AN ANSWER: accept within the minute, then wait two more.
+             Nothing is cancelled and you stay friends -> DONE
+          f. PRESENCE (0x2D, new). With both logged in and friends:
+               log out as the owner -> Tester2's row for the owner GREYS OUT, with no chat line
+               log back in as the owner -> Tester2 reads "[Friend] the owner has logged in." and the
+                          row un-greys -> DONE, all three presence reports
+               the row never changes -> paste the "friends: ... went ONLINE/offline" line;
+                          if it is there, the packet went and the client ignored it, which
+                          points at the status byte (0/1 is [I])
+               the line is said but the row stays grey -> they are two different fields and
+                          the list half is what to look at
+               a line on every PORTAL rather than once per login -> announced_presence is
+                          not holding; say so
+          g. "Tester2 is now your friend." should now be in the SAME COLOUR as "Tester2 has
+             declined the friend request." - both go through the client's own printer at kind
+             0xb. Different colours -> say which is which
+          h. the 51st buddy is refused with "Your buddy list is full." The header still reads
+             [n/0] - KNOWN, the client's max lives in a field nothing has been found to set
+
+    11c. CRAFTING - the Crafting Journal, and the six quests that open its tabs
+    11c. CRAFTING - the Crafting Journal, and the six quests that open its tabs
+        (2026-09-21). The owner: "We need to implement crafting in our server. After these quest
+        completions, they should unlock the appropriate crafting menu within the client."
+        The window, the recipe list and the animation are the CLIENT's; this server owns the
+        bag, the mesos and the mastery. One craft is TWO packets (0x02F6 mode 0 "may I", then
+        mode 3 "it finished"), and NOTHING is taken until the second.
+        research/crafting-2026-09-21.md; 348 recipes from tools/dump_craftrecipe.py.
+          a. !craft smithing 1 - the tab opens with no quest. Then walk to the Anvil in
+             Perion (10004000, x 718) and open the Crafting Journal.
+               the SMITHING tab is live and lists level-1 recipes; the other five are greyed
+                          with "Smithing Level 1 or higher is required to craft."  -> DONE
+               every tab still greyed -> the skill did not reach the client: paste the
+                          "ChangeSkillRecordResult" line from world-ch0.log
+               (the Journal is opened by a CLIENT KEYBIND - the owner, 2026-09-21 - so it opens
+                          anywhere; the greyed tab is the only gate)
+               still greyed after !craft -> the skill did not reach the client; paste the
+                          "ChangeSkillRecordResult" line from world-ch0.log
+          b. !item 4010000 20, then craft a Bronze Plate (5 ore, 100 meso, 3 mastery):
+               the bar animates, the ore drops by 5, 100 mesos go, the plate lands in Etc,
+                          and the chat says "Smithing's mastery increased. (+3)" -> DONE
+               the bar fills and nothing happens -> the mode 7 never came; paste the
+                          "CraftResult" lines
+               a red sentence instead ("not enough materials/mesos/space", "only available
+                          near crafting tools") -> quote it exactly. Each one is a different
+                          check and they are listed in the research §4
+          c. the MASTERY BAR's percentage. The curve is SETTLED (the owner, 2026-09-21: "settle
+             for the EXP curve in the client, since that's the source of truth for the client
+             display") - this is a sanity reading, not a choice.
+             !craft smithing 2 0, then craft ONE plate:
+               1.80% (3 of 166) -> DONE, the server and the client agree
+               anything else -> the server's mastery_exp_needed and the client's
+                          FUN_1401d2320 have drifted; say the number
+          d. Craft All with 20 ore: four crafts run back to back off ONE button press (the
+             client loops by itself, one 0x02F6 pair each) -> DONE. It stops after one ->
+                          the mode 7 result was not 0; paste the CraftResult line
+          e. !craft (no arguments) lists what is open and the mastery as n/needed;
+             !craft all 10 opens all six; !craft 2 0 closes Tailoring again -> DONE
+          f. the real thing: do quest 80008 (Silas Irons, Perion, level 10+) and watch for
+             "You have learnt Smithing." with the tab opening on the same screen -> DONE
+          g. ALREADY-FINISHED QUESTS (2026-09-21). The owner had finished Vicious's quest before
+             the server read Act.1.skill at all, and the Woodcrafting tab still said "Vicious
+             in Henesys is looking for an apprentice". The claim now backfills every finished
+             crafting quest, so: just LOG IN on that character and open the Journal.
+               Woodcrafting is live on the first screen, no relog, no re-quest -> DONE
+               still greyed -> the quest row is not Complete in the database; paste the
+                          "crafting: character ... finished quest" line, or its absence, from
+                          world-ch0.log
+               NOTE: the backfill learns the profession at LEVEL 1 with an EMPTY bar. The
+                          mastery those old turn-ins would have paid is gone for good and is
+                          not replayed (a login that added mastery would be a farm).
 
     11b. GIFT DROPS - !giftdrop and !giftall (2026-09-18/19). The owner wanted the modern Gift
         Drop window for compensation; this client has no such window (no UI image, none of
@@ -5370,10 +5784,10 @@ function Show-TestPlan {
         Write-Host '  freeze, or jump to their spawn points.'
         Write-Host ''
         Write-Host '  T11 AND T10 are the single-client half, and still untested.' -ForegroundColor Magenta
-        Write-Host '  T11 CROSSES TO ANOTHER CONTINENT - 87 maps behind a ferry.'
+        Write-Host '  T11 CROSSES TO ANOTHER CONTINENT - 87 maps, reached by the ship.'
         Write-Host '  ORBIS ITSELF ALREADY LOADED (2026-08-28, 0x00DC accepted, NPCs'
         Write-Host '  drew). This plan claimed it never had, for a week. What is'
-        Write-Host '  untested is EL NATH and the ferry - not "can the client survive'
+        Write-Host '  untested is EL NATH - not "can the client survive'
         Write-Host '  a map over there", which is answered yes.'
         Write-Host '  If a client dies loading one, THAT is the finding - worth more'
         Write-Host '  than the advancement it was on the way to.'
@@ -5435,19 +5849,14 @@ function Show-TestPlan {
         Write-Host '       it is the exit the leaving player cannot see.'
         Write-Host '       grep world-ch0.log for "mob control:" - it names the count and'
         Write-Host '       the recipient, so this needs no second launch to read.'
-        Write-Host '  T11. THIRD JOB + THE FERRY. THE ONE. Set up with:' -ForegroundColor Yellow
-        Write-Host '         !job 110   !exp 31545355   !map 10005000'
-        Write-Host '       (a level-70 Fighter in Sleepywood. If the level comes out'
+        Write-Host '  T11. THIRD JOB. THE ONE. Set up with:' -ForegroundColor Yellow
+        Write-Host '         !job 110   !exp 31545355   !map 20001000'
+        Write-Host '       (a level-70 Fighter in El Nath. If the level comes out'
         Write-Host '        wrong, say what it was - the exp curve is ours.)'
-        Write-Host '       a) CLICK EUREK THE ALCHEMIST (far right, x=1415).'
-        Write-Host '            a menu, two stops, 1000 mesos -> the ferry works'
-        Write-Host '            their wandering line -> the click never routed'
-        Write-Host '            SIX towns -> the network filter is broken and every cab'
-        Write-Host '                       now offers another continent too'
-        Write-Host '       b) PICK EL NATH. *** THIS IS THE MOMENT. ***'
-        Write-Host '            a snowy town -> 87 maps just became reachable'
-        Write-Host '            black screen / client dies -> THE finding of this run'
-        Write-Host '            mesos gone, no warp -> world-ch0.log says which half ran'
+        Write-Host '       NO FERRY any more: El Nath is on foot from Orbis, or a scroll.'
+        Write-Host '       a) a snowy town -> El Nath loads; black screen / dies -> THE finding'
+        Write-Host '       b) CLICK EUREK: their own wandering line, NO menu -> DONE'
+        Write-Host '            a menu of stops -> old build'
         Write-Host '       c) WALK RIGHT into Chief Residence. Four NPCs inside.'
         Write-Host '       d) CLICK TYLUS (they serve Fighter/Page/Spearman).'
         Write-Host '            "You are a Crusader now" -> DONE. Then open the skill'
@@ -5457,11 +5866,7 @@ function Show-TestPlan {
         Write-Host '            "come back at Level 70" -> the !exp did not land'
         Write-Host '       e) CLICK ROBEIRA / RENE / AREC. All must REFUSE, naming the'
         Write-Host '          BRANCH rather than the level.'
-        Write-Host '       f) CLICK EUREK AGAIN, in El Nath. They stand on both'
-        Write-Host '          continents - the only NPC here that does.'
-        Write-Host '            a menu home -> nobody can be stranded'
-        Write-Host '            their ordinary line -> El Nath is a trap, exit is 17'
-        Write-Host '                       floors of the Orbis Tower'
+        Write-Host '       f) Orbis booth, Platform Usher: only the platform line -> DONE'
         Write-Host '       NO third-job test exists in this client - no quest, no field,'
         Write-Host '       no marbles. Level 70 + the right 2nd job IS the gate.' -ForegroundColor Yellow
         Write-Host ''
@@ -5669,9 +6074,17 @@ function Show-TestPlan {
         Write-Host '            item gone -> fixed (live server: "needs a pet" - the restore sent the'
         Write-Host '            bag serial, the lookup knew only the pet serial). Same message again'
         Write-Host '            -> paste the "pet skill:" line, it prints the serial' -ForegroundColor Yellow
-        Write-Host '         d. NO "Closeness has increased (+1)" on a map change after the pet moved' -ForegroundColor Magenta
-        Write-Host '            slots (Consolidate/Sort): the re-send names the slot it is in NOW.'
-        Write-Host '            no line -> fixed; a line -> paste the "re-sent as pet" + restore lines' -ForegroundColor Yellow
+        Write-Host '         d. NO "Closeness has increased (+N)" ON A MAP CHANGE - 2nd fix (09-21).' -ForegroundColor Magenta
+        Write-Host '            THE NUMBER IS THE CLOSENESS (Lucy''s is 1, read off the wire). The'
+        Write-Host '            client prints the DIFFERENCE between the pet''s cached closeness and'
+        Write-Host '            the item''s, on every refresh - no quiet path. A field entry clears'
+        Write-Host '            the bag, so the pet was built with no item: 0 -> 1. The item now'
+        Write-Host '            goes out BEFORE the summon as well as after.'
+        Write-Host '            FEED the pet first so closeness > 1, then change maps:' -ForegroundColor Yellow
+        Write-Host '              no line -> DONE' -ForegroundColor Green
+        Write-Host '              a line reading the pet''s closeness -> SAY THE NUMBER; next lever' -ForegroundColor Yellow
+        Write-Host '              is dropping the post-summon write from the ENTRY batch only' -ForegroundColor Yellow
+        Write-Host '              pet sad/droopy or no vacuum -> the opposite regression, say so' -ForegroundColor Yellow
         Write-Host '       NO "NEW" MARK ON THE PET: mode 5 on the re-send. No highlighted Cash cell' -ForegroundColor Yellow
         Write-Host '         on login -> struck; still highlighted -> paste the Cash-tab 0x0070 lines.' -ForegroundColor Yellow
         Write-Host '       PET VACUUM AT LOGIN/MAP CHANGE: CONFIRMED ("Pets now work on initial summon").' -ForegroundColor DarkGray
@@ -5761,6 +6174,198 @@ function Show-TestPlan {
         Write-Host '        potion icon yes, coupon icon no -> 163 is not it; kill something,' -ForegroundColor Yellow
         Write-Host '        triple EXP still? report both halves separately' -ForegroundColor Yellow
         Write-Host '     c. wait one out / right-click it: icon AND stat go together' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  27. WEATHER ITEMS (2026-09-30): Sprinkled Chocolate etc. with a message, two clients on one map' -ForegroundColor White
+        Write-Host '       both see the effect and message, one spent, fades after ~30 s -> DONE' -ForegroundColor Green
+        Write-Host '       a second while one runs: refused, kept; a late arrival sees the rest -> DONE' -ForegroundColor Green
+        Write-Host '       GM Blessings 2023000/2023001: GM weather + name on both screens, BOTH get a 60:00 icon;' -ForegroundColor Green
+        Write-Host '       Wind = faster + higher jump, Precision = accuracy -> DONE' -ForegroundColor Green
+        Write-Host '          icon but no speed/jump = say so (bits 92/93 are the [D])' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  26. MEGAPHONES (2026-09-30): two clients on different channels, level 10+.' -ForegroundColor White
+        Write-Host '       Super Megaphone -> both see it, pink, whisper icon as ticked, one spent -> DONE' -ForegroundColor Green
+        Write-Host '       Megaphone -> only your channel, not pink, whisper icon as ticked -> DONE' -ForegroundColor Green
+        Write-Host '          pink or an item box on the Megaphone = say which (type 8 is the [D])' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  25. SHIP TO ORBIS (2026-09-26): Ellinia Station. Ships leave every :x0 (UTC wall clock),' -ForegroundColor White
+        Write-Host '       boarding :x5 to :x9. Joel: "Hi there!" + Next, then a MENU, Basic 5,000 /' -ForegroundColor Green
+        Write-Host '       Regular 20,000, grey lines -> DONE' -ForegroundColor Green
+        Write-Host '       Cherry + Basic outside the window: refused, names the next ship, ticket kept -> DONE' -ForegroundColor Green
+        Write-Host '       inside: "Do you still wish to board?" No = stays; Yes = Before Takeoff, countdown;' -ForegroundColor Green
+        Write-Host '       departure -> To Orbis ~5:00;' -ForegroundColor Green
+        Write-Host '       cabin and back keeps the clock; 0:00 -> Orbis Ticketing Booth -> DONE' -ForegroundColor Green
+        Write-Host '       two clients same departure see each other; next departure sees neither -> DONE' -ForegroundColor Green
+        Write-Host '       Regular (NEW 09-29): waiting room ALONE 0:10, then deck alone 1:00 -> Orbis,' -ForegroundColor Green
+        Write-Host '       both directions -> DONE; straight on deck = old build' -ForegroundColor Green
+        Write-Host '       Purin (waiting room): No = stays; Yes = Ellinia Station, ticket not returned -> DONE' -ForegroundColor Green
+        Write-Host '       disconnect or change channel anywhere aboard, log in -> Ellinia Station -> DONE' -ForegroundColor Green
+        Write-Host '       THE SHIP (new): enter the station :x5-:x0 -> whistle, ship slides IN from the right;' -ForegroundColor Green
+        Write-Host '       other times -> slides OUT; standing there it comes in at :x5, leaves at :x0 -> DONE' -ForegroundColor Green
+        Write-Host '          no ship = paste the ContiState/ContiMove lines; jumps not slides = say so;' -ForegroundColor Yellow
+        Write-Host '          a crash entering the station = say so FIRST' -ForegroundColor Yellow
+        Write-Host '       BALROGS: half the Basic rides, a minute in, on deck: their ship + two Crimson Balrogs -> DONE' -ForegroundColor Green
+        Write-Host '       THE WAY BACK: Agatha sells Tickets to Ellinia; Platform Usher -> tunnel -> Rini;' -ForegroundColor Green
+        Write-Host '       same ride, lands in Ellinia Station; the Usher has NO ferry line (09-29) -> DONE' -ForegroundColor Green
+        Write-Host '          no countdown -> paste the "FieldClock type 2" line; a shop window = old build' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  26. EMOTES (2026-09-29), two clients on one map: A presses Queasy / F1-F7 ->' -ForegroundColor White
+        Write-Host '       B sees A make the face -> DONE' -ForegroundColor Green
+        Write-Host '          nothing on B -> grep its log for "UserEmotion 0x02A6"' -ForegroundColor Yellow
+        Write-Host '       SHADOW STYLE: double-click ONCE (twice = off again), WALK -> afterimages on A and B;' -ForegroundColor Green
+        Write-Host '       B leaves and returns -> still on; double-click again -> off on both -> DONE' -ForegroundColor Green
+        Write-Host '          on A only -> grep B''s log for "UserEffectItem 0x02A8"' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  25. CITIZENSHIP (2026-09-28), a GM character Lv 12+: Arthur (Henesys Town Hall) ->' -ForegroundColor White
+        Write-Host '       the Oath CONTRACT window; Sign -> STAMP, closes ~2 s later, "citizen of Henesys" -> DONE' -ForegroundColor Green
+        Write-Host '          window stuck with grey buttons = old build (fixed 09-29)' -ForegroundColor Yellow
+        Write-Host '          a plain line = old build / under Lv 12; a CRASH on opening = say so FIRST' -ForegroundColor Yellow
+        Write-Host '       Community Board: ONE First Greeting + ONE donation available, nothing else -> DONE' -ForegroundColor Green
+        Write-Host '          all or none available -> paste the "quest 510001" log line' -ForegroundColor Yellow
+        Write-Host '       "!citizenship 1 contr 950", do the resident: +1000 Contribution at 10x, grade-up effect;' -ForegroundColor Green
+        Write-Host '       Arthur then shows the Grade Update certificate (Visitor), next time a menu -> DONE' -ForegroundColor Green
+        Write-Host '       Flint: Town Resident rows LOCKED; "!citizenship 1 grade 5", reopen -> they sell -> DONE' -ForegroundColor Green
+        Write-Host '       Raymond/Max: EVERY row locked for a non-citizen (Fried Chicken is Traveler+) -> DONE' -ForegroundColor Green
+        Write-Host '       HONOR (09-29): "!citizenship 1 grade 9", "... contr 9950", do the resident quest ->' -ForegroundColor Green
+        Write-Host '       Henesys Earrings in Equip + blue [Notice] congratulation on EVERY channel -> DONE' -ForegroundColor Green
+        Write-Host '          not on the other channel -> paste its "BroadcastMsg type 0" line' -ForegroundColor Yellow
+        Write-Host '       Roxy (Kerning Civic Center): Transfer window -> OK; "!citizenship" shows st1=2 -> DONE' -ForegroundColor Green
+        Write-Host '       QUEST RATE: Contribution and mesos at the !rates Quest multiplier; EVERY quest now' -ForegroundColor Green
+        Write-Host '       pays its mesos (+n) on turn-in -> DONE' -ForegroundColor Green
+        Write-Host '          no mesos line -> paste the "paid ... mesos" log line; 1x -> check !rates' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  24. CASH SHOP BEAUTY PREVIEW (2026-09-26): Beauty > Hairstyles > a hair coupon ->' -ForegroundColor White
+        Write-Host '       the panel shows hairstyles; face coupons the same -> DONE' -ForegroundColor Green
+        Write-Host '          empty -> grep the log for "CashShopBeautyPreview"; crash on entry -> say so first' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  23. SPAWN POINTS (2026-09-26): log off far across Kerning, log in -> nearest spawn;' -ForegroundColor White
+        Write-Host '       channel change / Cash Shop the same; Nella or a Return Scroll -> varied spots -> DONE' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  22. 2ND JOB TEST (2026-09-26): accept Test of Qualification -> warped in, quest shows' -ForegroundColor White
+        Write-Host '       30 Dark Marbles; leave -> beside the instructor; talk again -> go back in? -> DONE' -ForegroundColor Green
+        Write-Host '          last line only OK = old build; no warp = paste "second-job test:" lines' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  21. LAUNCHER (2026-09-25): "maplecw-launcher.exe --updated-from no-such-file.old" shows the' -ForegroundColor White
+        Write-Host '       sign-in-again notice; a real update explains before reopening -> DONE' -ForegroundColor Green
+        Write-Host '       Log > Copy logs, paste into Notepad: every line, [info]/[WARN] tags -> DONE' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  20. PET FEED LINE (2026-09-25): two players, one feeds: SAME bubble on both -> DONE' -ForegroundColor Green
+        Write-Host '          watcher: eating animation too, one bubble; else paste "pet line:" log lines' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  19. PET AUTO HP / MP (2026-09-25): the pet drinks, HP/MP rise, stack -1 -> DONE' -ForegroundColor Green
+        Write-Host '          nothing -> grep the log for "pet 0 drinks"; then check inventory still works' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  18. ITEM VARIANCE (2026-09-24): mob-dropped equips roll their stats.' -ForegroundColor White
+        Write-Host '       a. hover a dropped equip: a stat differs from its base -> DONE' -ForegroundColor Green
+        Write-Host '          plain template every time -> paste the "variance:" log lines' -ForegroundColor Yellow
+        Write-Host '       b. a stat BELOW base draws fine, no crash; c. same after relog -> DONE' -ForegroundColor Green
+        Write-Host '       d. King Slime: each member''s Squishy Shoes differ -> DONE' -ForegroundColor Green
+        Write-Host '       e. drop -> Chaos -> Innocence: back to the DROPPED stats, not plain -> DONE' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  17. FIRST TIME TOGETHER LAST STAGE (2026-09-24): two members, kill the King.' -ForegroundColor White
+        Write-Host '       a. each screen: Pass, mesos, then ONE Shoes at the row end, even spacing -> DONE' -ForegroundColor Green
+        Write-Host '          shoes on the Pass = old build; a gap = paste the "is PERSONAL to" lines' -ForegroundColor Yellow
+        Write-Host '       b. Jr. Necki / Curse Eye: a Pass and mesos, never a Coupon -> DONE' -ForegroundColor Green
+        Write-Host '       c. Exit map: Nella takes every Pass and Coupon (grey lines), nothing else -> DONE' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  16. MAPLE CHAT ACROSS CHANNELS + BUDDY CHAT (2026-09-24). Rooms live in the' -ForegroundColor White
+        Write-Host '     hub now, like parties. REBUILD THE HUB TOO - an old one drops the frames.'
+        Write-Host '       a. open on ch1, invite someone on ch2, they Accept: both avatars -> DONE' -ForegroundColor Green
+        Write-Host '          "busy" again -> no "maple chat: hub echo" line = the hub is old' -ForegroundColor Yellow
+        Write-Host '       b. lines typed on both sides show on both -> DONE' -ForegroundColor Green
+        Write-Host '       c. one closes: the other window drops their avatar -> DONE' -ForegroundColor Green
+        Write-Host '       d. BUDDY chat reaches your buddies, same channel and across -> DONE' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  15. CASH SHOP (2026-09-23): 483 NEW WARES, all 100 LP, no duration on any' -ForegroundColor White
+        Write-Host '     cash equipment. Restart the world servers first (they load the table).'
+        Write-Host '       a. Gloves and Effects tabs, empty before, now have items -> DONE' -ForegroundColor Green
+        Write-Host '       b. a hat or top: 100 LP and NO "90 days" line -> DONE' -ForegroundColor Green
+        Write-Host '       c. buy Red Boxing Gloves: arrives, 100 LP taken -> DONE' -ForegroundColor Green
+        Write-Host '          "NOT on sale" -> the world server still has the old table' -ForegroundColor Yellow
+        Write-Host '       d. Frieren/Himmel clothes are NOT listed (coupons only) -> DONE' -ForegroundColor Green
+        Write-Host '       e. DELETE an item in Cash Inventory: it vanishes, "The cash item has been' -ForegroundColor Green
+        Write-Host '          deleted." THEN buy something - it still works -> DONE' -ForegroundColor Green
+        Write-Host '          next buy does nothing -> the latch stayed set; paste the 0x05AE line' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  14. GROUND DROPS (2026-09-23): a player''s drop is EVERYONE''s now, and an' -ForegroundColor White
+        Write-Host '     untradeable one VANISHES. The server always allowed it; the 0x046E told the'
+        Write-Host '     other clients it was the dropper''s (ownType 0). Now ownType 2. No capture of'
+        Write-Host '     the failure exists, so this step is what proves it. Two clients, one map:'
+        Write-Host '       a. The owner drops a sword; Tester2 picks it up -> in TESTER2''s bag -> DONE' -ForegroundColor Green
+        Write-Host '          nothing -> grep world-ch0.log for Tester2''s 0x032C: absent = the client' -ForegroundColor Yellow
+        Write-Host '          still will not ask (suspect ownerId next); present = paste "pick-up:"' -ForegroundColor Yellow
+        Write-Host '       b. mesos the same way: Tester2 gets all of them' -ForegroundColor Green
+        Write-Host '       c. leave one: it lasts the full lifetime, then fades on BOTH screens' -ForegroundColor Green
+        Write-Host '       d. The owner drops an UNTRADEABLE item: enter type 3, the client''s OWN' -ForegroundColor Green
+        Write-Host '          disappearing animation, on BOTH screens, no pick-up prompt -> DONE' -ForegroundColor Green
+        Write-Host '          normal landing, then a fade at ~1.5 s -> type 3 is not the animation' -ForegroundColor Yellow
+        Write-Host '          fades then blinks/reappears at ~1.5 s -> the cleanup is redundant' -ForegroundColor Yellow
+        Write-Host '       e. LATE ARRIVAL: the owner drops a sword, THEN Tester2 portals in: sees it and' -ForegroundColor Green
+        Write-Host '          can take it -> DONE. Invisible -> the entry re-send is still wrong' -ForegroundColor Yellow
+        Write-Host '       f. a mob''s QUEST item still goes to the killer and does NOT vanish' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  13. THE TRADE WINDOW (2026-09-22): the invite worked; the packet that OPENS' -ForegroundColor White
+        Write-Host '     the window (0x0575 mode 4) did not exist. Its per-member payload is the'
+        Write-Host '     SAME avatar block 0x0224 carries. The window opens; putting items IN it'
+        Write-Host '     does not (modes 0x0C/0x10 unhandled) - do not test Confirm yet.'
+        Write-Host '       a. Tester2 invites, the owner accepts: BOTH windows open, each showing the' -ForegroundColor Green
+        Write-Host '          other player in the far seat -> DONE. One side only -> say which.' -ForegroundColor Green
+        Write-Host '       b. IF THE CLIENT DIES ON ACCEPT: paste client-exit.log + the CLIENT' -ForegroundColor Yellow
+        Write-Host '          FAULT line. The last virtual call is the one [D] in this packet.' -ForegroundColor Yellow
+        Write-Host '       c. blank/naked seat -> the look block; names swapped -> mySlot inverted' -ForegroundColor Yellow
+        Write-Host '       d. TWO windows on one screen -> the creator should get mode 0xB instead' -ForegroundColor Yellow
+        Write-Host '       e. dragging an item or Confirm does nothing yet - that is expected' -ForegroundColor DarkGray
+        Write-Host ''
+        Write-Host '  12. FRIENDS - THE BUDDY LIST DRAWS, THE LOOP IS GONE (2026-09-22, 3rd pass)' -ForegroundColor White
+        Write-Host '     Confirmed on screen: popup, Yes/No, and the Buddy tab listing the owner under'
+        Write-Host '     "Default Group (1/1)". Fixed since: answering the group report (sub-op 0x14)'
+        Write-Host '     was an INFINITE LOOP - 32566 round trips, a 42 MB log, the lag and the frozen'
+        Write-Host '     window. It is a report now and gets no reply. Added: a 60 s request TIMEOUT.'
+        Write-Host '       a. add + accept, then SIT FOR A MINUTE: no lag, buddy list opens instantly' -ForegroundColor Green
+        Write-Host '          still laggy -> say WHICH action starts it, then count 0x0193 sub-ops' -ForegroundColor Yellow
+        Write-Host '       b. The owner in Tester2''s list and Tester2 in the owner''s, under Default Group' -ForegroundColor Green
+        Write-Host '       c. JOB and LV now filled, online AND offline (the row builder was read:' -ForegroundColor Green
+        Write-Host '          LV = rec+0x139, JOB = rec+0x13D into the job-name lookup) -> DONE' -ForegroundColor Green
+        Write-Host '          still blank -> old build. Level right, job wrong -> say what it shows' -ForegroundColor Yellow
+        Write-Host '       c2. LOCATION: the status line says "Tester2 - Kerning City", not chat.' -ForegroundColor Green
+        Write-Host '          Other channel -> the channel. "Channel 1" for ch 2 -> off by one' -ForegroundColor Yellow
+        Write-Host '       d. TIMEOUT: ignore the balloon for a minute -> both read "The request to' -ForegroundColor Green
+        Write-Host '          add a Friend has been canceled." and the row is gone -> DONE' -ForegroundColor Green
+        Write-Host '          balloon still on screen after it -> EXPECTED. Press Yes anyway and say' -ForegroundColor Yellow
+        Write-Host '          what happens (nothing should).' -ForegroundColor Yellow
+        Write-Host '       e. accept inside the minute, wait two more: nothing is cancelled' -ForegroundColor Green
+        Write-Host '       f. PRESENCE (0x2D, NEW): log out as the owner -> Tester2''s row GREYS OUT, no' -ForegroundColor Green
+        Write-Host '          chat line. Log back in -> "[Friend] the owner has logged in." and it' -ForegroundColor Green
+        Write-Host '          un-greys -> DONE, three reports at once' -ForegroundColor Green
+        Write-Host '          nothing changes -> paste the "friends: ... went ONLINE/offline" line' -ForegroundColor Yellow
+        Write-Host '          a line on every PORTAL instead of once per login -> say so' -ForegroundColor Yellow
+        Write-Host '       g. "Tester2 is now your friend." should now match the COLOUR of "Tester2' -ForegroundColor Green
+        Write-Host '          has declined the friend request." Different -> say which is which' -ForegroundColor Yellow
+        Write-Host '       h. buddy limit is 50; the 51st is refused. The header still reads [n/0]' -ForegroundColor DarkGray
+        Write-Host '          - KNOWN, nothing found yet that sets the client''s own maximum' -ForegroundColor DarkGray
+        Write-Host ''
+        Write-Host '  NOT A BUG: there is no Maple Chat TYPING indicator and no server can add one.' -ForegroundColor DarkGray
+        Write-Host '     Measured three ways 2026-09-22: every 0x01FD the client can build writes mode' -ForegroundColor DarkGray
+        Write-Host '     0, 1, 3, 5, 7 or 8 (byte scan, control 38/38 - tools/builder_scan.py), the' -ForegroundColor DarkGray
+        Write-Host '     MapleChat.img window has no typing canvas, and none of the 6165 strings says' -ForegroundColor DarkGray
+        Write-Host '     "typing". Lines themselves work - that is mode 3.' -ForegroundColor DarkGray
+        Write-Host ''
+        Write-Host '  11c. CRAFTING (2026-09-21): the Journal is the CLIENT''s window; the server owns' -ForegroundColor White
+        Write-Host '     the bag, the mesos and the mastery. One craft = two packets, nothing taken'
+        Write-Host '     until the second. 348 recipes; the six quests grant the six professions.'
+        Write-Host '       a. !craft smithing 1, stand at the Anvil in Perion, open the Journal:' -ForegroundColor Green
+        Write-Host '          Smithing live, the other five greyed -> DONE' -ForegroundColor Green
+        Write-Host '          (the Journal is a client KEYBIND, so it opens anywhere; the greyed' -ForegroundColor Yellow
+        Write-Host '          tab is the only gate. Still greyed -> paste the skill-record line.)' -ForegroundColor Yellow
+        Write-Host '       b. !item 4010000 20, craft a Bronze Plate: -5 ore, -100 meso, +1 plate,' -ForegroundColor Green
+        Write-Host '          chat "Smithing''s mastery increased. (+3)" -> DONE' -ForegroundColor Green
+        Write-Host '          a red refusal instead -> QUOTE IT; each one is a different check' -ForegroundColor Yellow
+        Write-Host '       c. !craft smithing 2 0, craft ONE: the bar reads 1.80% (3 of 166).' -ForegroundColor Green
+        Write-Host '          The curve is settled - this only checks the two have not drifted.' -ForegroundColor Green
+        Write-Host '       d. Craft All with 20 ore: four crafts off one press -> DONE' -ForegroundColor Green
+        Write-Host '       e. !craft lists them, !craft all 10 opens all six, !craft 2 0 closes one' -ForegroundColor Green
+        Write-Host '       f. quest 80008 at Silas Irons: "You have learnt Smithing." -> DONE' -ForegroundColor Green
+        Write-Host '       g. a quest finished BEFORE today: just log in - the claim backfills it,' -ForegroundColor Green
+        Write-Host '          tab live on the first screen (level 1, empty bar; mastery not replayed)' -ForegroundColor Green
         Write-Host ''
         Write-Host '  11b. GIFT DROPS (2026-09-19): !giftdrop <player> <item> [n] [msg] and !giftall' -ForegroundColor White
         Write-Host '     <item> [n] [msg] queue gifts; the Administrator''s box offers them (Claim /'

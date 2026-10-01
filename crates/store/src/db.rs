@@ -288,6 +288,9 @@ impl Store {
         // exist BEFORE the rename pass, which visits it - a hat queued as 1006910 the day
         // before its renumbering must be claimed as 1007910.
         crate::gifts::create_tables(&conn)?;
+        // The effect item a character has switched on (2026-09-30), a new table - created
+        // BEFORE the rename below, which visits it (`ITEM_ID_TABLES`). `effectitem.rs`.
+        crate::effectitem::create_tables(&conn)?;
         crate::inventory::rename_item_ids(&conn)?;
         crate::skills::create_tables(&conn)?;
         // The six crafting professions. Their level/mastery pair is packed into one skill
@@ -335,6 +338,12 @@ impl Store {
         // Fame: `characters.fame` (ALTERed on, PRAGMA-guarded) and the `fame_log` the two
         // once-per-window rules are checked against. `fame.rs`.
         crate::fame::create_tables(&conn)?;
+        // Which spawn point a character comes back in at (2026-09-26). A new table, so
+        // CREATE IF NOT EXISTS on every open is the whole migration. `spawnpoint.rs`.
+        crate::spawnpoint::create_tables(&conn)?;
+        // Citizenship, one row per town a character signed with (2026-09-28). A new table,
+        // so CREATE IF NOT EXISTS is the whole migration. `citizenship.rs`.
+        crate::citizenship::create_tables(&conn)?;
         // The migration credential columns. These are ALTERed onto `migrations`, which is
         // NOT a new table, so the call carries its own PRAGMA guard - see that module.
         // Every claim entry point already calls this; doing it here too makes the module

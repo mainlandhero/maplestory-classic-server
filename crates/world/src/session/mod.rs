@@ -32,7 +32,7 @@ use crate::config::Config;
 /// Pruned 2026-09-06 on the owner's instruction: the per-kind rate setters, `!migsweep`,
 /// `!npcfx`, `!buff`, `!unbuff`, `!buy`, `!locker` and `!kit` are gone.
 const GM_COMMANDS: &str =
-    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !setrates <exp> <meso> <drop> <quest> <party%>, !rates, !job <jobId>, !npcecho [dx], !nx [amount], !lp [amount], !meso [amount], !resetap, !resetsp, !learn [level] | !learn <skillId> <level>, !craft [profession] [level] [mastery], !npcreload [templateId], !hair <hairId>, !face <faceId>, !giftdrop <player> <itemId> [count] [message], !giftall <itemId> [count] [message], !registrationcode, !recoverycode <email|username>, !online, !track <character>, !help";
+    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !setrates <exp> <meso> <drop> <quest> <party%>, !rates, !job <jobId>, !npcecho [dx], !nx [amount], !lp [amount], !meso [amount], !resetap, !resetsp, !learn [level] | !learn <skillId> <level>, !craft [profession] [level] [mastery], !npcreload [templateId], !hair <hairId>, !face <faceId>, !giftdrop <player> <itemId> [count] [message], !giftall <itemId> [count] [message], !registrationcode, !recoverycode <email|username>, !online, !track <character>, !citizenship [<town> <state|grade|contr> <value>], !help";
 
 /// What a player who is not a GM is shown by `!help`, and all they may run. The owner,
 /// 2026-09-06: *"A player should only be shown commands that they are allowed to execute."*
@@ -220,6 +220,21 @@ pub struct Session {
     /// [`Session::friend_timeout_tick`] measures the offer against. Per session, so a relog
     /// offers it again with a fresh clock.
     friend_popups_raised: std::collections::HashMap<u32, u64>,
+    /// **A feed waiting for its line** - `session/pet.rs`. Set when the pet eats: the map's
+    /// copy of the eating packet (`0x027E`) and the clock time it falls back at. The owner's
+    /// client reports the line it picked (`0x0203`) and everyone else is shown THAT line
+    /// (`0x0279`); if no report arrives by then, the map gets the `0x027E` as it used to.
+    pending_pet_line: Option<(u64, Reply)>,
+    /// **The effect item switched on** - Shadow Style and the rest of `501xxxx`, `0` for none.
+    /// `session/emote.rs`. Saved (`store::effectitem`) and restored at claim, so it survives a
+    /// relog and a channel change (the owner, 2026-09-30); carried in this character's `0x0224` so
+    /// everyone else on the field, arriving or already there, sees it.
+    active_effect_item: u32,
+    /// **The Community Board postings last sent**, and the UTC day they were for -
+    /// `session/citizenship.rs`. Set where the `SetField` builds its quest book (a `&self`
+    /// path, hence the cell) and read by the tick, which re-sends what changed when the day
+    /// turns under a player who has not moved.
+    board_sent: std::cell::RefCell<Option<(i64, Vec<(u32, String)>)>>,
     /// Whether this session has told its friends it is online yet - `session/friends.rs`.
     ///
     /// **Not done at claim**, which is the obvious place and the wrong one: presence is
@@ -227,6 +242,9 @@ pub struct Session {
     /// everyone this character is offline. It goes out on the FIRST field entry instead, and
     /// this flag is what keeps it from firing again on every portal.
     announced_presence: bool,
+    /// The name an Open (mode 0) asked to invite. With the hub up the room's id is only known
+    /// once the echo comes back, so the invite waits here for it - `session/messenger.rs`.
+    pending_messenger_invite: Option<String>,
     /// The craft this session accepted and is waiting to finish - `session/craft.rs`.
     ///
     /// **A craft is two packets**: the window asks to begin, animates the recipe's own
@@ -533,6 +551,9 @@ struct Conversation {
 /// socket - still announces exactly one departure. `crate::broadcast::Bus::part`.
 impl Drop for Session {
     fn drop(&mut self) {
+        // **Where they stood, as the spawn point they come back in at** - a log off, a dropped
+        // socket, a crash, a channel change. First, while the character is still claimed.
+        self.remember_spawn_point("the connection closed");
         // **The party, before anything else is torn down**: a dropped socket, a crash, a kill.
         // A channel change is a handover and says nothing here (`handing_over`); a log out
         // already said it. `session/party.rs` `leave_party_on_disconnect`.
@@ -552,6 +573,14 @@ impl Drop for Session {
         // they will be told this character is still online. `session/friends.rs`.
         if !self.handing_over {
             self.notify_friends_of_presence(false);
+            // **Out of any Maple Chat room**, or the others keep drawing an empty seat. A
+            // channel change is a handover and keeps the seat: the room belongs to the world.
+            if let Some(chr) = self.claimed_character() {
+                let seated = self.fields.messengers().room_of(chr.id).is_some();
+                if seated {
+                    let _ = self.run_messenger_request(chr.id, crate::messenger::Request::Disconnect);
+                }
+            }
         }
         // **And its mobs go back, or they stop moving for everybody.**
         //
@@ -589,6 +618,8 @@ mod beautycoupon;
 mod salon;
 mod cashitem;
 mod charinfo;
+mod citizenship;
+mod emote;
 mod fame;
 mod friends;
 mod cashshop;
@@ -671,7 +702,11 @@ impl Session {
             skill_ready_ms: std::collections::HashMap::new(),
             last_position: None,
             friend_popups_raised: std::collections::HashMap::new(),
+            pending_pet_line: None,
+            active_effect_item: 0,
+            board_sent: std::cell::RefCell::new(None),
             announced_presence: false,
+            pending_messenger_invite: None,
             pending_craft: None,
             log_name: None,
             last_move_action: None,
@@ -763,6 +798,7 @@ impl Session {
         let mut out = self.collect_mail();
         // Party requests answered by the hub's echo. `session/worldlink.rs`.
         out.extend(self.collect_party_outcomes());
+        out.extend(self.collect_messenger_outcomes());
         // Expire drops BEFORE the chatter switch is consulted. `chatter_off` turns off NPC
         // idle lines and nothing else; if the sweep sat after it, a run with chatter
         // disabled would leave items on the floor forever and the bug would look like the
@@ -804,6 +840,10 @@ impl Session {
         // invitation expiring is not idle chatter and a run with `chatter_off` should still
         // do it. `session/friends.rs`.
         out.extend(self.friend_timeout_tick(now_ms));
+        // A feed whose line never came back. session/pet.rs.
+        self.pet_line_fallback_tick(now_ms);
+        // The Community Board turning over at midnight UTC. session/citizenship.rs.
+        out.extend(self.board_tick());
         if self.config.chatter_off {
             return out;
         }
@@ -904,6 +944,7 @@ impl Session {
         // fatal on screen.
         out.extend(self.collect_mail());
         out.extend(self.collect_party_outcomes());
+        out.extend(self.collect_messenger_outcomes());
         out
     }
 
@@ -961,6 +1002,17 @@ impl Session {
             net::petfood::CLIENT_USE_PET_FOOD => {
                 return self.on_use_pet_food(body.get(2..).unwrap_or(&[]))
             }
+            // The line the owner's pet just said, after that feed. Relayed so every screen
+            // shows the same bubble. session/pet.rs (2026-09-25).
+            net::pet::CLIENT_PET_LINE_REPORT => {
+                return self.on_pet_line_report(body.get(2..).unwrap_or(&[]))
+            }
+            // An emote (F1-F7, Queasy...): relayed to the rest of the map as 0x02A6.
+            // session/emote.rs (2026-09-29).
+            net::userpool::CLIENT_EMOTION => return self.on_emotion(body.get(2..).unwrap_or(&[])),
+            // Shadow Style and the other effect items: switched on or off, relayed as 0x02A8
+            // and kept in this character's 0x0224. session/emote.rs (2026-09-29).
+            net::userpool::CLIENT_EFFECT_ITEM => return self.on_effect_item(body.get(2..).unwrap_or(&[])),
             // **The pet reached a drop.** The same handler as the player's request: it finds
             // the drop by the pet offset (byte 17) and takes it with the pet's leave type.
             // Seven of these went unanswered on 2026-09-15 - "Husky does not loot".
@@ -1070,6 +1122,11 @@ impl Session {
             // is what makes it reachable (2026-09-18). session/consume.rs.
             net::useitem::CLIENT_USE_RETURN_SCROLL => {
                 return self.on_use_return_scroll(body.get(2..).unwrap_or(&[]))
+            }
+            // A pet's Auto HP / Auto MP drinking the owner's potion - the same walk, and the
+            // same latch (2026-09-25). session/consume.rs.
+            net::useitem::CLIENT_PET_USE_ITEM => {
+                return self.on_pet_use_item(body.get(2..).unwrap_or(&[]))
             }
             net::userhit::CLIENT_USER_HIT => {
                 return self.on_user_hit(body.get(2..).unwrap_or(&[]))
@@ -1352,6 +1409,16 @@ impl Session {
             .ok()?
             .into_iter()
             .find(|c| c.id == claimed.character_id)?;
+        // **The spawn point they come back in at** (the owner, 2026-09-26): the one recorded when
+        // they last left - nearest to where they stood - but only on the map it was recorded
+        // on; a portal index means nothing on any other map. `store::spawnpoint`. Applied here
+        // so every re-entry (login, channel change, leaving the Cash Shop) agrees.
+        if let Ok(Some((map, portal))) = self.store.spawn_point(chr.id) {
+            let known = self.config.portal_positions.is_empty() || self.config.portal_positions.contains_key(&(map, portal));
+            if map == chr.map_id && known {
+                chr.portal = portal;
+            }
+        }
         // The bag override, applied here rather than at either SetField site so a portal
         // walk and a migration cannot disagree about it. See Config::inventory_slots.
         if let Some(slots) = self.config.inventory_slots {
@@ -1558,6 +1625,11 @@ impl Session {
         // so the record that builds the Crafting Journal's tabs already carries the skill.
         // `session/craft.rs`.
         self.reconcile_crafting_quests();
+        // **The effect item switched on last time** (Shadow Style...), restored before the
+        // first 0x0224 is built - saved between logins, the owner 2026-09-30. session/emote.rs.
+        if let Some(id) = self.claimed.as_ref().map(|c| c.character_id) {
+            self.active_effect_item = self.restored_effect_item(id);
+        }
         format!("{attested_note} || {outcome}")
     }
 

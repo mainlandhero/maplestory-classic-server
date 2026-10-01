@@ -25,6 +25,7 @@
 pub mod abilityspend;
 pub mod buildstamp;
 pub mod cash;
+pub mod citizenship;
 pub mod character;
 pub mod claims;
 pub mod codes;
@@ -34,8 +35,10 @@ pub mod friends;
 /// quality-of-life options. See its module docs for why the answer is a transition.
 pub mod dailycount;
 pub mod dailyperks;
+pub mod effectitem;
 pub mod db;
 pub mod fieldreturn;
+pub mod spawnpoint;
 pub mod inventory;
 pub mod keymap;
 pub mod kick;
@@ -82,7 +85,7 @@ pub use fame::{fame_windows, FameOutcome, FameWindows};
 pub use gifts::{Gift, GiftTarget, GIFT_TTL_SECS};
 pub use inventory::{
     plan_consolidation, plan_sort, Bag, Equipped, EquippedItem, InvItem, InventoryType, Item,
-    ItemKind, ItemRules, MoveOutcome, Stack, StackChange,
+    ItemKind, ItemRules, MoveOutcome, Stack, StackChange, WornItem,
 };
 pub use quest::{QuestRow, QuestState};
 pub use skillpoints::{
