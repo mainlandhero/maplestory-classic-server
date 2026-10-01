@@ -2606,6 +2606,12 @@
              the stat window drops the number. A coupon that outlives its icon or an icon
              that outlives its multiplier is a bug either way - say which.
 
+    30. BEGINNER RECOVERY (2026-10-01). A Beginner with Recovery, hurt.
+          a. cast it: a Recovery icon in the tray counting down 30 s, no chat line -> DONE
+               no icon = bit 131 is not Recovery's; say so, and whether anything else changed
+          b. blue +4 (level 1) every 5 s, six times; the icon goes with the last one -> DONE
+          c. cast again, right-click the icon: it goes and the +numbers stop -> DONE
+
     29. BUFFS ACROSS A CHANNEL CHANGE + RESPAWN WAVES (2026-10-01). Live is fine for this.
           a. cast a timed buff (Magic Armor, or a potion), change channel while it runs: the icon
              is there on the new channel with the time left -> DONE. When it reaches 0 the icon
@@ -6185,6 +6191,12 @@ function Show-TestPlan {
         Write-Host '        potion icon yes, coupon icon no -> 163 is not it; kill something,' -ForegroundColor Yellow
         Write-Host '        triple EXP still? report both halves separately' -ForegroundColor Yellow
         Write-Host '     c. wait one out / right-click it: icon AND stat go together' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  30. BEGINNER RECOVERY (2026-10-01), a hurt Beginner:' -ForegroundColor White
+        Write-Host '       cast: Recovery icon counting down 30 s, no chat line -> DONE' -ForegroundColor Green
+        Write-Host '          no icon -> bit 131 is not its bit; say so' -ForegroundColor Yellow
+        Write-Host '       blue +4 every 5 s, six times; icon goes with the last -> DONE' -ForegroundColor Green
+        Write-Host '       right-click the icon: it goes and the heals stop -> DONE' -ForegroundColor Green
         Write-Host ''
         Write-Host '  29. BUFFS ACROSS CHANNELS + RESPAWN WAVES (2026-10-01), live is fine:' -ForegroundColor White
         Write-Host '       timed buff on, change channel: icon there with the time left;' -ForegroundColor Green

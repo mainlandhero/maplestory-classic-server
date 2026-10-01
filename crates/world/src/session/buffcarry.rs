@@ -89,6 +89,20 @@ impl Session {
                 value: row.value,
                 reason: row.reason,
             });
+            // Recovery's icon is a heal the server delivers; the ticks left come with it, one
+            // every five seconds up to the same end.
+            if row.bit == net::buff::CTS_REGEN {
+                if let Some(left) = left_ms.filter(|l| *l > 0) {
+                    let every = super::recovery::RECOVERY_TICK_MS;
+                    let ticks = left.div_ceil(every);
+                    self.recovering = Some(super::recovery::Recovering {
+                        per_tick: u32::try_from(row.value).unwrap_or(0),
+                        ticks_left: u32::try_from(ticks).unwrap_or(0),
+                        next_ms: self.clock_ms.saturating_add(left - (ticks - 1) * every),
+                        level: 0,
+                    });
+                }
+            }
             // The EXP coupon is a rate as well as an icon, and the rate is the server's.
             if row.bit == net::buff::CTS_EXP_BUFF_RATE {
                 self.exp_coupon = Some(crate::consumables::ExpCoupon {
@@ -226,6 +240,21 @@ mod tests {
         let buff = out.iter().position(|r| r.opcode == net::buff::TEMPORARY_STAT_SET).expect("the carried buff");
         assert!(buff > set_field, "after the SetField, which builds the stage it belongs to");
         assert!(new.holds(92), "and held, so this channel's tick takes it down");
+    }
+
+    /// Recovery's heal comes across with its icon: 12 s left of a 4-per-tick cast is three more
+    /// heals, at 2, 7 and 12 s, ending with the icon.
+    #[test]
+    fn recoverys_heal_is_carried_with_its_icon() {
+        let (store, mut old, id) = claimed_session();
+        old.clock_ms = 18_000;
+        old.buffs.push(super::super::buff::ActiveBuff { bit: net::buff::CTS_REGEN, skill_id: 1001, expires_ms: 30_000, value: 4, reason: 1001 });
+        old.carry_buffs_out_at(1_000_000);
+        drop(old);
+        let mut new = session_for(&store, id);
+        let _ = new.carry_buffs_in_at(1_000_000);
+        let r = new.recovering.expect("the heal came across");
+        assert_eq!((r.per_tick, r.ticks_left, r.next_ms), (4, 3, 2_000));
     }
 
     /// The EXP coupon's rate comes across with its icon, or the second channel would show a

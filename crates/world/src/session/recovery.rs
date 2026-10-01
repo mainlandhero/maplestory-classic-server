@@ -16,10 +16,13 @@
 //! `0x007C` that moves the bar, and the blue number over the head - and it works without
 //! knowing the bit.
 //!
-//! **What is missing, and it is visible:** no buff icon appears in the tray, because that is
-//! exactly what the CTS bit buys. The heal is real, the icon is absent, and those two facts
-//! should be reported together. If the bit is ever found, this module keeps working and the
-//! icon is a separate, additive change.
+//! **The icon (2026-10-01).** The owner: *"Recovery skill needs to be fixed from the Beginner
+//! skill."* What a player saw was a heal with an empty tray and a developer's chat line saying
+//! the bit was unknown. The bit has since turned up in the client's own CTS name table - **131,
+//! `Regen`** (`net::buff::CTS_REGEN`, **[I]** that it is this skill's) - so a cast now sends it
+//! for the skill's `time`, records it like any buff so the tick's `0x007E` takes the icon down
+//! when the heal ends, and a right-click on the icon ends the heal with it. The heal is still
+//! the server's, tick by tick, below.
 //!
 //! # The numbers, and where the interval comes from
 //!
@@ -108,16 +111,46 @@ impl Session {
         };
         let replaced = self.recovering.is_some();
         self.recovering = Some(plan);
-        self.notice(format!(
-            "Recovery level {level}: +{} HP every {}s for {} ticks ({} total).{} No buff icon \
-             appears - Recovery's stat bit has never been identified, so the heal is real and \
-             the tray is empty.",
+        crate::server::log(&format!(
+            "   recovery: level {level}, +{} HP every {}s for {} ticks ({} total){}",
             plan.per_tick,
             RECOVERY_TICK_MS / 1000,
             plan.ticks_left,
             plan.total(),
-            if replaced { " Replaced the cast that was still running." } else { "" }
-        ))
+            if replaced { ", replacing the cast still running" } else { "" }
+        ));
+        // The icon, for exactly as long as the ticks run: the last tick lands at the same
+        // instant the tick expires the bit, and `Session::tick` heals before it expires.
+        let duration_ms = u32::try_from(u64::from(plan.ticks_left) * RECOVERY_TICK_MS).unwrap_or(u32::MAX);
+        let stat = net::buff::TemporaryStat {
+            bit: net::buff::CTS_REGEN,
+            value: i16::try_from(plan.per_tick).unwrap_or(i16::MAX),
+            reason: RECOVERY_SKILL_ID,
+            duration_ms,
+        };
+        self.buffs.retain(|b| b.bit != stat.bit);
+        self.buffs.push(super::buff::ActiveBuff {
+            bit: stat.bit,
+            skill_id: RECOVERY_SKILL_ID,
+            expires_ms: now.saturating_add(u64::from(duration_ms)),
+            value: stat.value,
+            reason: stat.reason,
+        });
+        vec![Reply {
+            opcode: net::buff::TEMPORARY_STAT_SET,
+            body: net::buff::temporary_stat_set_with_tail(&[stat], net::buff::TAIL_LEN),
+            what: format!(
+                "TemporaryStatSet: Recovery level {level} - CTS {} (Regen) = {} for {duration_ms} ms, the icon for the heal-over-time",
+                stat.bit, stat.value
+            ),
+        }]
+    }
+
+    /// The Recovery icon was right-clicked away: the heal stops with it.
+    pub(super) fn stop_recovery(&mut self) {
+        if self.recovering.take().is_some() {
+            crate::server::log("   recovery: cancelled from its icon");
+        }
     }
 
     /// One clock tick's worth of Recovery, if any is owed.
@@ -258,6 +291,94 @@ mod tests {
         assert!(Recovering::from_skill(&row(Some(0), Some(30)), 1, 0).is_none());
         assert!(Recovering::from_skill(&row(Some(4), None), 1, 0).is_none());
         assert!(Recovering::from_skill(&row(Some(4), Some(0)), 1, 0).is_none());
+    }
+
+    /// Level 1's row exactly as `gm-handbook/skills.txt` has it, so the cast goes through the
+    /// same loader the server uses.
+    const LEVEL_ONE_ROW: &str = "1001, 0, 1, 3, , Recovery, 31, , , , , , , , 3, , 6, , , , , , , , , , , , , , h1, 5, , , , , , 30, , , 120, , , , , , , , , , , , , , , , , , , , , , , 4, , , , , , , , , , , , , , , , , , , , , , , , , , , , , , , , , , MP -5; Recover HP 24 in 30 sec. #cCooldown: 2 min.#";
+
+    /// A Beginner with Recovery level 1, hurt, on a fresh connection.
+    fn hurt_beginner() -> (std::sync::Arc<store::Store>, Session, u32) {
+        use std::sync::Arc;
+        let path = std::env::temp_dir().join(format!("maplecw-recovery-{}-{:?}.txt", std::process::id(), std::thread::current().id()));
+        std::fs::write(&path, LEVEL_ONE_ROW).unwrap();
+        let mut config = crate::config::Config::default();
+        config.skills = crate::skilltable::SkillTable::load(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(config.skills.level(RECOVERY_SKILL_ID, 1).is_some(), "the row loaded");
+        let store = Arc::new(store::Store::open_in_memory().unwrap());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Pebble".into(), ..Default::default() };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        store.create_migration(account, id, 0, 0).unwrap();
+        store.set_skill_level(id, RECOVERY_SKILL_ID, 1).unwrap();
+        let mut s = Session::joining(store.clone(), Arc::new(config), Arc::new(crate::fields::Fields::new()));
+        s.claim_for_character(id);
+        let mut c = s.claimed_character().unwrap();
+        (c.hp, c.max_hp, c.mp, c.max_mp) = (10, 100, 50, 50);
+        store.save_character_progress(&c).unwrap();
+        (store, s, id)
+    }
+
+    fn cast(s: &mut Session) -> Vec<Reply> {
+        let mut b = net::buff::CLIENT_SKILL_USE.to_le_bytes().to_vec();
+        b.extend_from_slice(&RECOVERY_SKILL_ID.to_le_bytes());
+        b.extend_from_slice(&1u32.to_le_bytes());
+        b.resize(2 + 51, 0);
+        s.handle(&b)
+    }
+
+    /// **The cast puts Recovery's icon in the tray, and it comes down when the heal ends.** The
+    /// owner, 2026-10-01: *"Recovery skill needs to be fixed from the Beginner skill."* Four
+    /// effects: 5 MP spent, a `0x007D` on CTS 131 for 30 s with the skill as its reason, six heals
+    /// of 4, and the `0x007E` at 30 s - after the last heal, in the same tick. No chat line.
+    #[test]
+    fn recovery_shows_its_icon_for_the_heal_and_takes_it_down_after_the_last_tick() {
+        let (_store, mut s, _id) = hurt_beginner();
+        s.clock_ms = 1_000;
+        let out = cast(&mut s);
+        assert_eq!(s.claimed_character().unwrap().mp, 45, "5 MP");
+        let icon = net::buff::temporary_stat_set_with_tail(
+            &[net::buff::TemporaryStat { bit: net::buff::CTS_REGEN, value: 4, reason: RECOVERY_SKILL_ID, duration_ms: 30_000 }],
+            net::buff::TAIL_LEN,
+        );
+        assert!(out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_SET && r.body == icon), "the icon: {out:?}");
+        assert!(!out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE), "no developer line in chat: {out:?}");
+
+        // Idle regeneration heals on the same ticks, so Recovery's own heals are told apart by
+        // their log line rather than by the HP total.
+        let is_recovery_heal = |r: &Reply| r.opcode == net::stats::STAT_CHANGED && r.what.contains("Recovery level 1 +4 hp");
+        let mut heals = 0;
+        for t in [6_000u64, 11_000, 16_000, 21_000, 26_000] {
+            let out = s.tick(t);
+            heals += out.iter().filter(|r| is_recovery_heal(r)).count();
+            assert!(!out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET), "icon still up at {t}");
+        }
+        let last = s.tick(31_000);
+        let heal = last.iter().position(|r| is_recovery_heal(r)).expect("the sixth heal");
+        let reset = last.iter().position(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET).expect("the icon comes down");
+        assert!(heal < reset, "the last heal lands before the icon goes");
+        assert_eq!(heals + 1, 6, "six heals of 4: the tooltip's 24 in 30 sec");
+        assert!(!s.holds(net::buff::CTS_REGEN));
+    }
+
+    /// Right-clicking the icon away ends the heal too, or the HP would keep arriving with nothing
+    /// in the tray to say why.
+    #[test]
+    fn right_clicking_the_icon_ends_the_heal() {
+        let (_store, mut s, _id) = hurt_beginner();
+        s.clock_ms = 1_000;
+        let _ = cast(&mut s);
+        let mut b = net::buff::CLIENT_SKILL_CANCEL.to_le_bytes().to_vec();
+        let mut body = vec![0u8; net::buff::CLIENT_SKILL_CANCEL_LEN];
+        body[..4].copy_from_slice(&RECOVERY_SKILL_ID.to_le_bytes());
+        let bit = net::buff::CTS_REGEN as usize;
+        body[9 + 4 * (bit >> 5) + 3 - ((bit >> 3) & 3)] |= 1 << (7 - (bit & 7));
+        b.extend_from_slice(&body);
+        let out = s.handle(&b);
+        assert!(out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET), "{out:?}");
+        assert!(s.recovering.is_none(), "the heal stopped");
+        assert!(!s.tick(6_000).iter().any(|r| r.opcode == net::stats::STAT_CHANGED), "and nothing more arrives");
     }
 
     #[test]

@@ -120,6 +120,14 @@ pub const CTS_SPEED: u32 = 92;
 /// Jump"*). **[L]** for the name; nothing here has watched a jump change on screen from it.
 pub const CTS_JUMP: u32 = 93;
 
+/// The character-temporary-stat bit **Beginner Recovery** (`1001`) rides: **131, `Regen`**, from
+/// this client's own CTS name table (`research/first-job-buffs.md`, Appendix A: *"131 Regen"*).
+/// **[L]** for the name, and its `0x007D` block (`0x140a1de4f`) has the same 87-instruction shape
+/// and the same reads as Speed's (`research/msexe-secondarystat-140a165f0.txt`). **[I]** that it
+/// is Recovery's bit: nothing else in the first-job set is a regeneration. It carries the icon
+/// and its countdown; the HP itself is the server's (`world::session::recovery`).
+pub const CTS_REGEN: u32 = 131;
+
 /// The character-temporary-stat bit an EXP coupon rides: **163, `ExpBuffRate`**.
 ///
 /// **The bit is [L]**: it is what this client calls index 163 in its own CTS name table
