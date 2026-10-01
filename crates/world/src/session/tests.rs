@@ -1525,6 +1525,115 @@ fn a_mob_that_never_moved_drops_at_the_player() {
     assert_eq!(d.x, 777);
 }
 
+/// **Item variance, through a real kill.** The owner, 2026-09-24: *"I want to introduce item
+/// variance for any items dropped by mobs following these rules."* A Lv 60 hat (range 6:
+/// STR and DEX share it, 3 each; WDEF gets 30) dropped sixty times lands with its stats
+/// rolled, inside every cap, on no line the template lacks, and not all the same. The
+/// control: the Lv 0 starter sword on the same mob comes out exactly as its template.
+#[test]
+fn a_mobs_equip_drop_comes_out_with_rolled_stats() {
+    let (mut s, _, _) = gm_session();
+    let drops = crate::droptables::DropTables::parse("2 | 1002999 | 100 | 1 | 1 | 1 | Hat
+2 | 1302000 | 100 | 1 | 1 | 1 | Sword
+");
+    let mut equips = s.config.equips.clone();
+    let hat = crate::config::EquipTemplate { tuc: 7, inc_str: 2, inc_dex: 2, inc_pdd: 40, req_level: 60, ..Default::default() };
+    let sword = crate::config::EquipTemplate { tuc: 7, inc_wat: 17, ..Default::default() };
+    equips.insert(1_002_999, hat);
+    equips.insert(1_302_000, sword);
+    s.config = Arc::new(Config { drops, equips, ..(*s.config).clone() });
+    s.last_position = Some((500, 395));
+    let map = crate::fields::FieldKey::world(net::opcode::START_MAP_ID);
+
+    for kill in 0..60 {
+        s.drops_from_kill(2, 2000 + kill, None, 204, map);
+    }
+    let mut hats = Vec::new();
+    let floor: Vec<crate::drops::LiveDrop> = s.fields.with_drops(map, |d| d.on_field(map).copied().collect());
+    for d in &floor {
+        let store::ItemKind::Equip(Some(stats)) = d.item.kind else { panic!("an unrolled equip on the floor: {d:?}") };
+        match d.item_id() {
+            1_002_999 => hats.push(stats),
+            1_302_000 => assert_eq!(stats, sword.fresh_stats(), "Lv 0: range 0, nothing moves"),
+            other => panic!("{other}"),
+        }
+    }
+    assert_eq!(hats.len(), 60);
+    for h in &hats {
+        let st = h.stats;
+        assert!(st.inc_str <= 5 && st.inc_dex <= 5, "2 + 3 at most: {st:?}");
+        assert!((10..=70).contains(&st.inc_pdd), "40 +/- 30: {st:?}");
+        assert_eq!((st.inc_int, st.inc_luk, st.inc_wat, st.inc_mhp), (0, 0, 0, 0), "no new lines: {st:?}");
+        assert_eq!(h.options.remaining_enhancements, 7, "the slots are the template's");
+    }
+    let mut wdef: Vec<u16> = hats.iter().map(|h| h.stats.inc_pdd).collect();
+    wdef.sort_unstable();
+    wdef.dedup();
+    assert!(wdef.len() > 10, "sixty hats, and they vary: {wdef:?}");
+}
+
+/// **A character comes back in at the spawn point nearest where they left**, and a teleport
+/// lands on a random one. The owner, 2026-09-26: *"spawn the player to the closest spawn point where
+/// they last were before they disconnect, change channel, go into cash shop ... If the player
+/// does log off, the server should store which spawn point"*, and *"if a player is teleported
+/// into a map, the server will choose a random spawn point."*
+///
+/// A map with two spawn points - 0 at x 0 and 3 at x 1000 - and a door (5, at x 1100) that is
+/// not one. Claims, each an effect: the log off stores `(map, 3)` for a player standing at 950;
+/// the next login's record carries portal 3; a map that changed since ignores it; going into the
+/// Cash Shop records the new nearest; and teleports land only on 0 or 3, both of them.
+#[test]
+fn a_returning_character_comes_back_at_the_nearest_spawn_and_a_teleport_at_a_random_one() {
+    const MAP: u32 = 104_040_000;
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Returner".to_string(), map_id: MAP, ..Default::default() };
+    let id = store.create_character(account, 0, &chr).unwrap().id;
+    store.set_character_map(id, MAP).unwrap();
+    let mut config = Config::default();
+    config.spawn_points.insert(MAP, vec![0, 3]);
+    for (idx, x) in [(0u8, 0i16), (3, 1000), (5, 1100)] {
+        config.portal_positions.insert((MAP, idx), (x, 0));
+    }
+    let config = Arc::new(config);
+    let session = |store: &Arc<Store>| {
+        store.create_migration(account, id, 0, 0).unwrap();
+        let mut s = Session::new(store.clone(), config.clone());
+        assert!(s.claim_for_character(id).contains("claimed the migration"));
+        s
+    };
+
+    // Logs off standing near the far spawn point.
+    let mut s = session(&store);
+    assert_eq!(s.claimed_character().unwrap().portal, 0, "nothing recorded yet: the default");
+    s.last_position = Some((950, 0));
+    drop(s);
+    assert_eq!(store.spawn_point(id).unwrap(), Some((MAP, 3)), "the log off stored the nearest");
+
+    // Comes back: the record every re-entry reads carries it.
+    let mut s = session(&store);
+    assert_eq!(s.claimed_character().unwrap().portal, 3, "back in at spawn point 3, not the origin");
+
+    // Goes into the Cash Shop from beside spawn point 0: that is the new one.
+    s.last_position = Some((40, 0));
+    let _ = s.on_cash_shop_request(&[]);
+    assert_eq!(store.spawn_point(id).unwrap(), Some((MAP, 0)));
+
+    // Teleports: only spawn points, and both of them.
+    let mut landed = std::collections::BTreeSet::new();
+    for _ in 0..60 {
+        let mut chr = s.claimed_character().unwrap();
+        let out = s.teleport(&mut chr, MAP, "a test warp".to_string());
+        assert!(out.iter().any(|r| r.opcode == net::opcode::SET_FIELD));
+        landed.insert(chr.portal);
+    }
+    assert_eq!(landed, [0u8, 3].into_iter().collect(), "never the door, and not always the same spawn");
+
+    // A stored point on another map is not applied here.
+    store.set_spawn_point(id, 999, 3).unwrap();
+    assert_eq!(s.claimed_character().unwrap().portal, 0, "a portal index means nothing on another map");
+}
+
 /// **A killed mob comes back.** The owner: *"The mobs that I kill also do not respawn."*
 ///
 /// The delay is the WZ's own `mobTime`; a spawn point with none uses the field rate, and
@@ -3441,6 +3550,40 @@ fn drinking_a_red_potion_heals_a_hundred_and_takes_one_from_the_stack() {
     assert_eq!(left.kind.quantity(), 1);
 }
 
+/// **A pet's Auto HP drinks the potion, through the real dispatcher.** The owner, 2026-09-25:
+/// *"the pet attempts to drink the potion for the player, but the client never actually
+/// performs the restoration ... potions are never consumed and clients never recover."*
+/// `0x0206` had no handler; the deployed server logged 25 as UNKNOWN and answered none.
+///
+/// The body is the deployed capture's shape (`u8 pet, u32 tick, u16 slot, u32 item, u32 1`).
+/// Claims, all effects named: HP rises by the potion, the stack shrinks on screen and in the
+/// bag, and the latch is cleared (byte 0 of the StatChanged). A pet offering a non-potion is
+/// refused - and still answered, because the builder set the latch either way.
+#[test]
+fn a_pets_auto_hp_drinks_the_potion_and_answers_the_latch() {
+    let (mut s, acct, id) = session_with_potions(2, 1);
+    assert!(reload(&s, acct, id).max_hp >= 101, "the cap must not be what this test measures");
+
+    let mut packet = net::useitem::CLIENT_PET_USE_ITEM.to_le_bytes().to_vec();
+    packet.extend(net::useitem::pet_use_item(0, 0x1e5e_1dfb, 1, 2_000_000));
+    let replies = s.handle(&packet);
+    let stat = replies.iter().find(|r| r.opcode == net::stats::STAT_CHANGED).expect("0x0206 is answered");
+    assert_eq!(stat.body[0], 1, "byte 0 clears the latch the pet's builder set");
+    assert_eq!(reload(&s, acct, id).hp, 101, "1 + 100: the owner recovered");
+    let op = replies.iter().find(|r| r.opcode == net::inventory::INVENTORY_OPERATION).expect("the stack shrank on screen");
+    assert_eq!(op.body, net::inventory::inventory_quantity(store::InventoryType::Use.as_u8() as i8, 1, 1));
+    assert_eq!(s.store.inventory_slot(id, store::InventoryType::Use, 1).unwrap().unwrap().kind.quantity(), 1, "and in the bag");
+
+    // A non-potion (a Return Scroll's id) is refused, nothing is taken, and it still answers.
+    let mut scroll = net::useitem::CLIENT_PET_USE_ITEM.to_le_bytes().to_vec();
+    scroll.extend(net::useitem::pet_use_item(0, 0x1e5e_1dfc, 1, 2_030_002));
+    let refused = s.handle(&scroll);
+    let stat = refused.iter().find(|r| r.opcode == net::stats::STAT_CHANGED).expect("a refusal answers too");
+    assert_eq!(stat.body[0], 1);
+    assert!(!refused.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "nothing taken");
+    assert_eq!(s.store.inventory_slot(id, store::InventoryType::Use, 1).unwrap().unwrap().kind.quantity(), 1);
+}
+
 /// **A potion draws no number over the player's head**, and this is a rule about the game
 /// rather than about the packet.
 ///
@@ -5253,12 +5396,15 @@ fn the_tutorial_sentinel_always_drops_its_shellpiece() {
     // **The global table is no longer empty**, and this used to assert that it was. The owner put
     // the three scrolls in it on 2026-09-09. The concern behind the old assertion still
     // stands - an extra item on the floor during the step that teaches picking things up -
-    // so this bounds it instead of forbidding it: every global row must be 1 basis point, so
-    // a tutorial Sentinel drops something extra about once in 3 333 kills.
+    // so this bounds it instead of forbidding it: every global row must be exactly the scroll
+    // rate. That was 1 basis point until `c0f1d87` raised it to 50 (0.5%); the owner, 2026-09-25:
+    // *"Accept the new drop rate."* Two rows at 0.5% put an extra scroll on the tutorial floor
+    // about once in 100 kills. A row above the rate the scroll NPC quotes still fails here.
     for row in table.global() {
         assert_eq!(
-            row.chance_bp, 1,
-            "a global row above 1bp would land on the tutorial floor: {row:?}"
+            row.chance_bp,
+            crate::scrolls::GLOBAL_DROP_CHANCE_BP,
+            "a global row above the scroll rate would land on the tutorial floor: {row:?}"
         );
     }
 
@@ -5920,6 +6066,157 @@ fn a_full_equip_bag_does_not_stop_a_use_item_being_picked_up() {
     assert_eq!(use_bag.len(), 1, "the potion landed in the Use bag");
     assert_eq!(use_bag[0].item.item_id, 2000000);
     assert_eq!(s.fields.with_drops(map, |d| d.len()), 0, "and left the floor");
+}
+
+/// **A player's ground drop can be picked up by somebody else, end to end.**
+///
+/// The owner, 2026-09-23: *"users dropping items publicly in the field, but nobody except
+/// themselves were able to pick up what was dropped on the ground"* - and then the rule:
+/// *"as long as it is not untradeable, it should remain on the ground until drop expiry and
+/// available for anyone to pick up."*
+///
+/// Through the real handlers, both halves: the owner's `0x0070` drop, the `0x046E` the bus hands
+/// Tester2, and Tester2's `0x032C` naming it. The table-level test
+/// (`drops::a_player_ground_drop_is_public_and_has_no_owner_lock`) already passed before this
+/// was reported, so this asks the question at the level the report was made at.
+#[test]
+fn another_player_can_pick_up_a_tradeable_item_wisp_dropped() {
+    let (store, config, fields, account) = shared_channel(0, 30);
+    let (mut wisp, wisp_id) = join_channel(&store, &config, &fields, account, "Wisp");
+    let other = store.create_account("player", "correct horse battery").unwrap();
+    let (mut tester, tester_id) = join_channel(&store, &config, &fields, other, "Tester2");
+    wisp.on_field_entered();
+    tester.on_field_entered();
+    wisp.collect_mail();
+    tester.collect_mail();
+
+    store.add_item(wisp_id, store::InventoryType::Equip, &store::Item::equip(1_302_000), 1).unwrap();
+    wisp.last_position = Some((520, 395));
+    tester.last_position = Some((520, 395));
+    let out = wisp.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, 1, 0, 1));
+    let enter = out
+        .iter()
+        .find(|r| r.opcode == net::drops::DROP_ENTER_FIELD)
+        .expect("the owner's drop lands");
+    let object_id = u32::from_le_bytes([enter.body[2], enter.body[3], enter.body[4], enter.body[5]]);
+
+    // **Tester2 sees it**, and is told it belongs to everyone.
+    let seen = tester.collect_mail();
+    let theirs = seen
+        .iter()
+        .find(|r| r.opcode == net::drops::DROP_ENTER_FIELD)
+        .unwrap_or_else(|| panic!("Tester2 never saw the drop: {:?}", seen.iter().map(|r| &r.what).collect::<Vec<_>>()));
+    assert_eq!(
+        theirs.body[27],
+        net::drops::OWN_TYPE_EVERYONE,
+        "a public drop must say so in ownType - OWN_TYPE_USER tells every other client it is the owner's"
+    );
+
+    // **And takes it.**
+    let got = tester.on_pick_up(0x032C, &pick_up_body(object_id));
+    assert!(
+        got.iter().any(|r| r.opcode == net::drops::DROP_LEAVE_FIELD),
+        "{:?}",
+        got.iter().map(|r| &r.what).collect::<Vec<_>>()
+    );
+    let bagged: Vec<u32> = store
+        .bag(tester_id)
+        .unwrap()
+        .items_in(store::InventoryType::Equip)
+        .map(|i| i.item.item_id)
+        .collect();
+    assert_eq!(bagged, vec![1_302_000], "the sword is in Tester2's bag");
+    assert_eq!(
+        wisp.fields.with_drops(crate::fields::FieldKey::world(SHARED_MAP), |d| d.len()),
+        0,
+        "and off the floor"
+    );
+}
+
+/// **A player who arrives AFTER the drop is shown it too.** The field-entry re-send used to
+/// filter every drop on owner/party alone, so a public drop was invisible to anyone who walked
+/// in later - the other half of the owner's 2026-09-23 report.
+#[test]
+fn a_public_drop_is_resent_to_somebody_who_enters_the_map_later() {
+    let (store, config, fields, account) = shared_channel(0, 30);
+    let (mut wisp, wisp_id) = join_channel(&store, &config, &fields, account, "Wisp");
+    wisp.on_field_entered();
+    wisp.collect_mail();
+    store.add_item(wisp_id, store::InventoryType::Equip, &store::Item::equip(1_302_000), 1).unwrap();
+    wisp.last_position = Some((520, 395));
+    let out = wisp.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, 1, 0, 1));
+    let enter = out.iter().find(|r| r.opcode == net::drops::DROP_ENTER_FIELD).unwrap();
+    let object_id = u32::from_le_bytes([enter.body[2], enter.body[3], enter.body[4], enter.body[5]]);
+
+    // Tester2 logs in only now, onto the same map.
+    let other = store.create_account("player", "correct horse battery").unwrap();
+    let (mut tester, _) = join_channel(&store, &config, &fields, other, "Tester2");
+    let entry = tester.on_field_entered();
+    let resent = entry
+        .iter()
+        .find(|r| r.opcode == net::drops::DROP_ENTER_FIELD && r.body[2..6] == object_id.to_le_bytes())
+        .unwrap_or_else(|| panic!("the late arrival was never shown the owner's drop: {:?}", entry.iter().map(|r| &r.what).collect::<Vec<_>>()));
+    assert_eq!(resent.body[1], net::drops::ENTER_INSTANT, "already lying there, pickable");
+    assert_eq!(resent.body[27], net::drops::OWN_TYPE_EVERYONE);
+}
+
+/// **An untradeable item a player drops is drawn landing, then fades - for everyone - and
+/// nobody gets it.**
+///
+/// The owner, 2026-09-23: *"Untradeable items when dropped should just disappear, there should be
+/// an animation for it on client side and also broadcasted to other clients as well."*
+#[test]
+fn an_untradeable_item_dropped_fades_for_everyone_and_nobody_gets_it() {
+    let (store, config, fields, account) = shared_channel(0, 30);
+    let (mut wisp, wisp_id) = join_channel(&store, &config, &fields, account, "Wisp");
+    let other = store.create_account("player", "correct horse battery").unwrap();
+    let (mut tester, tester_id) = join_channel(&store, &config, &fields, other, "Tester2");
+    wisp.on_field_entered();
+    tester.on_field_entered();
+    wisp.collect_mail();
+    tester.collect_mail();
+
+    const BLOCKED: u32 = 1_302_016;
+    assert!(store::ItemRules::trade_blocked(BLOCKED), "positive control: really untradeable");
+    store.add_item(wisp_id, store::InventoryType::Equip, &store::Item::equip(BLOCKED), 1).unwrap();
+    wisp.last_position = Some((520, 395));
+    let out = wisp.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, 1, 0, 1));
+    let enter = out.iter().find(|r| r.opcode == net::drops::DROP_ENTER_FIELD).expect("drawn landing");
+    let object_id = u32::from_le_bytes([enter.body[2], enter.body[3], enter.body[4], enter.body[5]]);
+    assert!(store.bag(wisp_id).unwrap().items_in(store::InventoryType::Equip).next().is_none(), "it left the bag");
+    // **The client's own disappearing animation**: enter type 3, not the ordinary arc. The owner:
+    // *"There should be a separate animation that client should be able to animate where the
+    // drop fades out."*
+    assert_eq!(enter.body[1], net::drops::ENTER_DISAPPEARING, "{}", enter.what);
+
+    // Tester2 is sent the SAME animation - it is broadcast, not local to the dropper.
+    let theirs = tester.collect_mail();
+    let seen = theirs.iter().find(|r| r.opcode == net::drops::DROP_ENTER_FIELD).expect("Tester2 sees it go");
+    assert_eq!(seen.body[1], net::drops::ENTER_DISAPPEARING);
+
+    // Somebody walking in during that second is NOT sent it - it is on its way out.
+    assert!(!tester
+        .on_field_entered()
+        .iter()
+        .any(|r| r.opcode == net::drops::DROP_ENTER_FIELD && r.body[2..6] == object_id.to_le_bytes()));
+
+    // Nobody may take it, the dropper included, and nobody is told off for trying.
+    for who in [&mut tester, &mut wisp] {
+        let got = who.on_pick_up(0x032C, &pick_up_body(object_id));
+        assert!(!got.iter().any(|r| r.opcode == net::drops::DROP_LEAVE_FIELD && r.body[0] == 2), "not picked up");
+        assert!(!got.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE), "no chat line for a disposal");
+    }
+    assert!(store.bag(tester_id).unwrap().items_in(store::InventoryType::Equip).next().is_none());
+
+    // After VANISH_MS the fade goes to the field - Tester2's screen too.
+    wisp.tick(crate::drops::VANISH_MS + 1);
+    let faded = tester.collect_mail();
+    assert!(
+        faded.iter().any(|r| r.opcode == net::drops::DROP_LEAVE_FIELD && r.body[0] == 0),
+        "{:?}",
+        faded.iter().map(|r| &r.what).collect::<Vec<_>>()
+    );
+    assert_eq!(wisp.fields.with_drops(crate::fields::FieldKey::world(SHARED_MAP), |d| d.len()), 0);
 }
 
 /// A `0x032C` body with the drop's object id where the client puts it: **offset 13**.
@@ -7660,22 +7957,23 @@ fn menu_reply(selection: Option<u32>) -> Vec<u8> {
     b
 }
 
-/// **The whole second advancement, walked the way a player walks it.**
+/// **The whole second advancement, walked the way a player walks it** - the Magician's, which
+/// is the one the owner played on 2026-09-26: *"Upon accepting the quest, it should teleport me into
+/// the test map with monsters that drop marbles, and the quest should automatically be set to in
+/// progress with a completion requirement of 30 dark marbles"*; re-entry by regular talk while
+/// the test is under way, "not ready yet" and "nothing more to teach" otherwise; and *"when
+/// leaving the test area, the player should be placed right next to the spawn point at Magician
+/// Job Instructor"*.
 ///
-/// The owner, 2026-08-31: *"the user goes to their job instructor, receive a letter from their
-/// instructor, then go to the 2nd job trainer to talk, then get teleported to the special mob
-/// map ... get 20 marbles for proof, receive the recommendation letter, go back to the job
-/// instructor to receive their 2nd job advancement"*. That is this client's chain exactly,
-/// with one correction: **it is 30 marbles, not 20** - `Check.1.item.0.count` of quest 20002
-/// is `30` and the same on all four branches. **[L]**
-///
-/// The test walks the four legs that involve a map or an item, and asserts an effect at each
-/// one rather than just the last: a chain where the middle silently does nothing still ends
-/// with the right job, and that is precisely the failure this project keeps finding.
+/// Every leg asserts its effect, not just the last one: a chain whose middle silently does
+/// nothing still ends with the right job, which is the failure this project keeps finding. The
+/// quest's opening is three `Say.0` lines with no `yes` branch - 20102's real shape - and the
+/// deployed failure was exactly that: the third line ended on OK and nothing started.
 #[test]
 fn the_second_advancement_walks_the_client_s_own_chain() {
-    let b = &crate::secondjob::BRANCHES[0]; // Warrior
+    let b = crate::secondjob::BRANCHES.iter().find(|b| b.from_job == 200).unwrap(); // Magician
     let field = b.test_field;
+    let test_quest = b.chain.quests[2];
 
     let mut npcs = std::collections::HashMap::new();
     let npc = |template: u32| net::opcode::FieldNpc {
@@ -7684,18 +7982,24 @@ fn the_second_advancement_walks_the_client_s_own_chain() {
     npcs.insert(b.examiner_map_id, vec![npc(b.examiner_npc)]);
     npcs.insert(field.map_id, vec![npc(field.warden_npc)]);
     npcs.insert(b.instructor_map_id, vec![npc(b.instructor_npc)]);
+    let mut quests = std::collections::HashMap::new();
+    let mut say = std::collections::HashMap::new();
+    say.insert("0".to_string(), vec!["So Grendel sent you.".to_string(), "There is a place near here.".to_string(), "Bring me #b30#k of them.".to_string()]);
+    quests.insert(test_quest, crate::config::Quest { name: "Test of Qualification".into(), start_npc: Some(b.examiner_npc), say, ..Default::default() });
+    let mut portal_index = std::collections::HashMap::new();
+    portal_index.insert((b.examiner_map_id, crate::secondjob::EXAMINER_SPAWN_PORTAL.to_string()), 32u8);
 
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
     let chr = net::opcode::Character { name: "Thirty".to_string(), ..Default::default() };
     let mut made = store.create_character(account_id, 0, &chr).unwrap();
     made.level = crate::secondjob::LEVEL_MINIMUM;
-    made.job = b.from_job; // already a Swordsman - the chain's own Check.0.job.0
+    made.job = b.from_job; // already a Magician - the chain's own Check.0.job.0
     made.map_id = b.examiner_map_id;
     store.save_character_progress(&made).unwrap();
     store.set_character_map(made.id, b.examiner_map_id).unwrap();
     store.create_migration(account_id, made.id, 0, 0).unwrap();
-    let config = Config { npcs, ..Config::default() };
+    let config = Config { npcs, quests, portal_index, ..Config::default() };
     let mut s = Session::new(store.clone(), Arc::new(config));
     s.claim_for_character(made.id);
 
@@ -7706,79 +8010,81 @@ fn the_second_advancement_walks_the_client_s_own_chain() {
         store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().job
     };
     let held = |s: &Session, item: u32| s.held_count(made.id, item);
+    let said = |out: &[Reply]| -> String {
+        out.iter().filter(|r| r.opcode == net::script::SCRIPT_MESSAGE).map(|r| String::from_utf8_lossy(&r.body).to_string()).collect()
+    };
+    let yes = net::script::SCRIPT_ACTION_YES;
 
-    // ---- leg 1: the examiner puts you inside the hidden field ----------------------------
+    // ---- leg 0: before the quest, a regular talk warps nobody ------------------------------
     let out = s.handle(&npc_click(1000));
-    assert_eq!(
-        map_of(&store, made.id),
-        field.map_id,
-        "the examiner's whole job is to warp you in - that map has no portal to walk through"
-    );
-    assert!(
-        out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE),
-        "and says so first: a script box sent with a SetField is torn down by field entry"
-    );
+    assert!(said(&out).contains("not ready yet") && said(&out).contains(b.instructor_name), "{}", said(&out));
+    assert_eq!(map_of(&store, made.id), b.examiner_map_id, "no quest, no warp");
 
-    // ---- leg 2: the warden is the only door out ------------------------------------------
-    s.handle(&npc_click(1000)); // now the warden, because the map changed
+    // ---- leg 1: accept the Test of Qualification (action 4, the client's own request) -------
+    let out = s.handle(&quest_request(net::script::QUEST_ACTION_OPENING_SCRIPT, test_quest, b.examiner_npc));
+    assert!(out.iter().any(|r| r.what.contains("line 1 of 3")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    let out = s.on_script_reply(&script_reply(1));
+    assert!(out.iter().any(|r| r.what.contains("line 2 of 3")));
+    let out = s.on_script_reply(&script_reply(1));
+    let last = out.iter().find(|r| r.opcode == net::script::SCRIPT_MESSAGE).unwrap();
+    assert!(last.what.contains("yes/no prompt") && last.what.contains("line 3 of 3"), "the last line is Accept/Decline: {}", last.what);
+    assert!(store.quest_row(made.id, test_quest).unwrap().is_none(), "nothing starts before Accept");
+    let out = s.on_script_reply(&script_reply(yes));
     assert_eq!(
-        map_of(&store, made.id),
-        b.examiner_map_id,
-        "and it is the client's OWN returnMap for the field, not a number we chose"
+        store.quest_row(made.id, test_quest).unwrap().map(|r| r.state),
+        Some(store::QuestState::InProgress),
+        "accepted: in progress, so the journal shows the 30 Dark Marbles"
     );
+    assert!(out.iter().any(|r| r.opcode == net::quest::MESSAGE), "the quest record goes to the client");
+    assert_eq!(map_of(&store, made.id), field.map_id, "and in they go");
+    assert!(out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE), "said as a notice: a box would die with the SetField");
 
-    // ---- leg 3: thirty marbles buy the proof ---------------------------------------------
-    // Short of thirty, the examiner sends you back in and takes nothing.
+    // ---- leg 2: the warden lets them out BESIDE the instructor ------------------------------
+    let out = s.handle(&npc_click(1000)); // the warden, because the map changed
+    assert_eq!(map_of(&store, made.id), b.examiner_map_id, "the client's own returnMap");
+    assert!(out.iter().any(|r| r.what.contains("at portal 32 (job00")), "job00, not portal 0: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+
+    // ---- leg 3: short of marbles, a regular talk offers re-entry; No stays, Yes goes --------
     let etc = store::InventoryType::Etc;
-    store
-        .add_item(made.id, etc, &store::Item::bundle(b.chain.marble_item, 29), 200)
-        .unwrap();
-    s.handle(&npc_click(1000));
-    assert_eq!(map_of(&store, made.id), field.map_id, "29 is not 30");
-    assert_eq!(held(&s, b.chain.marble_item), 29, "and nothing was taken for a failed test");
-    assert_eq!(held(&s, b.chain.proof_item), 0, "and nothing was given");
-
-    // Back out, and top up to exactly thirty.
-    s.handle(&npc_click(1000)); // the warden again
-    store.add_item(made.id, etc, &store::Item::bundle(b.chain.marble_item, 1), 200).unwrap();
-    assert_eq!(held(&s, b.chain.marble_item), 30);
-
+    store.add_item(made.id, etc, &store::Item::bundle(b.chain.marble_item, 29), 200).unwrap();
     let out = s.handle(&npc_click(1000));
-    assert_eq!(
-        map_of(&store, made.id),
-        b.examiner_map_id,
-        "a PASS does not warp - re-entering a test that is finished would strand the player"
-    );
-    assert_eq!(held(&s, b.chain.marble_item), 0, "the thirty are handed over");
-    assert_eq!(held(&s, b.chain.proof_item), 1, "and the proof comes back");
-    assert!(
-        out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE),
-        "and the examiner says so"
-    );
+    assert!(out.iter().any(|r| r.what.contains("AskYesNo") && r.what.contains("back into the test area")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    s.on_script_reply(&script_reply(0));
+    assert_eq!(map_of(&store, made.id), b.examiner_map_id, "No: they stay");
+    s.handle(&npc_click(1000));
+    s.on_script_reply(&script_reply(yes));
+    assert_eq!(map_of(&store, made.id), field.map_id, "Yes: back in");
+    assert_eq!(held(&s, b.chain.marble_item), 29, "and nothing was taken");
+    s.handle(&npc_click(1000)); // the warden again
 
-    // ---- leg 4: the instructor, and only the instructor, advances -------------------------
+    // ---- leg 4: all thirty in hand - the talk points at the quest, and warps nobody --------
+    store.add_item(made.id, etc, &store::Item::bundle(b.chain.marble_item, 1), 200).unwrap();
+    let out = s.handle(&npc_click(1000));
+    assert!(said(&out).contains("Test of Qualification"), "{}", said(&out));
+    assert_eq!(map_of(&store, made.id), b.examiner_map_id);
+    assert_eq!(held(&s, b.chain.marble_item), 30, "a talk takes nothing - the quest's turn-in does");
+
+    // ---- leg 5: the instructor, and only the instructor, advances ---------------------------
+    // The proof is what quest 20103's start hands over once the test is turned in.
+    store.add_item(made.id, etc, &store::Item::bundle(b.chain.proof_item, 1), 200).unwrap();
     store.set_character_map(made.id, b.instructor_map_id).unwrap();
     s.claim_for_character(made.id); // re-read the character at its new map
     let out = s.handle(&npc_click(1000));
-    let menu = out
-        .iter()
-        .find(|r| r.opcode == net::script::SCRIPT_MESSAGE)
-        .expect("the instructor offers the choice");
+    let menu = out.iter().find(|r| r.opcode == net::script::SCRIPT_MESSAGE).expect("the instructor offers the choice");
     assert!(menu.what.contains("MENU"), "and it is a type-6 list, not a Say: {}", menu.what);
     assert_eq!(job_of(&store, made.id), b.from_job, "nothing has changed YET");
-
-    // Picking position 0 is this branch's first choice, and the job that comes out is that
-    // one rather than "the first job id in the file" - the two are only the same if the menu
-    // and the decoder agree, which is the bug this asserts against.
     let want = b.choices[0].job;
     let out = s.on_script_reply(&menu_reply(Some(0)));
     assert_eq!(job_of(&store, made.id), want, "the job must PERSIST, not just be announced");
-    let stat = out
-        .iter()
-        .find(|r| r.opcode == net::stats::STAT_CHANGED)
-        .expect("the client must be told, or it draws the old job forever");
+    let stat = out.iter().find(|r| r.opcode == net::stats::STAT_CHANGED).expect("the client must be told");
     assert!(stat.what.contains(&format!("job {} -> {want}", b.from_job)), "{}", stat.what);
     assert_eq!(held(&s, b.chain.proof_item), 0, "and the proof is spent, not left in the bag");
+
+    // ---- leg 6: a second job has nothing more to learn from the examiner -------------------
+    store.set_character_map(made.id, b.examiner_map_id).unwrap();
+    s.claim_for_character(made.id);
+    let out = s.handle(&npc_click(1000));
+    assert!(said(&out).contains("nothing more to teach"), "{}", said(&out));
 }
 
 /// **Phil's guide is a menu the cursor can pick from, and the pick rides.**
@@ -11204,6 +11510,52 @@ fn a_locker_item_moves_into_the_cash_tab_where_the_client_asked() {
     assert_eq!((bag[0].slot, bag[0].item.item_id), (3, 5680004));
 }
 
+/// The `0x03E1 0x1C` body: the sub-op and the locker serial, nothing else.
+fn cash_delete(serial: u64) -> Vec<u8> {
+    let mut b = net::cashshop::CLIENT_CASH_SHOP_ACTION.to_le_bytes().to_vec();
+    b.push(net::cashshop::ACTION_DELETE);
+    b.extend_from_slice(&serial.to_le_bytes());
+    b
+}
+
+/// **Deleting a locker item removes it, says so, and leaves the shop usable.**
+///
+/// The owner, 2026-09-24: *"I just tried deleting an item in Cash Shop, but this is currently
+/// unhandled."* The body is the one their client sent, `1c 01000000 01000000` - account 1,
+/// locker slot 1.
+#[test]
+fn deleting_a_locker_item_removes_it_and_releases_the_shop() {
+    let (mut s, store, _id) = cash_shop_session();
+    let account = 1i64;
+    let placed = store.put_cash_item(account, &store::Item::bundle(5680004, 1)).unwrap();
+    let serial = (account as u64) << 32 | u64::from(placed.slot);
+    assert_eq!(&cash_delete(serial)[2..], &[0x1c, 1, 0, 0, 0, 1, 0, 0, 0], "the captured body");
+
+    let out = s.handle(&cash_delete(serial));
+    // **Two replies, in this order.** 0x3C erases the item and prints "The cash item has been
+    // deleted." but does NOT clear the in-flight latch; the wallet does. Without it the shop
+    // would refuse every request after one delete.
+    assert_eq!(out.len(), 2, "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert_eq!(out[0].opcode, net::cashshop::CASH_SHOP_RESULT);
+    assert_eq!(out[0].body, net::cashshop::cash_item_deleted(serial), "0x3C + the serial echoed");
+    assert_eq!(out[1].opcode, net::cashshop::CASH_SHOP_WALLET, "then the latch-clearing wallet");
+    assert!(store.cash_locker(account).unwrap().is_empty(), "the row is really gone");
+
+    // **The same serial again: nothing is there, so it is refused - with 0x3D, which clears
+    // the latch and keeps anything else queued - and nothing else is touched.**
+    store.put_cash_item(account, &store::Item::bundle(5070000, 1)).unwrap(); // lands in slot 1 again
+    let other = s.handle(&cash_delete((2u64 << 32) | 1));
+    assert_eq!(other[0].body[0], net::cashshop::RESULT_QUEUE_REFUSED, "another account's serial: {}", other[0].what);
+    assert_eq!(store.cash_locker(account).unwrap().len(), 1, "and this account's item is untouched");
+    let short = s.handle(&{
+        let mut b = cash_delete(serial);
+        b.pop();
+        b
+    });
+    assert_eq!(short[0].body[0], net::cashshop::RESULT_QUEUE_REFUSED, "a 7-byte serial is refused, not guessed");
+    assert_eq!(store.cash_locker(account).unwrap().len(), 1);
+}
+
 /// The `0x03E1 0x0B` body the client builds: sub-op, `u64` serial, `u32` item, `u8` tab,
 /// **`u32`** slot - captured 2026-09-11 03:54:41.
 fn bag_to_locker(serial: u64, item_id: u32, tab: u8, slot: u32) -> Vec<u8> {
@@ -11338,6 +11690,11 @@ fn entering_the_shop_lists_the_lockers_stored_rows() {
     let ops: Vec<u16> = out.iter().map(|r| r.opcode).collect();
     assert_eq!(ops[0], net::cashshop::SET_CASH_SHOP, "the stage first");
     assert_eq!(*ops.last().unwrap(), net::cashshop::CASH_SHOP_WALLET, "the wallet last");
+    // The beauty coupons' preview lists (the owner, 2026-09-26): once, inside the stage, before the
+    // wallet - and exactly the salon's lists.
+    let preview: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::cashshop::CASH_SHOP_BEAUTY_PREVIEW).collect();
+    assert_eq!(preview.len(), 1, "{ops:?}");
+    assert_eq!(&preview[0].body[9..], &net::cashshop::beauty_preview(0, &crate::salon::cash_shop_previews())[9..], "the stamp aside, the salon's lists");
     assert!(
         !out.iter().any(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT
             && r.body[0] == net::cashshop::RESULT_ITEM_TO_LOCKER),
@@ -13718,6 +14075,7 @@ fn no_quest_answers_its_accept_or_turn_in_with_its_own_opening_lines() {
     let boxes = |replies: &[Reply]| replies.iter().filter(|r| r.opcode == net::script::SCRIPT_MESSAGE).count();
 
     let mut audited = 0;
+    let mut board_skipped = 0;
     let mut accepted_silently = 0;
     let mut accepted_with_yes = 0;
     let mut turned_in_with_line = 0;
@@ -13739,6 +14097,19 @@ fn no_quest_answers_its_accept_or_turn_in_with_its_own_opening_lines() {
         // character fill a tab, and since 2026-09-17 a full tab is a refusal box instead of
         // the quest's line. Each quest starts with an empty bag.
         empty_bag(&store, id2);
+        // **The Community Board's 71 quests are gated on the day's posting** (2026-09-28), so
+        // an accept outside it is a refusal box by design - `session/citizenship.rs` tests
+        // exactly that. The 14 citizenship story quests are still audited: the character is
+        // made a top-grade citizen of that quest's town first, so the gate lets them through.
+        if crate::citizenship::board_group_of(qid).is_some() {
+            board_skipped += 1;
+            continue;
+        }
+        if let Some((town, _)) = q.citizenship_check {
+            let standing = |t: u8, state: u8| store::citizenship::TownStanding { town: t, state, grade: 10, contribution: 10_000, certified_grade: 10 };
+            let other = if town == 1 { 2 } else { 1 };
+            store.set_citizenship(id2, &[standing(town, store::citizenship::STATE_ACTIVE), standing(other, store::citizenship::STATE_FROZEN)]).unwrap();
+        }
         audited += 1;
         let npc = q.start_npc.unwrap_or(1);
 
@@ -13787,7 +14158,8 @@ fn no_quest_answers_its_accept_or_turn_in_with_its_own_opening_lines() {
     eprintln!(
         "audited {audited} quests: accept -> {accepted_with_yes} spoke the yes branch, {accepted_silently} sent the record alone; turn-in -> {turned_in_with_line} spoke Say.1, {turned_in_with_quiz} completed a quiz silently, {turned_in_chained} chained, {turned_in_silently} sent the record alone"
     );
-    assert!(audited > 300, "the client ships 322 quests; {audited} audited");
+    assert_eq!(board_skipped, 71, "the four Community Board groups");
+    assert!(audited > 230, "the client ships 322 quests, 71 of them board quests; {audited} audited");
     assert_eq!(turned_in_with_quiz, 11, "the quiz nodes on path 1: Rain's seven, Stan, I'm Bored 1, Flying Medicine, Animal Fossils (the other seven ask nodes are openings, which the client shows itself)");
 }
 
@@ -14436,6 +14808,115 @@ fn a_friend_logging_in_and_out_reaches_the_other_sides_window() {
     assert_eq!(
         friend_records(&seen),
         vec![(tester_id, "Tester2".to_string(), net::friends::FLAG_ONLINE)]
+    );
+}
+
+/// **The buddy window's "Checking location" is answered into the window, not the chat.**
+///
+/// The owner, 2026-09-23: *"the current location of the player is reflecting in chat, but it should
+/// be where it says 'Tester2 - Checking location'. Instead of that, it should say 'Tester2 -
+/// Kerning City' or 'Tester2 - Channel 2'."* The window asks with kind `0x44` (`0x40 | /find`)
+/// and the client only fills the window when the answer carries the same bit - mode `0x48`,
+/// not `0x09`. The bytes are the ones Tester2's client actually sent (`world-ch0.log`
+/// 2026-09-22 00:58:14).
+#[test]
+fn the_buddy_windows_location_check_is_answered_into_the_window() {
+    let (store, config, fields, account) = shared_channel(0, 30);
+    let (mut wisp, _) = join_channel(&store, &config, &fields, account, "Wisp");
+    let other = store.create_account("player", "correct horse battery").unwrap();
+    let (mut tester, _) = join_channel(&store, &config, &fields, other, "Tester2");
+    wisp.on_field_entered();
+    tester.on_field_entered();
+
+    // 0x017B  44 <tick> 0400 "Wisp"
+    let mut ask = net::whisper::CLIENT_WHISPER.to_le_bytes().to_vec();
+    ask.extend_from_slice(&[0x44, 0x1f, 0x6b, 0x14, 0x12, 0x04, 0x00]);
+    ask.extend_from_slice(b"Wisp");
+    let out = tester.handle(&ask);
+    let answer = out
+        .iter()
+        .find(|r| r.opcode == net::whisper::WHISPER)
+        .unwrap_or_else(|| panic!("{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>()));
+    assert_eq!(answer.body[0], net::whisper::mode::FOUND_IN_WINDOW, "{}", answer.what);
+    assert_eq!(&answer.body[3..7], b"Wisp");
+    assert_eq!(answer.body[7], net::whisper::place::MAP, "same channel: the map, which the client names");
+    assert_eq!(&answer.body[8..12], &SHARED_MAP.to_le_bytes());
+    assert!(!out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE), "and nothing in the chat log");
+
+    // A /find typed in chat (kind 5) still answers in chat - mode 0x09.
+    ask[2] = 0x05;
+    let out = tester.handle(&ask);
+    let answer = out.iter().find(|r| r.opcode == net::whisper::WHISPER).unwrap();
+    assert_eq!(answer.body[0], net::whisper::mode::FOUND);
+}
+
+/// **Job and level are in the record where the row builder reads them**, so they show for an
+/// offline friend too. The owner, 2026-09-23: *"The buddy list still does not have Job and level of
+/// the buddy character."* `FUN_1411be0a0` reads `rec+0x139` (LV) and hands `rec+0x13D` to the
+/// job-name lookup `FUN_1402b0250(job, subJob)`.
+#[test]
+fn a_friend_record_carries_level_and_job_where_the_row_builder_reads_them() {
+    let (mut wisp, wisp_id, tester, tester_id, store) = two_friends();
+    store.request_friend(tester_id, wisp_id, "Default Group").unwrap();
+    store.answer_friend_request(wisp_id, tester_id, true).unwrap();
+    let brief = store.character_brief(tester_id).unwrap().unwrap();
+    drop(tester); // offline: the columns must still be filled
+    wisp.collect_mail();
+
+    let out = wisp.on_field_entered();
+    let list = out.iter().find(|r| r.opcode == net::friends::FRIEND_RESULT && r.body[0] == 0x15).unwrap();
+    let rec = &list.body[5..5 + net::friends::FRIEND_ENTRY_LEN];
+    assert_eq!(rec[0x11], net::friends::FLAG_OFFLINE);
+    assert_eq!(&rec[0x139..0x13D], &brief.level.to_le_bytes(), "LV");
+    assert_eq!(&rec[0x13D..0x141], &brief.job.to_le_bytes(), "JOB");
+    assert_eq!(&rec[0x141..0x145], &[0u8; 4], "subJob");
+}
+
+/// **Buddy chat reaches every accepted buddy, and nobody else.**
+///
+/// The owner, 2026-09-24: *"Buddy chat sent by a player with buddies should go to all online buddies
+/// that the player has added."* On the deployed server it was logged "kind 0 ... is not built"
+/// and went nowhere (`Server Investigation/world-ch0.log` 04:32:28, Moth's `'hewwo'`). The body
+/// here is that capture's shape: `u8 kind 0, u16 count, u32 recipient, str text`.
+#[test]
+fn buddy_chat_reaches_accepted_buddies_only() {
+    let (store, config, fields, account) = shared_channel(0, 30);
+    let (mut moth, moth_id) = join_channel(&store, &config, &fields, account, "Moth");
+    let a2 = store.create_account("buddy", "correct horse battery").unwrap();
+    let (mut cobalt, cobalt_id) = join_channel(&store, &config, &fields, a2, "Cobalt");
+    let a3 = store.create_account("pending", "correct horse battery").unwrap();
+    let (mut asker, asker_id) = join_channel(&store, &config, &fields, a3, "Asker");
+    for s in [&mut moth, &mut cobalt, &mut asker] {
+        s.on_field_entered();
+        s.collect_mail();
+    }
+    // Cobalt is an accepted buddy; Asker has only ASKED, which is not a friendship.
+    store.request_friend(cobalt_id, moth_id, "Default Group").unwrap();
+    store.answer_friend_request(moth_id, cobalt_id, true).unwrap();
+    store.request_friend(asker_id, moth_id, "Default Group").unwrap();
+    for s in [&mut moth, &mut cobalt, &mut asker] {
+        s.collect_mail();
+    }
+
+    let mut line = net::groupmessage::CLIENT_GROUP_MESSAGE.to_le_bytes().to_vec();
+    line.push(net::groupmessage::kind::BUDDY);
+    line.extend_from_slice(&1u16.to_le_bytes());
+    line.extend_from_slice(&cobalt_id.to_le_bytes());
+    line.extend_from_slice(&5u16.to_le_bytes());
+    line.extend_from_slice(b"hewwo");
+    let out = moth.handle(&line);
+    assert!(!out.iter().any(|r| r.opcode == net::groupmessage::GROUP_MESSAGE), "the sender's client draws its own line");
+
+    let heard = cobalt.collect_mail();
+    let got = heard
+        .iter()
+        .find(|r| r.opcode == net::groupmessage::GROUP_MESSAGE)
+        .unwrap_or_else(|| panic!("Cobalt hears it: {:?}", heard.iter().map(|r| &r.what).collect::<Vec<_>>()));
+    assert_eq!(got.body[0], net::groupmessage::kind::BUDDY, "drawn as a BUDDY line, not a party one");
+    assert!(got.body.windows(5).any(|w| w == b"hewwo"));
+    assert!(
+        !asker.collect_mail().iter().any(|r| r.opcode == net::groupmessage::GROUP_MESSAGE),
+        "a request that was never accepted is not a buddy"
     );
 }
 

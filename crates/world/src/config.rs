@@ -195,6 +195,17 @@ pub struct Config {
     /// valid arrival points, and `sp` is what an ordinary login uses.
     pub portal_index: HashMap<(u32, String), u8>,
 
+    /// **Every map's spawn points**: map -> the indices of its portals named **`sp`** that lead
+    /// nowhere and run no script. The name is the rule, measured on `gm-handbook/portals.txt`:
+    /// every one of its 426 maps has at least one `sp`, and the other target-0 portals are
+    /// special-purpose - `tp` (72, the Mystic Door's town points), `st00` (51, a stage's arrival),
+    /// `h001`, `start00`, Kerning City's `pc00` and `cab00` - not places to put a player down.
+    ///
+    /// The owner, 2026-09-26: a character comes back in at the spawn point **nearest** to where they
+    /// left, and a teleport lands on a **random** one. [`Self::nearest_spawn_point`],
+    /// [`Self::random_spawn_point`].
+    pub spawn_points: HashMap<u32, Vec<u8>>,
+
     /// `(map, portal index)` -> where that portal stands, in map pixels.
     ///
     /// The owner, 2026-09-14: *"The first client also sees the client joining start from the origin
@@ -584,6 +595,52 @@ impl Config {
         (links, index, positions)
     }
 
+    /// The spawn points of every map in `portals.txt` - see [`Self::spawn_points`]. A missing file
+    /// is an empty table, and every caller then falls back to portal 0 as before.
+    pub fn load_spawn_points(path: &std::path::Path) -> HashMap<u32, Vec<u8>> {
+        let mut out: HashMap<u32, Vec<u8>> = HashMap::new();
+        let Ok(text) = std::fs::read_to_string(path) else { return out };
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            // map, index, name, target map, target portal, script, x, y
+            let f: Vec<&str> = line.split(',').map(str::trim).collect();
+            if f.len() < 5 {
+                continue;
+            }
+            let (Ok(map), Ok(idx), Ok(target)) = (f[0].parse::<u32>(), f[1].parse::<u8>(), f[3].parse::<u32>()) else {
+                continue;
+            };
+            if f[2] == "sp" && target == 0 && f.get(5).is_none_or(|s| s.is_empty()) {
+                out.entry(map).or_default().push(idx);
+            }
+        }
+        out
+    }
+
+    /// **The spawn point on `map` nearest `(x, y)`**, by straight-line distance - where a
+    /// character who logged off, changed channel or went into the Cash Shop there comes back in.
+    /// `None` when the map has no spawn point with a known position.
+    pub fn nearest_spawn_point(&self, map: u32, (x, y): (i16, i16)) -> Option<u8> {
+        self.spawn_points.get(&map)?.iter().copied().filter_map(|idx| {
+            let (px, py) = *self.portal_positions.get(&(map, idx))?;
+            let (dx, dy) = (i64::from(px) - i64::from(x), i64::from(py) - i64::from(y));
+            Some((dx * dx + dy * dy, idx))
+        }).min().map(|(_, idx)| idx)
+    }
+
+    /// **A random spawn point on `map`**, for a teleport - the owner, 2026-09-26: *"if a player is
+    /// teleported into a map, the server will choose a random spawn point. Such as when Nella
+    /// teleports the player back to Kerning City."* `0`, the map's default, when it has none.
+    pub fn random_spawn_point(&self, map: u32, roll: u64) -> u8 {
+        match self.spawn_points.get(&map) {
+            Some(all) if !all.is_empty() => all[(roll % all.len() as u64) as usize],
+            _ => 0,
+        }
+    }
+
     /// Is this a map the client can actually load?
     ///
     /// **An empty table answers `true` for everything**, deliberately. The table is generated
@@ -825,6 +882,9 @@ impl Config {
             // Column 25, `cash`, added 2026-09-11 after the six requirement columns. A file
             // from before then has the name there, which does not parse, and means "not cash".
             let cash = f.get(25).and_then(|x| x.parse::<u32>().ok()).unwrap_or(0) != 0;
+            // Column 19, `reqLevel` - read for item variance (`crate::variance`), which takes
+            // its range from it. A file without it reads as level 0: no variance.
+            let req_level = f.get(19).and_then(|x| x.parse::<u16>().ok()).unwrap_or(0);
             out.insert(
                 v[0],
                 EquipTemplate {
@@ -847,6 +907,7 @@ impl Config {
                     inc_crd: u(17),
                     trade_block: v[18] != 0,
                     cash,
+                    req_level,
                 },
             );
         }
@@ -1448,6 +1509,8 @@ pub struct EquipTemplate {
     /// carrying `cash = 1` and no other candidate). Every request the client builds about
     /// the item names that tab, so the server has to agree or every later move misses.
     pub cash: bool,
+    /// `info/reqLevel`. Item variance's range is this over ten (`crate::variance`).
+    pub req_level: u16,
 }
 
 impl EquipTemplate {
@@ -1569,6 +1632,32 @@ pub struct Quest {
     /// and this key is that rule made explicit rather than inferred from an absence at
     /// runtime.
     pub complete_on_consume: Option<u32>,
+
+    /// `Check.0.citizenshipTown` / `Check.0.citizenshipGrade` - **starting** this quest needs an
+    /// ACTIVE citizenship of that town at that grade or higher. 86 quests, all of them
+    /// `506001..506045` / `506101..506141`. The client refuses with reason `0x50`
+    /// (`FUN_14070FE30`, `research/citizenship-2026-09-27.md` §5.1); the server refuses too.
+    /// `(town, grade)`.
+    pub citizenship_check: Option<(u8, u8)>,
+    /// `Act.1.citizenshipContr` - what turning it in banks, and where.
+    pub citizenship_contr: Option<CitizenshipContr>,
+    /// `Act.1.money` - mesos for turning it in, at the Quest rate. 255 quests carry one, every
+    /// value positive. **Nothing paid it until 2026-09-28** (the owner: *"make the server pay for
+    /// quest mesos at the 10x rate too for all quests"*) - the quest window showed the amount
+    /// and the purse never moved. `Session::pay_quest_mesos`. The one `Act.0.money` in this
+    /// client (quest 10303, `-1000`, a cost to START) is not read.
+    pub complete_money: u32,
+}
+
+/// `Act.1.citizenshipContr`: `town`, and either a flat `amount` (the weeklies, the story arcs)
+/// or an `amountFormula` in `citizenshipGrade` (every daily: `"100 + ( ( citizenshipGrade - 1 )
+/// x 50 )"`). **[L]** The client evaluates the same string to draw the reward
+/// (`FUN_1402C96E0`); `world::citizenship::contribution_for` computes the number it draws.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CitizenshipContr {
+    pub town: u8,
+    pub amount: Option<u32>,
+    pub formula: Option<String>,
 }
 
 /// One `Act.<state>.item.<n>` while it is still being read.
@@ -1788,6 +1877,32 @@ fn read_quest_rows(text: &str, out: &mut HashMap<u32, Quest>, mode: Overlay) -> 
                     (act_state(dotted), act_item_index(dotted), value.parse::<u8>().ok())
                 {
                     act_items.entry((qid, st)).or_default().entry(n).or_default().gender = Some(g);
+                }
+            }
+            // Citizenship - `Check.0.citizenshipTown/Grade` and `Act.1.citizenshipContr.*`.
+            // WZ keys, so an overlay never touches them.
+            "Check" if fill && dotted == "0.citizenshipTown" => {
+                if let Ok(town) = value.parse::<u8>() {
+                    let grade = quest.citizenship_check.map_or(1, |(_, g)| g);
+                    quest.citizenship_check = Some((town, grade));
+                }
+            }
+            "Check" if fill && dotted == "0.citizenshipGrade" => {
+                if let Ok(grade) = value.parse::<u8>() {
+                    let town = quest.citizenship_check.map_or(0, |(t, _)| t);
+                    quest.citizenship_check = Some((town, grade));
+                }
+            }
+            "Act" if fill && dotted == "1.money" => {
+                quest.complete_money = value.parse().unwrap_or(0);
+            }
+            "Act" if fill && dotted.starts_with("1.citizenshipContr.") => {
+                let c = quest.citizenship_contr.get_or_insert_with(CitizenshipContr::default);
+                match &dotted["1.citizenshipContr.".len()..] {
+                    "town" => c.town = value.parse().unwrap_or(0),
+                    "amount" => c.amount = value.parse().ok(),
+                    "amountFormula" => c.formula = Some(value.to_string()),
+                    _ => {}
                 }
             }
             "Act" if dotted == "1.exp" && (fill || quest.complete_exp == 0) => {
@@ -2519,6 +2634,7 @@ impl Default for Config {
             portals: HashMap::new(),
             portal_index: HashMap::new(),
             portal_positions: HashMap::new(),
+            spawn_points: HashMap::new(),
             npcs: HashMap::new(),
             mobs: HashMap::new(),
             mob_respawn_s: HashMap::new(),
@@ -3085,6 +3201,44 @@ mod spawn_tests {
         // reqLevel is field 19 and the starter sword needs nothing at all - it is the one
         // weapon in this client with a completely free entry, which is why `!kit` uses it.
         assert_eq!(fields[19], "0", "the Sword has no level requirement: {row}");
+        // And the loader reads that column: item variance's range is reqLevel / 10.
+        assert_eq!(equips[&1302000].req_level, 0);
+        assert_eq!(equips[&1072128].req_level, 28, "Squishy Shoes, the King Slime's drop");
+        assert_eq!(equips[&1050000].req_level, 15, "Beige Plain Robe");
+    }
+
+    /// **Spawn points are the `sp` portals, and nothing else** - checked on Kerning City's real
+    /// row set, which has all the lookalikes: 15 `sp`, six `tp` Mystic Door points, `pc00` and
+    /// `cab00` (target 0, no script, not spawn points) and doors. Then the two picks: the
+    /// nearest to where someone stood, and a random one for a teleport.
+    #[test]
+    fn spawn_points_are_the_sp_portals_and_the_picks_use_them() {
+        let path = std::path::Path::new("../../gm-handbook/portals.txt");
+        if !path.exists() {
+            return; // generated data, gitignored
+        }
+        let (portals, portal_index, portal_positions) = Config::load_portals_with_positions(path);
+        let spawn_points = Config::load_spawn_points(path);
+        let cfg = Config { portals, portal_index, portal_positions, spawn_points, ..Config::default() };
+        let kerning = &cfg.spawn_points[&crate::firsttime::TOWN_MAP];
+        assert_eq!(kerning.len(), 15, "Kerning City's fifteen `sp`: {kerning:?}");
+        for not_a_spawn in [24u8, 33, 34, 40] {
+            assert!(!kerning.contains(&not_a_spawn), "in01 / pc00 / cab00 / tp are not spawn points: {not_a_spawn}");
+        }
+        assert_eq!(cfg.spawn_points.len(), 426, "every map in the file has at least one");
+        // Standing at the in04 door (-761, 115): sp 12 at (-1051, 107) is 290 px away, sp 3 at
+        // (-19, 88) is 742.
+        assert_eq!(cfg.nearest_spawn_point(crate::firsttime::TOWN_MAP, (-761, 115)), Some(12));
+        assert_eq!(cfg.nearest_spawn_point(crate::firsttime::TOWN_MAP, (2102, -286)), Some(5), "on a spawn point: that one");
+        assert_eq!(cfg.nearest_spawn_point(999_999_999, (0, 0)), None);
+        // A teleport: always a spawn point, and not always the same one.
+        let picks: std::collections::BTreeSet<u8> =
+            (0..200u64).map(|r| cfg.random_spawn_point(crate::firsttime::TOWN_MAP, r.wrapping_mul(0x9E37_79B9_7F4A_7C15))).collect();
+        assert!(picks.iter().all(|p| kerning.contains(p)), "{picks:?}");
+        assert!(picks.len() > 5, "a teleport is spread over the town: {picks:?}");
+        assert_eq!(cfg.random_spawn_point(999_999_999, 7), 0, "a map with none: the default");
+        // The Magician Job Instructor's `job00` is NOT a random landing spot - it is used by name.
+        assert!(!cfg.spawn_points[&10002070].contains(&32));
     }
 
     /// Quest 1000's tree, read back out of the generated table.

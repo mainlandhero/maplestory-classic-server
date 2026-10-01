@@ -365,6 +365,23 @@ the `0x0224` (`world-ch0.log`), and a `0x0224` for an id already in the pool is 
 research had recorded. `broadcast_look_change` now sends `0x0225` then `0x0224` then the pets
 for that one character, the sequence a fresh sighting gets (§8.1). Unverified on the observer.
 
+**2026-09-22: the trade WINDOW opens.** The owner: *"Tester2 just sent the owner a trade request, but
+after the owner accepts it, the Trade window did not open."* The invite has worked since
+2026-09-09; what was missing is `0x0575` **mode 4**, whose payload
+`research/trade-2026-09-09.md` §3 left undecoded because it runs through a virtual call on
+whichever miniroom class the room type selects. Read now: for a trade the call is
+`FUN_141C423D0`, and its **only** packet read is `FUN_1402ee8d0` - the same avatar decoder
+`0x0224` uses, so a member is `u8 slot`, `opcode::avatar_look`, `u32 id`, `str name`, `u16`,
+with the list ended by a negative byte and the two flag bytes before it being the slot
+capacity and the recipient's own slot. `net::trade::room_open`; the room lives in
+`session/trade.rs` in a process-wide table keyed by the ticket (the inviter's id), the shape
+`session/messenger.rs` already uses. Both sides get a mode 4 with their own `mySlot`.
+**Not built: putting items in.** Modes `0x0C` and `0x10` - the trade dialog's own senders -
+are still unanswered, so the window opens and nothing can be traded in it yet. **One [D]
+carries risk**: the handler's trailing virtual call resolves to a method that reads nothing,
+and if that resolution is wrong the body is short. Plan step 13(b) asks for `client-exit.log`
+rather than assuming. Never on a screen.
+
 **2026-09-30: the GM's Blessings are weather and a buff for the whole map.** The owner: *"these two items
 should also be atmospheric effects that gives all players a buff ... it does not give players the
 appropriate buff icon with a duration."* Three gaps, all closed: **Wind sent no buff at all** - its
@@ -456,7 +473,7 @@ ship."* `crate::boat` is now two `Route`s on one timetable. Orbis side: Agatha (
 sells Ticket to Ellinia (Basic)/(Regular) - 4031084/5, the same 5,000/20,000 **[I]**; the Platform
 Usher (1001) offers Isa's platform menu - the booth's `east00` has no target **[L]** - and
 teleports to the Station Tunnel (20000011), which walks to Rini's platform (20000012, `fieldType
-2` with its own `shipObj`); their second line is still their ferry. Rini (1004), Erin (1006), the
+2` with its own `shipObj`); their second line was their ferry until 2026-09-29, when the ferry was removed. Rini (1004), Erin (1006), the
 waiting room 20000013, deck 20000020 (Balrog ship at -590, -221) and cabin 20000021 mirror the
 Ellinia side; the ship lands in Ellinia Station. Wording from the v96 Agatha/Rini/Erin/Isa scripts
 The owner pasted (Rini's and Erin's are word for word Cherry's and Purin's). A login on a To Ellinia
@@ -576,6 +593,667 @@ Shoes, twenty Slimes from the King, ten Passes to clear, a Companion's Magic Box
 animation; 10 entries per character per UTC day, counted and shown by Lakelis; a clear only when the
 whole run is on the stage; a disconnect logs back in on the Exit; no party of one. **Placeholder
 text:** Cloto's stage-4 and stage-5 intros await the owner's screenshots.
+
+**2026-09-30: the live server's status in Discord - one message, edited every minute.** The owner: *"I want to be
+able to integrate with discord ... configurable and only used on the live server ... current server status
+and online members in each channel as well as current up time and patch version"*, *"only posts the status
+once and then continuously update that same message ID"*, *"Upon server shutdown ... offline for
+maintenance"*. The world hub (`maplecw-chat --discord-webhook-file PATH`, `world::discordstatus`) holds the
+cross-channel roster and, every 60 s, PATCHes one embed: status, uptime, players per channel by name
+(a channel seen and gone reads "offline"), total, server build (`buildstamp` time + digest), client patch
+(`client-patch-version.txt`, written by `maplecw-auth --client-dir`). The id lives in
+`discord-status-message.txt`; a new message is posted ONLY with no id or on a 404 - errors and rate limits
+retry the edit. **Offline**: `maplecw-chat --discord-offline` (edit only, never posts), run by
+`start-server.ps1` in `-Stop` and its shutdown `finally`, plus a console ctrl handler in the hub for the
+window's X/logoff/shutdown. **Live only**: the URL is in the gitignored repo-root `discord-webhook.txt`,
+shipped in the SERVER package by `package-server.ps1`; `start-server.ps1` passes the flag only when the file
+is beside it; `test-server.ps1` never does. New crate `webhook` (rustls + `webpki-roots`, TLS 1.3, no tls12
+so the pinned sign-in link is unchanged; the URL is never logged - `redacted()`). Tests: URL parsing and
+redaction, plain and chunked responses, JSON escaping, the embed's contents, the id surviving a restart,
+offline never posting; an ignored live test reached discord.com over TLS (401/404 on a fake webhook, nothing
+posted). **Nothing has been posted to the real channel yet** - the first live start will.
+
+**2026-09-30: the effect item is saved between logins.** The owner: *"The effect should persist and should be
+saved between logins."* `store::effectitem` (new table, in `ITEM_ID_TABLES`, created before the rename
+pass) saves every switch; the claim restores it if still held (else forgets it), so everyone else sees it
+on arrival. **Client limit, measured statically**: the owner's OWN client resets it to off at every
+character-data field entry (`context+0x2394`, cleared by `FUN_142CAD420`) and no packet sets it there
+(`0x02A8` with one's own id is dropped by the remote-range dispatcher) - so after a relog the owner sees it
+after one double-click, which the server treats as "no change". Tests: survives a relog, off stays off,
+unheld is forgotten; fail with the save or the restore removed. Unseen on screen.
+
+**2026-09-30: Shadow Style (and every `501xxxx` effect item) is seen by the whole map.** The owner: *"Upon double
+click, the server should change the effect from OFF to ON and start animating the effect to the client and
+other characters on the same map."* **What the log showed**: the double-click sent `0x00EC` `55724c00 05000000`
+(5010005, slot 5) and, 2.03 s later, `00000000 05000000` - **item 0 is "off"**, so the second click switched
+it off again, which is the (OFF) in the screenshot. The client toggles its OWN character before sending
+(`FUN_142D4D8C0`: range `5010000..=5019999`, one switch per 2 s, `FUN_14277CD40(user, id)`, `0` when the
+item is already active) and waits for nothing; Shadow Style's WZ effect is a `spectrum` afterimage, drawn
+while MOVING. What was missing is everyone else: now `session/emote.rs` checks the id (effect range and
+held in the Cash tab, or 0), keeps it on the session, relays **`0x02A8`** `u32 charId, u32 itemId` (handler
+`FUN_1429D4F20`, a tail jump into the same setter **[L]**) to the map, and writes it at **`0x0224` offset
+395** (read at `1429ce6f4` into that setter - was an [I] row) so a later arrival sees it too; the stored
+spawn is refreshed on the switch. Per connection, like the client's copy. Tests: ON reaches the map and
+not another map; a later arrival's `0x0224` carries it; OFF reaches the map; an unheld or non-effect id
+switches nothing; fails with the relay or the spawn refresh removed. **Unseen on screen.**
+
+**2026-09-29: emotes are seen by the whole map.** The owner: *"I just tried playing the Queasy emote as the owner,
+can we make sure that the emotes are relayed to other clients in the same map as well please?"* The client
+sends `0x00EA` - `u32 emotion, u32 duration, u8 flag`, Queasy captured as `08000000 ffffffff 00` - after
+drawing the face on itself, and nothing answered or relayed it. Now `session/emote.rs` sends everyone
+else on the field `0x02A6` = `u32 charId` + those nine bytes. **[L] both ends**: the sender
+(`FUN_142D4D520`) calls `FUN_14282D710(user, emotion, duration, flag)` before encoding the same three,
+and `0x02A6`'s handler (`FUN_1427862E0`) reads the three and calls that same function - which upgrades
+`research/same-map-capability-sweep.md` §4.5's [D]. Tests: the capture's bytes reach a player on the
+same map and not one on another map or the sender; a wrong-length body is not relayed; fails with the
+publish removed. **Unseen on screen.**
+
+**2026-09-29: Citizen of Honor - the town's earring, and every channel is told.** The owner: *"When someone
+achieves that standing, they should automatically receive the earring for those specific towns. It should
+be combined with a server wide blue text broadcast (on every channel) congratulating the player."* This
+client has **no medal items** (no 1142xxx in `Character.wz`, no "medal" in `String.wz`); the grade-10
+reward is the town earrings, Henesys Earrings `1032021` / Kerning City Earrings `1032022` [L]. The
+turn-in that takes a town to grade 10 hands over that town's earring (Equip tab, grey chat line) and
+sends `0x00AC` **type 0** - the client's blue `[Notice]` arm, chat kind 9 = `0xFF60CEFF` [L], screen
+unmeasured - with the client's own unused sentence `0x17D9`, *"Let us all congratulate <name> for
+becoming a Citizen of Honor in <town>!"*, to the achiever and, through the hub (`link::everyone` +
+`deliver_anywhere`, the whisper route), to everyone online on every channel. Once per town: grade 10 is
+reached once, and `citizenship.honor_earring` (ALTERed on, guarded) is a test-and-set. A **full Equip
+tab** loses nothing - the notice says so and Arthur / Roxy hand it over on the next talk. Tests: the
+earring, the mark, both players hearing the notice, no repeat; the full-tab path through the clerk; the
+ALTER on an old table. Each fails with its piece removed. **Not tested across two channel processes** -
+the hub path is the one whispers already use; the unit tests reach the other player through one
+channel's bus.
+
+**2026-09-29: the town general stores' unranked rows need a citizenship too.** The owner, at Raymond: *"some
+items in the shop are not locked behind a rank"* - Fried Chicken, Hot Dog and Supreme Sniper Potion
+(Raymond), Fried Chicken, Dried Squid and Supreme Dexterity Potion (Max) carry no rank on the source page
+and in `data/shops.txt`, so they were sold to anyone. The owner chose Traveler+ (that town's citizens, any
+grade) over leaving them open; the six rows are tagged and every row of the six town-hall shops is now
+gated (`shops.rs` test, 46 gated rows). And **Max's Elixir (3000, Citizen of Honor+)**, on the source page
+and missing from the transcription, is added at the owner's word - 933 rows.
+
+**2026-09-29: the citizenship contract closes after Sign - the server starts the stamp.** The owner's first
+run: *"when I click on Sign, the contract never went away."* The signing worked (record, effect, notice
+all in the log) - the WINDOW waits after OK for a `0x055B` type `0x47` force-close from the server: result
+1 plays the stamp and it closes itself ~2 s later (sending the `0x47` answer we already swallow), result
+0 closes it with no stamp. `FUN_1410DEA80` starts the stamp and its only caller is that branch
+(`0x141F6F486`); research §5.4 had said OK plays it - corrected there. The contract answer now ends
+with `script_force_close(1)` when the standing changed and `(0)` when it was refused. Tests: the Oath
+ends with the result-1 close; a contract made stale behind the window ends with result 0 and signs
+nothing; both fail without it. Fixture:
+`research/fixtures/citizenship-oath-signed-but-window-never-closed-no-server-force-close-world.log`.
+
+**2026-09-29: the Regular ship waits ten seconds, and the ferry is gone.** The owner: *"The before travel
+should also last 10 seconds before players get teleported to during the ride for 1 minute. This should
+happen in both directions"*, then *"in Orbis, the ferry to El Nath or Sleepywood should NOT exist"*,
+*"Sleepywood to El Nath should NOT have a ferry"* and *"El Nath should only be accessible by foot or
+teleport scroll"*.
+
+* **Regular ticket, both routes:** Cherry / Rini now put the passenger in the route's Before Takeoff
+  room - an instance of their own, keyed by the voyage like the ship - with a 0:10 clock
+  (`boat::PRIVATE_WAIT_S`); the tick then moves them to their own deck for the 1:00 crossing. Purin /
+  Erin work in that room as for Basic. Joel's, Agatha's and Cherry's lines say "10 seconds". Test:
+  waiting room alone at 0:10, deck alone at 1:00, arrival - Orbis and Ellinia - and it fails with the
+  wait removed.
+* **The Ossyria ferry line is deleted** (`crate::taxi`): Eurek the Alchemist in Sleepywood and El Nath
+  and the Platform Usher in Orbis are no longer taxis - Eurek says their own line again, and the Usher's
+  menu is only the platform to Victoria Island. `Network::Ossyria`, `Voice::Ferryman`/`Wanderer` and
+  `FERRY_FARE_MESOS` are gone; eight taxi rows remain, and no taxi stands on or goes to Ossyria. El Nath
+  is reached from Orbis on foot (the Orbis Tower) or by scroll; the ships are the only link between the
+  continents, and El Nath -> Victoria is walk to Orbis, then the ship. Nothing else warps into El Nath
+  (`thirdjob::INSTRUCTOR_TOWN` is a name only); `!map` is the GM's. Plan step T11 now starts with
+  `!map 20001000`.
+
+**2026-09-28: citizenship is built - contracts, grade locks, Contribution and the Community Board.**
+The owner: *"Great, make the implementation"*, and for the board: *"If the player has never done them, do not
+show the quest as available for pick up. If the player has completed the quest, remain in the completed
+tab until it is chosen again. If the quest has been chosen as the weekly or daily, they show up normally
+to everyone ... If the quest was previously completed by the player, they become active again"*.
+`research/citizenship-2026-09-27.md` §5-§7. **Unseen on a client** - plan step 25.
+
+* **State**: `store::citizenship` (new table, created on open) - per character per town `state` (1 active,
+  the client's; 2 frozen, ours), `grade`, `contribution`, `certified_grade`. Sent as quest **510000**'s ex
+  record `st1=..;gr1=..;ct1=..` in the character record (**block #28, presence 16**, via
+  `QuestBook::ex`) and live as `0x0089` **sub-case 13**. The client locks quests, shop rows and NPC grade
+  lines off that string itself.
+* **Arthur (229) / Roxy (425)**, Lv 12+, in their hall: the **contract window** (`0x055B` types
+  0x42..0x46): Oath (never signed), Transfer (active elsewhere - the old town freezes), Reactivation
+  (frozen here - 50,000 mesos [S], refused in a Say before the window if short), and for a citizen a
+  menu: standing, or the Renunciation. OK signs (effect 83 CitizenshipGet); the stamp's second answer
+  (`0x47`) is swallowed; the offer is recomputed at the answer. At most one active town, always.
+* **Quests**: `Check.0.citizenshipTown/Grade` refused server-side (the client's `0x50` rule);
+  `Act.1.citizenshipContr` banked on a recorded turn-in - flat or the formula, evaluated at the grade
+  at turn-in - with `0x0089` **sub-case 35** ("You have gained ... Contribution"), and a grade-up at
+  1000/2000/.../8000/10000 [S] plays effect 84 and says to see the clerk, who hands over the **Grade
+  Update certificate (0x46)** on the next talk.
+* **The board - solved in the client, research §7**: `FUN_14070FAE0` refuses (`0x51`) any group quest
+  its group's record does not list: quest **510001..510004** = `q1_d=<id>|<id>` / `q1_w=<id>`. A completed
+  group quest is re-offered by the client itself unless `doNotRepeat` (`0x19`), same day (`0x13`) or same
+  Monday-week (`0x16`) - so the completed tab and "becomes active again" are the client's own behaviour
+  once the record lists it. Posted, UTC: **one resident a day** (both halves - First Greeting shows once
+  ever, Asking After after it) plus a town leader at grade 5+; **one donation a week at the character's
+  own grade**; a shuffled order per cycle so each comes round once. The server refuses the same five
+  cases, restarts a completed row (`store::restart_quest`, the only backwards move) and sends state 0
+  with forget-completion before the accept. Re-sent from the tick when the day turns.
+* **Shops**: the town-hall shops' `min_grade` rows now carry `+0x104` town / `+0x108` grade (the client
+  draws them locked) and `classic_buy` refuses them - **the gate that was parsed and never read**.
+* **At the Quest rate** (the owner, same day: *"10x as well, similar to the current 10x global boost"*): a
+  board daily/weekly's Contribution is multiplied by the `!setrates` Quest field, the one quest EXP already
+  used (so EXP is NOT multiplied twice); story-arc Contribution stays flat. **And quest mesos are paid at
+  all now** - *"make the server pay for quest mesos at the 10x rate too for all quests"*: `Act.1.money`
+  (255 quests, all positive) was read by nothing, so every turn-in showed mesos and paid none. Paid on
+  a recorded turn-in, at the Quest rate, with the "mesos (+n)" line. Quest 10303's `Act.0.money -1000`
+  (a cost to start) is still not read. Test: 10x -> 1500 Contribution and 3510 mesos for a grade-2
+  daily, 50 flat + 3510 mesos for a story step, nothing on a repeat turn-in; fails with either piece off.
+* `!citizenship [<town> <state|grade|contr> <value>]` (GM).
+* **Not built**: discounts (shops, storage, taxis - which items are tagged is [S]), Character Info's
+  CITIZENSHIP section, the Citizen-of-Honor announcement, earrings/housing. **Retracted**: research
+  §2.1's "grade and level gates move together" - true of the 15 story quests only.
+* Tests: `net` (block #28 placement, sub-cases 13/35, all five windows, the answer parser against a
+  menu cancel), `store` (restart only from Complete), `world::citizenship` (formula at 1..10, clerk
+  offers, one active town, groups vs the real `Quest.wz`, posting tiers, cycles, Monday weeks), and
+  ten session tests end to end. Controls: each fails with its piece disabled (gate, contract routing,
+  payout, shop refusal, the record in the book). The quest audit now skips the 71 board quests (their
+  refusal box is the point) and audits the story quests as a top-grade citizen.
+
+**2026-09-26: the Cash Shop's beauty coupon preview is filled - `0x05B9`.** The owner: *"the Mystery
+Hair and Signature Hair Coupon should show previews."* The panel is client-side but its data is
+not: it reads a coupon -> styles map at `0x143A410A8` that only the Cash Shop stage's `0x05B9`
+(flag 0 -> `FUN_1401C2910`) fills - `research/cash-shop-stage.md` §6.4 had it filed as
+"peripheral". **The client never reads its own `Etc/BeautyPreview.img`** (measured: no path or key
+string in the image, four controls found). Found by walking up from the panel: `FUN_1410B3440` ->
+`FUN_1401C34D0(gender, coupon)` -> the map -> its only writer -> the `0x05B9` arm; layout from the
+listing and the decompiler agreeing read for read. Sent on Cash Shop entry, before the wallet:
+Mystery/Signature Hair = the union of both salons' VIP/REG pools, Mystery/Signature Face = the
+surgery pool, male and female - exactly what the coupons give (`salon::cash_shop_previews`). Tests:
+the body walks the decoder's shape; every list non-empty for both genders, base ids, art present
+(`beauty.txt`); entry sends it once, before the wallet. **Not seen in the client yet** - plan step 24.
+
+**2026-09-26: back in at the nearest spawn point; a teleport lands on a random one.** The owner: *"spawn
+the player to the closest spawn point where they last were before they disconnect, change channel, go
+into cash shop ... store which spawn point"* and *"if a player is teleported into a map, the server will
+choose a random spawn point. Such as when Nella teleports the player back to Kerning City"*. The arrival
+portal was per-connection only, so every login landed at portal 0. Now: `store::spawnpoint` (a new
+`spawn_point` table, created on open - the live DB gains it with no step) holds `(map, portal index)`;
+recorded as the spawn point nearest `last_position` on log off / socket drop (`Drop`), at the channel
+change request (the new channel can claim before the old teardown), on entering the Cash Shop, and on
+every map change (so a crash before a step still returns there). `claimed_character` applies it only
+when the stored map is still the character's map. **Spawn point = a portal named `sp`** with target 0
+and no script - measured: all 426 maps have one, and the other target-0 names (`tp` x72 Mystic Door
+points, `st00`, `h001`, Kerning's `pc00`/`cab00`) are not places to set someone down.
+`Session::teleport` picks a random `sp` and is used by: Return Scroll, respawn in town after death,
+`!map`, Nella and the First Time Together warps, Phil's ride, Shanks, taxis, the daily Henesys escape.
+Unchanged (exact): portal walks, the PQ `st00` arrival, the Cash Shop exit, the 2nd-job exit onto
+`job00`. Tests: real-data (Kerning's 15 `sp`, lookalikes excluded, nearest, random spread) and an end
+to end (log off at 950 -> back at `sp` 3; map changed -> ignored; Cash Shop records; 60 teleports land
+only on spawn points, both of them) - fails with the stored portal ignored and with Drop not recording.
+
+**2026-09-26: the 2nd job test is a quest you accept - all four classes.** The owner, at the Magician
+Job Instructor: accepting *Test of Qualification* should warp into the test map with the quest in
+progress (30 Dark Marbles); a regular talk re-enters while it is active, says "not ready yet, talk to
+Grendel" otherwise and "nothing more to teach" after the advancement; and leaving puts you beside the
+instructor. **Measured cause** (`world-ch0.log` 02:02:55-02:03:57, three tries): `20102` is
+`startscript q20102s`, which the client does not ship, so it hands the start to the server (action 4);
+`Say.0` has three lines and no `yes` branch, so the third ended on OK - the quest was never recorded
+and the existing warp (`enter_test_field_on_quest_start`, transition-only) never ran. Now: the last
+opening line of a not-yet-started test quest is Accept/Decline (`opens_the_test`); Yes records the
+start and warps. Regular talk is `secondjob::examiner_talk` (re-entry is a yes/no, re-checked on Yes);
+the old click-to-exchange `TestStep::Pass`, which handed out the proof outside the quests, is gone -
+the proof comes from 20x03's start as the data says. The warden now exits onto **`job00`**, the spawn
+point each examiner map has beside its instructor (Magician's portal 0 is 6 000 px below them). Also
+fixed: the warden's notice had a run of spaces mid-sentence (a lost `\`); ~a dozen other strings
+have the same damage - flagged as a separate task. Test: `the_second_advancement_walks_the_client_s_own_chain`
+rewritten on the Magician branch, every leg asserted; it fails with the Accept box off and with the
+exit at portal 0. world 1259 passed.
+
+**2026-09-25: the launcher says it updated, and has Copy logs.** The owner: *"When the launcher
+auto-updates, it just closes and re-opens, and the user doesn't know what happened and doesn't
+realize that they have to login again"*, and *"the launcher client logs needs a "copy logs"
+button"*. `selfupdate::check_and_update` now only INSTALLS; the old window shows **"Launcher
+updated"** - it will close and reopen, sign in again - and `selfupdate::restart_into` starts the
+new one from `eframe::App::on_exit`, so OK, the X and Alt+F4 all restart it. The new launcher
+(started with `--updated-from`) opens with its own "Launcher updated - please sign in again". The
+window behind either dialog is disabled. The log pane has **Copy logs**: every line, oldest first,
+`[info]/[ ok ]/[WARN]/[ERR ]` tags, under a header naming the launcher's folder, with a "copied N
+line(s)" confirmation. Tests: the copied text and the dialog wording (launcher 175 passed). **Not
+seen on screen yet** - egui's layout is not checked by a test; plan step 21.
+
+**2026-09-25: an unchanged launcher no longer "updates" every player.** The owner: *"whenever we
+package the server and update the server, it causes the launcher to update itself when we didn't
+change anything about the launcher."* The launcher compares its own SHA-256 with the server's
+(`crates/launcher/src/selfupdate.rs`), and two things changed the bytes of an unchanged launcher:
+**(1)** the MSVC linker stamps the link TIME into the PE header, so any relink was a new file; **(2)**
+`maplecw-auth` rewrote `auth-cert-fingerprint.txt` at every start (same text, new mtime), and the
+launcher's `build.rs` watches it, so the next package recompiled and relinked it. Measured in
+`target-static` with the packaging flags: touching that file alone moved the hash
+(`28613a5d` -> `96d414ad`). Fixed: `/Brepro` on the launcher and on `grap64.dll` (compiled into it),
+and `tls.rs` writes the fingerprint file only when its text differs. After: touching the
+fingerprint file, `main.rs` or the stub's source leaves the hash byte-identical; a real one-string
+change moves it and reverting restores the original exactly. Tests: auth's reload test backdates
+the file and fails if a restart touches it (checked with the old behaviour). launcher + auth +
+grap-stub: 335 passed. **The first package after this ships ONE last launcher update** - the new
+bytes carry `/Brepro` - and none after that unless the launcher (or code it uses from `store`,
+`patchset`, `tlspin`) really changes.
+
+**2026-09-25: a pet's feed line is the same on every screen.** The owner: *"Please relay these pet
+packets so everyone see the pet feed speech bubbles. If possible, sync the chat bubbles so that the
+dialogues are the same."* `0x0203` is the owner's client reporting the line its pet said after a
+feed (`research/pet-line-report-0x0203-2026-09-25.md`); `0x0279` is its mirror - `FUN_141ec3fa0`
+performs the same two bytes and string with flag 0, so nothing is reported back **[L]**. Now a feed
+sends `0x027E` to the owner only and HOLDS the map's copy; the owner's report is relayed to the
+field as `0x0279` byte for byte, so every screen shows the owner's line - the map's own `0x027E`
+made each client pick a random one. One report per feed, within 2 s (`PET_LINE_WAIT_MS`), at most
+80 characters; any other `0x0203` is logged and dropped (a bystander's, a repeat, no feed). No
+report in time -> the held `0x027E` goes to the map as before. A field change drops the pending
+feed. Test: `a_feed_and_the_level_it_earns_are_seen_by_the_other_player` covers the relay, the
+drop and the fallback (fails with the dispatch arm off). **[I], watch on the run:** that a
+bystander's `0x0279` plays the EATING animation as well as the line - the performer gets the
+same bytes the owner's did, but the second is written as 0 when below 9.
+`c0f1d87` (scrolls to 0.5%) had left
+`session::tests::the_tutorial_sentinel_always_drops_its_shellpiece` failing - it pinned global rows
+at 1 bp. The owner: *"Accept the new drop rate."* It now pins them to `scrolls::GLOBAL_DROP_CHANCE_BP`;
+the tutorial Sentinel drops an extra scroll about once in 100 kills. world: 1259 passed, 0 failed.
+
+**2026-09-25: a pet's Auto HP / Auto MP drinks the potion.** The owner: *"the pet attempts to drink
+the potion for the player, but the client never actually performs the restoration ... potions are
+never consumed and clients never recover."* The pet's request is **`0x0206`**, and it had no
+handler: the deployed server logged 25 from Moth (`world-ch0.log.4` and `.3`, 2026-09-18..19; excerpt in
+`research/fixtures/pet-auto-potion-0x0206-unanswered-25-times-deployed-world.log`) as
+UNKNOWN and answered none. Body from the builder's listing (`FUN_142cca680`, control: `0x0114`'s
+builder read back its known shape): `u8 pet, u32 tick, u16 slot, u32 itemId, u32 literal 1` - 15
+bytes, matching both captures (Red Potion slot 8, Blue Potion slot 6). **The builder then sets the
+exclusive-request latch** (`mov [rbx+0x2330],1` at `142cca8cc`), so each unanswered drink also
+froze every later inventory action for the session. Now `net::useitem::CLIENT_PET_USE_ITEM` ->
+`Session::on_pet_use_item` -> the same walk as a double-click (slot checked against the bag, capped
+restore, stack shrinks, latch cleared); a non-potion is refused and still answered. Tests: the two
+real captures parse; the session test goes through `handle` and fails with the dispatch arm off.
+**Not yet looked at:** `0x0203` (59 UNKNOWN in the deployed logs) and a second `0x0205` shape (33) -
+both pet-family builders.
+
+**2026-09-25: Innocence keeps a mob drop's roll.** The owner: *"Can we make Innocence Scrolls keep a
+good base roll?"* A rolled drop now remembers its roll as its own base - `store::Item::rolled_base`,
+a nullable TEXT column (`rolled_base`, 17 stats comma-separated) on `inventory`, `equipment`,
+`storage_item` and `cash_locker`, travelling with the item like `failed_slots` - and Innocence
+reverts to THAT. An item that never rolled (NULL: anything not from a mob, and every item from
+before variance) reverts to the template exactly as before. Chaos still decides which stats exist
+from the template. Real scrolls on a bagged item carry the column over (they rebuild the `Item`).
+**Migration verified on a copy of the repo's maplecw.db**: the column appears on all four tables
+on open, every row kept, all NULL. Tests: the store round trip (bag -> worn -> bag), and
+`innocence_reverts_a_rolled_drop_to_its_roll_and_anything_else_to_the_template` through
+`apply_scroll` - fails with the override disabled. store + world + login: 1731 passed, 0 failed.
+
+**2026-09-24: item variance - every equip a mob drops rolls its stats.** The owner, with a rules
+sheet: *"I want to introduce item variance for any items dropped by mobs following these rules
+(including those dropped by party quests such as Slime Shoes)."* `crate::variance`: range =
+reqLevel / 10 (x2 for an overall, `105xxxx`); each stat the clean template HAS rolls down /
+unchanged / up at 1/3 each, then a uniform distance up to its cap - primes share the range
+(range / how many of STR DEX INT LUK the item has), WATK MATK Speed x1/2, ACC Avoid x1, Jump
+x1/4, HP MP WDEF MDEF x5; round, floor at zero. Crit is not on the sheet and does not move;
+upgrade slots are the template's. Wired at both mob-drop mint sites in `session/combat.rs`
+(the shared row, and personal drops - each member's Squishy Shoes rolled on its own); a cash
+equip, an id with no template and a Lv 0 item come out unchanged. **Not** applied to reactor
+boxes, shops, NPC rewards, crafting or `!item` - only what a mob drops. Every roll is logged
+(`variance:` lines, the template beside it). `EquipTemplate` grew `req_level` (equips.txt column
+19; 1166 of 1799 equips have one). Tests: the rules one at a time in `variance.rs`, a real kill
+(`a_mobs_equip_drop_comes_out_with_rolled_stats`, with the Lv 0 sword as the unchanged control)
+and the King Slime's shoes; both end-to-end tests fail with the roll switched off.
+Innocence keeps the roll - see the entry above.
+
+**2026-09-24: Nella on the Exit takes every Pass and Coupon.** The owner: *"when people talk to Nella
+on the Party Quest exit map, Nella should remove the player of any Passes or Coupons they may have.
+They may not be taken outside of the Party Quest area."* `firsttime::STAYS_IN_THE_QUEST`; taken the
+moment they are spoken to, before their question and whatever the answer, each with its grey "lost"
+line. Nella INSIDE the quest takes nothing. They are the only way out - a login on a stage lands on
+the Exit. The Nella test holds an unrelated Etc item as a control, and fails with the list emptied.
+
+**2026-09-24: the King Slime's shoes land beside the Pass, in one slot every member shares.**
+The owner: the per-member Squishy Shoes dropped *"right on top of the pass"*, and *"the clients should
+also not have weird drop placement such as empty spaces where they do not see a drop they can pick
+up because it's instanced for someone else."* The shared row (Pass, mesos) and the shoes were each
+centred on the corpse on their own, so the first shoe slot was the first Pass slot. Now
+`Session::party_quest_personal_drops` hands the shoes to `drops_from_kill_for`, which lays the row
+out with ONE extra slot at its end and puts **every** member's pair in it: each client sees exactly
+one pair there - its own - so every screen shows one even row with nothing stacked and no hole.
+`the_king_slimes_shoes_share_one_slot_after_the_pass` checks each member's visible row is evenly
+spaced; against the old placement it fails with a shared drop under the shoes.
+
+**2026-09-24: the last stage of First Time Together drops Passes and mesos, nothing else.**
+The owner: *"Jr Necki and Cursed Eye on the last stage ... somehow drops "Coupon" items? The only thing
+they should drop are Passes and mesos."* The scrape (`data/drops.txt`) had given all three stage-5
+templates - 800001, 800002 and the King Slime 800003 - a 6% row for `4001001` Coupon, stage 1's
+item. Removed; the mesos are the level default. `the_last_stage_always_drops_passes_and_never_shared_shoes`
+now fails on any row besides the Pass and mesos, and was checked failing against the old table.
+The global scroll rows (0.5% since 2026-09-25) still roll for every mob, these included.
+
+**2026-09-24: Maple Chat works across channels, through the hub; buddy chat is built.** The owner,
+with the deployed server's logs in `Desktop\Server Investigation`: *"an invite was attempted,
+but ... the client was not able to accept even when they tried to accept it, the server replied
+back you are too busy"*, *"buddy chat does not work"*, and *"Maple Chat should work cross
+channel, please use the hub code."*
+
+* **Maple Chat, measured:** Cobalt opened room `0x20001` on channel 1 (`world-ch1.log`
+  04:32:58); the invite reached Moth on channel 0 through the hub; their Accept arrived at channel
+  0, whose per-process room registry did not hold the room - *"this channel does not hold
+  (another channel's room ...)"*, mode 0 result 1 (`world-ch0.log` 04:33:04). The invite used
+  the hub and the room did not. **Rooms are now `world::messenger::Rooms`, a replica per channel
+  kept in step by the hub exactly the way parties are**: Open / Enter / Leave / Disconnect are
+  `Frame::MessengerRequest`s the hub applies and echoes to every channel in one order, and a
+  late channel gets `Frame::MessengerSnapshot`. The actor's channel builds the actor's replies
+  from the echo; every OTHER member is told by the channel that hosts them, so each member is
+  told exactly once and a dead channel's players are taken out of their rooms by the hub. A chat
+  line and an invite change nothing and read the replica. `tests/messengerlink.rs` replays the
+  production failure through a real hub - a room made on channel 1, accepted on channel 0 - and
+  the window opens.
+* **Buddy chat:** `0x0179` kind 0 was "not built; went nowhere" (`world-ch0.log` 04:32:28,
+  Moth's `'hewwo'`). It now goes to every **accepted** friend on the server's own list, on any
+  channel via the hub - a request still waiting is not a buddy.
+* **Deploy all of it together.** Two new hub frame kinds (7 and 8): an old `maplecw-chat` skips
+  them as unknown, so upgraded channels behind an old hub would open no room at all, silently.
+  Hub, both channels, same build. net 673, world 1214 + both link integration tests.
+
+**2026-09-24: one price rule for the whole Cash Shop.** The owner: *"make sure everything in the Cash
+Shop costs 100 LP and does not have duration with the exception of shop merchants. 7 day shop
+merchants should cost 700 LP, 1 day shop merchants should cost 100 LP. Collaboration signature
+style packages should maintain their price."* `tools/cash_wares.py::price_rule` is that
+sentence, applied by `backport_install.py` step 4f to the classic shop's own rows as well as
+ours: **102 shipped rows** changed (90-day clothing, permits, emotions and effects made
+permanent; the 1000 LP Megaphone and weather x11 bundles to 100, with `originalPrice` and
+`discount` reset so they do not draw as a 91% sale), Cozy Coffeehouse and Granny's Food Stand
+(7-day merchants) to 700. **The four collaboration pets stay at 1000 LP** (the owner: *"collab pets
+should remain at 1000 LP"* - they were briefly swept to 100). Result, all 653 rows on sale: 637
+at 100 LP and permanent, the four collaboration pets at 1000, three 7-day merchants at 700, the
+1-day Mushroom House Elf at 100, the Signature Style box at 800 and its eight coupons at 200. "Shop merchants"
+was read as the hired merchants (503); store permits (514) follow the general rule.
+`commodity::tests` checks the rule over every row. Installed; `--check` passes.
+
+**2026-09-24: deleting a cash item works.** The owner: *"I just tried deleting an item in Cash Shop,
+but this is currently unhandled."* The trash button sends `0x03E1` sub-op `0x1C` with the
+locker serial - `1c 01000000 01000000`, this server's own `(account << 32) | slot` for account
+1, slot 1 - and it was refused with the generic `0x3D`, which is the *"Due to an unknown
+error"* on their screen. It was already decoded (`research/cash-shop-actions.md` section 5); it
+had never been built because of one open caveat, which the later arm table closes: the success
+reply `0x05AE 0x3C` erases the item and says *"The cash item has been deleted."* but **does not
+clear the in-flight latch `[stage+0x74]`**, so on its own it would leave the shop refusing
+everything after one delete. The server now checks the serial is this account's and names an
+occupied slot, deletes the row, sends `0x3C`, then the wallet `0x05AD` - whose arm clears the
+latch and cannot re-trigger a purchase, because `0x3C` has already reset the pending kind.
+Refusals stay `0x3D`, so a multi-select delete keeps the rest of its queue. Plan 15(e).
+
+**2026-09-23: the Cash Shop sells 645 items, up from 162.** The owner: *"Add all of the items that
+are not listed but named except those that are part of the collaboration signature sets since
+they come from the Cash Coupons instead"*, then *"Make sure all cash equipment items do not
+have time duration, and all newly added items costs 100 LP to purchase."*
+
+* **Audit first** (`tools/audit_cash_items.py` -> `gm-handbook/cashaudit.txt`): 927 items carry
+  `info/cash = 1`; the shop sold 162. The rest were 16 switched-off placeholder rows (the
+  `92xxxxxx` block), 521 named items with no row, and 228 with no String.wz name at all.
+* **483 rows added** by `tools/backport_install.py` step 4f, from `tools/cash_wares.py`: every
+  named cash item the **pristine** client does not sell. Read from the untouched original, so
+  a re-install produces the same rows and `--check` stays byte-exact - read from
+  client-patched, they would all be "already listed" after the first install and vanish from
+  the next. The collaboration items do not exist in the pristine client; the manifest guard
+  (mapped through `HAIR_HAT_RENAMES`) must come out empty and stops the build if it does not.
+  521 - 35 manifest items - 3 renamed hair-hats = 483, the same number from both directions.
+* **Placement copies the classic rows** for the same kind of item: clothing by slot (Gloves 407
+  and Effects 410 were empty tabs and now are not), face vs eye accessories 408/409,
+  permits and hired merchants under Convenience, dye coupons under Beauty / Misc, emotions
+  under Expressions. **Gender** is the client's own id rule (`FUN_140253130`) - **for equips
+  only**: the first build read that digit on `5xxxxxx` ids too and locked `5010000` to male; a
+  spot check of the built `Commodity.img` caught it before anything was installed.
+* **No cash equipment has a duration, and every new ware is 100 LP** (the owner's rules). That
+  zeroes the Period on the classic shop's own 84 clothing rows as well. The server never
+  applied a period (`Commodity::period_days` is only logged), so purchases were permanent
+  already; this makes the shop say so. Non-equipment keeps its classic duration (permits and
+  emotions 90 days, hired merchants 7).
+* Installed, `--check` passes, `commodity::tests` pins 674 rows and both rules. **The running
+  world servers still hold the old table** - restart them - and the **client package must be
+  rebuilt** (`tools/make-installer.ps1`) or other players' shops will not show the new rows.
+  Plan step 15.
+
+**2026-09-23: JOB, LV and the location line, read out of the client rather than guessed.**
+The owner: *"The buddy list still does not have Job and level"*, and the location *"is reflecting in
+chat, but it should be where it says 'Tester2 - Checking location'."*
+
+* **JOB/LV: my tail layout was wrong, and the screen said so.** The row builder was found by
+  scanning for every `imul ..., 0x149` (27 sites, all friend code), then xref-ing the one
+  accessor outside the manager, `FUN_142cc3ea0(ctx, i)`. Its caller `FUN_1411be0a0` reads
+  `rec+0x139` into the row as an int (LV) and hands `rec+0x13D, rec+0x141` to
+  **`FUN_1402b0250(job, subJob)`**, which is the job-name lookup - a map keyed `0 ->
+  "Beginner"`, `100`, `110`... with a `job == 400 && subJob == 1` Dual Blade case. So
+  **`0x139` level, `0x13D` job, `0x141` subJob, `0x145` status**, all **[L]**. The same builder
+  reads `0x12`, `0x16`, `0x2C` and `0x39`, confirming the rest. The reference's `inShop` does not
+  exist here; it was right about 313 bytes, which is what made its last field look safe.
+* **The location line needs mode `0x48`, not `0x09`.** `FUN_1418486b0` is `switch (mode)`, the
+  find arm is `case 9: case 0x48:`, and inside it `mode & 0x40` picks the window over the chat
+  log. The window asks with kind `0x44` = `0x40 | 5`; the answer must carry the same bit.
+  Sending `0x09` is what printed *"'Tester2' is currently at 'Victoria Road : Kerning City'."*
+* **[I]:** whether the channel in place 3 is 0- or 1-based. It goes out 0-based; plan 12(c2)
+  asks. net 672, world 1188.
+
+**2026-09-23: a player's drop is everybody's, and an untradeable one vanishes.** The owner:
+*"users dropping items publicly in the field, but nobody except themselves were able to pick up
+what was dropped on the ground"*, then the rule: tradeable items and mesos stay until expiry
+for **anyone**; untradeable ones *"should just disappear, there should be an animation for it
+on client side and also broadcasted to other clients as well."*
+
+* **The pick-up bug was the packet, not the rule.** The server had allowed it since 2026-09-05
+  (`public`, `may_be_taken_by`); the `0x046E` said otherwise - `ownType = 0` (user) with the
+  dropper as `ownerId`, i.e. *"this is somebody else's"* to every other client. A public drop
+  now goes out as `OWN_TYPE_EVERYONE`. `research/item-drop.md` had called `ownType` "stored and
+  never tested"; `tools/fieldrefs.py 0x70` over the drop code finds **two reads after the
+  store**, so that line was an absence and is corrected.
+* **An untradeable item a player drops is a disposal**: drawn landing on every screen, taken by
+  nobody (the dropper included, and silently), faded for the whole field by the expiry sweep
+  after `VANISH_MS` = 1.5 s. A trade-blocked item a *mob* drops is untouched - still the
+  killer's alone.
+* **And a second cause, found while doing the fade:** the re-send to a player who *enters
+  the map after* a drop filtered every drop on `may_see_drop(owner, viewer, party)`, which
+  knows nothing of `public` - so a late arrival was never shown a player's drop at all.
+  Fixed; a disposal is not re-sent to anyone.
+* **The disposal uses the client's own disappearing animation: `0x046E` enter type 3.** The owner:
+  *"There should be a separate animation that client should be able to animate where the drop
+  fades out."* `FUN_141790f80`, the drop's per-frame update, tests `enterType == 3` four times
+  with its own layer calls, the source block is read for it (so it still leaves the player's
+  hand), and `drop+0x61` is clear so no client even offers the pick-up. The server's `0x046F`
+  after `VANISH_MS` stays as cleanup, in case the client does not destroy the object itself.
+* **No capture of the failure exists**, and that is worth saying: no archived run has a second
+  player sending `0x032C` for someone else's drop, so "the client refused locally" is inferred
+  from the packet, not observed. The end-to-end test proves the server half; plan step 14 is
+  what proves the client half.
+
+Also, from this run of the suite: **the friends / whisper world-side changes of 2026-09-22 now
+compile and pass** - they had been blocked by the instancing refactor landing underneath them.
+net 672, world 1176.
+
+**2026-09-22 (late): presence, a red line, and a 50-buddy ceiling.** Four more of the owner's
+reports, three of them one packet.
+
+* **`0x00A7` sub-op `0x2D` is the presence notify**, and it closes three at once: *"Tester2 was
+  not able to check the owner's current map location"*, *"once the owner logs off, the buddy list also
+  remains showing the owner is still online"*, and *"when Tester2 logs in after the owner, the owner was not
+  informed."* Body `u32 id, u32 accountId, u8 status, u32 channel, u8 account, u8 announce`.
+  The arm **only acts on a change** - it compares the row's `+0x12` (channel) and `+0x145`
+  (status) and returns silently when both already match - so the list goes out first (it
+  carries `rec[0x11]`, the flag that greys the row, and leaves `+0x145` at zero) and the
+  `0x2D` second. Sent the other way round the line would never be said. Every friend on the
+  channel gets both on a login and on a logout, the logout quietly.
+  * **The login notice fires on the FIRST FIELD ENTRY, not at claim.** Presence is registered
+    when the character enters a field, so a notice sent at claim tells everyone the character
+    is *offline* - which is exactly what the test caught. `Session::announced_presence` keeps
+    it from firing again on every portal.
+  * Two more confirmations of the record layout fell out: `FUN_142debab0` matches `rec+0x00`
+    against a character id, and `rec+0x28` against an account id **for rows whose `rec[0x11]`
+    is 5..=8** - which is the reference's "5 through 8 = account friend" exactly.
+* **"%s is now your friend" is a red system line now.** The owner: *"can we send it as a red system
+  message?"* It can, and the colour is inherited rather than chosen: `0x00AC` **type 5** is two
+  instructions - `FUN_1415eca30(&text, 0xb)` - and kind `0xb` is the kind the client's own
+  `0x32` *"%s has declined the friend request."* prints with, the line already on the owner's screen
+  in that colour. The sentence itself has to be ours: **all 6165 strings were searched and
+  there is no "is now your friend"** among them.
+* **The buddy list holds 50.** `store::friends::FRIEND_LIST_LIMIT`, refusing the 51st with the
+  client's own *"Your buddy list is full."* The window header still reads `[n/0]`: `0x2F`
+  writes the client's own max to `ctx+0x118b` but also pops *"Your friends list has increased
+  by %d slots! Your wallet is %d Mesos lighter"*, so it is the **purchase** result, not a way
+  to state a capacity. Whatever normally writes `0x118b` is not found yet - a display gap, not
+  a limit gap.
+
+**Still open:** the window's **JOB and LV columns are blank**, because three of the record's
+four tail words (`0x139`, `0x13D`, `0x141`) go out as zeros and which is which is **[I]**.
+`0x2D` writes all three but **only when `account` is set**, so it cannot fill them for an
+ordinary friend - they belong in the `0x15` record. The next step is one scan: find what reads
+`rec+0x139` / `+0x13D` / `+0x141` in the row drawer. net 668, store 377, world 1163.
+
+**2026-09-22 (evening): the buddy list DRAWS, and answering the group report was an infinite
+loop.** On screen at last: the Buddy tab lists *"Default Group (1/1)"* with the owner in a
+NAME / JOB / LV row, so the 329-byte record's measured half is right and `0x15` is the list.
+Three things came back with it.
+
+* **The loop, and it is why the client lagged and the window froze.** The owner: *"the owner's client
+  started lagging a lot after the friend request was accepted"*, *"the owner opening the buddy list
+  crashes/freezes the client"*. `world-ch0.log` reached **42 MB in one sitting**: **32 566**
+  round trips of `0x0193` sub-op `0x14` -> `0x00A7` `0x19` + `0x15` -> sub-op `0x14`, one per
+  millisecond. The cycle is structural - every list reply ends in a window refresh, and a
+  refreshed window hands its group names back - so **sub-op `0x14` is a report and is now
+  answered with nothing**, the same as `0x013D` and `0x00B8`. "Always answer" is about a
+  request the UI waits on; this is not one, and the window draws correctly without a reply.
+* **A timeout.** The owner: *"it should have a timeout if not accepted within a certain amount of
+  time."* 60 s, measured from **when the balloon was raised**, not from when the request was
+  made - counted from the asking, every request made while the target was offline would expire
+  before its balloon could be drawn. Both sides get the client's own `0x2A` *"The request to
+  add a Friend has been canceled."*, both rows go, and the store's guard decides so an answer
+  that arrives first wins. A logout before the minute is up is not an answer: the row survives
+  and the next login offers it again with a fresh clock.
+* **A correction.** This entry's predecessor said `0x19` *empties the record array the window
+  draws from*. It does not - it clears and refills its own `{id, name}` map at `manager+0x18`;
+  the record arrays at `+0x00`, `+0x08` and `+0x10` are untouched. The order the two go out in
+  is a preference, not a requirement, and the doc comments that said otherwise are fixed.
+
+**Still open, and all four are one packet - `0x00A7` sub-op `0x2D`:**
+
+1. *"Tester2 was not able to check the owner's current map location"* - the window says
+   *"The owner - Checking location"* and the chat says *"the owner is not online on any channel."*
+2. *"Once the owner logs off, the buddy list also remains showing the owner is still online."*
+3. The **JOB and LV columns are blank** - that is the unknown 12-byte tail going out as zeros.
+4. *"`Tester2 is now your friend` should also show in client opcode instead of a message we
+   write"* - and note there is **no such string in the table**: all 6165 were searched, and
+   the nearest the client owns is `0x03EE` *"[Friend] %s has logged in."*. So this one needs
+   the sub-op found, not just swapped.
+
+Case `0x2D` is already decompiled and it answers 1-3 directly: it reads
+`u32 id, u32 accountId, u8, u32 channel, u8 hasDetail, u8`, finds the record by id, and when
+`hasDetail` is set reads `str name, u32 -> rec+0x139, u32 -> rec+0x13D, u32 -> rec+0x141`,
+each with `-1` meaning "leave it alone". **That names three of the four tail words**, and the
+two the window shows blank are almost certainly among them. `research/friends-2026-09-21.md`.
+
+**2026-09-22: the friend request popup CRASHED the client, and the fix decoded the 329-byte
+record.** The owner: *"Adding someone as a friend causes a fatal client crash to whoever the
+invitation was sent to."* The client named the packet itself - `0x009E CLIENT_PACKET_REJECTED`
+class 1 reason `0x26` ("a decoder asked for more bytes than the packet had left"), echoing our
+`0x00A7` verbatim, and the connection dropped 3.5 s later. The `0x1A` arm reads seven fields,
+**exactly the 28 bytes this server built**, and then one **329-byte friend record** off the same
+packet. Three offsets are measured off `FUN_142dec8f0` (`*rec` = the id, `rec+4` = a C string,
+and **`rec[0x11] == 1`** is the test that raises the balloon at all), the rest matches the
+reference tree's `Friend.encode` field for field, and its `FriendFlag` enum makes that `1`
+`FriendRequest`. Four instruments, one layout - `net::friends::FriendRecord`.
+
+**And `0x19` was never the list.** Its arm fills an id-to-name map and *clears* the record
+array the window strides over, so every field entry had been handing the window an empty list.
+The list is sub-op **`0x15`**: `u32 count` then `count * 0x149` bytes in one read. Both go out
+now, `0x19` first because the other order throws the list away, accepted friends only, with the
+online flag and channel from the roster. A waiting request stays an invitation. Plan 12.
+`research/friends-2026-09-21.md` section 6. net 669, world 1156.
+
+**2026-09-22: there is no Maple Chat typing indicator, and the first answer to that was not
+evidence.** The owner: *"there's no typing indicator when a user is typing a message."* The earlier
+write-up said so on the strength of eight `0x01FD` builders in
+`research/msexe-send-opcodes.txt` - which is a **miss in a census whose own header says in
+capitals that a miss in it is not evidence**. Re-measured three ways: `tools/builder_scan.py`
+(new; a byte scan for immediate `edx` loads into the packet constructor, control re-finds
+**38/38** census sites for `0x017E` before it reports anything) finds **12** sites, of which
+two are real builders the census missed - `141183150` writes mode 1 and `141183200` mode 3, so
+the modes are `{0,0,1,1,3,3,5,7,8,8}` and none is typing; `UI_000.wz/MapleChat.img` has 34 node
+names and no typing state or canvas; and none of the 6165 decrypted strings says "typing". A
+feature needs a packet, art and words, and this client has none of the three.
+
+**2026-09-22: the friend request is a POPUP, and the chat commands are gone.** The owner:
+*"there should not be any chat commands. Please use the client's built in UI elements, there
+should be one similar pop up just like the party invitation, chat invitation, or trade
+invitation."* There is one, and it is the same balloon family those three use: string
+`0x0438` *"Friend request from"*, drawn by balloon kind `0x0E`
+(`FUN_14180e3d0`, one of the 31 writers of `balloon+0x300`), raised by **`0x00A7` sub-op
+`0x1A`** - found by walking the string id to `FUN_1418099f0` and its setter's callers back to
+the `0x00A7` handler. **Both buttons are decoded too**, which is what retired the workaround:
+Yes calls `FUN_141829a70` = `0x0193` **sub-op 2**, No calls `FUN_1418297d0` = **sub-op 6**,
+both echoing the `u32` the server put in the popup - so this server puts the requester's
+character id there and the answer names the pairing by itself. A refusal sends the asker
+`0x32` *"%s has declined the friend request."* The balloon is raised once per session per
+requester (`Session::friend_popups_raised`), not on every map change. `!friend` and everything
+under it is deleted. Plan 12. Never on a screen.
+
+**2026-09-21: the friend list, wired.** `0x0193` in, `0x00A7` out - `net::friends`,
+`store::friends` (two directed rows per friendship, so each side has its own group and the
+pending half is a state rather than a column), `session/friends.rs`. A request is recorded,
+the asker gets the client's own *"Buddy request successfully sent to %s."*, the target's
+session redraws its list and says who asked (a bus `Event::FriendRequest`, or their next
+field entry when they are on another channel), and every refusal is one of the eleven
+sentences this client already owns (`0x1C`..`0x30`, decrypted). **Two things are not
+decoded**, both marked in the code: which of the window's `2`/`3`, `4`/`5`, `6`/`7` sub-ops is
+Accept (**answered 2026-09-22: 2 for Yes, 6 for No**) - and the **329-byte record**
+`0x15`/`0x18` carry, which is why the list goes out as `0x19`'s `{id, name}` rows. Whether
+those rows are what the window draws is the one **[D]** left: plan step 12(b) is the reading.
+
+**2026-09-21: the friend list is `0x0193`, and this server has never had one (the decode).** The owner:
+*"Tester2 just tried adding the owner as a friend, but nothing showed up on the owner's screen."* The
+client did send it - `world-ch0.log` 01:35:06.649, `0x0193` sub-op 1 with `str "Wisp"` and
+`str "Default Group"`, once, and unanswered because there is no friend code in this server at
+all. Decoded and written up in `research/friends-2026-09-21.md`: the ten outbound builders and
+their sub-ops (1 add by name + group, 2/3, 4/5, 6/7, 0x0B, 0x0C, 0x12, 0x13, 0x14 = the group
+names), and the inbound `0x0193` shape (`u32 kind, u32, u32, u32, str, u32`; kind 7 =
+*"Not Find"*). **The gating unknown: nothing on the game socket populates the friend window's
+rows** - `0x0193` carries one entry and no count, and no other dispatch case reaches that
+code - while the executable carries a whole `CNM*Friend*` Nexon social layer and an
+*"Account Friends"* string. If the list is served there, answering `0x0193` moves the request
+flow and never draws a list. One Ghidra pass decides it; **NOT WIRED**, nothing built.
+
+**2026-09-21: the pet's phantom "+1 Closeness" on a map change, and what the number was.**
+The owner: *"if the pet has some sort of closeness, a message of +1 closeness still erroneously
+show up bottom right on the screen, despite not actually adding any closeness."* **The number
+is the closeness itself** - Lucy's is 1, read out of the `0x0070` body in `world-ch0.log` at
+01:13:05.886 - so the client was reporting a rise from 0 to 1, honestly. `FUN_141ec4f60`, off
+the local user's full refresh, reads the pet's cached closeness, reloads the pet from its Cash
+item and prints string `0x1AC` *"%s's Closeness has increased (+%d)"* with the difference
+(`0x1AD` for a fall): **[L]**, and there is no quiet path. A field entry clears the client's
+bag - which is why `restore_bag_and_mesos` exists - so `CPet` was being built with no item to
+read and the post-summon write then took it from 0 to 1. The entry now sends the pet's item
+**before** the summon as well as after; the second write stays, because it is the re-read that
+made the vacuum work (2026-09-18, on screen). **[I]** that a pet reads its item at
+construction; the measured support is that only one line appears per map change and the
+first-move re-summon is silent. Plan 8(d) discriminates: feed the pet first, so a line that
+still appears reads the real closeness rather than 1. Never on a screen.
+
+**2026-09-21: crafting - the six professions, the Crafting Journal, and the quests that
+open its tabs.** The owner: *"We need to implement crafting in our server. After these quest
+completions, they should unlock the appropriate crafting menu within the client."* The
+window is the client's own, over `Etc/CraftRecipe.img`; it asks `0x02F6` *"may I start
+this"*, runs the recipe's `ProcessTimeMS` animation itself, then asks again, and this server
+answers `0x0398` and owns the bag, the mesos and the mastery. **Nothing is taken until the
+second packet.** A profession is an ordinary skill (`92000000`..`92050000`) whose `level`
+field packs the mastery: `(level << 24) | exp` - that packing is the whole reason the tab
+unlocks and the bar fills, and it happens in one place, `Store::skills`. The recipe key is
+the client's own `(level + profession * 10) * 1000 + index`; `tools/dump_craftrecipe.py`
+writes all 348 into `gm-handbook/craftrecipes.txt`. Quest `Act.1.skill.<n>` is read now (18
+rows, all six professions, three quests each) and grants the profession plus its mastery.
+`!craft [profession] [level] [mastery]` opens a tab without the quest. The mastery curve is
+the client's own `50, 166, 319, ...`, which disagrees with meowdb's table - settled by the owner:
+*"settle for the EXP curve in the client, since that's the source of truth for the client
+display."* **A quest finished before any of this existed is backfilled at the claim**, at
+level 1 with an empty bar (the mastery is not replayed): the owner's Woodcrafting tab still read
+*"Vicious in Henesys is looking for an apprentice"* on a level-12 character, because
+`Act.1.skill` was read by nothing until today and a completed quest is never turned in
+again. **The window is opened by a client keybind** - no packet opens it, which is why none
+was found. `research/crafting-2026-09-21.md`, `net::craft`, `store::crafting`,
+`world::crafting`, `session/craft.rs`. Plan 11c. Never on a screen.
 
 **2026-09-19: Gift Drops - `!giftdrop` and `!giftall`, through the Administrator's box.** The owner
 wanted the modern Gift Drop window for compensation. This client has no such window (no UI
@@ -2505,7 +3183,7 @@ which on screen is indistinguishable from absent.
 | | |
 |---|---|
 | **second job advancement**, end to end | the four hidden test fields, their mobs, the 30 marbles, the examiner and the warden. `research/second-job.md`, `research/second-job-fields.md` |
-| **third job advancement** + the Ossyria ferry | ten jobs, four instructors on map 20001001, Eurek's 1000-meso crossing. `research/third-job.md` |
+| **third job advancement** | ten jobs, four instructors on map 20001001 (the Ossyria ferry that reached them was removed 2026-09-29). `research/third-job.md` |
 | **the departure handover** | measured *on the wire* (below), never watched on a screen |
 | **the release-first control rotation** | landed 2026-09-04 20:37, after the last run of the day. `research/control-release-does-it-despawn.md` |
 | remote `move_action` / facing, foothold, seat index | all landed 2026-09-04 after the last run |
@@ -2899,7 +3577,7 @@ world of MapleStory"*, and who carries **zero** quest rows. **[L]** on all three
 | what | state |
 |---|---|
 | `thirdjob.rs` — ten jobs, four instructors, level 70, tier 3 | wired, **never on a screen** |
-| The Ossyria ferry line — 3 stops, 1000 mesos | wired, **never on a screen** |
+| ~~The Ossyria ferry line~~ | **removed 2026-09-29** at the owner's word - El Nath is on foot or by scroll |
 | `skillpoints::Tier::Third` and the tier-3 SP pool in `0x007C` | wired, **never on a screen** |
 | The three invisible third-job skills | already filtered — `secondjob::HIDDEN_SKILLS` holds all 13 |
 | **87 Orbis/El Nath maps** | all have field images and footholds. **CORRECTED 2026-09-04 — one of them HAS been loaded**, see below |
@@ -3316,7 +3994,7 @@ verdict, so this paragraph is a summary rather than the record:
 |---|---|
 | **done and on a screen** | A quests, B NPC chatter, C drops, D level up, E first job advancement (packet *and* NPC conversation), F NPC shops, G storage, I bag persistence, K HP/MP per level |
 | **decoded, not enforced** | J the damage formula - physical and magic both read, `check_hit` and `max_plausible_hit` still have no caller |
-| **open** | H citizenship (zero server code), L attack-speed timing (lowest priority, and the source page does not carry the table) |
+| **open** | H citizenship (BUILT 2026-09-28, unseen - START HERE), L attack-speed timing (lowest priority, and the source page does not carry the table) |
 
 The live work is not covered by any letter: it is the multiplayer chain at the top of this file.
 
@@ -5846,6 +6524,21 @@ before anyone adds it in the wrong place: the account is already the unit that o
 characters (`crates/store/src/db.rs`), so the foreign key is natural.
 
 #### H. Citizenship - set by the owner, 2026-08-19
+
+**2026-09-28: BUILT - see START HERE.** **2026-09-27: `research/citizenship-2026-09-27.md` extends this** - the site's shops, resident items and
+rules matched against the client; two corrections from the data (weekly pay is fixed per quest; grade
+and level gates move together, which derives the level column); the client's own hooks (shop-row
+grade fields, Character Info section, effects 83/84, the contract window, `/citizenship`); and the one
+open question before building: which packet tells the client its own town and grade.
+**ANSWERED the same day (§5 of that file): there is no citizenship packet.** The client keeps it in
+hidden quest **510000**'s `key=value;` record - `st1/gr1/ct1` (Henesys), `st2/gr2/ct2` (Kerning City) -
+sent in the character record (presence byte 16, `u16 n, n x (u32 quest, str)`) and live as `0x0089`
+sub-case 13 (`u32 quest, str`). Quest start/complete and shop rows all lock on `st == 1 && gr >= need`
+(start refusal `0x50`). Without that record the client refuses every citizenship quest, offered or not.
+**The contract window, same day (§5.4):** ScriptMessage types **`0x42`..`0x46`** = Oath / Transfer /
+Reactivation (shows the meso fee) / Renunciation / Grade Update, bodies `u8 town, [u8], [u32], u32 npcTemplate`;
+answers on `0x00F3` as `u32 handle, u8 0x42+v, u8 1|0`, then `u32 handle, u8 0x47, u8 0x42+v` when the stamp finishes.
+All text is the client's own string pool (`0x17E0`..`0x17ED`).
 
 Classic World's town-membership system, and **it is the thing the shop data's rank tags
 were waiting for.** Pick Henesys or Kerning City, work a community board, climb ten grades
