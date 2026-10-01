@@ -210,7 +210,7 @@ impl Session {
 
         // Step 4, Treasure only -> the confirm.
         let equip_slot = npc::equip_slot_from_real_path(&convo.path)?;
-        let Ok(Some((equip_id, _, _))) = self.store.worn_item(chr.id, equip_slot) else {
+        let Ok(Some((equip_id, _, _, _))) = self.store.worn_item(chr.id, equip_slot) else {
             return Some(self.admin_says(
                 template,
                 &npc::nothing_equipped(),
@@ -298,7 +298,7 @@ impl Session {
                 "the scroll is no longer in the bag",
             );
         };
-        let Ok(Some((item_id, stats, failed_slots))) = self.store.worn_item(chr.id, equip_slot)
+        let Ok(Some((item_id, stats, failed_slots, rolled_base))) = self.store.worn_item(chr.id, equip_slot)
         else {
             return self.admin_says(
                 template,
@@ -327,6 +327,15 @@ impl Session {
                 // uses it. `daily_claim_day` only reads.
                 let guaranteed = !mode.always_succeeds() && self.mode_is_free_today(chr.id, mode);
                 let chance = if guaranteed { Chance::Guaranteed } else { Chance::Rolled };
+                // **Innocence keeps a mob drop's roll.** The owner, 2026-09-24: *"Can we make
+                // Innocence Scrolls keep a good base roll?"* An item that rolled when it
+                // dropped (`world::variance`) reverts to THAT, not the template; anything that
+                // never rolled has no `rolled_base` and reverts to the template as before.
+                // Chaos still reads the template: which stats exist is the item's, not the roll's.
+                let base = match (mode, rolled_base) {
+                    (SecretsMode::Innocence, Some(rolled)) => EquipBase { tuc: base.tuc, stats: rolled },
+                    _ => base,
+                };
                 match scrolls::apply(mode, &base, &state, chance, self.next_roll()) {
                     Ok(a) => {
                         if guaranteed {
@@ -446,6 +455,7 @@ impl Session {
             kind: store::ItemKind::Equip(Some(new_stats)),
             failed_slots: applied.after.failed_slots,
             pet_id: None,
+            rolled_base: None, // server-only; this copy is only drawn
         };
         let blob = self.item_blob(&refreshed);
         out.push(Reply {
@@ -626,7 +636,7 @@ impl Session {
         worn.iter()
             .map(|e| {
                 let (remaining, failed) = match self.store.worn_item(character_id, e.slot) {
-                    Ok(Some((_, stats, failed))) => (
+                    Ok(Some((_, stats, failed, _))) => (
                         stats
                             .map(|s| s.options.remaining_enhancements)
                             .unwrap_or_else(|| self.equip_base(e.item_id).tuc),
@@ -764,6 +774,53 @@ mod tests {
         assert!(!free[1], "Innocence has no daily pass at all");
         assert!(free[2], "Clean Slate starts the day free");
         assert_eq!(SecretsMode::ALL[1], SecretsMode::Innocence, "the order the flags are in");
+    }
+
+    /// **Innocence keeps a mob drop's roll.** The owner, 2026-09-24: *"Can we make Innocence
+    /// Scrolls keep a good base roll?"*
+    ///
+    /// A worn Lv 60 hat whose template is 40 WDEF / 2 STR, which dropped rolled at 60 / 4 and
+    /// has since been Chaos'd to 65 / 3: Innocence takes it to **60 / 4** - its roll - with every
+    /// slot back, and the rolled base is still there for next time. The control is the same
+    /// hat with no rolled base (any item that did not come from a mob): Innocence takes it to
+    /// the template's 40 / 2, exactly as before.
+    #[test]
+    fn innocence_reverts_a_rolled_drop_to_its_roll_and_anything_else_to_the_template() {
+        const HAT: u32 = 1_002_999;
+        let mut config = Config::default();
+        config.equips.insert(HAT, EquipTemplate { tuc: 7, inc_str: 2, inc_pdd: 40, req_level: 60, ..EquipTemplate::default() });
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let id = store.create_character(account, 0, &net::opcode::Character { name: "Hatter".into(), ..Default::default() }).unwrap().id;
+        store.create_migration(account, id, 0, 0).unwrap();
+        let mut s = Session::new(store.clone(), Arc::new(config));
+        assert!(s.claim_for_character(id).contains("claimed the migration"));
+
+        let template = s.config.equips[&HAT].fresh_stats();
+        let rolled = net::opcode::EquipStatSet { inc_str: 4, inc_pdd: 60, ..Default::default() };
+        let mut chaosed = template;
+        chaosed.stats = net::opcode::EquipStatSet { inc_str: 3, inc_pdd: 65, ..Default::default() };
+        chaosed.options.remaining_enhancements = 5;
+
+        let innocence = |s: &mut Session, rolled_base: Option<net::opcode::EquipStatSet>| {
+            let _ = store.unequip_to_bag(id, 1, Some(20));
+            let hat = store::Item { item_id: HAT, kind: store::ItemKind::Equip(Some(chaosed)), failed_slots: 0, pet_id: None, rolled_base };
+            store.set_inventory_slot(id, store::InventoryType::Equip, 10, &hat).unwrap();
+            store.equip_from_bag(id, 10, 1).unwrap();
+            store.add_item(id, store::InventoryType::Etc, &store::Item::bundle(scrolls::SCROLL_OF_SECRETS, 1), 100).unwrap();
+            let _ = s.apply_scroll(9_010_000, Confirmed::Secrets { mode: SecretsMode::Innocence, equip_slot: 1 });
+            store.worn_item(id, 1).unwrap().expect("still worn")
+        };
+
+        let (_, stats, _, kept) = innocence(&mut s, Some(rolled));
+        let stats = stats.expect("stored stats");
+        assert_eq!(stats.stats, rolled, "back to its ROLL (60 WDEF, 4 STR), not the template's 40 / 2");
+        assert_eq!(stats.options.remaining_enhancements, 7, "every slot back");
+        assert_eq!(kept, Some(rolled), "and the roll is still the base for the next Innocence");
+
+        let (_, stats, _, kept) = innocence(&mut s, None);
+        assert_eq!(stats.expect("stored stats").stats, template.stats, "no roll: the template, as before");
+        assert_eq!(kept, None);
     }
 
     /// The daily key names the mode, not the item - all three modes now live in one item, so

@@ -154,7 +154,7 @@ impl Session {
             }
         }
         let mut chr = chr;
-        self.go_to_map(&mut chr, firsttime::STAGE_1, 0, format!("First Time Together, instance {}", instance.id))
+        self.teleport(&mut chr, firsttime::STAGE_1, format!("First Time Together, instance {}", instance.id))
     }
 
     /// The other members' side of the entry: warp, sent as an `Event` rather than as bytes
@@ -168,7 +168,7 @@ impl Session {
             // for nothing.
             return out;
         }
-        out.extend(self.go_to_map(&mut chr, map, 0, why.to_string()));
+        out.extend(self.teleport(&mut chr, map, why.to_string()));
         out
     }
 
@@ -293,7 +293,7 @@ impl Session {
             "   first time together: {} ({}) leaves for the Exit map - {why}",
             chr.name, chr.id
         ));
-        out.extend(self.go_to_map(&mut chr, firsttime::EXIT_MAP, 0, format!("First Time Together: {why}")));
+        out.extend(self.teleport(&mut chr, firsttime::EXIT_MAP, format!("First Time Together: {why}")));
         out
     }
 
@@ -330,6 +330,23 @@ impl Session {
             return None;
         }
         let line = if chr.map_id == firsttime::EXIT_MAP { firsttime::NELLA_TOWN } else { firsttime::NELLA_LEAVE };
+        // On the Exit they take every Pass and Coupon first, each with its grey chat-log line,
+        // whatever the answer turns out to be.
+        let mut out = Vec::new();
+        if chr.map_id == firsttime::EXIT_MAP {
+            for item in firsttime::STAYS_IN_THE_QUEST {
+                let held = self.held(chr.id, item);
+                if held == 0 {
+                    continue;
+                }
+                out.extend(self.take_items(chr.id, store::InventoryType::Etc, item, held));
+                out.push(self.item_chat_line(item, -i64::from(held)));
+                crate::server::log(&format!(
+                    "   first time together: Nella took {held} x {item} from {} ({}) on the Exit - they never leave the quest",
+                    chr.name, chr.id
+                ));
+            }
+        }
         self.conversation = Some(Conversation {
             npc_template: template,
             quest_id: None,
@@ -338,11 +355,12 @@ impl Session {
             awaiting_yes_no: true,
             sent_with_next: false,
         });
-        Some(vec![Reply {
+        out.push(Reply {
             opcode: net::script::SCRIPT_MESSAGE,
             body: net::script::npc_ask(template, line, false),
             what: format!("ScriptMessage YES/NO from NPC {template} (Nella) on map {}", chr.map_id),
-        }])
+        });
+        Some(out)
     }
 
     /// Nella's yes/no. Yes on the Exit map goes to Kerning City; Yes anywhere else inside
@@ -358,7 +376,7 @@ impl Session {
             // Already out of the run by the time they reach the Exit, but a member who
             // logged back in there may not be; dropping again is harmless.
             let mut out = self.drop_from_run(chr.id, "Nella sent them home");
-            out.extend(self.go_to_map(&mut chr, firsttime::TOWN_MAP, 0, "First Time Together: Nella sends them home".to_string()));
+            out.extend(self.teleport(&mut chr, firsttime::TOWN_MAP, "First Time Together: Nella sends them home".to_string()));
             return out;
         }
         self.leave_party_quest("Nella showed them out")
@@ -683,57 +701,44 @@ impl Session {
         }
     }
 
-    /// **A kill on the last stage.** The King Slime leaves a pair of Squishy Shoes for every
-    /// member of the run on this field - each one only theirs to see and take - and breaks
-    /// into twenty Slimes where it died. The owner, 2026-09-23. The Passes come from the ordinary
-    /// drop table, which carries them at 100% (`data/drops.txt`).
-    pub(super) fn party_quest_kill(&mut self, key: crate::fields::FieldKey, template: u32, died_at: Option<(i16, i16)>) -> Vec<Reply> {
+    /// **The King Slime's personal drops**: a pair of Squishy Shoes for every member of the
+    /// run on this field, each one only theirs to see and take. The owner, 2026-09-23. Empty for
+    /// every other kill.
+    ///
+    /// Returned rather than placed, because **where** they land belongs to the kill's whole row:
+    /// `Session::drops_from_kill_for` puts every pair in ONE slot at the end of the shared
+    /// drops. The owner, 2026-09-24: the shoes had been centred on the corpse on their own and
+    /// landed *"right on top of the pass"*, and *"the clients should also not have weird drop
+    /// placement such as empty spaces where they do not see a drop they can pick up because
+    /// it's instanced for someone else."* One shared slot answers both: each client sees
+    /// exactly one pair there - its own - so the row is contiguous on every screen.
+    pub(super) fn party_quest_personal_drops(&self, key: crate::fields::FieldKey, template: u32) -> Vec<(u32, store::Item)> {
         if template != firsttime::KING_SLIME || key.map != firsttime::STAGE_5 || !key.is_instanced() {
             return Vec::new();
         }
         let Some(me) = self.claimed_character().map(|c| c.id) else { return Vec::new() };
-        let run = self.fields.runs().instance_of(me);
-        let Some(run) = run else { return Vec::new() };
-        let Some((x, y)) = died_at.or(self.last_position) else { return Vec::new() };
-        let mut out = Vec::new();
+        let Some(run) = self.fields.runs().instance_of(me) else { return Vec::new() };
+        self.bus()
+            .characters_on(key, &run.members)
+            .into_iter()
+            .map(|member| (member, store::Item::equip(firsttime::SLIME_SHOES)))
+            .collect()
+    }
 
-        // The shoes. One each, owned by and shown to that member alone.
-        let here = self.bus().characters_on(key, &run.members);
-        let n = here.len() as i16;
-        for (i, &member) in here.iter().enumerate() {
-            let offset = (i as i16 - (n - 1) / 2) * crate::drops::DROP_STAGGER_PX;
-            let landed = self.config.footholds.landing(key.map, x.saturating_add(offset), y);
-            let (dx, dy) = landed.map(|l| (l.x, l.y)).unwrap_or((x, y));
-            let now = self.clock_ms;
-            let (_, enter) = self.fields.with_drops(key, |d| {
-                d.personal_drop_from_mob(crate::drops::DropFromMob {
-                    map_id: key,
-                    owner_id: member,
-                    item: store::Item::equip(firsttime::SLIME_SHOES),
-                    inv_type: store::InventoryType::Equip,
-                    meso: 0,
-                    x: dx,
-                    y: dy,
-                    source_x: x,
-                    source_y: y,
-                    now_ms: now,
-                    party_id: 0,
-                    from_mob: true,
-                })
-            });
-            if member == me {
-                out.push(enter);
-            } else {
-                self.bus().publish_to_character(member, key, enter);
-            }
+    /// **A kill on the last stage.** The King Slime breaks into twenty Slimes where it died.
+    /// The owner, 2026-09-23. Its shoes are [`Session::party_quest_personal_drops`], placed with the
+    /// rest of the kill's drops; the Passes come from the ordinary drop table, which carries
+    /// them at 100% (`data/drops.txt`).
+    pub(super) fn party_quest_kill(&mut self, key: crate::fields::FieldKey, template: u32, died_at: Option<(i16, i16)>) -> Vec<Reply> {
+        if template != firsttime::KING_SLIME || key.map != firsttime::STAGE_5 || !key.is_instanced() {
+            return Vec::new();
         }
-
+        let Some((x, y)) = died_at.or(self.last_position) else { return Vec::new() };
         // The Slimes, where it died - summoned, so they never come back. session/mobskill.rs.
         let slimes = [firsttime::SLIME; firsttime::SLIMES_FROM_THE_KING];
-        out.extend(self.summon_mobs_at(key, &slimes, (x, y), "the King Slime broke apart"));
+        let out = self.summon_mobs_at(key, &slimes, (x, y), "the King Slime broke apart");
         crate::server::log(&format!(
-            "   first time together: the King Slime died at ({x}, {y}) on field {key}; {} pair(s) of shoes, {} Slimes",
-            here.len(),
+            "   first time together: the King Slime died at ({x}, {y}) on field {key}; {} Slimes",
             firsttime::SLIMES_FROM_THE_KING
         ));
         out

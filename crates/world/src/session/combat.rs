@@ -840,6 +840,8 @@ impl Session {
             // `drop_audience` adds no arithmetic to either, and `chr_id` terminates the
             // walk because the killer is on this map by definition, having just swung.
             let ranked = crate::mobshare::drop_audience(&shares, chr_id);
+            // The King Slime's per-member shoes ride in the same row. session/firsttime.rs.
+            let personal = self.party_quest_personal_drops(map, template);
             out.extend(self.drops_from_kill_for(
                 template,
                 object_id,
@@ -847,6 +849,7 @@ impl Session {
                 &ranked,
                 map,
                 Some(chr_id),
+                &personal,
             ));
             let (worth, why) = self.exp_for_kill(template);
             out.extend(self.award_kill_experience(worth, &why, chr_id, &shares));
@@ -1005,7 +1008,7 @@ impl Session {
         // `Some(killer)` says "the one candidate is this connection's own character", which is
         // what makes the packets come back in the return value rather than going over the bus.
         // That is this form's whole contract and it is what every existing caller relies on.
-        self.drops_from_kill_for(template, object_id, died_at, &[killer], map, Some(killer))
+        self.drops_from_kill_for(template, object_id, died_at, &[killer], map, Some(killer), &[])
     }
 
     /// **Roll what a dead mob leaves on the floor, put it there, and give it to the first
@@ -1060,6 +1063,9 @@ impl Session {
         ranked: &[u32],
         map: crate::fields::FieldKey,
         mine: Option<u32>,
+        // Drops each only ONE member may see, placed together in one slot after the shared
+        // ones - see the end of this function.
+        personal: &[(u32, store::Item)],
     ) -> Vec<Reply> {
         // The provisional owner, replaced by the walk below the moment a drop exists. Never
         // empty in practice - `drop_audience` always appends the killer - but a caller that
@@ -1191,7 +1197,8 @@ impl Session {
         // drop should also be slightly staggered from each other"*. Three items landing on
         // exactly the same pixel render as one. Centred on the mob so a single drop is
         // exactly where it died, and spread outward from there.
-        let n = rolled.len() as i16;
+        // One more slot when there are personal drops: they all share the last one.
+        let n = rolled.len() as i16 + i16::from(!personal.is_empty());
         // The corpse, bound before the loop shadows `x` with the staggered landing spot.
         // Both ends of the arc have to exist at once or there is no arc.
         let (mob_x, mob_y) = (x, y);
@@ -1232,7 +1239,9 @@ impl Session {
                     continue;
                 };
                 let item = if inv == store::InventoryType::Equip {
-                    store::Item::equip(r.item_id)
+                    // **Item variance**: a mob's equip rolls around its template. The owner,
+                    // 2026-09-24 - `crate::variance` has the rules.
+                    self.mob_drop_variance(store::Item::equip(r.item_id))
                 } else {
                     store::Item::bundle(r.item_id, r.quantity.min(u32::from(u16::MAX)) as u16)
                 };
@@ -1355,9 +1364,78 @@ impl Session {
                 )),
             }
         }
+
+        // **Personal drops share ONE slot, the last in the row.** The owner, 2026-09-24, on the
+        // King Slime's shoes: they landed *"right on top of the pass"*, and *"the clients
+        // should also not have weird drop placement such as empty spaces where they do not
+        // see a drop they can pick up because it's instanced for someone else."* A slot per
+        // member would leave every client a gap for each pair it cannot see; one slot for all
+        // of them means each client sees exactly one drop there - its own - after the shared
+        // ones, and nothing sits on top of anything it can see.
+        if !personal.is_empty() {
+            let offset = ((n - 1) - (n - 1) / 2) * crate::drops::DROP_STAGGER_PX;
+            let x = mob_x.saturating_add(offset);
+            let fallback = if self.config.footholds.is_empty() { (x, mob_y) } else { (mob_x, mob_y) };
+            let (x, y) = self.config.footholds.landing(map.map, x, mob_y).map(|l| (l.x, l.y)).unwrap_or(fallback);
+            for (member, item) in personal {
+                let Some(inv_type) = store::InventoryType::for_item(item.item_id) else { continue };
+                // Each member's pair is rolled on its own - item variance, `crate::variance`.
+                let item = self.mob_drop_variance(*item);
+                let now = self.clock_ms;
+                let (drop_id, enter) = self.fields.with_drops(map, |d| {
+                    d.personal_drop_from_mob(crate::drops::DropFromMob {
+                        from_mob: true,
+                        map_id: map,
+                        owner_id: *member,
+                        item,
+                        inv_type,
+                        meso: 0,
+                        x,
+                        y,
+                        source_x: mob_x,
+                        source_y: mob_y,
+                        now_ms: now,
+                        party_id: 0,
+                    })
+                });
+                let shown = if Some(*member) == me {
+                    out.push(enter);
+                    true
+                } else {
+                    self.bus().publish_to_character(*member, map, enter)
+                };
+                crate::server::log(&format!(
+                    "   drop {drop_id} ({}) on map {map} at ({x}, {y}) is PERSONAL to {member} - slot {} of {n}, the one every member's own copy shares; {}",
+                    item.item_id,
+                    n - 1,
+                    if shown { "shown to them" } else { "they are not on this field" }
+                ));
+            }
+        }
         out
     }
 
+
+    /// **An equip a mob drops, with its stats rolled** (`crate::variance`); anything else
+    /// unchanged. The roll goes in the log, because a player asking "why is mine worse"
+    /// deserves an answer that does not need a second drop.
+    pub(super) fn mob_drop_variance(&mut self, item: store::Item) -> store::Item {
+        let rolled = {
+            let rng = &mut self.rng;
+            crate::variance::for_mob_drop(&self.config.equips, item, &mut || rng.next())
+        };
+        if let (store::ItemKind::Equip(Some(after)), Some(t)) = (rolled.kind, self.config.equips.get(&item.item_id)) {
+            crate::server::log(&format!(
+                "   variance: {} (req level {}, range {:.1}) rolled {:?} from template {:?}",
+                item.item_id,
+                t.req_level,
+                crate::variance::range(t.req_level, item.item_id),
+                after.stats,
+                t.fresh_stats().stats
+            ));
+        }
+        rolled
+    }
 
     /// Spawn everything on this map whose timer is due, and tell the client.
     ///
