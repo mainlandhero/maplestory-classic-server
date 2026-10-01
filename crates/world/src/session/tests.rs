@@ -4923,11 +4923,11 @@ fn the_drop_rate_multiplies_the_chance() {
     s.last_position = Some((520, 395));
     let map = crate::fields::FieldKey::world(net::opcode::START_MAP_ID);
 
-    // 5000 % 10000 = 5000, which is above 10% (1000 bp) and below 100%.
+    // 500 000 of 1 000 000 is 50%: above the 10% row (100 000 ppm) and below 100%.
     let entry = &s.config.drops.for_mob(2)[0];
-    assert!(!entry.hits_at(5_000, store::rates::Rate::NORMAL), "1x must miss this roll");
+    assert!(!entry.hits_at(500_000, store::rates::Rate::NORMAL), "1x must miss this roll");
     assert!(
-        entry.hits_at(5_000, store::rates::Rate::from_per_cent(1_000)),
+        entry.hits_at(500_000, store::rates::Rate::from_per_cent(1_000)),
         "10x makes a 10% row certain"
     );
 
@@ -5392,7 +5392,7 @@ fn the_tutorial_sentinel_always_drops_its_shellpiece() {
     let rows = table.for_mob(1);
     assert_eq!(rows.len(), 1, "template 1 drops exactly one thing: {rows:?}");
     assert_eq!(rows[0].item_id, 4000000, "Jr. Sentinel Shellpiece");
-    assert_eq!(rows[0].chance_bp, crate::droptables::BASIS_POINTS, "100%, not the scraped 40%");
+    assert_eq!(rows[0].chance_ppm, crate::droptables::PER_MILLION, "100%, not the scraped 40%");
     // **The global table is no longer empty**, and this used to assert that it was. The owner put
     // the three scrolls in it on 2026-09-09. The concern behind the old assertion still
     // stands - an extra item on the floor during the step that teaches picking things up -
@@ -5402,8 +5402,8 @@ fn the_tutorial_sentinel_always_drops_its_shellpiece() {
     // about once in 100 kills. A row above the rate the scroll NPC quotes still fails here.
     for row in table.global() {
         assert_eq!(
-            row.chance_bp,
-            crate::scrolls::GLOBAL_DROP_CHANCE_BP,
+            row.chance_ppm,
+            crate::scrolls::GLOBAL_DROP_CHANCE_BP * 100,
             "a global row above the scroll rate would land on the tutorial floor: {row:?}"
         );
     }

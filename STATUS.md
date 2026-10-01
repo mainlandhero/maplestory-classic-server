@@ -382,6 +382,30 @@ carries risk**: the handler's trailing virtual call resolves to a method that re
 and if that resolution is wrong the body is short. Plan step 13(b) asks for `client-exit.log`
 rather than assuming. Never on a screen.
 
+**2026-10-01: drops are v83's - chances, the rate rule and the missing items - and a drop-table page.**
+The owner: *"Please make them closer to v83 drop rates and drop behavior ... If there's an item in our server
+not dropped but the old sources have them as dropping as such, add them"*, after
+`research/drop-rates-vs-v83-2026-10-01.md` showed scrolls at 4-6x and low-level equipment at 2.5x v83, even
+at 1x. `tools/v83_drops.py` rebuilds `data/drops.txt` from Cosmic's v83 tables (pinned commit, fetched to
+the gitignored `.cache/`): 149 templates matched by name (118 at the same level too); their v83 rows are
+taken, and 2936 items meowdb never listed are added. meowdb-only rows go to the v83 median for their
+category (equipment 0.08%, scroll 0.03%, use 2%, etc 0.9%, trophy 60%). Three traps, each handled and counted:
+**this client renumbered items** (its 4000000 is Jr. Sentinel Shellpiece, v83's is Blue Snail Shell), so an id
+counts only when the names agree, or moves to the one same-subtype item of that name; **it renamed every
+scroll and cut each to one stat**, so scrolls pair by type + main stat + tier (100/60/10, and v83's cursed
+dark scrolls to the cursed 10%) - 242 of 754, none ambiguous; and **quest items** are added only when a quest
+here names them (`questitems`' orphan rule, at build time). The global table, the hand-set 100% rows and the
+800000+ party-quest/test templates are copied untouched. Per kill at 1x, equipment now sits on v83 for
+levels 1-70 (0.0103 against 0.0097 at 1-20); scrolls are at 50-70% of v83, since many v83 scrolls have no
+counterpart here. Server: chances are **parts per million** (v83's scale; `0.1287%` and `0.005%` were not
+representable in basis points), and the **global table is no longer scaled by the drop rate**, as in v83 - the
+two repurposed scrolls stay at the owner's 0.5% at any rate. The owner's follow-up, *"Wand for Magic Attack
+scrolls do not drop, but they should drop from things like Mano, or obtainable from PQs such as KPQ"*: Mano
+now drops both (0.3%), pinned by `the_drop_file_carries_v83_chances`; First Time Together's Companion's Magic
+Box already gave them (1 in 61 each, `magicbox.rs`). The page: `tools/drops_page.py` builds a searchable
+table of every mob, the global rows and the PQ box, with a drop-rate box that recomputes the chances the way
+the server does. Plan step 31. **Not on a screen.**
+
 **2026-10-01: Beginner Recovery shows its icon.** The owner: *"Recovery skill needs to be fixed from
 the Beginner skill."* No log came with it; the visible gap the code itself documented was an empty tray
 and a developer's chat line on every cast ("Recovery's stat bit has never been identified"). The bit is

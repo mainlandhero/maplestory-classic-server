@@ -1,0 +1,318 @@
+<title>MapleCW Drop Tables</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one sticky control rail over a single reading column; monsters are ledger cards, items a flat table. */
+:root {
+  --bg: #f4f5f2;
+  --surface: #ffffff;
+  --ink: #1c2220;
+  --muted: #5b6661;
+  --line: #dce1dc;
+  --accent: #b9440f;
+  --accent-soft: #fbe7da;
+  --equip: #2f5fa8;
+  --scroll: #7a3fa6;
+  --use: #2c7a4b;
+  --etc: #6b6f6c;
+  --mesos: #9a6b00;
+  --setup: #a33a5c;
+  --chip-bg: #eef1ee;
+  --hot: #fff4c7;
+  --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111513; --surface: #181e1b; --ink: #e5eae7; --muted: #9ba6a0; --line: #2a322e;
+    --accent: #f0874a; --accent-soft: #3a2316; --equip: #82a9ea; --scroll: #c597ea; --use: #79c99a;
+    --etc: #a7aca9; --mesos: #e3b54a; --setup: #e88aa8; --chip-bg: #222a26; --hot: #3b3416;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111513; --surface: #181e1b; --ink: #e5eae7; --muted: #9ba6a0; --line: #2a322e;
+  --accent: #f0874a; --accent-soft: #3a2316; --equip: #82a9ea; --scroll: #c597ea; --use: #79c99a;
+  --etc: #a7aca9; --mesos: #e3b54a; --setup: #e88aa8; --chip-bg: #222a26; --hot: #3b3416;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1040px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 64px; }
+header h1 { font-family: var(--display); font-size: clamp(28px, 4vw, 40px); line-height: 1.1; margin: 0 0 6px; letter-spacing: -0.01em; text-wrap: balance; }
+header p { margin: 0; color: var(--muted); max-width: 68ch; }
+header p b { color: var(--ink); font-weight: 600; }
+
+.rail { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); padding-block: 14px 12px; margin-top: 18px; border-bottom: 1px solid var(--line); display: grid; gap: 10px; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.search { flex: 1 1 280px; min-width: 0; display: flex; }
+.search input { width: 100%; font: inherit; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.seg button { font: inherit; font-weight: 500; border: 0; background: transparent; color: var(--muted); padding: 9px 14px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.rate { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rate label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+.rate input { width: 84px; font: 500 15px var(--mono); padding: 8px 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--surface); color: var(--ink); }
+.presets { display: inline-flex; gap: 4px; }
+.presets button { font: 500 13px var(--mono); border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 6px; padding: 6px 8px; cursor: pointer; }
+.presets button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: 500 13px var(--body); border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 999px; padding: 4px 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.chip i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; }
+.chip[aria-pressed="true"] { color: var(--ink); border-color: var(--ink); }
+button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.status { font-size: 13px; color: var(--muted); }
+.status b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.c-equip { color: var(--equip); } .c-scroll { color: var(--scroll); } .c-use { color: var(--use); }
+.c-etc { color: var(--etc); } .c-mesos { color: var(--mesos); } .c-setup { color: var(--setup); }
+
+.list { display: grid; gap: 10px; margin-top: 16px; }
+details.mob { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+details.mob > summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 12px 14px; }
+details.mob > summary::-webkit-details-marker { display: none; }
+.lv.pq { color: var(--accent); border-color: var(--accent); }
+.boxnote { margin: 0; padding: 10px 14px; color: var(--muted); font-size: 14px; border-bottom: 1px solid var(--line); }
+.lv { font: 500 12px var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 2px 7px; min-width: 52px; text-align: center; font-variant-numeric: tabular-nums; }
+.mname { font-weight: 600; min-width: 0; }
+.mname small { color: var(--muted); font-weight: 400; font-family: var(--mono); font-size: 12px; margin-left: 6px; }
+.odds { display: flex; gap: 14px; font: 13px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; flex-wrap: wrap; justify-content: flex-end; }
+.odds span b { font-weight: 500; }
+details.mob[open] > summary { border-bottom: 1px solid var(--line); }
+.tbl { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; padding: 8px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 7px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.eff { font-weight: 500; }
+tr.hit td { background: var(--hot); }
+.tag { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; border-radius: 4px; padding: 0 6px; margin-left: 6px; border: 1px solid currentColor; vertical-align: 1px; }
+.tag.q { color: var(--accent); }
+.tag.fixed { color: var(--muted); }
+.cat { font-size: 12px; font-weight: 600; text-transform: capitalize; }
+.capped { color: var(--accent); }
+.global { margin-top: 26px; }
+.global h2, .items h2 { font-family: var(--display); font-size: 20px; margin: 0 0 4px; }
+.global p, .items p.note { margin: 0 0 10px; color: var(--muted); font-size: 14px; max-width: 70ch; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.items { margin-top: 16px; }
+.more { padding: 12px 14px; color: var(--muted); font-size: 13px; }
+.empty { padding: 28px 14px; text-align: center; color: var(--muted); }
+footer { margin-top: 36px; color: var(--muted); font-size: 13px; max-width: 75ch; }
+footer p { margin: 0 0 8px; }
+@media (max-width: 640px) {
+  details.mob > summary { grid-template-columns: auto 1fr; }
+  .odds { grid-column: 1 / -1; justify-content: flex-start; }
+  th, td { padding-inline: 10px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>MapleCW Drop Tables</h1>
+    <p>Every monster's drops on this server, with the chance at the server's current drop rate. Chances follow the <b>v83</b> tables where the monster has one. A monster's own drops scale with the rate and stop at 100%. The global drops never scale.</p>
+  </header>
+
+  <div class="rail">
+    <div class="row">
+      <div class="search"><input id="q" type="search" placeholder="Search a monster or an item - Snail, Work Gloves, 1082002" autocomplete="off" aria-label="Search monsters or items"></div>
+      <div class="seg" role="group" aria-label="View">
+        <button id="v-mobs" type="button" aria-pressed="true">Monsters</button>
+        <button id="v-items" type="button" aria-pressed="false">Items</button>
+      </div>
+    </div>
+    <div class="row">
+      <div class="rate">
+        <label for="rate">Drop rate</label>
+        <input id="rate" type="number" min="0.01" max="100" step="0.5" value="1" inputmode="decimal">
+        <span class="presets" id="presets"></span>
+      </div>
+      <div class="chips" id="chips" role="group" aria-label="Item kinds"></div>
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+
+  <div id="mobs" class="list"></div>
+  <section id="items" class="items" hidden></section>
+  <section class="global" id="global"></section>
+
+  <footer>
+    <p>The <b>Companion's Magic Box</b> from First Time Together is listed with the monsters: its "1 in N" counts boxes, not kills.</p>
+    <p>"1 in N" is the average number of kills per drop, rounded. Expected drops per kill add up the chances of every equipment or scroll row. Rows marked <b>quest</b> drop only for a player who has that quest in progress. Mesos marked <b>by level</b> are the server's default for a monster with no meso row: always dropped, and not affected by the drop rate.</p>
+    <p>No source has Nexon's official per-monster rates. The v83 numbers come from Cosmic, the maintained OdinMS/HeavenMS server, and are the closest classic calibration there is.</p>
+  </footer>
+</div>
+
+<script>
+const DATA = /*__DATA__*/null;
+const CATS = ["equip", "scroll", "use", "etc", "setup", "mesos"];
+const PRESETS = [1, 2, 3, 5, 10];
+const MILLION = 1e6;
+const state = { q: "", view: "mobs", rate: 1, cats: new Set(CATS) };
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const itemOf = (id) => id === 0 ? ["Mesos", "mesos", 0] : (DATA.items[id] || ["Item " + id, "etc", 0]);
+
+try {
+  const saved = JSON.parse(localStorage.getItem("drop-tables") || "{}");
+  if (saved.rate > 0) state.rate = saved.rate;
+  if (saved.view === "items") state.view = "items";
+} catch (e) { /* storage unavailable: defaults */ }
+function save() { try { localStorage.setItem("drop-tables", JSON.stringify({ rate: state.rate, view: state.view })); } catch (e) {} }
+
+// The server's arithmetic: Rate::apply is chance * per_cent / 100, floored, never below 1, capped at 100%.
+function effective(ppm, scaled) {
+  if (ppm === 0) return 0;
+  if (!scaled) return ppm;
+  const perCent = Math.round(state.rate * 100);
+  return Math.min(MILLION, Math.max(1, Math.floor(ppm * perCent / 100)));
+}
+function pct(ppm) {
+  const p = ppm / 1e4;
+  if (p >= 100) return "100%";
+  if (p >= 99.99) return p.toFixed(4) + "%"; // v83's "nearly always", 99.9999%
+  return (p >= 1 ? p.toFixed(2) : p >= 0.01 ? p.toFixed(3) : p.toFixed(4)).replace(/\.?0+$/, "") + "%";
+}
+function oneIn(ppm) {
+  if (ppm <= 0) return "never";
+  if (ppm >= MILLION) return "every kill";
+  if (ppm >= 999_000) return "nearly every kill";
+  const n = MILLION / ppm;
+  return "1 in " + (n < 10 ? n.toFixed(1).replace(/\.0$/, "") : Math.round(n).toLocaleString());
+}
+function qty(item, lo, hi) {
+  if (item === 0) return (lo === hi ? lo : lo + "-" + hi).toLocaleString() + " mesos";
+  return lo === hi ? (lo === 1 ? "1" : String(lo)) : lo + "-" + hi;
+}
+function matchesText(text) { return text.toLowerCase().includes(state.q); }
+function rowMatches(r) {
+  if (!state.q) return false;
+  const [name] = itemOf(r[0]);
+  return matchesText(name) || String(r[0]) === state.q;
+}
+
+function renderChips() {
+  $("chips").innerHTML = CATS.map((c) =>
+    `<button type="button" class="chip c-${c}" data-cat="${c}" aria-pressed="${state.cats.has(c)}"><i></i>${c}</button>`).join("");
+  $("presets").innerHTML = PRESETS.map((p) =>
+    `<button type="button" data-rate="${p}" aria-pressed="${state.rate === p}">${p}x</button>`).join("");
+}
+
+function rowHtml(r, scaled, highlight) {
+  const [item, ppm, lo, hi, fixed] = r;
+  const [name, cat, quest] = itemOf(item);
+  const isScaled = scaled && !fixed;
+  const eff = effective(ppm, isScaled);
+  const capped = isScaled && ppm * state.rate >= MILLION && ppm < MILLION;
+  const tags = (quest ? '<span class="tag q" title="Drops only while the quest is in progress">quest</span>' : "") +
+    (fixed && item === 0 ? '<span class="tag fixed" title="Server default for a monster with no meso row">by level</span>' : "");
+  return `<tr class="${highlight ? "hit" : ""}"><td>${esc(name)}${tags}</td><td><span class="cat c-${cat}">${cat}</span></td>` +
+    `<td class="num">${qty(item, lo, hi)}</td><td class="num">${pct(ppm)}</td>` +
+    `<td class="num eff ${capped ? "capped" : ""}">${pct(eff)}</td><td class="num">${oneIn(eff)}</td></tr>`;
+}
+const HEAD = '<thead><tr><th>Drop</th><th>Kind</th><th class="num">Amount</th><th class="num">Base</th><th class="num">At rate</th><th class="num">Odds</th></tr></thead>';
+
+function expected(rows, cat) {
+  return rows.filter((r) => itemOf(r[0])[1] === cat).reduce((s, r) => s + effective(r[1], !r[4]) / MILLION, 0);
+}
+function perKill(x) {
+  if (x <= 0) return "none";
+  return x >= 1 ? x.toFixed(2) + "/kill" : "1 in " + Math.round(1 / x).toLocaleString();
+}
+
+function renderMobs() {
+  const el = $("mobs");
+  const parts = [];
+  let shown = 0, rowsShown = 0;
+  for (const m of DATA.mobs) {
+    const nameHit = !!state.q && (matchesText(m.name) || String(m.id) === state.q);
+    const itemHit = !!state.q && m.rows.some(rowMatches);
+    if (state.q && !nameHit && !itemHit) continue;
+    const rows = m.rows.filter((r) => state.cats.has(itemOf(r[0])[1]))
+      .sort((a, b) => effective(b[1], !b[4]) - effective(a[1], !a[4]) || a[0] - b[0]);
+    if (!rows.length) continue;
+    shown++; rowsShown += rows.length;
+    const eq = expected(m.rows, "equip"), sc = expected(m.rows, "scroll");
+    parts.push(`<details class="mob"${itemHit && !nameHit ? " open" : ""}><summary>` +
+      (m.kind ? `<span class="lv pq">PQ</span><span class="mname">${esc(m.name)}<small>${esc(m.kind)}</small></span>`
+              : `<span class="lv">Lv ${m.level || "?"}</span><span class="mname">${esc(m.name)}<small>#${m.id}</small></span>`) +
+      `<span class="odds"><span>equips <b class="c-equip">${perKill(eq)}</b></span><span>scrolls <b class="c-scroll">${perKill(sc)}</b></span><span>${m.rows.length} ${m.kind ? "prizes" : "drops"}</span></span>` +
+      `</summary>` + (m.kind ? `<p class="boxnote">Every member gets one box when the last stage clears. Opening it gives exactly one of these ${m.rows.length} prizes, each equally likely. The drop rate does not change it.</p>` : "") +
+      `<div class="tbl"><table>${HEAD}<tbody>${rows.map((r) => rowHtml(r, true, rowMatches(r))).join("")}</tbody></table></div></details>`);
+  }
+  el.innerHTML = parts.length ? parts.join("") : '<div class="empty panel">No monster or drop matches that search.</div>';
+  $("status").innerHTML = `<b>${shown}</b> monsters, <b>${rowsShown.toLocaleString()}</b> drops shown at <b>${state.rate}x</b>` +
+    (state.q ? ` for "${esc(state.q)}"` : "") + ". Open a monster to see its table.";
+}
+
+function renderItems() {
+  const el = $("items");
+  const flat = [];
+  for (const m of DATA.mobs) {
+    for (const r of m.rows) {
+      const [name, cat] = itemOf(r[0]);
+      if (!state.cats.has(cat)) continue;
+      if (state.q && !matchesText(name) && String(r[0]) !== state.q && !matchesText(m.name)) continue;
+      flat.push({ m, r, name, eff: effective(r[1], !r[4]) });
+    }
+  }
+  flat.sort((a, b) => a.name.localeCompare(b.name) || b.eff - a.eff);
+  const LIMIT = 600;
+  const body = flat.slice(0, LIMIT).map(({ m, r, name, eff }) => {
+    const [, cat, quest] = itemOf(r[0]);
+    return `<tr><td>${esc(name)}${quest ? '<span class="tag q">quest</span>' : ""}${r[4] && r[0] === 0 ? '<span class="tag fixed">by level</span>' : ""}</td>` +
+      `<td><span class="cat c-${cat}">${cat}</span></td><td>${esc(m.name)} <span class="status">${m.kind ? esc(m.kind) : "Lv " + (m.level || "?")}</span></td>` +
+      `<td class="num">${qty(r[0], r[2], r[3])}</td><td class="num">${pct(r[1])}</td><td class="num eff">${pct(eff)}</td><td class="num">${oneIn(eff)}</td></tr>`;
+  }).join("");
+  el.innerHTML = `<h2>Who drops it</h2><p class="note">Each row is one monster dropping one item, sorted by item, then by the best odds.</p>` +
+    `<div class="panel tbl"><table><thead><tr><th>Drop</th><th>Kind</th><th>Monster</th><th class="num">Amount</th><th class="num">Base</th><th class="num">At rate</th><th class="num">Odds</th></tr></thead><tbody>${body || ""}</tbody></table>` +
+    (flat.length ? "" : '<div class="empty">Nothing matches that search.</div>') +
+    (flat.length > LIMIT ? `<div class="more">Showing the first ${LIMIT} of ${flat.length.toLocaleString()} rows. Search for an item to narrow it down.</div>` : "") + "</div>";
+  $("status").innerHTML = `<b>${flat.length.toLocaleString()}</b> monster-and-item pairs at <b>${state.rate}x</b>` + (state.q ? ` for "${esc(state.q)}"` : "") + ".";
+}
+
+function renderGlobal() {
+  const rows = DATA.global.filter((r) => state.cats.has(itemOf(r[0])[1]) && (!state.q || rowMatches(r)));
+  $("global").hidden = !rows.length && !!state.q;
+  $("global").innerHTML = `<h2>Every monster</h2><p>Rolled once for every kill, on top of the monster's own table. The drop rate does not change these, as in v83.</p>` +
+    `<div class="panel tbl"><table>${HEAD}<tbody>${rows.map((r) => rowHtml(r, false, rowMatches(r))).join("") ||
+      '<tr><td colspan="6" class="empty">No global drops of the selected kinds.</td></tr>'}</tbody></table></div>`;
+}
+
+function render() {
+  $("v-mobs").setAttribute("aria-pressed", state.view === "mobs");
+  $("v-items").setAttribute("aria-pressed", state.view === "items");
+  $("mobs").hidden = state.view !== "mobs";
+  $("items").hidden = state.view !== "items";
+  if (state.view === "mobs") renderMobs(); else renderItems();
+  renderGlobal();
+  renderChips();
+}
+
+$("q").addEventListener("input", (e) => { state.q = e.target.value.trim().toLowerCase(); render(); });
+$("rate").addEventListener("input", (e) => {
+  const v = parseFloat(e.target.value);
+  if (v > 0 && v <= 1000) { state.rate = v; save(); render(); }
+});
+$("v-mobs").addEventListener("click", () => { state.view = "mobs"; save(); render(); });
+$("v-items").addEventListener("click", () => { state.view = "items"; save(); render(); });
+$("presets").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-rate]");
+  if (!b) return;
+  state.rate = Number(b.dataset.rate); $("rate").value = state.rate; save(); render();
+});
+$("chips").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-cat]");
+  if (!b) return;
+  const c = b.dataset.cat;
+  if (state.cats.has(c) && state.cats.size > 1) state.cats.delete(c); else state.cats.add(c);
+  render();
+});
+$("rate").value = state.rate;
+render();
+</script>

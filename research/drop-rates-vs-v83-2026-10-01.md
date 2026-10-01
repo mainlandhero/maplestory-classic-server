@@ -106,3 +106,20 @@ repo). The steps are:
 * parse Cosmic's `152-drop-data.sql` with `\((\d+),\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\)`, chance / 1e6;
 * map names with `gm-handbook/mobnames.txt` and the reference source's `mob_drops.json` `mobName`;
 * for a name with several GMS ids, take the id with the most rows.
+
+## 7. Applied, the same day
+
+The owner chose v83 behaviour and asked for the missing items too. `tools/v83_drops.py` does it and
+records how. In short:
+
+* matched mobs take v83's rows, including the items meowdb never listed (2936 rows);
+* meowdb-only rows take the v83 median for their category;
+* items are paired by name, because this client renumbered them;
+* scrolls are paired by what they do (242 of 754), because this client renamed every scroll;
+* quest items are added only when a quest here uses them;
+* the global table is no longer scaled by the rate, and the server holds chances in parts per million.
+
+Equipment per kill at 1x after the change, ours against v83: 0.0103 / 0.0097 (lv 1-20),
+0.0121 / 0.0133 (21-40), 0.0146 / 0.0165 (41-70), 0.0090 / 0.0197 (71+). Scrolls per kill are
+0.0006-0.0009 against v83's 0.0011-0.0018. They are lower because many v83 scrolls (15%, 65%, the
+types this client lacks) have no counterpart here.

@@ -774,13 +774,18 @@ mod tests {
         //
         // 994 since 2026-09-24: the same three mobs' scraped 6% Coupon rows removed - the owner,
         // *"The only thing they should drop are Passes and mesos."*
-        assert_eq!(rows, 994, "every parseable row in data/drops.txt");
-        assert_eq!(gated_rows, 9, "rows this filter can now remove (15 quest-item rows, 6 marble)");
+        //
+        // 3930 since 2026-10-01: the v83 tables (`tools/v83_drops.py`) added the items meowdb
+        // was missing. 43 of those rows are quest items, all nine ids belonging to a quest here
+        // - the builder adds a quest item only when a quest of this client names it, which is
+        // this module's orphan rule applied at build time, and `orphans` below proves it.
+        assert_eq!(rows, 3930, "every parseable row in data/drops.txt");
+        assert_eq!(gated_rows, 43, "rows this filter can remove (quest-item rows, marbles excluded)");
         assert!(
             gated.contains(&4_031_047),
             "the screenshot item must be one of the rows this changes: {gated:?}"
         );
-        assert_eq!(gated.len(), 8, "quest-item ids in data/drops.txt, marbles excluded: {gated:?}");
+        assert_eq!(gated.len(), 9, "quest-item ids in data/drops.txt, marbles excluded: {gated:?}");
         assert!(orphans.is_empty(), "no droppable quest item is an orphan today: {orphans:?}");
     }
 }
