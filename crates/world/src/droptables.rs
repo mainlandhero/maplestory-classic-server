@@ -380,6 +380,11 @@ mod tests {
             for roll in [0u64, 1, 9_999, 10_000, u64::MAX] {
                 assert!(row.hits(roll), "mob {mob}: roll {roll} must still drop it");
             }
+            // The owner, 2026-09-24: *"The only thing they should drop are Passes and mesos."* The
+            // scrape had given all three a 6% Coupon row - stage 1's item, on stage 5.
+            let others: Vec<u32> =
+                tables.for_mob(mob).iter().map(|e| e.item_id).filter(|&i| i != crate::firsttime::PASS && i != MESOS).collect();
+            assert!(others.is_empty(), "mob {mob} drops {others:?} besides Passes and mesos");
         }
         assert!(
             !tables.for_mob(crate::firsttime::KING_SLIME).iter().any(|e| e.item_id == crate::firsttime::SLIME_SHOES),

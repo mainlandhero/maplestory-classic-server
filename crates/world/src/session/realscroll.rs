@@ -236,6 +236,7 @@ impl Session {
                     kind: store::ItemKind::Equip(Some(new_stats)),
                     failed_slots: applied.after.failed_slots,
                     pet_id: None,
+                    rolled_base: None, // server-only; this copy is only drawn
                 };
                 let blob = self.item_blob(&refreshed);
                 let pos = match target {
@@ -344,7 +345,7 @@ impl Session {
         target: Target,
     ) -> Option<(u32, Option<net::opcode::EquipStats>, u8)> {
         match target {
-            Target::Worn(slot) => self.store.worn_item(character_id, slot).ok().flatten(),
+            Target::Worn(slot) => self.store.worn_item(character_id, slot).ok().flatten().map(|(id, s, f, _)| (id, s, f)),
             Target::Bagged(slot) => {
                 let item = self.bag_slot_item(character_id, store::InventoryType::Equip, slot)?;
                 match item.kind {
@@ -372,11 +373,15 @@ impl Session {
                 matches!(self.store.set_worn_equip(character_id, slot, stats, failed_slots), Ok(true))
             }
             Target::Bagged(slot) => {
+                // The rolled base is the ROW's and a scroll does not change it - carried over,
+                // or a scrolled drop would lose what Innocence reverts to (`Item::rolled_base`).
+                let rolled_base = self.bag_slot_item(character_id, store::InventoryType::Equip, slot).and_then(|i| i.rolled_base);
                 let item = store::Item {
                     item_id: equip_id,
                     kind: store::ItemKind::Equip(Some(*stats)),
                     failed_slots,
                     pet_id: None,
+                    rolled_base,
                 };
                 self.store
                     .set_inventory_slot(character_id, store::InventoryType::Equip, slot, &item)

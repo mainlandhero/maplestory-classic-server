@@ -771,7 +771,10 @@ mod tests {
         // (800001, 800002, 800003) and removed the King Slime's scraped 1% Squishy Shoes row -
         // the shoes are per member, in code. `droptables`'
         // `the_last_stage_always_drops_passes_and_never_shared_shoes` pins those rows.
-        assert_eq!(rows, 997, "every parseable row in data/drops.txt");
+        //
+        // 994 since 2026-09-24: the same three mobs' scraped 6% Coupon rows removed - the owner,
+        // *"The only thing they should drop are Passes and mesos."*
+        assert_eq!(rows, 994, "every parseable row in data/drops.txt");
         assert_eq!(gated_rows, 9, "rows this filter can now remove (15 quest-item rows, 6 marble)");
         assert!(
             gated.contains(&4_031_047),

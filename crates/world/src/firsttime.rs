@@ -563,6 +563,12 @@ pub const NELLA_LEAVE: &str =
 /// What Nella asks on the Exit map.
 pub const NELLA_TOWN: &str = "Shall I send you back to Kerning City?";
 
+/// **What never leaves the quest.** The owner, 2026-09-24: *"when people talk to Nella on the Party
+/// Quest exit map, Nella should remove the player of any Passes or Coupons they may have. They
+/// may not be taken outside of the Party Quest area."* Nella on the Exit is the only way out:
+/// a login on a stage lands on the Exit too (`keep_out_of_party_quest_on_login`).
+pub const STAYS_IN_THE_QUEST: [u32; 2] = [COUPON, PASS];
+
 /// The conversation path Lakelis' menu is parked under.
 pub const ASK_PATH: &str = "firsttime.ask";
 /// Lakelis' menu line: go in.

@@ -227,15 +227,24 @@ pub struct Item {
     /// The owner, 2026-09-16: *"Two Husky should not share the same name. The pets should in the
     /// background have different ids to identify them apart."*
     pub pet_id: Option<u32>,
+    /// **The stats this equip rolled when a mob dropped it** - its own clean base, which an
+    /// Innocence reverts to instead of the WZ template. `None` for every item that never
+    /// rolled (anything not dropped by a mob, and everything from before item variance),
+    /// which reverts to the template exactly as before. Server-only, and it travels with the
+    /// row for the same reason `failed_slots` does.
+    ///
+    /// The owner, 2026-09-24: *"Can we make Innocence Scrolls keep a good base roll?"*
+    /// (`world::variance`).
+    pub rolled_base: Option<EquipStatSet>,
 }
 
 impl Item {
     pub fn equip(item_id: u32) -> Self {
-        Item { item_id, kind: ItemKind::Equip(None), failed_slots: 0, pet_id: None }
+        Item { item_id, kind: ItemKind::Equip(None), failed_slots: 0, pet_id: None, rolled_base: None }
     }
 
     pub fn bundle(item_id: u32, quantity: u16) -> Self {
-        Item { item_id, kind: ItemKind::Bundle { quantity }, failed_slots: 0, pet_id: None }
+        Item { item_id, kind: ItemKind::Bundle { quantity }, failed_slots: 0, pet_id: None, rolled_base: None }
     }
 
     /// The owner: *"Please do not allow untradeable items to be stored."* Same answer as
@@ -460,6 +469,7 @@ pub(crate) fn item_columns() -> Vec<&'static str> {
     // exactly the offset it was before.
     c.push(FAILED_SLOTS_COLUMN);
     c.push(PET_ID_COLUMN);
+    c.push(ROLLED_BASE_COLUMN);
     c
 }
 
@@ -469,6 +479,73 @@ pub(crate) const FAILED_SLOTS_COLUMN: &str = "failed_slots";
 /// The second, after it. See [`Item::pet_id`]. Nullable: NULL is every non-pet row.
 pub(crate) const PET_ID_COLUMN: &str = "pet_id";
 
+/// The third. See [`Item::rolled_base`]. Nullable TEXT: NULL is "never rolled - the template
+/// is its base", and a value is the 17 stats in [`EquipStatSet`] field order, comma-separated.
+/// One column rather than seventeen because nothing ever queries a single stat of it.
+pub(crate) const ROLLED_BASE_COLUMN: &str = "rolled_base";
+
+/// [`Item::rolled_base`] -> the column. **Exhaustive**: a new stat on `EquipStatSet` stops this
+/// compiling until it is decided whether it is stored.
+pub(crate) fn rolled_base_text(set: &Option<EquipStatSet>) -> Value {
+    let Some(set) = set else { return Value::Null };
+    let EquipStatSet {
+        inc_str,
+        inc_dex,
+        inc_int,
+        inc_luk,
+        inc_mhp,
+        inc_mmp,
+        inc_speed,
+        inc_jump,
+        inc_pad,
+        inc_mad,
+        inc_pdd,
+        inc_mdd,
+        inc_acc,
+        inc_eva,
+        inc_crt,
+        inc_crd,
+        inc_wat,
+    } = set;
+    let v = [
+        inc_str, inc_dex, inc_int, inc_luk, inc_mhp, inc_mmp, inc_speed, inc_jump, inc_pad, inc_mad, inc_pdd, inc_mdd,
+        inc_acc, inc_eva, inc_crt, inc_crd, inc_wat,
+    ];
+    Value::Text(v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(","))
+}
+
+/// The column -> [`Item::rolled_base`]. Anything that is not exactly 17 numbers reads as
+/// `None` - a hand-edited value that does not parse means "revert to the template", which is
+/// what the item did before item variance existed, rather than an item with no stats.
+pub(crate) fn rolled_base_from(text: Option<String>) -> Option<EquipStatSet> {
+    let text = text?;
+    let v: Vec<u16> = text.split(',').map(|x| x.trim().parse::<u16>()).collect::<std::result::Result<_, _>>().ok()?;
+    let [inc_str, inc_dex, inc_int, inc_luk, inc_mhp, inc_mmp, inc_speed, inc_jump, inc_pad, inc_mad, inc_pdd, inc_mdd, inc_acc, inc_eva, inc_crt, inc_crd, inc_wat] =
+        <[u16; 17]>::try_from(v).ok()?;
+    Some(EquipStatSet {
+        inc_str,
+        inc_dex,
+        inc_int,
+        inc_luk,
+        inc_mhp,
+        inc_mmp,
+        inc_speed,
+        inc_jump,
+        inc_pad,
+        inc_mad,
+        inc_pdd,
+        inc_mdd,
+        inc_acc,
+        inc_eva,
+        inc_crt,
+        inc_crd,
+        inc_wat,
+    })
+}
+
+/// A worn item as the `equipment` row holds it: id, stats, failed slots, rolled base.
+pub type WornItem = (u32, Option<EquipStats>, u8, Option<EquipStatSet>);
+
 /// The `equipment` columns a worn item is read back with, and the reader for them.
 ///
 /// **Its own helper because both unequip paths have to carry `failed_slots`**, and a path that
@@ -477,19 +554,19 @@ pub(crate) const PET_ID_COLUMN: &str = "pet_id";
 /// applies to the stat block: the comment at the second call site records that it used to
 /// select `item_id` alone and flattened a scrolled item on the way back to the bag.
 pub(crate) fn worn_columns() -> String {
-    format!("{}, {}", EQUIP_STAT_COLUMNS.join(", "), FAILED_SLOTS_COLUMN)
+    format!("{}, {}, {}", EQUIP_STAT_COLUMNS.join(", "), FAILED_SLOTS_COLUMN, ROLLED_BASE_COLUMN)
 }
 
-/// `(item_id, stats, failed_slots)` from a row selected with [`worn_columns`] after `item_id`.
-pub(crate) fn worn_from_row(
-    row: &rusqlite::Row<'_>,
-) -> rusqlite::Result<(u32, Option<EquipStats>, u8)> {
+/// [`WornItem`] from a row selected with [`worn_columns`] after `item_id`.
+pub(crate) fn worn_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WornItem> {
     let item_id = u32::try_from(row.get::<_, i64>(0)?).unwrap_or(0);
     let stats = equip_stats_from_row(row, 1)?;
     // Tolerant of a missing value for the same reason `item_from_row` is: a row written before
     // the column existed has no failures, which is what 0 says.
     let failed: i64 = row.get(1 + EQUIP_STAT_COLUMN_COUNT).unwrap_or(0);
-    Ok((item_id, stats, u8::try_from(failed).unwrap_or(0)))
+    // And no rolled base, which is what NULL says: revert to the template.
+    let rolled: Option<String> = row.get(2 + EQUIP_STAT_COLUMN_COUNT).unwrap_or(None);
+    Ok((item_id, stats, u8::try_from(failed).unwrap_or(0), rolled_base_from(rolled)))
 }
 
 /// The stat columns as SQL declarations. Nullable on purpose: NULL is "no per-item stats
@@ -693,6 +770,7 @@ pub(crate) fn item_values(item: &Item) -> Vec<Value> {
         Some(id) => Value::Integer(i64::from(id)),
         None => Value::Null,
     });
+    out.push(rolled_base_text(&item.rolled_base));
     out
 }
 
@@ -715,11 +793,14 @@ pub(crate) fn item_from_row(row: &rusqlite::Row<'_>, base: usize) -> rusqlite::R
     let failed_slots: i64 = row.get(base + 3 + EQUIP_STAT_COLUMN_COUNT).unwrap_or(0);
     // And the pet id after it, NULL (or absent) for anything that is not a numbered pet.
     let pet_id: Option<i64> = row.get(base + 4 + EQUIP_STAT_COLUMN_COUNT).unwrap_or(None);
+    // And the rolled base after that, NULL for anything that never rolled.
+    let rolled: Option<String> = row.get(base + 5 + EQUIP_STAT_COLUMN_COUNT).unwrap_or(None);
     Ok(Item {
         item_id: u32::try_from(item_id).unwrap_or(0),
         kind,
         failed_slots: u8::try_from(failed_slots).unwrap_or(0),
         pet_id: pet_id.and_then(|v| u32::try_from(v).ok()),
+        rolled_base: rolled_base_from(rolled),
     })
 }
 
@@ -822,7 +903,7 @@ pub const ITEM_ID_RENAMES: &[(u32, u32)] = &[
 /// (worn items) is here because the invariant is "every table with the column", not
 /// "every table a box could be in" - the test below derives the list from the schema and
 /// fails the moment a fifth table appears without being added.
-pub const ITEM_ID_TABLES: &[&str] = &["inventory", "equipment", "cash_locker", "storage_item", "pets", "gifts"];
+pub const ITEM_ID_TABLES: &[&str] = &["inventory", "equipment", "cash_locker", "storage_item", "pets", "gifts", "effect_item"];
 
 /// Apply [`ITEM_ID_RENAMES`] to every table in [`ITEM_ID_TABLES`]. Runs on every open.
 pub(crate) fn rename_item_ids(conn: &Connection) -> Result<()> {
@@ -883,6 +964,11 @@ pub(crate) fn add_equip_stat_columns(conn: &Connection, table: &str) -> Result<(
     // numbers those on the next open.
     if !existing.contains(PET_ID_COLUMN) {
         conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {PET_ID_COLUMN} INTEGER"), [])?;
+    }
+    // The rolled base, 2026-09-24, nullable: NULL is the truthful value for every item that
+    // predates item variance - it never rolled, and the template is its base.
+    if !existing.contains(ROLLED_BASE_COLUMN) {
+        conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {ROLLED_BASE_COLUMN} TEXT"), [])?;
     }
     Ok(())
 }
@@ -1754,7 +1840,7 @@ impl Store {
         &self,
         character_id: u32,
         equip_slot: u8,
-    ) -> Result<Option<(u32, Option<EquipStats>, u8)>> {
+    ) -> Result<Option<WornItem>> {
         let conn = self.conn();
         let got = conn
             .query_row(
@@ -1900,14 +1986,14 @@ impl Store {
                 worn_from_row,
             )
             .optional()?;
-        let Some((item_id, stats, failed_slots)) = worn else {
+        let Some((item_id, stats, failed_slots, rolled_base)) = worn else {
             return Err(StoreError::SlotEmpty { slot: u16::from(equip_slot) });
         };
         tx.execute(
             "DELETE FROM equipment WHERE character_id = ?1 AND slot = ?2",
             rusqlite::params![i64::from(character_id), equip_slot],
         )?;
-        let item = Item { item_id, kind: ItemKind::Equip(stats), failed_slots, pet_id: None };
+        let item = Item { item_id, kind: ItemKind::Equip(stats), failed_slots, pet_id: None, rolled_base };
         set_slot(&tx, character_id, inv_type, dst, &item)?;
         tx.commit()?;
         Ok(InvItem { inv_type, slot: dst, item })
@@ -1969,7 +2055,7 @@ impl Store {
                 worn_from_row,
             )
             .optional()?;
-        let displaced = worn.as_ref().map(|(item_id, _, _)| *item_id);
+        let displaced = worn.as_ref().map(|(item_id, _, _, _)| *item_id);
         if worn.is_some() {
             tx.execute(
                 "DELETE FROM equipment WHERE character_id = ?1 AND slot = ?2",
@@ -1986,7 +2072,7 @@ impl Store {
         // would silently lose every Clean Slate they had earned on it.
         let columns = worn_columns();
         let placeholders: Vec<String> =
-            (4..4 + EQUIP_STAT_COLUMN_COUNT + 1).map(|i| format!("?{i}")).collect();
+            (4..4 + EQUIP_STAT_COLUMN_COUNT + 2).map(|i| format!("?{i}")).collect();
         let mut values = vec![
             Value::Integer(i64::from(character_id)),
             Value::Integer(i64::from(equip_slot)),
@@ -2001,6 +2087,7 @@ impl Store {
             }
         }
         values.push(Value::Integer(i64::from(item.failed_slots)));
+        values.push(rolled_base_text(&item.rolled_base));
         tx.execute(
             &format!(
                 "INSERT INTO equipment (character_id, slot, item_id, {columns})
@@ -2011,13 +2098,13 @@ impl Store {
         )?;
         // The displaced item lands in `src`, which the DELETE above has just emptied. This
         // is why a swap needs no free slot.
-        if let Some((item_id, stats, failed_slots)) = worn {
+        if let Some((item_id, stats, failed_slots, rolled_base)) = worn {
             set_slot(
                 &tx,
                 character_id,
                 inv_type,
                 src,
-                &Item { item_id, kind: ItemKind::Equip(stats), failed_slots, pet_id: None },
+                &Item { item_id, kind: ItemKind::Equip(stats), failed_slots, pet_id: None, rolled_base },
             )?;
         }
         tx.commit()?;
@@ -2248,7 +2335,7 @@ mod tests {
                 chr.id,
                 InventoryType::Equip,
                 3,
-                &Item { item_id: 1040002, kind: ItemKind::Equip(Some(scrolled)), failed_slots: 0, pet_id: None },
+                &Item { item_id: 1040002, kind: ItemKind::Equip(Some(scrolled)), failed_slots: 0, pet_id: None, rolled_base: None },
             )
             .unwrap();
 
@@ -2274,8 +2361,13 @@ mod tests {
     /// The owner, 2026-09-09: *"If the item previously had 2 failed scroll slots, the player is
     /// allowed to use 2 clean slate scrolls on the item."* That promise only holds if the
     /// count outlives the bag.
+    ///
+    /// **The rolled base rides the same mechanism** (`Item::rolled_base`, 2026-09-24): an
+    /// Innocence reverts a mob-dropped equip to it, so losing it on an equip would turn a good
+    /// roll into the template the first time the player scrolled it.
     #[test]
     fn the_failed_slot_count_survives_the_bag_and_back() {
+        let rolled = EquipStatSet { inc_pdd: 23, inc_str: 2, ..EquipStatSet::default() };
         let store = Store::open_in_memory().unwrap();
         let account = store.create_account("wisp", "correct horse battery").unwrap();
         let chr = store.create_character(account, 0, &dressed()).unwrap();
@@ -2291,6 +2383,7 @@ mod tests {
                     kind: ItemKind::Equip(Some(EquipStats::default())),
                     failed_slots: 2,
                     pet_id: None,
+                    rolled_base: Some(rolled),
                 },
             )
             .unwrap();
@@ -2299,10 +2392,20 @@ mod tests {
         let in_bag = store.bag_items(chr.id, InventoryType::Equip).unwrap();
         let row = in_bag.iter().find(|i| i.slot == 3).expect("it is in the bag");
         assert_eq!(row.item.failed_slots, 2, "the bag row kept the count");
+        assert_eq!(row.item.rolled_base, Some(rolled), "and the rolled base");
 
         store.equip_from_bag(chr.id, 3, 5).unwrap();
+        assert_eq!(store.worn_item(chr.id, 5).unwrap().unwrap().3, Some(rolled), "worn, it is still there");
         let back = store.unequip_to_bag(chr.id, 5, None).unwrap();
         assert_eq!(back.item.failed_slots, 2, "on, then off, and the count is still 2");
+        assert_eq!(back.item.rolled_base, Some(rolled), "on, then off, and the rolled base too");
+
+        // And a malformed value reads as "never rolled", not as an item with no stats.
+        assert_eq!(rolled_base_from(Some("1,2,3".into())), None);
+        assert_eq!(rolled_base_from(Some(match rolled_base_text(&Some(rolled)) {
+            Value::Text(t) => t,
+            v => panic!("{v:?}"),
+        })), Some(rolled), "the text round-trips");
     }
 
     /// Equipping over a worn item **swaps** it into the slot the new one came from.
@@ -2366,7 +2469,7 @@ mod tests {
                 chr.id,
                 InventoryType::Equip,
                 1,
-                &Item { item_id: 1040002, kind: ItemKind::Equip(Some(scrolled)), failed_slots: 0, pet_id: None },
+                &Item { item_id: 1040002, kind: ItemKind::Equip(Some(scrolled)), failed_slots: 0, pet_id: None, rolled_base: None },
             )
             .unwrap();
         store.equip_from_bag(chr.id, 1, 5).unwrap();
@@ -2396,7 +2499,7 @@ mod tests {
                 chr,
                 InventoryType::Equip,
                 2,
-                &Item { item_id: 1040002, kind: ItemKind::Equip(Some(EquipStats::default())), failed_slots: 0, pet_id: None },
+                &Item { item_id: 1040002, kind: ItemKind::Equip(Some(EquipStats::default())), failed_slots: 0, pet_id: None, rolled_base: None },
             )
             .unwrap();
         let zeroed = store.inventory_slot(chr, InventoryType::Equip, 2).unwrap().unwrap();
@@ -2449,7 +2552,7 @@ mod tests {
                 chr,
                 InventoryType::Equip,
                 1,
-                &Item { item_id: 1302000, kind: ItemKind::Equip(Some(stats)), failed_slots: 0, pet_id: None },
+                &Item { item_id: 1302000, kind: ItemKind::Equip(Some(stats)), failed_slots: 0, pet_id: None, rolled_base: None },
             )
             .unwrap();
         let back = store.inventory_slot(chr, InventoryType::Equip, 1).unwrap().unwrap();
