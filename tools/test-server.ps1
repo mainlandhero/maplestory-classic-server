@@ -2519,7 +2519,7 @@
             only the owner's screen changes -> the map copy of 0x027B is dropped; say so
           HAT: put the Blue Top Hat on the pet with Tester2 already in the map.
             Tester2 sees the hat at once             -> DONE
-            Tester2 sees TWO the owner's, or a frozen one  -> the second 0x0224 duplicates the user;
+            Tester2 sees TWO copies of the owner's character, or a frozen one  -> the second 0x0224 duplicates the user;
                        STOP, say so - the beauty coupon uses the same path and never tested it
             Tester2 sees nothing until a map change  -> the redraw ignores the look; say so
           FEEDING (2026-09-15, the owner: +30 fullness, +1 closeness, -1 fullness every five
@@ -6132,7 +6132,7 @@ function Show-TestPlan {
         Write-Host '         owner only -> the map 0x027B is dropped; say so' -ForegroundColor Yellow
         Write-Host '       HAT: Blue Top Hat on the pet with Tester2 present:'
         Write-Host '         Tester2 sees it at once -> DONE' -ForegroundColor Green
-        Write-Host '         Tester2 sees TWO the owner''s / a frozen one -> STOP, say so' -ForegroundColor Red
+        Write-Host '         Tester2 sees TWO copies of the owner''s character / a frozen one -> STOP, say so' -ForegroundColor Red
         Write-Host '         nothing until a map change -> redraw ignores the look' -ForegroundColor Yellow
         Write-Host '       FEEDING: Pet Food (Lucy, 35 mesos) on the Husky, Show Pet Info open:'
         Write-Host '         Fullness +30, Closeness +1, Level 2 -> DONE (0x0112, never captured)' -ForegroundColor Green

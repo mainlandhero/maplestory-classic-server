@@ -21,6 +21,38 @@ Rust workspace, SQLite, patched client in `client-patched/`. Testing only.
   put a `-Probe` watch on `141177e40` - its int3 is the byte the guard reads. A test fails if
   `hook.rs` stops calling it.
 
+## The repository is anonymous - never write personal or machine information into it
+
+The owner asked for this explicitly (2026-09-30), and the whole history was rewritten to
+remove what had leaked. It applies to **everything committed**: code, comments, docs,
+`STATUS.md`, `research/`, fixtures, test data and commit messages. The only exception is the
+commit author line.
+
+**Never write:**
+
+- the owner's name, email address or any account name that is theirs - call them **"the
+  owner"**, and use **neutral pronouns** (they/them/their) for the owner and for anyone else;
+- **user-profile paths** (`C:\Users\<name>\...`), the real checkout location, scratchpad or
+  temp paths - write `C:\MapleCW` for the repository in docs and commands;
+- **hostnames, usernames, public IP addresses, LAN addresses of real machines**, MAC addresses,
+  Windows SIDs - use `127.0.0.1` or the documentation ranges `192.0.2.x`, `198.51.100.x`,
+  `203.0.113.x`;
+- **hardware or OS details** of any real machine (CPU model, OS edition, RAM, uptime);
+- **real player handles or real people's names** as character, account or party names -
+  use non-name handles (`Wisp`, `Tester2`, `Cobalt`, `Pebble`, ...). Game content keeps its
+  own names (NPCs, items, collaboration cosmetics);
+- secrets of any kind (webhook URLs, keys, tokens) - those live in gitignored files.
+
+**Fixtures are where this leaks.** A copied `world-ch0.log` carries the players' character
+names, the server's public address line and user paths. Before anything goes into
+`research/fixtures/`, replace them: names with the same-length handles above (hex dumps keep
+their byte lengths - a name inside a packet is also in the hex), the public address with a
+documentation-range one, paths with `C:\MapleCW`. Check with
+`git grep -i -E "Users[\\/]+[A-Za-z]"` and a grep for the handles before committing.
+
+**Commands written in chat** still need the real full path (see Shell below): take it from the
+session's working directory, never from this file, and never write it back into the repo.
+
 ## Shell
 
 Windows PowerShell **5.1**, from an **elevated** window. `pwsh` is **not installed**.
