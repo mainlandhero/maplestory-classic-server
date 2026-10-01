@@ -382,6 +382,82 @@ carries risk**: the handler's trailing virtual call resolves to a method that re
 and if that resolution is wrong the body is short. Plan step 13(b) asks for `client-exit.log`
 rather than assuming. Never on a screen.
 
+**2026-10-01: Chaos, Pure Clean Slate, Innocence and the Lucky Day Scroll, backported from the modern
+client - dragged onto equipment like any scroll.** The owner: *"I want to be able to preserve the click and
+drag scrolling which we cannot achieve with our hacked-together Scroll of Secrets method"*; *"We can use
+the success rates shown on the modern items"*; Lucky Day *"will automatically make the next scroll used on
+that item to automatically succeed without respecting its success percentage"*, its text changed to
+*"Increases the success chance of your next scroll by 100%"*.
+* **Client data** (`tools/backport_signature_style.py` by id, `tools/backport_install.py --install`, run
+  2026-10-01, 29 archives, every image parses, all 14 icon outlinks of the seven resolve): Pure Clean
+  Slate 1/3/5/20% `2049000..2049003`, Chaos 60% `2049100`, **Innocence 70% as `2049190`** (modern
+  2049600), Lucky Day `2530000`. gm-handbook regenerated; the store's pinned item count 2871 -> 2878.
+* **Why Innocence moved [L]**: the drag handler's applicability predicate `FUN_1404174b0` lets
+  `2049000..2049199` onto any non-pet equip (`0x14041752c`), and sends 2049600 to the category rule,
+  which no equip meets - the client would refuse the drag itself. Neither the client nor the server
+  checks remaining slots before sending, so the server's rules decide (Clean Slate with nothing to
+  restore is refused and takes nothing).
+* **Server**: `scrolls::BACKPORTED` - each is a `!scroll` mode at its tooltip's rate
+  (`Chance::Percent`, which also lets Innocence miss: a miss changes nothing); they arrive on `0x0125`
+  and are recognised before the 0204 scroll table. Not on pet equipment (the client's own exclusion).
+* **Lucky Day [L for the path, I for the bit]**: a `2530000..2532999` drag goes to `FUN_1417ea820`, the
+  client's own confirm (`0x0F13`), then **`0x0126`** (`FUN_142cc7bf0`) - the same five fields as
+  `0x0125`, same latch. `realscroll::on_item_enhancer` sets **attribute bit 9** on the item (the client
+  tests bits 8 and 9 together at `0x1417e9a30` for *"already has a Lucky Day or Protection Scroll"*;
+  v214 names 0x200 LuckyDay - which of the pair is which is the [I]). The next scroll on it -
+  real (at 100%, so it cannot destroy), backported, or `!scroll`'s Scroll of Secrets - succeeds and
+  clears the bit. A second Lucky Day on a marked item is refused, free.
+* **Players need the new client data** - the launcher's patch, or client-patched directly. No drop
+  table or shop sells them yet (`!item` only). Tests: `scrolls`, `session::realscroll`. **Unseen on a
+  screen** - plan step 30, which also asks what the tooltip draws for bit 9.
+
+**2026-10-01: the overall's take-off reaches the client, and a sale no longer jumps the shop's tab.**
+* The owner: *"when I have a top and bottom worn currently, by equipping an overall, it takes off the
+  top but leaves the bottom in conflict. I will try to take off the bottom to no avail, but it does
+  happen in the backend, I just need to change maps for it to show up."* Since 2026-08-29 the store
+  moved the bottom into the bag, but the reply carried only the overall's mode-2 swap - so the
+  client kept drawing the bottom at -6, and unequipping it named a slot the server had emptied
+  (refused). Now the take-off goes out first as its own `0x0070` (`-6 -> bag slot`, or `-5 -> bag
+  slot` for a bottom over an overall; Deco 105/106 the same), then the equip unchanged. Tests check
+  both bodies.
+* The owner: *"subsequent selling to NPC shop from another tab erroneously goes back to the previously
+  opened shop tab."* **[L]**: `0x055E` type 0's arm ends by selecting inventory tab
+  `shopUI+0x4ac - 1` (`141fa68a5`), and the only writer of `+0x4ac` in the shop's code is the BUY
+  request (`141fb7fff`, the item's inventory type) - `tools/fieldrefs.py` over the shop's range finds
+  that write and that read and nothing else. So a sale answered with type 0 re-selected the last
+  purchase's tab. A sale is now answered with **type 16** (reads nothing, only clears the latch);
+  the `0x0070` remove and the mesos carry the sale. **[I]**: whether the sell list redraws without
+  type 0's list rebuild - plan step 29(c) asks. Recharge still answers type 0 (same jump, unreported).
+
+**2026-10-01: the Community Board gives one daily and one weekly per character, fixed for the period,
+and only what the character's level can turn in.** The owner, with a live-server screenshot of three
+"Donating to Henesys" in progress, the selected one needing level 22: *"Weeklies should only be allowed
+once per character, and the highest level weekly at time of weekly reset is allowed"*, and *"once the
+user completes a daily, even if they advance in citizen rank, they should not be offered a new daily
+quest"*. Both came from the posting being recomputed from the grade on every send: each grade-up
+mid-week posted the next tier's donation beside the one already taken, and a daily turned in at grade 4
+was followed by a leader daily at grade 5. Now (`citizenship::settle`, table `board_pick`):
+* the period's pick is made the first time an active citizen is seen in it and **kept**; the tier is
+  the highest whose grade gate AND `Check.1.lvmin` the character meets (donations finish at
+  `12 + 5 (g - 1)` **[L]**, newly read into `Quest::complete_min_level`). A daily is one resident,
+  or the leader instead at grade 5 / level 32 - no longer both;
+* once a group's quest is turned in, the group posts `q1_d=` / `q1_w=` until the period turns (the
+  First Greeting counts, so its check-in waits too); the server's start gate says so;
+* a board quest in progress when the period turns is that period's pick; **extra in-progress ones
+  are given up** when the pick is made - the highest one the level can finish is kept. The live
+  characters with several are cleaned at their next field entry, before the quest book is read
+  (`quest_book` now builds block #28 first), and live by a `0x0089` give-up record.
+
+**2026-10-01: `!scroll` - the Treasure Scroll guarantees a Scroll of Secrets, and the result asks to
+go on.** The owner: *"Treasure Scroll should work for Scroll of Secrets"*, and *"once users finish
+scrolling with !scroll and the result screen shows, they should be asked if they want to continue
+scrolling if they have more scrolls in their inventory"*. The Treasure branch's scroll menu lists
+"Scroll of Secrets as a Chaos Scroll / Clean Slate Scroll" after the real scrolls while one is held
+(Innocence always works, so it is not offered); it applies the mode at `Chance::Guaranteed`, spends one
+of each, and claims no daily pass. After any result, with either scroll left, the result box is a
+yes/no (`scroll.again`): Yes opens the `!scroll` menu, No closes silently. Tests in `scrollnpc` and
+`session::scroll`. **Unseen on a screen** - plan step 28.
+
 **2026-10-01: drops are v83's - chances, the rate rule and the missing items - and a drop-table page.**
 The owner: *"Please make them closer to v83 drop rates and drop behavior ... If there's an item in our server
 not dropped but the old sources have them as dropping as such, add them"*, after
