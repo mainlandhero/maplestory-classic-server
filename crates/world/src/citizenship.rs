@@ -54,16 +54,38 @@
 //! **resident** - both ids posted - and the client shows whichever half applies: a newcomer gets
 //! the greeting (once, ever), everyone after gets the check-in.
 //!
-//! * **Daily:** one resident a day from the grade-1 residents, and at grade 5+ one town leader
-//!   as well (the site: "Grade 5 adds the town leaders' VIP dailies").
-//! * **Weekly:** one donation a week, **at the character's own grade** - each donation is gated
-//!   at a grade and pays `500 + 250 (g - 1)` **[L]**, and the site's "one donation a week" at
-//!   "500 at grade 1, +250 per grade" is exactly that. The pick is per grade tier, the same for
-//!   everyone at that tier.
+//! * **Daily:** one resident a day - a grade-1 resident, or at grade 5+ (and level 32, the
+//!   level the leaders' check-ins need) one of the town leaders instead.
+//! * **Weekly:** one donation a week, **at the highest tier the character reaches** - each
+//!   donation is gated at a grade and pays `500 + 250 (g - 1)` **[L]**, and the site's "one
+//!   donation a week" at "500 at grade 1, +250 per grade" is exactly that.
+//!
+//! **A tier is reached by grade AND level.** The donations all *start* at level 12 but
+//! *finish* at `12 + 5 (g - 1)` (`Check.1.lvmin`) **[L]**, and the client will not turn one in
+//! below that. The owner, 2026-10-01, with a screenshot of a grade-3 posting a character could
+//! not complete: *"player having access to a weekly that they do not fulfill the level
+//! requirement for"*.
+//!
+//! **One per character per period, chosen when the period starts and kept** ([`settle`],
+//! `store::citizenship`'s `board_pick`). The same screenshot had three donations in progress:
+//! the posting was recomputed from the grade every time, so each grade-up mid-week posted the
+//! next tier's donation beside the one already taken. The owner: *"Weeklies should only be
+//! allowed once per character, and the highest level weekly at time of weekly reset is
+//! allowed"*, and *"once the user completes a daily, even if they advance in citizen rank,
+//! they should not be offered a new daily quest"*. So:
+//!
+//! * the period's pick is made the first time the character is seen in it, as an active
+//!   citizen, and stored - a grade or a level gained later waits for the next period;
+//! * a board quest still in progress when the period turns **is** the pick (no second one);
+//! * once one of the group's quests is turned in, the group posts nothing until the period
+//!   turns - a daily's First Greeting included, so its check-in waits too;
+//! * extra in-progress quests from before this rule (and any the character cannot finish at
+//!   their level) are given up when the pick is made: the highest finishable one is kept.
 //!
 //! The picks walk a shuffled order of each tier, reshuffled every cycle, so every resident and
 //! every donation comes round once per cycle. Seeded from the period number only - every
-//! channel is its own process and they must all post the same thing without talking.
+//! channel is its own process and they must all post the same thing without talking. The
+//! per-character part is only which tier, and when.
 //!
 //! Days are **UTC**, like the Maple Administrator's (`store::dailyperks`).
 
@@ -476,39 +498,97 @@ pub fn tier_picks(
         .collect()
 }
 
-/// What `group` posts for a character whose grade in that town is `grade` (1 when they are
-/// not a citizen there - the client locks those quests anyway). See the module docs: a daily
-/// posts every tier at or below the grade, a weekly only the highest.
-pub fn posted_for(
+/// The pick a character reaching `grade` and `level` gets in `period`: the highest tier whose
+/// grade gate they meet and whose quests they can turn in (`Check.1.lvmin`). Empty when no
+/// tier qualifies.
+pub fn fresh_pick(
     group: &BoardGroup,
     quests: &std::collections::HashMap<u32, crate::config::Quest>,
     period: i64,
     grade: u8,
+    level: u32,
 ) -> Vec<u32> {
-    let reachable: Vec<(u8, Vec<u32>)> = tier_picks(group, quests, period).into_iter().filter(|(g, _)| *g <= grade).collect();
-    if group.weekly {
-        reachable.last().map(|(_, q)| q.clone()).unwrap_or_default()
-    } else {
-        reachable.into_iter().flat_map(|(_, q)| q).collect()
-    }
+    tier_picks(group, quests, period)
+        .into_iter()
+        .rfind(|(g, ids)| *g <= grade && ids.iter().all(|q| finish_level(quests, *q) <= level))
+        .map(|(_, ids)| ids)
+        .unwrap_or_default()
 }
 
-/// The four board records for a character, as `(qrID, "qrKey=id|id")` - block #28 at field
-/// entry and `0x0089` sub-case 13 when a period turns.
-pub fn board_records(
-    towns: &[TownStanding],
+fn finish_level(quests: &std::collections::HashMap<u32, crate::config::Quest>, quest_id: u32) -> u32 {
+    quests.get(&quest_id).map_or(0, |q| q.complete_min_level)
+}
+
+/// One of the character's quest rows in a board group, as [`settle`] reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoardRow {
+    pub quest_id: u32,
+    pub in_progress: bool,
+    pub completed_at: Option<i64>,
+}
+
+/// What [`settle`] decided for one group.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Settled {
+    /// The period's pick - store it when `save` is set.
+    pub pick: Vec<u32>,
+    pub save: bool,
+    /// In-progress quests to give up: they are not this period's one.
+    pub drop: Vec<u32>,
+    /// What the board record lists now: the pick, or nothing once one was turned in.
+    pub posted: Vec<u32>,
+}
+
+/// The whole posting rule for one group and one ACTIVE citizen - see the module docs.
+/// `stored` is the kept `(period, pick)`, `rows` the character's quest rows in this group.
+pub fn settle(
+    group: &BoardGroup,
     quests: &std::collections::HashMap<u32, crate::config::Quest>,
-    unix_secs: i64,
-) -> Vec<(u32, String)> {
-    BOARD_GROUPS
+    now: i64,
+    grade: u8,
+    level: u32,
+    stored: Option<(i64, Vec<u32>)>,
+    rows: &[BoardRow],
+) -> Settled {
+    let period = group.period(now);
+    let mut out = Settled::default();
+    match stored {
+        Some((p, pick)) if p == period => out.pick = pick,
+        _ => {
+            out.save = true;
+            let gate = |q: u32| quests.get(&q).and_then(|q| q.citizenship_check).map_or(1, |(_, g)| g);
+            let keep = rows
+                .iter()
+                .filter(|r| r.in_progress && group.contains(r.quest_id) && finish_level(quests, r.quest_id) <= level)
+                .max_by_key(|r| (gate(r.quest_id), r.quest_id))
+                .map(|r| r.quest_id);
+            out.drop = rows
+                .iter()
+                .filter(|r| r.in_progress && group.contains(r.quest_id) && Some(r.quest_id) != keep)
+                .map(|r| r.quest_id)
+                .collect();
+            out.pick = match keep {
+                // A daily resident is both halves; the client shows whichever applies.
+                Some(q) if group.odd_do_not_repeat => {
+                    let odd = if q % 2 == 1 { q } else { q - 1 };
+                    vec![odd, odd + 1]
+                }
+                Some(q) => vec![q],
+                None => fresh_pick(group, quests, period, grade, level),
+            };
+        }
+    }
+    let turned_in = rows
         .iter()
-        .map(|g| {
-            let grade = towns.iter().find(|t| t.town == g.town && t.is_active()).map_or(1, |t| t.grade);
-            let ids = posted_for(g, quests, g.period(unix_secs), grade);
-            let list = ids.iter().map(u32::to_string).collect::<Vec<_>>().join("|");
-            (g.record_quest, format!("{}={list}", g.key))
-        })
-        .collect()
+        .any(|r| group.contains(r.quest_id) && r.completed_at.is_some_and(|at| group.period(at) == period));
+    out.posted = if turned_in { Vec::new() } else { out.pick.clone() };
+    out
+}
+
+/// A group's record value, `qrKey=id|id`.
+pub fn board_record(group: &BoardGroup, posted: &[u32]) -> String {
+    let list = posted.iter().map(u32::to_string).collect::<Vec<_>>().join("|");
+    format!("{}={list}", group.key)
 }
 
 /// Whether a COMPLETED board quest may be picked up again at `now` - the client's own table,
@@ -532,8 +612,16 @@ mod tests {
     /// 1 x6, 2, 3 x3, 4, 5 x2 (Kerning x3), 6, 7, 8, 9.
     fn board_quests() -> HashMap<u32, Quest> {
         let mut m = HashMap::new();
+        // `Check.1.lvmin`: 12 for a resident, 32 for a leader, `12 + 5 (g - 1)` for a donation.
         let mut put = |id: u32, town: u8, grade: u8| {
-            m.insert(id, Quest { citizenship_check: Some((town, grade)), ..Quest::default() });
+            let complete_min_level = if (506_019..=506_035).contains(&id) || (506_119..=506_136).contains(&id) {
+                12 + 5 * (u32::from(grade) - 1)
+            } else if grade == 5 {
+                32
+            } else {
+                12
+            };
+            m.insert(id, Quest { citizenship_check: Some((town, grade)), complete_min_level, ..Quest::default() });
         };
         for (first, town) in [(506_001u32, 1u8), (506_101, 2)] {
             for q in first..first + 14 { put(q, town, 1); }
@@ -562,6 +650,7 @@ mod tests {
         let fixture = board_quests();
         for (id, q) in &fixture {
             assert_eq!(real[id].citizenship_check, q.citizenship_check, "quest {id}");
+            assert_eq!(real[id].complete_min_level, q.complete_min_level, "quest {id}: Check.1.lvmin");
         }
         assert_eq!(real[&506_035].citizenship_contr.as_ref().unwrap().amount, Some(2_500));
         // `Act.1.money`: 255 quests, all positive, all read (paid at the Quest rate since
@@ -657,25 +746,31 @@ mod tests {
         assert_eq!(board_group_of(506_000), None);
     }
 
-    /// One resident a day (plus a leader at grade 5); one donation a week at your own grade.
+    /// One resident a day, a leader instead at grade 5 and level 32; one donation a week at the
+    /// highest tier grade AND level reach.
     #[test]
-    fn a_daily_posts_a_resident_and_a_weekly_one_donation_at_your_grade() {
+    fn a_fresh_pick_is_the_highest_tier_grade_and_level_both_reach() {
         let q = board_quests();
         for period in 0..40 {
-            let d = posted_for(&BOARD_GROUPS[0], &q, period, 1);
+            let d = fresh_pick(&BOARD_GROUPS[0], &q, period, 1, 200);
             assert_eq!(d.len(), 2);
             assert_eq!(d[0] % 2, 1, "the greeting half");
             assert_eq!(d[1], d[0] + 1, "and its check-in");
             assert!(d[0] < 506_015, "no leader below grade 5");
-            let d5 = posted_for(&BOARD_GROUPS[0], &q, period, 5);
-            assert_eq!(d5.len(), 4);
-            assert_eq!(&d5[..2], &d[..], "the same resident for everyone");
-            assert!(d5[2] >= 506_015);
+            let leader = fresh_pick(&BOARD_GROUPS[0], &q, period, 5, 32);
+            assert_eq!(leader.len(), 2, "ONE daily: the leader instead, not as well");
+            assert!(leader[0] >= 506_015);
+            assert_eq!(fresh_pick(&BOARD_GROUPS[0], &q, period, 5, 31), d, "grade 5 below level 32: a resident");
             for grade in 1..=10u8 {
-                let w = posted_for(&BOARD_GROUPS[1], &q, period, grade);
+                let w = fresh_pick(&BOARD_GROUPS[1], &q, period, grade, 200);
                 assert_eq!(w.len(), 1);
                 assert_eq!(q[&w[0]].citizenship_check.unwrap().1, grade.min(9), "grade {grade}");
             }
+            // The screenshot: grade 3, below level 22 - the level-17 tier, not the grade-3 one.
+            let w = fresh_pick(&BOARD_GROUPS[1], &q, period, 3, 21);
+            assert_eq!(q[&w[0]].citizenship_check.unwrap().1, 2);
+            assert_eq!(q[&w[0]].complete_min_level, 17);
+            assert!(fresh_pick(&BOARD_GROUPS[1], &q, period, 3, 11).is_empty(), "nothing anyone below 12 can finish");
         }
     }
 
@@ -685,26 +780,84 @@ mod tests {
         let q = board_quests();
         let n = 7;
         for cycle in 0..5 {
-            let mut seen: Vec<u32> = (cycle * n..cycle * n + n).map(|p| posted_for(&BOARD_GROUPS[2], &q, p, 1)[0]).collect();
+            let mut seen: Vec<u32> = (cycle * n..cycle * n + n).map(|p| fresh_pick(&BOARD_GROUPS[2], &q, p, 1, 200)[0]).collect();
             seen.sort_unstable();
             assert_eq!(seen, (0..7).map(|i| 506_101 + 2 * i).collect::<Vec<_>>(), "cycle {cycle}");
         }
-        let days: Vec<u32> = (0..14).map(|p| posted_for(&BOARD_GROUPS[0], &q, p, 1)[0]).collect();
+        let days: Vec<u32> = (0..14).map(|p| fresh_pick(&BOARD_GROUPS[0], &q, p, 1, 200)[0]).collect();
         assert!(days.windows(2).filter(|w| w[0] != w[1]).count() >= 10, "{days:?}");
     }
 
     #[test]
     fn the_records_are_the_clients_key_then_pipe_separated_ids() {
+        assert_eq!(board_record(&BOARD_GROUPS[0], &[506_005, 506_006]), "q1_d=506005|506006");
+        assert_eq!(board_record(&BOARD_GROUPS[1], &[506_025]), "q1_w=506025");
+        assert_eq!(board_record(&BOARD_GROUPS[3], &[]), "q1_w=", "nothing posted is an empty list, not a missing key");
+    }
+
+    fn row(quest_id: u32, in_progress: bool, completed_at: Option<i64>) -> BoardRow {
+        BoardRow { quest_id, in_progress, completed_at }
+    }
+
+    /// **Frozen for the period.** The pick is made once; a grade or level gained later does not
+    /// move it, and the next period does.
+    #[test]
+    fn the_pick_is_made_once_per_period_and_kept() {
         let q = board_quests();
-        let now = 20_000 * 86_400;
-        let recs = board_records(&[standing(1, STATE_ACTIVE, 5, 4_000)], &q, now);
-        assert_eq!(recs.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![510_001, 510_002, 510_003, 510_004]);
-        assert!(recs[0].1.starts_with("q1_d=") && recs[0].1.matches('|').count() == 3, "{}", recs[0].1);
-        assert!(recs[1].1.starts_with("q1_w=") && !recs[1].1.contains('|'));
-        let weekly: u32 = recs[1].1["q1_w=".len()..].parse().unwrap();
-        assert_eq!(q[&weekly].citizenship_check.unwrap().1, 5, "Henesys at grade 5");
-        let kerning_weekly: u32 = recs[3].1["q1_w=".len()..].parse().unwrap();
-        assert_eq!(q[&kerning_weekly].citizenship_check.unwrap().1, 1, "not a citizen there: tier 1");
+        let weekly = &BOARD_GROUPS[1];
+        let monday = (20_724 * 86_400) as i64; // 2026-09-28
+        let first = settle(weekly, &q, monday, 1, 30, None, &[]);
+        assert!(first.save && first.drop.is_empty());
+        assert_eq!(q[&first.pick[0]].citizenship_check.unwrap().1, 1);
+        assert_eq!(first.posted, first.pick);
+        let stored = Some((weekly.period(monday), first.pick.clone()));
+        let later = settle(weekly, &q, monday + 3 * 86_400, 4, 40, stored.clone(), &[]);
+        assert!(!later.save, "same week: kept");
+        assert_eq!(later.posted, first.pick, "a grade-up mid-week posts nothing new");
+        let next = settle(weekly, &q, monday + 7 * 86_400, 4, 40, stored, &[]);
+        assert!(next.save);
+        assert_eq!(q[&next.pick[0]].citizenship_check.unwrap().1, 4, "the next Monday: the new tier");
+    }
+
+    /// **Turned in, then nothing** until the period turns - the daily's check-in half included.
+    #[test]
+    fn a_turn_in_empties_the_group_for_the_rest_of_the_period() {
+        let q = board_quests();
+        let daily = &BOARD_GROUPS[0];
+        let now = (20_730 * 86_400) as i64;
+        let pick = fresh_pick(daily, &q, daily.period(now), 1, 30);
+        let stored = Some((daily.period(now), pick.clone()));
+        let greeted = settle(daily, &q, now, 5, 40, stored.clone(), &[row(pick[0], false, Some(now + 600))]);
+        assert!(greeted.posted.is_empty(), "the First Greeting was today's daily: no check-in, no leader");
+        let yesterday = settle(daily, &q, now, 5, 40, stored, &[row(pick[0], false, Some(now - 86_400))]);
+        assert_eq!(yesterday.posted, pick, "a turn-in yesterday does not count against today");
+    }
+
+    /// **The screenshot**: three donations in progress, the top one needing level 22. The
+    /// highest one the character can finish is kept as the week's; the others are given up.
+    #[test]
+    fn extra_in_progress_quests_are_given_up_and_the_highest_finishable_one_kept() {
+        let q = board_quests();
+        let weekly = &BOARD_GROUPS[1];
+        let now = (20_730 * 86_400) as i64;
+        // 506_019 tier 1 (lv 12), 506_025 tier 2 (lv 17), 506_026 tier 3 (lv 22).
+        let rows = [row(506_019, true, None), row(506_025, true, None), row(506_026, true, None)];
+        let s = settle(weekly, &q, now, 3, 21, None, &rows);
+        assert_eq!(s.pick, vec![506_025]);
+        assert_eq!(s.posted, vec![506_025]);
+        let mut dropped = s.drop.clone();
+        dropped.sort_unstable();
+        assert_eq!(dropped, vec![506_019, 506_026]);
+        assert!(s.save);
+
+        // One in progress from last week carries over as this week's - no second donation.
+        let carried = settle(weekly, &q, now, 9, 99, Some((weekly.period(now) - 1, vec![506_019])), &[row(506_019, true, None)]);
+        assert_eq!(carried.pick, vec![506_019]);
+        assert!(carried.drop.is_empty());
+
+        // A daily check-in in progress keeps its resident, both halves.
+        let daily = settle(&BOARD_GROUPS[0], &q, now, 1, 30, None, &[row(506_006, true, None)]);
+        assert_eq!(daily.pick, vec![506_005, 506_006]);
     }
 
     /// Weeks turn over on Monday, UTC: 2026-09-27 is a Sunday, 2026-09-28 a Monday.

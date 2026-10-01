@@ -23,6 +23,15 @@
 //! grade-up happens at a quest turn-in, in the middle of an NPC conversation, and a second
 //! script window then is a fight for the same UI - so the certificate waits for the next talk
 //! to the clerk, and this column is how the clerk knows one is owed.
+//!
+//! # `board_pick` - what the Community Board offers this character this period
+//!
+//! The owner, 2026-10-01: *"Weeklies should only be allowed once per character, and the highest
+//! level weekly at time of weekly reset is allowed"*, and of the dailies *"once the user
+//! completes a daily, even if they advance in citizen rank, they should not be offered a new
+//! daily quest"*. A posting computed from the grade each time moved with every grade-up, so one
+//! week handed out three donations. The posting is now **chosen once per period and kept**: one
+//! row per character and board group, overwritten when the period turns.
 
 use rusqlite::{params, Connection};
 
@@ -67,6 +76,16 @@ pub(crate) fn create_tables(conn: &Connection) -> Result<()> {
             contribution    INTEGER NOT NULL DEFAULT 0,
             certified_grade INTEGER NOT NULL DEFAULT 1,
             PRIMARY KEY (character_id, town)
+        );
+        -- One Community Board group's posting for one character, frozen for the period
+        -- (UTC day, or Monday-started week) it was chosen in.
+        CREATE TABLE IF NOT EXISTS board_pick (
+            character_id    INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+            record_quest    INTEGER NOT NULL,
+            period          INTEGER NOT NULL,
+            -- The posted quest ids, '|'-separated as the client's record has them.
+            quests          TEXT NOT NULL,
+            PRIMARY KEY (character_id, record_quest)
         );
         "#,
     )?;
@@ -160,6 +179,30 @@ impl Store {
         Ok(changed > 0)
     }
 
+    /// The board posting kept for `record_quest` (the group's `qrID`): `(period, quest ids)`.
+    pub fn board_pick(&self, character_id: u32, record_quest: u32) -> Result<Option<(i64, Vec<u32>)>> {
+        let row: Option<(i64, String)> = self
+            .conn()
+            .query_row(
+                "SELECT period, quests FROM board_pick WHERE character_id = ?1 AND record_quest = ?2",
+                params![i64::from(character_id), i64::from(record_quest)],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
+        Ok(row.map(|(period, quests)| (period, quests.split('|').filter_map(|q| q.parse().ok()).collect())))
+    }
+
+    /// Keep `quests` as `record_quest`'s posting for `period`, replacing any earlier period's.
+    pub fn set_board_pick(&self, character_id: u32, record_quest: u32, period: i64, quests: &[u32]) -> Result<()> {
+        let list = quests.iter().map(u32::to_string).collect::<Vec<_>>().join("|");
+        self.conn().execute(
+            "INSERT INTO board_pick (character_id, record_quest, period, quests) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(character_id, record_quest) DO UPDATE SET period = excluded.period, quests = excluded.quests",
+            params![i64::from(character_id), i64::from(record_quest), period, list],
+        )?;
+        Ok(())
+    }
+
     /// Add `amount` to `town`'s contribution **only if that citizenship is active**, and
     /// return the standing after. `None` - nothing written - for a town the character is not
     /// an active citizen of: contribution banks only where you live (`Check.citizenshipTown`
@@ -227,6 +270,19 @@ mod tests {
         create_tables(&old).unwrap();
         let n: i64 = old.query_row("SELECT COUNT(*) FROM pragma_table_info('citizenship') WHERE name = 'honor_earring'", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 1, "added once to the old table, and twice is harmless");
+    }
+
+    /// A board pick is kept per group and replaced, not added to, when the period turns.
+    #[test]
+    fn a_board_pick_is_kept_per_group_and_replaced_by_the_next_period() {
+        let (store, chr) = store_with_character();
+        assert_eq!(store.board_pick(chr, 510_002).unwrap(), None);
+        store.set_board_pick(chr, 510_002, 2_960, &[506_025]).unwrap();
+        store.set_board_pick(chr, 510_001, 20_730, &[506_005, 506_006]).unwrap();
+        assert_eq!(store.board_pick(chr, 510_002).unwrap(), Some((2_960, vec![506_025])));
+        assert_eq!(store.board_pick(chr, 510_001).unwrap(), Some((20_730, vec![506_005, 506_006])));
+        store.set_board_pick(chr, 510_002, 2_961, &[]).unwrap();
+        assert_eq!(store.board_pick(chr, 510_002).unwrap(), Some((2_961, vec![])), "an empty posting is a posting");
     }
 
     /// Contribution banks only in the active town; a frozen one is untouched and says so.
