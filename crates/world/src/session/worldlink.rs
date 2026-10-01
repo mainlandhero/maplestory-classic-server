@@ -44,7 +44,57 @@ pub fn apply_echoed_party_request(fields: &crate::fields::Fields, actor: u32, no
     }
 }
 
+/// Outcomes of hub-echoed Maple Chat requests whose actor plays here, waiting for the actor's
+/// session: `actor -> outcome`. See `session/messenger.rs` for who sends what.
+type MessengerOutcome = Result<crate::messenger::Effect, crate::messenger::Refusal>;
+static PENDING_MESSENGER: std::sync::Mutex<Vec<(u32, MessengerOutcome)>> = std::sync::Mutex::new(Vec::new());
+
+/// **The link thread's side of a Maple Chat change.** Apply it to this channel's replica, tell
+/// every room member THIS channel hosts (the other channels tell theirs, from the same echo),
+/// and queue the actor's own replies if the actor plays here.
+pub fn apply_echoed_messenger_request(fields: &crate::fields::Fields, actor: u32, request: crate::messenger::Request) {
+    let described = format!("{request:?}");
+    let outcome = fields.messengers().apply(actor, request);
+    let (_, others) = crate::session::messenger::messenger_effect_packets(actor, &outcome);
+    let mut told = 0;
+    for (member, reply) in others {
+        if fields.bus().publish_to_character_anywhere(member, reply) {
+            told += 1;
+        }
+    }
+    let hosted_here = crate::link::installed().is_some_and(|l| l.hosts(actor));
+    crate::server::log(&format!(
+        "   maple chat: hub echo {described} by {actor} -> {outcome:?}; {told} member(s) on this channel told{}",
+        if hosted_here { "; the actor plays here and is answered on their next tick" } else { "" }
+    ));
+    if hosted_here {
+        PENDING_MESSENGER.lock().unwrap_or_else(|e| e.into_inner()).push((actor, outcome));
+    }
+}
+
 impl Session {
+    /// Drain the Maple Chat outcomes queued for THIS character and turn them into its own
+    /// replies - the mode 0 and six-seat mode 4 that open its window, or the refusal. Called
+    /// beside [`Session::collect_party_outcomes`].
+    pub(super) fn collect_messenger_outcomes(&mut self) -> Vec<Reply> {
+        let Some(me) = self.claimed_character().map(|c| c.id) else { return Vec::new() };
+        let mine: Vec<MessengerOutcome> = {
+            let mut q = PENDING_MESSENGER.lock().unwrap_or_else(|e| e.into_inner());
+            if q.is_empty() {
+                return Vec::new();
+            }
+            let (m, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut *q).into_iter().partition(|(a, _)| *a == me);
+            *q = rest;
+            m.into_iter().map(|(_, o)| o).collect()
+        };
+        let mut out = Vec::new();
+        for outcome in mine {
+            let (replies, _) = crate::session::messenger::messenger_effect_packets(me, &outcome);
+            out.extend(self.after_messenger_outcome(&outcome, replies));
+        }
+        out
+    }
+
     /// Tell the hub this character plays here. Idempotent; called on every field entry.
     pub(super) fn announce_online_to_link(&self) {
         let (Some(link), Some(chr), Some(claim)) = (crate::link::installed(), self.claimed_character(), self.claimed()) else {
@@ -121,6 +171,13 @@ pub fn link_handler(fields: std::sync::Arc<crate::fields::Fields>) -> crate::lin
             Frame::PartySnapshot { parties, next_id } => {
                 crate::server::log(&format!("   link: party snapshot from the hub: {} party(ies), next id {next_id}", parties.len()));
                 fields.parties().restore(parties, next_id);
+            }
+            Frame::MessengerRequest { actor, request } => {
+                apply_echoed_messenger_request(&fields, actor, request);
+            }
+            Frame::MessengerSnapshot { rooms, next_id } => {
+                crate::server::log(&format!("   link: maple chat snapshot from the hub: {} room(s), next id {next_id:#x}", rooms.len()));
+                fields.messengers().restore(rooms, next_id);
             }
             // Online / Offline are folded into the link's directory before this runs.
             Frame::Online { .. } | Frame::Offline { .. } | Frame::Hello { .. } => {}

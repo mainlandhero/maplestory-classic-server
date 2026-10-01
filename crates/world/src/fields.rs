@@ -368,6 +368,9 @@ pub struct Fields {
     /// "never renumber from a small number" rule `store::FIRST_CHARACTER_ID` carries. That
     /// is why `Fields` implements `Default` by hand.
     parties: Mutex<crate::party::Parties>,
+    /// This channel's replica of the world's Maple Chat rooms - [`crate::messenger`]. Kept in
+    /// step with every other channel by the hub, the same way `parties` is.
+    messengers: Mutex<crate::messenger::Rooms>,
     /// This channel's party-quest runs. See [`crate::firsttime::Runs`].
     runs: Mutex<crate::firsttime::Runs>,
     /// This channel's ships to Orbis. See [`crate::boat::Voyages`].
@@ -391,6 +394,7 @@ impl Fields {
             bus: crate::broadcast::Bus::new(),
             controllers: crate::mobshare::Controllers::new(),
             parties: Mutex::new(crate::party::Parties::new()),
+            messengers: Mutex::new(crate::messenger::Rooms::new()),
             runs: Mutex::new(crate::firsttime::Runs::default()),
             voyages: Mutex::new(crate::boat::Voyages::default()),
             weather: Mutex::new(HashMap::new()),
@@ -415,6 +419,12 @@ impl Fields {
     /// `Fields`, `Bus` or a session.
     pub fn parties(&self) -> std::sync::MutexGuard<'_, crate::party::Parties> {
         self.parties.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// This channel's replica of the Maple Chat rooms. A guard, like [`Fields::parties`]: do
+    /// not hold it across a call into `Fields`, `Bus` or a session.
+    pub fn messengers(&self) -> std::sync::MutexGuard<'_, crate::messenger::Rooms> {
+        self.messengers.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// This channel's party-quest runs. **Bind what you read to a local before locking
