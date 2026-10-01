@@ -105,6 +105,10 @@ pub struct CompletedQuest {
 pub struct QuestBook {
     pub started: Vec<StartedQuest>,
     pub completed: Vec<CompletedQuest>,
+    /// The quest **ex** records - `(questId, "key=value;...")` - that go in block #28 behind
+    /// presence byte 16 (`crate::citizenship::quest_ex_block`). Citizenship is quest 510000's
+    /// and the Community Board's postings are 510001..510004's. Empty sends no block at all.
+    pub ex: Vec<(u32, String)>,
 }
 
 /// The most entries either block can carry, because the count is a `u16`.
@@ -143,7 +147,9 @@ impl QuestBook {
 
     /// How many bytes the two blocks add to a character record.
     pub fn record_len(&self) -> usize {
-        self.started_block().len() + self.completed_block().len()
+        self.started_block().len()
+            + self.completed_block().len()
+            + if self.ex.is_empty() { 0 } else { crate::citizenship::quest_ex_block(&self.ex).len() }
     }
 }
 
@@ -876,6 +882,7 @@ mod tests {
         let book = QuestBook {
             started: vec![StartedQuest { quest_id: 1000, progress: "007".into() }],
             completed: vec![CompletedQuest { quest_id: 1001, completed_at: 42 }],
+            ex: Vec::new(),
         };
         let with = character_record_for_set_field_with_quests(&chr, 0, &equips, &book);
 
@@ -900,6 +907,25 @@ mod tests {
 
         assert_eq!(*with.last().unwrap(), *bare.last().unwrap(), "0x140308b3f still last");
         assert_eq!(with.len(), bare.len() + book.record_len());
+    }
+
+    /// The ex records (citizenship, the board) are block #28: presence 16 set, after the
+    /// completed block, before the final byte - and absent entirely when there are none.
+    #[test]
+    fn the_ex_records_follow_the_completed_block_behind_presence_16() {
+        let chr = dressed();
+        let equips = equips_of(&chr);
+        let plain = QuestBook::default();
+        let book = QuestBook { ex: vec![(510_000, "st1=1;gr1=1;ct1=0".into())], ..QuestBook::default() };
+        let without = character_record_for_set_field_with_quests(&chr, 0, &equips, &plain);
+        let with = character_record_for_set_field_with_quests(&chr, 0, &equips, &book);
+        assert_eq!(without[crate::citizenship::PRESENCE_QUEST_EX], 0);
+        assert_eq!(with[crate::citizenship::PRESENCE_QUEST_EX], 1);
+        let ex = crate::citizenship::quest_ex_block(&book.ex);
+        assert_eq!(&with[with.len() - 1 - ex.len()..with.len() - 1], &ex[..]);
+        assert_eq!(&with[..without.len() - 1][crate::opcode::PRESENCE_ARRAY_LEN..], &without[..without.len() - 1][crate::opcode::PRESENCE_ARRAY_LEN..]);
+        assert_eq!(with.len(), without.len() + ex.len());
+        assert_eq!(book.record_len(), plain.record_len() + ex.len());
     }
 
     /// An empty book costs six bytes, and that is a decision rather than an accident: the
@@ -1129,6 +1155,7 @@ mod tests {
         let book = QuestBook {
             started: vec![StartedQuest { quest_id: 1000, progress: String::new() }],
             completed: Vec::new(),
+            ex: Vec::new(),
         };
         let plain = crate::opcode::set_field_with_character_dressed(&chr, 0, 0, 0, &equips);
         let quested = set_field_with_character_dressed_quests(&chr, 0, 0, 0, &equips, &book, &[]);

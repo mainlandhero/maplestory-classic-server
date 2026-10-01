@@ -169,6 +169,13 @@ pub struct ClassicShopRow {
     /// `FUN_141fb9240` refuses when the double is `0.0` (`research/classic-shop-rows.md`
     /// §3 row 41a). Thousandths rather than a float so the row stays `Eq`.
     pub unit_price_milli: u32,
+    /// `row+0x104` / `row+0x108`: the citizenship **town** (1 Henesys, 2 Kerning City) and
+    /// **grade** this row needs, or `0, 0` for none. The client locks the row itself -
+    /// `FUN_1402C90F0` (`st == 1`) and `FUN_1402C9150 >= +0x108`, refusing with string
+    /// `0x17DA` / `0x17DB` ("%s citizenship required", "Grade %s or higher"). **[L]**
+    /// `research/citizenship-2026-09-27.md` §5.1.
+    pub citizenship_town: u32,
+    pub citizenship_grade: u32,
 }
 
 impl ClassicShopRow {
@@ -187,7 +194,14 @@ impl ClassicShopRow {
             sell: false,
             buy_back: false,
             unit_price_milli: 0,
+            citizenship_town: 0,
+            citizenship_grade: 0,
         }
+    }
+
+    /// The same row, locked behind a citizenship of `town` at `grade` or higher.
+    pub fn with_citizenship(self, town: u32, grade: u32) -> Self {
+        Self { citizenship_town: town, citizenship_grade: grade, ..self }
     }
 
     /// The same row, rechargeable at `unit_price_milli` thousandths of a meso per unit.
@@ -228,6 +242,8 @@ impl ClassicShopRow {
             sell: false,
             buy_back: true,
             unit_price_milli: 0,
+            citizenship_town: 0,
+            citizenship_grade: 0,
         }
     }
 
@@ -280,8 +296,8 @@ impl ClassicShopRow {
         w.u8(0); // +0xec
         w.str(""); // +0xf8
         w.u32(0); // +0x100
-        w.u32(0); // +0x104  required citizenship type
-        w.u32(0); // +0x108  required citizenship grade
+        w.u32(self.citizenship_town); // +0x104  required citizenship town
+        w.u32(self.citizenship_grade); // +0x108  required citizenship grade
         // **The client picks the width of this field from the item id, so we must too.**
         // `0x1404ba57f`: a rechargeable id takes 8 raw bytes into `row+0x40`; anything else
         // takes this `i16` into `row+0x1c`. Writing the `i16` for a star left the client 6
@@ -453,6 +469,25 @@ pub fn parse_classic_shop_request(body: &[u8]) -> Option<ClassicShopRequest> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The citizenship lock is the two u32s at `+0x104/+0x108` and nothing else: the same row
+    /// with and without it differs in exactly those eight bytes, which sit right before the
+    /// tail (`+0x1c` for a potion, `+0x10c`, the two tab bytes: six).
+    #[test]
+    fn a_citizenship_lock_is_the_two_u32s_before_the_tail() {
+        let plain = ClassicShopRow::buy(2_000_000, 50, 100);
+        let locked = plain.with_citizenship(2, 5);
+        let (mut a, mut b) = (PacketWriter::new(), PacketWriter::new());
+        plain.write(&mut a);
+        locked.write(&mut b);
+        let (a, b) = (a.into_vec(), b.into_vec());
+        assert_eq!(a.len(), b.len(), "no width change");
+        let differ: Vec<usize> = (0..a.len()).filter(|&i| a[i] != b[i]).collect();
+        assert_eq!(differ.len(), 2, "{differ:?}");
+        let at = b.len() - 6 - 8;
+        assert_eq!(&b[at..at + 8], &[2, 0, 0, 0, 5, 0, 0, 0]);
+        assert_eq!(&a[at..at + 8], &[0u8; 8]);
+    }
 
     /// **The golden vector from `research/classic-shop-rows.md` §9.1, byte for byte.**
     ///

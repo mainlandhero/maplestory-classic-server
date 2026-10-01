@@ -110,6 +110,21 @@ pub const BANNER: u8 = 4;
 /// length.
 pub const SYSTEM_LINE: u8 = 5;
 
+/// **Type 0: the blue `[Notice]` line in the chat log.** `case 0` of `FUN_142d60d40` formats
+/// the text after string `0x536`, **`[Notice]`**, and posts it with `FUN_1415eca30(.., 9)` -
+/// chat kind **9**, whose colour constant is **`0xFF60CEFF`**, light blue
+/// (`research/message-subcases.md` §3's table). **[L]** for the read, the prefix and the kind;
+/// what it looks like on screen is unmeasured. No flag byte - types 4 and 26 only.
+pub const NOTICE: u8 = 0;
+
+/// A blue `[Notice]` line - see [`NOTICE`].
+pub fn notice(text: &str) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(NOTICE);
+    w.str(text);
+    w.into_vec()
+}
+
 /// Show `text` in the banner.
 ///
 /// An empty string is sent as [`clear_banner`] instead, because that is what the client does

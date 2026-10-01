@@ -299,6 +299,29 @@ impl Store {
         Ok(changed > 0)
     }
 
+    /// **Take a completed quest back to in progress** - a Community Board daily or weekly
+    /// being picked up again. `true` only on that transition; `false` (nothing written) for a
+    /// quest that is not complete.
+    ///
+    /// This is the ONE way a completed row moves backwards, and it is deliberately not
+    /// reachable from `start_quest`, whose `INSERT OR IGNORE` refusing a completed quest is
+    /// the guard that ended the farmable-Heena loop. The caller decides a repeat is allowed
+    /// (`world::citizenship::may_repeat`); the row still only moves from `Complete`.
+    pub fn restart_quest(&self, character_id: u32, quest_id: u32) -> Result<bool> {
+        let changed = self.conn().execute(
+            "UPDATE quest_state SET state = ?3, progress = '', started_at = ?5, completed_at = NULL
+              WHERE character_id = ?1 AND quest_id = ?2 AND state = ?4",
+            rusqlite::params![
+                i64::from(character_id),
+                i64::from(quest_id),
+                QuestState::InProgress.as_u8(),
+                QuestState::Complete.as_u8(),
+                Store::now(),
+            ],
+        )?;
+        Ok(changed > 0)
+    }
+
     /// The two record blocks' worth of state, ready for
     /// `net::opcode::character_record_for_set_field_with_quests`.
     ///
@@ -374,6 +397,23 @@ mod tests {
         store.complete_quest(chr, 1000).unwrap();
         assert!(!store.start_quest(chr, 1000).unwrap(), "nor does one after completion");
         assert_eq!(store.quest_row(chr, 1000).unwrap().unwrap().state, QuestState::Complete);
+    }
+
+    /// A board quest picked up again: only a completed row moves back, once, and it comes back
+    /// empty-handed (no progress, no completion time) so the next turn-in is a fresh one.
+    #[test]
+    fn only_a_completed_quest_can_be_restarted() {
+        let (store, chr) = store_with_character();
+        assert!(!store.restart_quest(chr, 506002).unwrap(), "never touched");
+        store.start_quest(chr, 506002).unwrap();
+        store.set_quest_progress(chr, 506002, "005").unwrap();
+        assert!(!store.restart_quest(chr, 506002).unwrap(), "in progress");
+        store.complete_quest(chr, 506002).unwrap();
+        assert!(store.restart_quest(chr, 506002).unwrap());
+        let row = store.quest_row(chr, 506002).unwrap().unwrap();
+        assert_eq!((row.state, row.progress.as_str(), row.completed_at), (QuestState::InProgress, "", None));
+        assert!(!store.restart_quest(chr, 506002).unwrap(), "not twice");
+        assert!(store.complete_quest(chr, 506002).unwrap().is_some(), "and it can be turned in again");
     }
 
     /// Completing moves the quest between the two record blocks, and it can only happen once.

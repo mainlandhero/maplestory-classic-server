@@ -176,6 +176,9 @@ impl Session {
             "resetsp" => self.gm_reset_sp(),
             "learn" => self.gm_learn(arg),
             "craft" => self.gm_craft(arg),
+            // Show or set a citizenship - the client's own `/citizenship` shape.
+            // session/citizenship.rs.
+            "citizenship" => self.gm_citizenship(arg),
             // Re-read `data/npc-dialogue.txt` without restarting. See `gm_npc_reload`.
             "npcreload" => self.gm_npc_reload(arg),
             // Account administration from inside the game. The owner, 2026-09-05. The codes are
@@ -499,7 +502,7 @@ impl Session {
             self.map_name(map)
         ));
         // Portal 0 is the map's spawn point, which is where a GM warp should land.
-        out.extend(self.go_to_map(&mut chr, map, 0, format!("GM !map {map}")));
+        out.extend(self.teleport(&mut chr, map, format!("GM !map {map}")));
         out
     }
 

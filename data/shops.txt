@@ -238,18 +238,20 @@ shop: Luna | Grocer | Victoria Road: Henesys Department Store
 shop: Oak | Town Furnishings | Victoria Road: Henesys Town Hall
 	Henesys Resident's Chair	10000	Visitor+
 
+# Traveler+ on the three unranked rows: the owner, 2026-09-29 - the source page lists them with no
+# rank, and he chose "citizens of this town, any grade" over "anyone".
 shop: Raymond | Town General Store | Victoria Road: Henesys Town Hall
 	Bronze Arrows for Bows	2	Helpful Stranger+
 	Bronze Arrows for Crossbows	2	Helpful Stranger+
-	Fried Chicken	60
-	Hot Dog	180
+	Fried Chicken	60	Traveler+
+	Hot Dog	180	Traveler+
 	Salad	220	Visitor+
 	Pizza	252	Recognized Guest+
 	Hamburger	350	Town Resident+
 	Mrs. Ming Ming's Stew	480	Trusted Neighbor+
 	Orange Mushroom Daydream	500	Citizen of Honor+
 	Orange Juice	540	Trusted Neighbor+
-	Supreme Sniper Potion	600
+	Supreme Sniper Potion	600	Traveler+
 	Sharpness Potion	750	Helpful Stranger+
 	Fat Sausage	800	Distinguished Citizen+
 	Unagi	1000	Town Patron+
@@ -379,21 +381,25 @@ shop: Dr. Faymus | Grocer | Victoria Road: Kerning City Pharmacy
 	Arrows for Crossbows	1
 	Subi Throwing Stars	500
 
+# Traveler+ on the three unranked rows: the owner, 2026-09-29 - the source page lists them with no
+# rank, and he chose "citizens of this town, any grade" over "anyone".
 shop: Max | City General Store | Victoria Road: Kerning City Civic Center
-	Fried Chicken	60
-	Dried Squid	180
+	Fried Chicken	60	Traveler+
+	Dried Squid	180	Traveler+
 	Salad	220	Visitor+
 	Pizza	252	Recognized Guest+
 	Hamburger	350	Town Resident+
 	Andre's Seafood Soup	480	Trusted Neighbor+
 	Ribbon Pig Daydream	500	Citizen of Honor+
 	Orange Juice	540	Trusted Neighbor+
-	Supreme Dexterity Potion	600
+	Supreme Dexterity Potion	600	Traveler+
 	Destructive Potion	750	Helpful Stranger+
 	Fat Sausage	800	Distinguished Citizen+
 	Wolbi Throwing Stars	1000	Helpful Stranger+
 	Unagi	1000	Town Patron+
 	Grape Juice	1260	Guardian of the Village+
+# Added 2026-09-29 at the owner's word, from the source page: missing from the transcription, Raymond has his.
+	Elixir	3000	Citizen of Honor+
 
 shop: Weston | City Furnishings | Victoria Road: Kerning City Civic Center
 	Kerning City Resident's Chair	10000	Visitor+
