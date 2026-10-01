@@ -381,6 +381,12 @@ impl Session {
             return out;
         }
         out.extend(self.apply_quest_completion_rewards(finished, chosen));
+        // `Act.1.citizenshipContr` - Contribution, and a grade-up when it crosses one.
+        // After the rewards, so the item and EXP lines come first. `session/citizenship.rs`.
+        out.extend(self.bank_citizenship_contribution(finished));
+        // `Act.1.money`, at the Quest rate like the EXP - every quest (the owner, 2026-09-28).
+        // Nothing paid it before. session/citizenship.rs.
+        out.extend(self.pay_quest_mesos(finished));
         // **The turn-in fanfare.** The owner, 2026-08-21: *"Quest finish still does not trigger
         // the SFX for quest finish."* It did not, because nothing sent one.
         //
@@ -630,7 +636,19 @@ impl Session {
         let Some(chr) = self.claimed_character() else { return Vec::new() };
         // Read before writing, so "already complete" can be told from "already started".
         // `start_quest` collapses both into `false` and the two need different answers.
-        let before = self.store.quest_row(chr.id, quest_id).ok().flatten().map(|r| r.state);
+        let mut before = self.store.quest_row(chr.id, quest_id).ok().flatten().map(|r| r.state);
+        // **Citizenship.** A quest gated on a town's citizenship, or on the Community Board's
+        // posting, is refused here the way the client refuses it (`0x50`, `0x51`, `0x13`,
+        // `0x16`, `0x19`); and a COMPLETED board quest that is posted again and past its day or
+        // week is picked up afresh - the one way a completed row moves back. Every other quest
+        // passes straight through. `session/citizenship.rs`.
+        let restart = match self.citizenship_start_gate(quest_id, npc_template) {
+            Ok(restart) => restart,
+            Err(refusal) => return refusal,
+        };
+        if restart {
+            before = None;
+        }
         if before == Some(store::QuestState::Complete) {
             return Vec::new();
         }
@@ -654,6 +672,24 @@ impl Session {
                 return self.bag_full_refusal(quest_id, npc_template, &short, "accepted");
             }
         }
+        let mut out = Vec::new();
+        if restart {
+            match self.store.restart_quest(chr.id, quest_id) {
+                // The client still holds the completion: take it out of BOTH collections
+                // first (state 0, forget_completion), then the ordinary accept below puts it
+                // in the started one. Without the first, the quest would sit in both tabs.
+                Ok(true) => out.push(Reply {
+                    opcode: net::quest::MESSAGE,
+                    body: net::quest::quest_forgotten(quest_id, true),
+                    what: format!(
+                        "quest {quest_id}: a completed Community Board quest picked up again for character {} - its completion is cleared, then it is accepted afresh",
+                        chr.id
+                    ),
+                }),
+                Ok(false) => return Vec::new(),
+                Err(e) => return self.notice(format!("Quest {quest_id} could not be picked up again: {e}")),
+            }
+        }
         let what = match self.store.start_quest(chr.id, quest_id) {
             Ok(true) => format!(
                 "quest {quest_id} accepted from NPC {npc_template} by character {} ({}) and stored",
@@ -667,8 +703,7 @@ impl Session {
                 "quest {quest_id} accepted but NOT STORED ({e}) - the journal will show it until the next relog and then lose it"
             ),
         };
-        let mut out =
-            vec![Reply { opcode: net::quest::MESSAGE, body: net::quest::quest_accepted(quest_id), what }];
+        out.push(Reply { opcode: net::quest::MESSAGE, body: net::quest::quest_accepted(quest_id), what });
         // Only on the transition. A row that already existed has already been paid.
         if before.is_none() {
             out.extend(self.grant_quest_start_items(quest_id));
@@ -937,6 +972,12 @@ impl Session {
         }
 
         if let Some(replies) = self.open_taxi_for(template) {
+            return replies;
+        }
+
+        // **Arthur and Roxy sign citizenship contracts.** Level 12+, in their own hall; below
+        // that they say their own line. session/citizenship.rs.
+        if let Some(replies) = self.open_town_clerk(template) {
             return replies;
         }
 
@@ -1226,10 +1267,9 @@ impl Session {
             // `script_replies` deliberately returns nothing for a Ride: a script message with
             // or just before a SetField is torn down silently by field entry.
             out.extend(self.notice(crate::jobguide::arrival_line(dest)));
-            out.extend(self.go_to_map(
+            out.extend(self.teleport(
                 &mut chr,
                 dest.map_id,
-                0,
                 format!(
                     "Phil's job guide: {who} chose {} and rides to {} ({}), where {} (template \
                      {}) is waiting. Phil grants no job - advance_job_for does.",
@@ -1335,7 +1375,7 @@ impl Session {
                     chr.id,
                     if fare == 0 { " - FREE: a Beginner with Mai's Final Training complete" } else { "" }
                 );
-                out.extend(self.go_to_map(&mut chr, crate::shanks::DESTINATION_MAP, 0, why));
+                out.extend(self.teleport(&mut chr, crate::shanks::DESTINATION_MAP, why));
             }
             crate::shanks::Step::Ask { .. } | crate::shanks::Step::Done { .. } => {}
         }
@@ -1402,7 +1442,7 @@ impl Session {
                 ),
             });
             let why = crate::taxi::ride_note(taxi, &chr, map_id, &map_name, fare, balance);
-            out.extend(self.go_to_map(&mut chr, map_id, 0, why));
+            out.extend(self.teleport(&mut chr, map_id, why));
         }
         Some(out)
     }    /// How many of `item_id` this character is carrying, across every slot of its own tab.
@@ -1565,92 +1605,69 @@ impl Session {
         out
     }
 
-    /// **The examiner runs the test.** `None` for any NPC that is not one of the four.
+    /// **A regular talk to one of the four Job Instructors.** `None` for any other NPC.
     ///
-    /// Three outcomes carry an effect and each carries exactly one: `Enter` a map id, `Pass`
-    /// the items to move, and nothing else carries either. A refusal cannot warp anybody and
-    /// cannot pay anybody, because there is no field on those arms to read it from.
+    /// The test is a quest (`secondjob::ExaminerTalk` has the owner's rules, 2026-09-26): accepting
+    /// *Test of Qualification* sends the player in, and handing it in with the marbles is its
+    /// completion. A regular talk only answers questions - and, while the test is under way and
+    /// the marbles are short, offers to send them back in, on a Yes.
     pub(super) fn job_test_for(&mut self, template: u32) -> Option<Vec<Reply>> {
-        let mut chr = self.claimed_character()?;
+        let chr = self.claimed_character()?;
         let branch = crate::secondjob::branch_examined_by(template)?;
         let marbles = self.held_count(chr.id, branch.chain.marble_item);
-        let holds_proof = self.held_count(chr.id, branch.chain.proof_item) > 0;
-        match crate::secondjob::test_step(&chr, template, marbles, holds_proof)? {
-            crate::secondjob::TestStep::Refused(line) => {
-                Some(self.instructor_says(template, &line))
+        let test = match self.store.quest_row(chr.id, branch.chain.quests[2]).ok().flatten().map(|r| r.state) {
+            Some(store::QuestState::InProgress) => crate::secondjob::TestQuest::InProgress,
+            Some(store::QuestState::Complete) => crate::secondjob::TestQuest::Completed,
+            _ => crate::secondjob::TestQuest::NotStarted,
+        };
+        match crate::secondjob::examiner_talk(&chr, template, test, marbles)? {
+            crate::secondjob::ExaminerTalk::OfferReEntry { question, .. } => {
+                self.conversation = Some(Conversation {
+                    npc_template: template,
+                    quest_id: None,
+                    path: crate::secondjob::REENTER_PATH.to_string(),
+                    sent: 0,
+                    awaiting_yes_no: true,
+                    sent_with_next: false,
+                });
+                Some(vec![Reply {
+                    opcode: net::script::SCRIPT_MESSAGE,
+                    body: net::script::npc_ask(template, &question, false),
+                    what: format!("ScriptMessage AskYesNo from examiner {template}: back into the test area? - {question:?}"),
+                }])
             }
-            crate::secondjob::TestStep::AlreadyPassed { line, .. } => {
-                Some(self.instructor_says(template, &line))
-            }
-            crate::secondjob::TestStep::Pass {
-                marble_item, take_marbles, proof_item, line, ..
-            } => {
-                let mut out = Vec::new();
-                // The marbles go first: the proof is what they are exchanged FOR, and a
-                // failure to take them must not leave a proof behind as well.
-                let Some(marble_inv) = store::InventoryType::for_item(marble_item) else {
-                    return Some(self.notice(format!(
-                        "Item {marble_item} names no bag, so the test cannot be settled."
-                    )));
-                };
-                match self.take_quest_item(chr.id, marble_inv, marble_item, take_marbles as u16) {
-                    Ok(replies) => out.extend(replies),
-                    Err(e) => {
-                        return Some(self.notice(format!(
-                            "Your {}s could not be handed over: {e}",
-                            crate::secondjob::MARBLE_ITEM_NAME
-                        )))
-                    }
-                }
-                let Some(proof_inv) = store::InventoryType::for_item(proof_item) else {
-                    return Some(out);
-                };
-                let max_stack = self.config.shops.max_stack(proof_item);
-                match self.store.add_item(
-                    chr.id,
-                    proof_inv,
-                    &store::Item::bundle(proof_item, 1),
-                    max_stack,
-                ) {
-                    Ok(placed) => out.extend(self.inventory_added_replies(
-                        proof_inv,
-                        &placed,
-                        "the examiner's proof of a hero",
-                    )),
-                    Err(e) => out.extend(self.notice(format!(
-                        "Your {} could not be handed over: {e}",
-                        crate::secondjob::PROOF_ITEM_NAME
-                    ))),
-                }
-                out.extend(self.instructor_says(template, &line));
-                Some(out)
-            }
-            crate::secondjob::TestStep::Enter { field, line, .. } => {
-                // A script box sent with or just before a `SetField` is torn down silently by
-                // field entry, so the words go out as a notice and the conversation is ended
-                // rather than left behind for the next reply to walk into. Same ordering as
-                // `jobguide::Step::Ride`, which is the one observed working.
-                self.conversation = None;
-                let who = chr.name.clone();
-                let mut out = self.notice(line);
-                out.extend(self.go_to_map(
-                    &mut chr,
-                    field.map_id,
-                    0,
-                    format!(
-                        "second-job test: {who} enters {} ({}) - {} spawns {} and {}, and it is the ONLY place their {} drops. The map has one portal and it is the spawn point, so NPC {} inside is the only way out",
-                        field.map_id,
-                        field.map_name,
-                        field.map_name,
-                        field.mobs[0],
-                        field.mobs[1],
-                        crate::secondjob::MARBLE_ITEM_NAME,
-                        field.warden_npc
-                    ),
-                ));
-                Some(out)
-            }
+            crate::secondjob::ExaminerTalk::NothingMoreToTeach(line)
+            | crate::secondjob::ExaminerTalk::NotReady(line)
+            | crate::secondjob::ExaminerTalk::HandIn(line)
+            | crate::secondjob::ExaminerTalk::Passed(line) => Some(self.instructor_says(template, &line)),
         }
+    }
+
+    /// The answer to the re-entry question. Yes sends them back in - **after asking again**
+    /// whether the test is still under way and short, because the box may have sat on screen
+    /// while the quest was handed in. No, or anything that changed, says nothing more.
+    pub(super) fn test_reentry_answer(&mut self, template: u32, action: i8) -> Vec<Reply> {
+        self.conversation = None;
+        if action != net::script::SCRIPT_ACTION_YES {
+            return Vec::new();
+        }
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let Some(branch) = crate::secondjob::branch_examined_by(template) else { return Vec::new() };
+        let in_progress = self
+            .store
+            .quest_row(chr.id, branch.chain.quests[2])
+            .ok()
+            .flatten()
+            .is_some_and(|r| r.state == store::QuestState::InProgress);
+        let marbles = self.held_count(chr.id, branch.chain.marble_item);
+        if !in_progress || marbles >= branch.chain.marble_count_items {
+            crate::server::log(&format!(
+                "   second-job test: {} said Yes to re-entering, but the test is no longer short (in progress {in_progress}, {marbles} marbles); not sent in",
+                chr.name
+            ));
+            return Vec::new();
+        }
+        self.enter_test_field(branch, &format!("{} goes back in from {}", chr.name, branch.examiner_name))
     }
 
     /// **The warden opens the door.** `None` for any NPC that is not one of the four.
@@ -1665,15 +1682,25 @@ impl Session {
         self.conversation = None;
         let who = chr.name.clone();
         let mut out = self.notice(step.line);
+        // **Beside the instructor, not at the map's portal 0.** The owner, 2026-09-26: *"when leaving
+        // the test area, the player should be placed right next to the spawn point at Magician
+        // Job Instructor instead of at the origin of the map."* `secondjob::EXAMINER_SPAWN_PORTAL`.
+        let beside = self
+            .config
+            .portal_index
+            .get(&(step.to_map_id, crate::secondjob::EXAMINER_SPAWN_PORTAL.to_string()))
+            .copied()
+            .unwrap_or(0);
         out.extend(self.go_to_map(
             &mut chr,
             step.to_map_id,
-            0,
+            beside,
             format!(
-                "second-job test: {who} leaves {} for {} ({}), where {} is waiting. That map id is the client's OWN returnMap and forcedReturn for the field, not a choice this server made",
+                "second-job test: {who} leaves {} for {} ({}) at portal {beside} ({}, beside {}). That map id is the client's OWN returnMap and forcedReturn for the field, not a choice this server made",
                 branch.test_field.map_name,
                 step.to_map_id,
                 branch.examiner_map_name,
+                crate::secondjob::EXAMINER_SPAWN_PORTAL,
                 branch.examiner_name
             ),
         ));
@@ -1698,9 +1725,19 @@ impl Session {
         else {
             return Vec::new();
         };
+        let who = self.claimed_character().map(|c| c.name).unwrap_or_default();
+        self.enter_test_field(branch, &format!(
+            "quest {quest_id} startscript (q{quest_id}s, which this client does NOT ship): {who} accepted the test"
+        ))
+    }
+
+    /// **Into the hidden field**, with the words as a notice first - a script box sent with a
+    /// `SetField` is torn down by the field entry. Shared by accepting the test and by the
+    /// examiner's re-entry offer, so the two cannot drift.
+    fn enter_test_field(&mut self, branch: &'static crate::secondjob::Branch, why: &str) -> Vec<Reply> {
         let Some(mut chr) = self.claimed_character() else { return Vec::new() };
         let field = branch.test_field;
-        let who = chr.name.clone();
+        self.conversation = None;
         let mut out = self.notice(format!(
             "Into {} with you. Bring the {} back {} {}s - talk to the instructor inside when \
              you want to come out.",
@@ -1713,10 +1750,7 @@ impl Session {
             &mut chr,
             field.map_id,
             0,
-            format!(
-                "quest {quest_id} startscript (q{quest_id}s, which this client does NOT ship): {who} enters {} ({})",
-                field.map_id, field.map_name
-            ),
+            format!("second-job test: {why} - enters {} ({})", field.map_id, field.map_name),
         ));
         out
     }
@@ -2278,10 +2312,9 @@ impl Session {
             crate::dailyperks::Perk::ReturnToHenesys => {
                 let from = chr.map_id;
                 let mut moved = chr.clone();
-                let out = self.go_to_map(
+                let out = self.teleport(
                     &mut moved,
                     crate::dailyperks::HENESYS,
-                    crate::dailyperks::HENESYS_PORTAL,
                     format!(
                         "daily perk ReturnToHenesys PAID: {} - the once-a-day escape for character {}, from map {from}",
                         crate::dailyperks::COMMAND_TYPED, chr.id
@@ -2348,8 +2381,17 @@ impl Session {
         // Only offer Accept/Decline while walking a state's own lines. On a branch the user
         // has already answered, and asking again is the loop the owner hit.
         let on_branch = convo.path.contains('.');
-        let branches =
-            last && !on_branch && convo.quest_id.is_some() && self.has_branch(&convo, "yes");
+        // **The Test of Qualification ends its opening on Accept/Decline.** The owner, 2026-09-26:
+        // *"Upon accepting the quest, it should teleport me into the test map."* The quest is
+        // `startscript q20x02s`, which the client does NOT ship, so it hands the whole start to
+        // the server (action 4) and draws no Accept of its own; `Say.0` has no `yes` branch
+        // either. Before this the three lines ended on an OK that started nothing
+        // (world-ch0.log 2026-09-26 02:03:02, three tries). The Yes lands in `accept_quest`,
+        // which records the start and - on that transition only - warps them in.
+        let branches = last
+            && !on_branch
+            && convo.quest_id.is_some()
+            && (self.has_branch(&convo, "yes") || self.opens_the_test(&convo));
         let has_next = !last;
 
         // **A quiz's `#L` menu is never sent from here.** Quest 1013's `Say.1.0` carries four
@@ -2395,6 +2437,17 @@ impl Session {
     }
 
 
+    /// Is this conversation the opening of a *Test of Qualification* the character has not
+    /// started? Then its last line is the Accept box (`say_line`).
+    pub(super) fn opens_the_test(&self, convo: &Conversation) -> bool {
+        let Some(quest_id) = convo.quest_id else { return false };
+        if convo.path != "0" || !crate::secondjob::is_test_quest(quest_id) {
+            return false;
+        }
+        let Some(chr) = self.claimed_character() else { return false };
+        self.store.quest_row(chr.id, quest_id).ok().flatten().is_none()
+    }
+
     /// Does the current path have a `yes` / `no` branch under it?
     pub(super) fn has_branch(&self, convo: &Conversation, branch: &str) -> bool {
         let Some(q) = convo.quest_id.and_then(|q| self.config.quests.get(&q)) else {
@@ -2426,6 +2479,15 @@ impl Session {
         // This comes FIRST, before the Say-shaped decoder, and it is the branch with a
         // precondition: it answers only when this session has a taxi conversation parked.
         if let Some(replies) = self.taxi_menu_answer(body) {
+            return replies;
+        }
+        // The citizenship contract window (types 0x42..0x46, six-byte answers, two per
+        // accepted contract) and the clerk's menu - each only while its own `citizenship.`
+        // path is parked. session/citizenship.rs.
+        if let Some(replies) = self.citizenship_contract_answer(body) {
+            return replies;
+        }
+        if let Some(replies) = self.citizenship_menu_answer(body) {
             return replies;
         }
         // The salons' coupon menu and their pick-a-look box (type 0x0a) - each only when its
@@ -2514,6 +2576,12 @@ impl Session {
         }
         if convo.path == crate::shanks::ASK_PATH {
             return self.shanks_reply(reply.action);
+        }
+
+        // The Job Instructor's "back into the test area?" - no quest id either, so it goes
+        // before the generic quest branch for the same reason. The owner, 2026-09-26.
+        if convo.path == crate::secondjob::REENTER_PATH {
+            return self.test_reentry_answer(convo.npc_template, reply.action);
         }
 
         // The first job instructor's yes/no, before the generic quest branch for the same
@@ -2618,11 +2686,14 @@ impl Session {
     /// quest journal instead of a frozen client. The reason travels in the reply's label.
     pub(super) fn quest_book(&self, character_id: u32) -> (net::quest::QuestBook, String) {
         match self.store.quest_book(character_id) {
-            Ok(book) => {
+            Ok(mut book) => {
+                // Block #28: citizenship (quest 510000) and the Community Board's postings.
+                book.ex = self.quest_ex_records(character_id);
                 let note = format!(
-                    ", quests: {} started / {} completed",
+                    ", quests: {} started / {} completed / ex records [{}]",
                     book.started.len(),
-                    book.completed.len()
+                    book.completed.len(),
+                    book.ex.iter().map(|(q, v)| format!("quest {q} = {v}")).collect::<Vec<_>>().join("; ")
                 );
                 (book, note)
             }

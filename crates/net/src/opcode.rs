@@ -2453,6 +2453,14 @@ pub fn character_record_for_set_field_with_quests_and_skills(
     out[PRESENCE_QUEST_COMPLETED] = 1;
     out.extend_from_slice(&quests.started_block());
     out.extend_from_slice(&quests.completed_block());
+    // Block #28, the quest ex records - citizenship (510000) and the Community Board's
+    // postings (510001..510004). Presence 16's gate is at 0x140308a36, after the completed
+    // block's and before the final byte; presence 10/11/12/15, whose regions sit between,
+    // are never set by this server. `research/citizenship-2026-09-27.md` §5.2.
+    if !quests.ex.is_empty() {
+        out[crate::citizenship::PRESENCE_QUEST_EX] = 1;
+        out.extend_from_slice(&crate::citizenship::quest_ex_block(&quests.ex));
+    }
     out.push(tail);
     out
 }

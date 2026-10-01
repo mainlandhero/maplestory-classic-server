@@ -85,7 +85,15 @@ impl Session {
                 // (`research/classic-shop-rows.md` §3 row 41a), and every Grocer already lists
                 // Subi, so this is one field on a row that already went out - not a new row.
                 // On a non-rechargeable id the field is not on the wire and the value drops.
-                .with_unit_price(self.unit_price_milli(item.item_id)),
+                .with_unit_price(self.unit_price_milli(item.item_id))
+                // **The town-hall shops' grade locks.** `data/shops.txt` tags a row with the
+                // grade it needs; the town is the shop's own. The client draws the row locked
+                // and refuses it itself, and `classic_buy` refuses it too.
+                // session/citizenship.rs.
+                .with_citizenship(
+                    Self::shop_row_citizenship(template, item.min_grade).map_or(0, |(t, _)| u32::from(t)),
+                    Self::shop_row_citizenship(template, item.min_grade).map_or(0, |(_, g)| u32::from(g)),
+                ),
             );
         }
         // **No Sell twins.** Until 2026-09-16 every stocked item went out a second time with
@@ -216,6 +224,23 @@ impl Session {
                 &format!("item {} belongs to no inventory tab", row.item_id),
             );
         };
+        // **A grade-locked row is sold to that town's citizens only.** The client refuses it
+        // first; this is the refusal on the side of the socket that has to be believed.
+        if row.citizenship_grade > 0 {
+            let (town, grade) = (row.citizenship_town as u8, row.citizenship_grade as u8);
+            if !self.may_buy_gated(chr.id, town, grade) {
+                let mut out = self.classic_refused(
+                    net::classicshop::RESULT_NOT_ENOUGH_MESOS,
+                    &format!("item {} needs citizenship town {town} grade {grade}", row.item_id),
+                );
+                out.extend(self.notice(format!(
+                    "Only citizens of {} of grade {grade} ({}) or higher may buy that.",
+                    crate::citizenship::town(town).map_or("that town", |t| t.name),
+                    crate::citizenship::grade_name(grade)
+                )));
+                return out;
+            }
+        }
 
         let cap = u16::try_from(row.max_per_purchase.max(1)).unwrap_or(1);
         let qty = quantity.clamp(1, cap);

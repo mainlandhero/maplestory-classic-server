@@ -909,7 +909,9 @@ mod tests {
         // after the coordinator had deleted them as "duplicates". They were not - they
         // are the female variants, sharing a display name and differing only in id, and
         // the live UI counts (98/98 and 36/36) are what proved it.
-        assert_eq!(table.item_count(), 932, "and 932 item rows");
+        // 933 since 2026-09-29: Max's Elixir, on the source page and missing from the
+        // transcription, added at the owner's word.
+        assert_eq!(table.item_count(), 933, "and 933 item rows");
         assert!(
             table.problems.is_empty(),
             "every row must resolve; still open:\n{}",
@@ -940,10 +942,20 @@ mod tests {
         assert!(flint.items.iter().all(|i| i.min_grade.is_some()), "every scroll is gated");
         let lesser = flint.items.iter().find(|i| i.name.starts_with("Topwear")).unwrap();
         assert_eq!(lesser.min_grade, Some(5), "Town Resident+");
+        // **Every row of the six town-hall shops needs a citizenship** (the owner, 2026-09-29): the
+        // general stores' unranked rows are Traveler+, grade 1.
+        for npc in ["Raymond", "Oak", "Flint", "Max", "Weston", "Ben"] {
+            let shop = table.by_npc(npc).expect(npc);
+            assert!(shop.items.iter().all(|i| i.min_grade.is_some()), "{npc}: an ungated row");
+        }
+        let elixir = table.by_npc("Max").unwrap().items.iter().find(|i| i.name == "Elixir").expect("Max sells an Elixir");
+        assert_eq!((elixir.buy_price, elixir.min_grade), (3_000, Some(10)), "3000 mesos, Citizen of Honor+");
+        let chicken = table.by_npc("Raymond").unwrap().items.iter().find(|i| i.name == "Fried Chicken").unwrap();
+        assert_eq!(chicken.min_grade, Some(1), "Traveler+");
         assert!(
             table.shops.iter().flat_map(|s| &s.items).filter(|i| i.min_grade.is_some()).count()
-                == 40,
-            "40 gated rows across the file"
+                == 47,
+            "47 gated rows across the file - 40, the six unranked town-hall rows made Traveler+, and Max's Elixir (2026-09-29)"
         );
     }
 
