@@ -382,6 +382,16 @@ carries risk**: the handler's trailing virtual call resolves to a method that re
 and if that resolution is wrong the body is short. Plan step 13(b) asks for `client-exit.log`
 rather than assuming. Never on a screen.
 
+**2026-10-01: Beginner Recovery shows its icon.** The owner: *"Recovery skill needs to be fixed from
+the Beginner skill."* No log came with it; the visible gap the code itself documented was an empty tray
+and a developer's chat line on every cast ("Recovery's stat bit has never been identified"). The bit is
+in the client's own CTS name table - **131 `Regen`** (`net::buff::CTS_REGEN`), whose `0x007D` block has
+Speed's exact shape **[L]**; that it is Recovery's is **[I]**. A cast now sends it for the heal's 30 s
+with value `x` and the skill as reason, records it so the tick's `0x007E` takes it down right after the
+sixth heal, and a right-click on it ends the heal. The chat line is gone (a log line instead), and a
+channel change carries the remaining heal with the icon. The heal itself is unchanged. Plan step 30.
+**Not on a screen.**
+
 **2026-10-01: buffs survive a channel change, and mobs come back in waves.** Two live-server reports
 relayed by the owner. *"Once buff expires, it does not go away"*: an icon comes down only on the
 server's `0x007E`, each channel is its own process, and a connection started with no buffs - so a buff

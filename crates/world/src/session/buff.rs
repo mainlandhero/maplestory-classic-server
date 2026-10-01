@@ -685,6 +685,9 @@ impl Session {
             ));
         }
         self.buffs.retain(|b| !held.contains(&b.bit));
+        if held.contains(&net::buff::CTS_REGEN) {
+            self.stop_recovery();
+        }
         self.reset_reply(
             &held,
             net::buff::TAIL_LEN,
