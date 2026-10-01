@@ -78,6 +78,43 @@ pub const TREASURE_SCROLL: u32 = 4_031_066;
 /// third could be anywhere.
 pub const REPURPOSED: [u32; 2] = [SCROLL_OF_SECRETS, TREASURE_SCROLL];
 
+/// **The modern client's own scrolls, backported** (the owner, 2026-10-01: *"Can we potentially
+/// back port Chaos Scrolls, Clean Slate Scrolls, Innocence Scrolls from the modern client and
+/// make it work like how we have in !scroll?"* - and *"We can use the success rates shown on
+/// the modern items."*). Real Use-tab items, dragged onto an equip like any scroll (`0x0125`),
+/// each one a [`SecretsMode`] at the rate its own tooltip states.
+///
+/// | id | modern name | mode | rate |
+/// |---|---|---|---|
+/// | 2049000..2049003 | Pure Clean Slate Scroll 1/3/5/20% | Clean Slate | 1, 3, 5, 20 |
+/// | 2049100 | Chaos Scroll 60% | Chaos | 60 |
+/// | **2049190** | Innocence Scroll 70% (modern **2049600**) | Innocence | 70 |
+///
+/// **Innocence is renumbered** (`tools/backport_install.py`'s `SCROLL_RENAMES`): this client's
+/// applicability predicate `FUN_1404174b0` lets `2049000..2049199` onto any non-pet equip
+/// (`0x14041752c..0x14041754d`) [L], but 2049600 falls to the "scroll category == equip
+/// category" rule, which no equip meets - the drag would be refused before anything is sent.
+pub const BACKPORTED: [(u32, SecretsMode, u32); 6] = [
+    (2_049_000, SecretsMode::CleanSlate, 1),
+    (2_049_001, SecretsMode::CleanSlate, 3),
+    (2_049_002, SecretsMode::CleanSlate, 5),
+    (2_049_003, SecretsMode::CleanSlate, 20),
+    (2_049_100, SecretsMode::Chaos, 60),
+    (2_049_190, SecretsMode::Innocence, 70),
+];
+
+/// The mode and success rate of a [`BACKPORTED`] scroll.
+pub fn backported(item_id: u32) -> Option<(SecretsMode, u32)> {
+    BACKPORTED.iter().find(|(id, _, _)| *id == item_id).map(|&(_, mode, pct)| (mode, pct))
+}
+
+/// `2530000` **Lucky Day Scroll**, backported. Dragged onto an equip (`0x0126`) it sets
+/// [`net::opcode::ATTRIBUTE_LUCKY_DAY`]; the next scroll on that item then succeeds whatever
+/// its rate, and spends the bit. The owner, 2026-10-01: *"the lucky day scroll will
+/// automatically make the next scroll used on that item to automatically succeed without
+/// respecting its success percentage."*
+pub const LUCKY_DAY: u32 = 2_530_000;
+
 /// The success chance of Chaos and Clean Slate when the daily free pass is spent, in percent.
 pub const ROLLED_SUCCESS_PCT: u32 = 60;
 
@@ -225,6 +262,9 @@ pub enum Chance {
     Guaranteed,
     /// Any later use: [`ROLLED_SUCCESS_PCT`].
     Rolled,
+    /// A [`BACKPORTED`] scroll at its own rate - **Innocence included**, which only ever
+    /// succeeds outright under the other two.
+    Percent(u32),
 }
 
 /// The equip as it stands, plus the one server-only number.
@@ -368,6 +408,14 @@ pub fn apply(
         // "no random base stats will be kept" is `stats: base.stats` and nothing else: the
         // template's own set, not the current set with the rolls unwound, so an item that has
         // been scrolled a dozen times still lands exactly on the template.
+        // A backported Innocence (70%) that misses changes nothing: no slot, no stat.
+        SecretsMode::Innocence if !innocence_succeeds(chance, roll) => Ok(Applied {
+            after: *state,
+            succeeded: false,
+            slot_spent: false,
+            changes: Vec::new(),
+            destroyed: false,
+        }),
         SecretsMode::Innocence => Ok(Applied {
             after: EquipState { remaining: base.tuc, failed_slots: 0, stats: base.stats },
             succeeded: true,
@@ -551,6 +599,15 @@ fn succeeds(chance: Chance, roll: u64) -> bool {
     match chance {
         Chance::Guaranteed => true,
         Chance::Rolled => (roll % 100) < u64::from(ROLLED_SUCCESS_PCT),
+        Chance::Percent(pct) => (roll % 100) < u64::from(pct),
+    }
+}
+
+/// Innocence rolls only at a [`Chance::Percent`]; `!scroll`'s Innocence is a flat 100%.
+fn innocence_succeeds(chance: Chance, roll: u64) -> bool {
+    match chance {
+        Chance::Percent(pct) => (roll % 100) < u64::from(pct),
+        Chance::Guaranteed | Chance::Rolled => true,
     }
 }
 
@@ -972,5 +1029,28 @@ mod tests {
                 assert_ne!(a.line(), b.line());
             }
         }
+    }
+
+    /// **The backported rates are the modern tooltips'**, and Innocence rolls only at one.
+    #[test]
+    fn backported_scrolls_roll_at_their_own_rate() {
+        assert_eq!(backported(2_049_100), Some((SecretsMode::Chaos, 60)));
+        assert_eq!(backported(2_049_003), Some((SecretsMode::CleanSlate, 20)));
+        assert_eq!(backported(2_049_190), Some((SecretsMode::Innocence, 70)));
+        assert_eq!(backported(2_049_600), None, "the modern id is not used - the client refuses it");
+        assert!(BACKPORTED.iter().all(|(id, _, _)| (2_049_000..2_049_200).contains(id)), "the range the client lets onto any equip");
+
+        let base = EquipBase { tuc: 7, stats: EquipStatSet { inc_pdd: 10, ..Default::default() } };
+        let worn = EquipState { remaining: 3, failed_slots: 2, stats: EquipStatSet { inc_pdd: 15, ..Default::default() } };
+        // roll % 100 = 69 succeeds at 70; 70 does not.
+        let hit = apply(SecretsMode::Innocence, &base, &worn, Chance::Percent(70), 69).unwrap();
+        assert!(hit.succeeded);
+        assert_eq!(hit.after.stats, base.stats);
+        let miss = apply(SecretsMode::Innocence, &base, &worn, Chance::Percent(70), 70).unwrap();
+        assert!(!miss.succeeded && !miss.slot_spent);
+        assert_eq!(miss.after, worn, "a missed Innocence changes nothing");
+        assert!(apply(SecretsMode::Innocence, &base, &worn, Chance::Rolled, 99).unwrap().succeeded, "!scroll's is still 100%");
+        assert!(!apply(SecretsMode::CleanSlate, &base, &worn, Chance::Percent(1), 1).unwrap().succeeded, "1% misses at roll 1");
+        assert!(apply(SecretsMode::CleanSlate, &base, &worn, Chance::Percent(1), 100).unwrap().succeeded, "and hits at roll 0");
     }
 }

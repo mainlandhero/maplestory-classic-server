@@ -1224,6 +1224,11 @@ impl Session {
             net::upgrade::CLIENT_ITEM_UPGRADE => {
                 return self.on_item_upgrade(body.get(2..).unwrap_or(&[]));
             }
+            // **`0x0126` - the Lucky Day Scroll dragged onto an equip** (2026-10-01). The same
+            // body and the same latch as `0x0125`; `session/realscroll.rs`.
+            net::upgrade::CLIENT_ITEM_ENHANCER => {
+                return self.on_item_enhancer(body.get(2..).unwrap_or(&[]));
+            }
             // **`0x0111` is the summoning sack**, and it latches for the same reason.
             // The owner, 2026-09-09: *"I just also tried summoning the GM Black Sack Jr. Balrog
             // lvl 80"* - it arrived and fell through to the unlock arm below, exactly as

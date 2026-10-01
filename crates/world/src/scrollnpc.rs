@@ -23,7 +23,20 @@
 //!     scroll.equip:treasure              which worn item?   (asked FIRST - see below)
 //!     scroll.real:<eq>                   which of your scrolls shall I guarantee?
 //!     scroll.confirm:treasure:<eq>:<id>  are you sure?   yes/no
+//!     scroll.confirm:treasuresecrets:<modeKey>:<eq>      ... when it guarantees a Secrets
+//!
+//!   after every result, while either scroll is still in the bag
+//!     scroll.again                       keep scrolling?  yes/no -> scroll.pick
 //! ```
+//!
+//! **The Treasure Scroll guarantees a Scroll of Secrets too** (the owner, 2026-10-01: *"Treasure
+//! Scroll should work for Scroll of Secrets"*). Its scroll menu lists the two modes that can
+//! fail - Chaos and Clean Slate - after the real scrolls, when a Scroll of Secrets is in the
+//! bag. Innocence always works and is not offered. A guaranteed Secrets claims no daily pass.
+//!
+//! **And the result asks to go again** (the same day: *"they should be asked if they want to
+//! continue scrolling if they have more scrolls in their inventory"*). Yes is `!scroll` typed
+//! again; No closes, silently - `0x00F3` holds no latch.
 //!
 //! **The Treasure Scroll asks for the equip before the scroll**, which is the opposite order
 //! to the other branch and is not an accident: the list of real scrolls it can offer is
@@ -104,9 +117,17 @@ pub const REAL_PATH_PREFIX: &str = "scroll.real:";
 /// The yes/no. Followed by `secrets:<key>:<slot>` or `treasure:<slot>:<realScrollId>`.
 pub const CONFIRM_PATH_PREFIX: &str = "scroll.confirm:";
 
+/// "Keep scrolling?" after a result. Yes opens [`PICK_PATH`] again.
+pub const AGAIN_PATH: &str = "scroll.again";
+
 /// The `secrets` / `treasure` discriminator inside a path.
 const SECRETS_TAG: &str = "secrets";
 const TREASURE_TAG: &str = "treasure";
+/// A Treasure Scroll guaranteeing a Scroll of Secrets.
+const TREASURE_SECRETS_TAG: &str = "treasuresecrets";
+
+/// The Scroll of Secrets modes a Treasure Scroll can guarantee: the two that can fail.
+pub const TREASURE_SECRETS_MODES: [SecretsMode; 2] = [SecretsMode::Chaos, SecretsMode::CleanSlate];
 
 /// Does this conversation path belong to `!scroll`?
 ///
@@ -115,6 +136,7 @@ const TREASURE_TAG: &str = "treasure";
 pub fn is_scroll_path(path: &str) -> bool {
     path == PICK_PATH
         || path == MODE_PATH
+        || path == AGAIN_PATH
         || path.starts_with(EQUIP_PATH_PREFIX)
         || path.starts_with(REAL_PATH_PREFIX)
         || path.starts_with(CONFIRM_PATH_PREFIX)
@@ -158,6 +180,8 @@ pub fn equip_slot_from_real_path(path: &str) -> Option<u8> {
 pub enum Confirmed {
     Secrets { mode: SecretsMode, equip_slot: u8 },
     Treasure { equip_slot: u8, real_scroll: u32 },
+    /// A Treasure Scroll making a Scroll of Secrets, used as `mode`, succeed. Spends both.
+    TreasureSecrets { mode: SecretsMode, equip_slot: u8 },
 }
 
 impl Confirmed {
@@ -165,14 +189,16 @@ impl Confirmed {
         match self {
             Confirmed::Secrets { equip_slot, .. } => equip_slot,
             Confirmed::Treasure { equip_slot, .. } => equip_slot,
+            Confirmed::TreasureSecrets { equip_slot, .. } => equip_slot,
         }
     }
 
-    /// Which of the two repurposed items this consumes.
+    /// Which of the two repurposed items this consumes - the Treasure Scroll on both of its
+    /// paths; the scroll it guarantees is the second item.
     pub fn item(self) -> Scroll {
         match self {
             Confirmed::Secrets { .. } => Scroll::Secrets,
-            Confirmed::Treasure { .. } => Scroll::Treasure,
+            Confirmed::Treasure { .. } | Confirmed::TreasureSecrets { .. } => Scroll::Treasure,
         }
     }
 }
@@ -184,6 +210,9 @@ pub fn confirm_path(action: Confirmed) -> String {
         }
         Confirmed::Treasure { equip_slot, real_scroll } => {
             format!("{CONFIRM_PATH_PREFIX}{TREASURE_TAG}:{equip_slot}:{real_scroll}")
+        }
+        Confirmed::TreasureSecrets { mode, equip_slot } => {
+            format!("{CONFIRM_PATH_PREFIX}{TREASURE_SECRETS_TAG}:{}:{equip_slot}", mode.key())
         }
     }
 }
@@ -200,6 +229,10 @@ pub fn confirmed_from_path(path: &str) -> Option<Confirmed> {
             equip_slot: a.parse().ok()?,
             real_scroll: b.parse().ok()?,
         }),
+        TREASURE_SECRETS_TAG => {
+            let mode = SecretsMode::from_key(a).filter(|m| TREASURE_SECRETS_MODES.contains(m))?;
+            Some(Confirmed::TreasureSecrets { mode, equip_slot: b.parse().ok()? })
+        }
         _ => None,
     }
 }
@@ -452,14 +485,28 @@ pub fn no_scroll_fits(item_name: &str) -> String {
 /// **The normal rate is shown on every row**, and it is the whole point of the screen: a 10%
 /// scroll and a 100% scroll cost the same Treasure Scroll, so a player who cannot see the
 /// difference cannot spend it well.
-pub fn real_scroll_menu(item_name: &str, offered: &[(u32, String, u16, u16)]) -> String {
-    let rows: Vec<String> = offered
+///
+/// `secrets_held` is how many Scrolls of Secrets the bag holds; when it is not zero the
+/// [`TREASURE_SECRETS_MODES`] follow the real scrolls as rows of their own, so a selection
+/// index past `offered` names one of them.
+pub fn real_scroll_menu(item_name: &str, offered: &[(u32, String, u16, u16)], secrets_held: u16) -> String {
+    let mut rows: Vec<String> = offered
         .iter()
         .enumerate()
         .map(|(i, (id, name, success, count))| {
             row(i, *id, name, &format!(" - normally {success}% (x{count})"))
         })
         .collect();
+    if secrets_held > 0 {
+        for (j, mode) in TREASURE_SECRETS_MODES.iter().enumerate() {
+            rows.push(row(
+                offered.len() + j,
+                crate::scrolls::SCROLL_OF_SECRETS,
+                &format!("Scroll of Secrets as a {}", mode.name()),
+                &format!(" - normally {}% (x{secrets_held})", crate::scrolls::ROLLED_SUCCESS_PCT),
+            ));
+        }
+    }
     menu(
         &format!(
             "These are the scrolls you carry that fit your #b{item_name}#k. \
@@ -498,7 +545,21 @@ pub fn confirm(action: Confirmed, item_name: &str, real_name: &str, guaranteed: 
              #b{item_name}#k?{PARAGRAPH}It will succeed, and one enhancement slot will be \
              used.{PARAGRAPH}Both scrolls are used up."
         ),
+        Confirmed::TreasureSecrets { mode, .. } => format!(
+            "Use your #bTreasure Scroll#k to guarantee a #bScroll of Secrets#k as a #b{}#k on \
+             your #b{item_name}#k?{PARAGRAPH}{}{LINE_BREAK}It will succeed.{PARAGRAPH}Both \
+             scrolls are used up.",
+            mode.name(),
+            describe(mode)
+        ),
     }
+}
+
+/// The result, with "keep going?" under it - asked only while one of the two scrolls is still
+/// in the bag. `held` is what is left, as [`pick_menu`] takes it.
+pub fn again(result: &str, held: &[(Scroll, u16)]) -> String {
+    let left: Vec<String> = held.iter().map(|(scroll, n)| format!("#b{}#k x{n}", scroll.name())).collect();
+    format!("{result}{PARAGRAPH}You still have {}. Shall we keep scrolling?", left.join(" and "))
 }
 
 pub fn cancelled() -> String {
@@ -519,6 +580,10 @@ pub fn outcome(
     remaining: u8,
 ) -> String {
     let head = match action {
+        // The Treasure Scroll made it work, so this is the Secrets line for a success.
+        Confirmed::TreasureSecrets { mode, equip_slot } => {
+            return outcome(Confirmed::Secrets { mode, equip_slot }, item_name, real_name, true, changes, remaining);
+        }
         Confirmed::Secrets { mode: SecretsMode::Innocence, .. } => {
             format!("Your #b{item_name}#k is as it was the day it was made.")
         }
@@ -597,7 +662,49 @@ mod tests {
         out.push(confirm(t, "Suitcase", "Attack Scroll", false));
         out.push(outcome(t, "Suitcase", "Attack Scroll", true, &[("Weapon Attack", 1)], 5));
         out.push(outcome(t, "Suitcase", "Attack Scroll", true, &[], 5));
+        for mode in TREASURE_SECRETS_MODES {
+            let ts = Confirmed::TreasureSecrets { mode, equip_slot: 5 };
+            out.push(confirm(ts, "Suitcase", "", true));
+            out.push(outcome(ts, "Suitcase", "", true, &[("Weapon Attack", 3)], 5));
+        }
+        out.push(real_scroll_menu("Suitcase", &offered(), 2));
+        out.push(again("It worked.", &[(Scroll::Secrets, 2), (Scroll::Treasure, 1)]));
         out
+    }
+
+    /// **The Treasure Scroll guarantees a Scroll of Secrets** (the owner, 2026-10-01): its menu
+    /// lists Chaos and Clean Slate after the real scrolls - not Innocence, which always works -
+    /// only while a Scroll of Secrets is held, and the choice survives the path round trip.
+    #[test]
+    fn the_treasure_menu_offers_the_scroll_of_secrets_after_the_real_scrolls() {
+        let without = real_scroll_menu("Suitcase", &offered(), 0);
+        assert!(!without.contains("4031065"), "{without}");
+        let with = real_scroll_menu("Suitcase", &offered(), 2);
+        assert!(with.contains("#L2##i4031065# #bScroll of Secrets as a Chaos Scroll#k - normally 60% (x2)"), "{with}");
+        assert!(with.contains("#L3##i4031065# #bScroll of Secrets as a Clean Slate Scroll#k"), "{with}");
+        assert!(!with.contains("Innocence"), "{with}");
+        assert!(with.ends_with("#l") && with.matches("#l").count() == 1, "still one #l at the very end: {with}");
+        for mode in TREASURE_SECRETS_MODES {
+            let a = Confirmed::TreasureSecrets { mode, equip_slot: 11 };
+            assert_eq!(confirmed_from_path(&confirm_path(a)), Some(a));
+            assert_eq!(a.item(), Scroll::Treasure, "the Treasure Scroll is the item used");
+            assert!(confirm(a, "Suitcase", "", true).contains("It will succeed."));
+        }
+        assert_eq!(confirmed_from_path("scroll.confirm:treasuresecrets:innocence:11"), None, "not a mode it guarantees");
+        // A guaranteed Chaos reads as a success even when the roll moved nothing.
+        let ts = Confirmed::TreasureSecrets { mode: SecretsMode::Chaos, equip_slot: 11 };
+        assert!(outcome(ts, "Suitcase", "", true, &[], 4).starts_with("It worked"));
+    }
+
+    /// The result asks to go on, naming what is left; its path is one of ours.
+    #[test]
+    fn the_result_asks_to_keep_scrolling_while_scrolls_are_left() {
+        let text = again("It worked.", &[(Scroll::Secrets, 2), (Scroll::Treasure, 1)]);
+        assert!(text.starts_with("It worked."), "{text}");
+        assert!(text.contains("#bScroll of Secrets#k x2 and #bTreasure Scroll#k x1"), "{text}");
+        assert!(text.ends_with("Shall we keep scrolling?"), "{text}");
+        assert!(is_scroll_path(AGAIN_PATH));
+        assert_eq!(confirmed_from_path(AGAIN_PATH), None, "the again box is not a confirm");
     }
 
     /// **A line break is the two characters `\` and `n`, never a newline byte.**
@@ -656,7 +763,7 @@ mod tests {
             mode_menu([true, false, true]),
             equip_menu(Branch::Secrets(SecretsMode::Chaos), &worn()),
             equip_menu(Branch::Treasure, &worn()),
-            real_scroll_menu("Wizet Secret Agent Suitcase", &offered()),
+            real_scroll_menu("Wizet Secret Agent Suitcase", &offered(), 0),
         ]
     }
 
@@ -747,7 +854,7 @@ mod tests {
         assert!(p.contains("#L1##i4031066# #bTreasure Scroll#k (x1)"), "{p}");
         let e = equip_menu(Branch::Treasure, &worn());
         assert!(e.contains("#L0##i1322999# #bWizet Secret Agent Suitcase#k"), "{e}");
-        let r = real_scroll_menu("Suitcase", &offered());
+        let r = real_scroll_menu("Suitcase", &offered(), 0);
         assert!(r.contains("#L0##i2043200#"), "{r}");
     }
 

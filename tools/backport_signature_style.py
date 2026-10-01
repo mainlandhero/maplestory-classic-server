@@ -220,6 +220,12 @@ CONSUME_NAMES = [
     # face coupons
     "Frieren Face Coupon", "Fern Face Coupon", "Stark Face Coupon", "Himmel Face Coupon",
     "\u00dcbel Face Coupon", "Aura Face Coupon", "Linie Face Coupon", "L\u00fcgner Face Coupon",
+    # **The backported scrolls, by id** (the owner, 2026-10-01: *"back port Chaos Scrolls, Clean
+    # Slate Scrolls, Innocence Scrolls from the modern client"*, then the Lucky Day Scroll). By
+    # id because their names are not unique - "Lucky Day Scroll" is 2530000, 2530002 and
+    # 2530004. Pure Clean Slate 1/3/5/20%, Chaos 60%, Innocence 70% (renumbered on install,
+    # see `backport_install.py`'s SCROLL_RENAMES), Lucky Day.
+    2049000, 2049001, 2049002, 2049003, 2049100, 2049600, 2530000,
 ]
 
 
@@ -428,9 +434,17 @@ def main():
         ("consume", CONSUME_NAMES, consume, "Item/Consume", "Consume"),
     ]:
         prop_tree = tree(tree_rel)
-        for name in names:
-            for item_id in ids_named(table, name, allow_many=False):
-                _, _, desc = table[item_id]
+        for wanted in names:
+            # An entry is a name (resolved, and fatal when it is missing or ambiguous) or an
+            # id (fatal when the modern strings do not have it).
+            if isinstance(wanted, int):
+                if wanted not in table:
+                    raise SystemExit("no item %d in the modern client's strings" % wanted)
+                hits = [wanted]
+            else:
+                hits = ids_named(table, wanted, allow_many=False)
+            for item_id in hits:
+                _, name, desc = table[item_id]
                 # Items are grouped by their first four digits: 5222221 -> 0522.img.
                 image = "%04d.img" % (item_id // 10000)
                 key = "%08d" % item_id

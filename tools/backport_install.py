@@ -236,8 +236,19 @@ BOX_ID = 5681599
 # So they wear 2890907..2890914: same 0289.img, same canvas nodes, a free stretch of the
 # family (the modern client uses 2890000..2890054).
 FACE_COUPON_RENAMES = {2897000 + n: 2890900 + n for n in range(7, 15)}
+# The backported Innocence Scroll 70%, 2026-10-01. This client's scroll-applicability predicate
+# (FUN_1404174b0) lets 2049000..2049199 onto any non-pet equip but sends 2049600 to the
+# "scroll category == equip category" rule, which nothing meets - so the drag would be refused
+# client-side. It wears 2049190: same 0204.img, a free number in the accepted range, and the
+# icon outlinks still name the modern 02049600 canvas node, merged untouched (like the box).
+# Must equal `world::scrolls::BACKPORTED`'s Innocence id. [L, research in STATUS.md 2026-10-01]
+SCROLL_RENAMES = {2049600: 2049190}
+# The Lucky Day Scroll's text, the owner's own (2026-10-01): it guarantees the next scroll, it
+# does not add 10%.
+LUCKY_DAY_ID = 2530000
+LUCKY_DAY_DESC = "Increases the success chance of your next scroll by 100%"
 # Every id that changes family or number on the way into the classic client, old -> new.
-RENAMES = {BOX_MODERN_ID: BOX_ID, **FACE_COUPON_RENAMES}
+RENAMES = {BOX_MODERN_ID: BOX_ID, **FACE_COUPON_RENAMES, **SCROLL_RENAMES}
 
 # The three hair-hats, 2026-09-18: Aura / Linie / Lügner Hair (Hat), 1006910..1006912. They
 # would not go on a male character - no 0x0107, no message box, across every run since
@@ -870,6 +881,8 @@ def main():
             root = {t: {("%d" % HAIR_HAT_RENAMES[int(k)]) if k.isdigit() and int(k) in HAIR_HAT_RENAMES else k: v
                         for k, v in ids.items()}
                     for t, ids in root.items()}
+        if image == "Consume.img" and str(LUCKY_DAY_ID) in root:
+            root[str(LUCKY_DAY_ID)] = dict(root[str(LUCKY_DAY_ID)], desc=LUCKY_DAY_DESC)
         if image == "Cash.img":
             # The modern text says "obtain 1 item according to set probability rates". Ours
             # gives every set (the owner, 2026-09-10), and the tooltip is the one place a player

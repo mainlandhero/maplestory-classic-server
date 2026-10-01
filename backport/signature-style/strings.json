@@ -706,6 +706,34 @@
   "2897014": {
    "name": "Lügner Face Coupon",
    "desc": "#cDouble-click# to change your face to #cLügner Face#."
+  },
+  "2049000": {
+   "name": "Pure Clean Slate Scroll 1%",
+   "desc": "Restores exhausted scroll uses. Cannot be used on cash items."
+  },
+  "2049001": {
+   "name": "Pure Clean Slate Scroll 3%",
+   "desc": "Restores exhausted scroll uses. Cannot be used on cash items."
+  },
+  "2049002": {
+   "name": "Pure Clean Slate Scroll 5%",
+   "desc": "Restores exhausted scroll uses. Cannot be used on cash items."
+  },
+  "2049003": {
+   "name": "Pure Clean Slate Scroll 20%",
+   "desc": "Restores previously lost upgrade slots. Cannot be used on cash items."
+  },
+  "2049100": {
+   "name": "Chaos Scroll 60%",
+   "desc": "Alters equipment for better or worse. Some stats are not affected. Cannot be used on Cash items."
+  },
+  "2049600": {
+   "name": "Innocence Scroll 70%",
+   "desc": "Resets all stats on an item, except for Hidden Potentials. Can only be used on equipment. If used on an item that grows, the item may revert to its pre-growth state. Additional options will not be reset.\\nCannot be used on items that have #cScissors of Karma, Sharing Tag, or Item Guard# applied."
+  },
+  "2530000": {
+   "name": "Lucky Day Scroll",
+   "desc": "Increases the success chance of your next scroll by 10%.\\n#cCannot be used with Potential Scrolls or Enhancement Scrolls.#"
   }
  },
  "Pet": {

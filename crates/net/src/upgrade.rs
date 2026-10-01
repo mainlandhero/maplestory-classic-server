@@ -66,6 +66,19 @@ use crate::packet::PacketWriter;
 /// **-5**, the worn topwear.
 pub const CLIENT_ITEM_UPGRADE: u16 = 0x0125;
 
+/// **`0x0126` - an "enhancer" scroll dragged onto an equip**: the Lucky Day / Protection
+/// family. The owner, 2026-10-01: *"We should allow drag scrolling for lucky day scroll."*
+///
+/// **[L]**: in the drag handler `FUN_1417df1d0`, a scroll the applicability predicate
+/// (`FUN_1404174b0`) refuses goes to `FUN_1417ea820`, which is true for `2530000..2532999`
+/// (and subtypes `0x30..0x32`, `0x37`, `0x38`, `0x3D`); that branch shows the client's own
+/// confirm (`0x0F13` *"You've selected the %s. Do you want to use the %s on it?"*) and calls
+/// `FUN_142cc7bf0` - **the same five fields as [`CLIENT_ITEM_UPGRADE`]**, from the same four
+/// arguments (`0x1417e01fd..0x1417e0222` beside `0x1417dfb2b..0x1417dfb50`). It sets the same
+/// `+0x2330` latch, so it is answered on every path, exactly like `0x0125`.
+/// [`parse_item_upgrade`] reads it.
+pub const CLIENT_ITEM_ENHANCER: u16 = 0x0126;
+
 /// Body length of a [`CLIENT_ITEM_UPGRADE`]. Measured on the wire four times in one run.
 pub const ITEM_UPGRADE_REQUEST_LEN: usize = 11;
 

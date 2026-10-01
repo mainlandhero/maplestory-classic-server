@@ -2668,6 +2668,126 @@
     "notSale": 1,
     "collabo": 1
    }
+  },
+  {
+   "prop_archive": "Item\\Consume\\Consume_000.wz",
+   "outlinks": 2,
+   "canvas_images": [
+    "Item/Consume/_Canvas/0204.img"
+   ],
+   "id": 2049000,
+   "name": "Pure Clean Slate Scroll 1%",
+   "desc": "Restores exhausted scroll uses. Cannot be used on cash items.",
+   "script": null,
+   "npc": null,
+   "info": {
+    "price": 1,
+    "recover": 1,
+    "success": 1
+   }
+  },
+  {
+   "prop_archive": "Item\\Consume\\Consume_000.wz",
+   "outlinks": 2,
+   "canvas_images": [
+    "Item/Consume/_Canvas/0204.img"
+   ],
+   "id": 2049001,
+   "name": "Pure Clean Slate Scroll 3%",
+   "desc": "Restores exhausted scroll uses. Cannot be used on cash items.",
+   "script": null,
+   "npc": null,
+   "info": {
+    "price": 1,
+    "recover": 1,
+    "success": 3
+   }
+  },
+  {
+   "prop_archive": "Item\\Consume\\Consume_000.wz",
+   "outlinks": 2,
+   "canvas_images": [
+    "Item/Consume/_Canvas/0204.img"
+   ],
+   "id": 2049002,
+   "name": "Pure Clean Slate Scroll 5%",
+   "desc": "Restores exhausted scroll uses. Cannot be used on cash items.",
+   "script": null,
+   "npc": null,
+   "info": {
+    "price": 1,
+    "recover": 1,
+    "success": 5
+   }
+  },
+  {
+   "prop_archive": "Item\\Consume\\Consume_000.wz",
+   "outlinks": 2,
+   "canvas_images": [
+    "Item/Consume/_Canvas/0204.img"
+   ],
+   "id": 2049003,
+   "name": "Pure Clean Slate Scroll 20%",
+   "desc": "Restores previously lost upgrade slots. Cannot be used on cash items.",
+   "script": null,
+   "npc": null,
+   "info": {
+    "price": 1,
+    "recover": 1,
+    "success": 20
+   }
+  },
+  {
+   "prop_archive": "Item\\Consume\\Consume_000.wz",
+   "outlinks": 2,
+   "canvas_images": [
+    "Item/Consume/_Canvas/0204.img"
+   ],
+   "id": 2049100,
+   "name": "Chaos Scroll 60%",
+   "desc": "Alters equipment for better or worse. Some stats are not affected. Cannot be used on Cash items.",
+   "script": null,
+   "npc": null,
+   "info": {
+    "price": 1,
+    "randstat": 1,
+    "success": 60
+   }
+  },
+  {
+   "prop_archive": "Item\\Consume\\Consume_000.wz",
+   "outlinks": 2,
+   "canvas_images": [
+    "Item/Consume/_Canvas/0204.img"
+   ],
+   "id": 2049600,
+   "name": "Innocence Scroll 70%",
+   "desc": "Resets all stats on an item, except for Hidden Potentials. Can only be used on equipment. If used on an item that grows, the item may revert to its pre-growth state. Additional options will not be reset.\\nCannot be used on items that have #cScissors of Karma, Sharing Tag, or Item Guard# applied.",
+   "script": null,
+   "npc": null,
+   "info": {
+    "price": 1,
+    "success": 70,
+    "reset": 1,
+    "accountSharable": 1
+   }
+  },
+  {
+   "prop_archive": "Item\\Consume\\Consume_000.wz",
+   "outlinks": 2,
+   "canvas_images": [
+    "Item/Consume/_Canvas/0253.img"
+   ],
+   "id": 2530000,
+   "name": "Lucky Day Scroll",
+   "desc": "Increases the success chance of your next scroll by 10%.\\n#cCannot be used with Potential Scrolls or Enhancement Scrolls.#",
+   "script": null,
+   "npc": null,
+   "info": {
+    "price": 1,
+    "success": 100,
+    "accountSharable": 1
+   }
   }
  ],
  "pets": [
@@ -7642,6 +7762,18 @@
    "05681551/info/iconRaw",
    "05681552/info/icon",
    "05681552/info/iconRaw"
+  ],
+  "Item/Consume/_Canvas/0204.img": [
+   "02049041/info/icon",
+   "02049041/info/iconRaw",
+   "02049178/info/icon",
+   "02049178/info/iconRaw",
+   "02049609/info/icon",
+   "02049609/info/iconRaw"
+  ],
+  "Item/Consume/_Canvas/0253.img": [
+   "02530006/info/icon",
+   "02530006/info/iconRaw"
   ],
   "Item/Consume/_Canvas/0254.img": [
    "02543137/info/icon",
