@@ -343,6 +343,19 @@ if ($missingCert.Count -gt 0) {
 } else {
     Write-Host '  sign-in certificate included - clients need no fingerprint configuration'
 }
+# **The Discord status webhook, live server only** (world::discordstatus, 2026-09-30). The URL is
+# a credential - whoever has it can post as the webhook - so it lives in the gitignored
+# discord-webhook.txt at the repo root and travels in THIS package only, never in the players'
+# client setup. start-server.ps1 passes it to the hub when the file is there; the test launcher
+# never does. The id of the one message it edits (discord-status-message.txt) is NOT shipped: it
+# is written on the server by the first post and kept there, so re-deploying keeps the message.
+$discordSrc = Join-Path $repo 'discord-webhook.txt'
+if (Test-Path $discordSrc) {
+    Copy-Item $discordSrc $stage -Force
+    Write-Host '  Discord status webhook included (discord-webhook.txt) - the live server will post its status'
+} else {
+    Write-Host '  no discord-webhook.txt - the server will run without a Discord status message'
+}
 Copy-Item (Join-Path $here 'installer\start-server.ps1')  $stage -Force
 Copy-Item (Join-Path $here 'installer\start-servers.cmd') $stage -Force
 Copy-Item (Join-Path $here 'installer\SERVER-README.txt') $stage -Force

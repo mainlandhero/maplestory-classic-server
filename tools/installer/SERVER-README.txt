@@ -201,6 +201,18 @@ forever - and neither says anything about itself.
    address needs neither. -Status prints the rule's RemoteIP line either way.
 
 
+THE DISCORD STATUS MESSAGE
+
+  If discord-webhook.txt is in this folder (a Discord webhook URL on its first line), the
+  world hub posts ONE status message there and edits it every minute: online or not, uptime,
+  each channel's players, the server build and the client patch. Stopping the servers
+  (closing this window, Ctrl+C, or start-server.ps1 -Stop) turns it red: "offline for
+  maintenance". The message's id is kept in discord-status-message.txt - delete that file
+  (or the message in Discord) to start a fresh one. Remove discord-webhook.txt to turn it off.
+
+  The URL is a secret: anyone who has it can post as the webhook. Do not share this folder's
+  copy of it.
+
 IF A SERVER EXITS ON ITS OWN
 ----------------------------
 
