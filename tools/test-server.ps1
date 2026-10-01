@@ -2631,6 +2631,53 @@
              at most 8 s after the first kill -> DONE
                each back 8 s after its own kill = old build
 
+    30. BACKPORTED SCROLLS + LUCKY DAY (2026-10-01). The client data changed: launch the
+        client from client-patched (or let the launcher patch) BEFORE this step.
+          !item 2049100 5   (Chaos 60%)     !item 2049003 5   (Pure Clean Slate 20%)
+          !item 2049190 5   (Innocence 70%) !item 2530000 5   (Lucky Day Scroll)
+          a. each shows its modern icon and name in the Use tab; Lucky Day's tooltip reads
+             "Increases the success chance of your next scroll by 100%" -> DONE
+               a blank icon / no name = the client did not take the backported data; say so
+          b. DRAG Chaos onto a worn item: the client's own "Do you want to use..." box, then the
+             scroll animation, success or failure at about 60%; a slot is used either way -> DONE
+               nothing at all after Yes = the client refused it before sending; grep the log
+               for "0x0125" - absent means the drag never reached the server
+          c. DRAG Innocence onto that item: back to its original stats at about 70% -> DONE
+          d. DRAG Lucky Day onto an item: the client's confirm, then the success animation, one
+             Lucky Day gone. Look at the item's tooltip - does it show anything new? SAY WHICH
+             (that is a measurement: attribute bit 9 is [I]). Then drag a 10% scroll (or Chaos)
+             onto it: it SUCCEEDS. Do it three times -> DONE
+               the drag does nothing = grep for "0x0126"; absent = the client did not send it
+               a second Lucky Day on a marked item is refused (client message or ours) -> DONE
+
+    29. OVERALL + SHOP TABS (2026-10-01).
+          a. wear a top AND a bottom, equip an overall: the top AND the bottom both land in the
+             Equip tab at once, no map change needed; the bottom slot is empty -> DONE
+               the bottom still drawn until a map change = old build
+          b. the other way: overall on, equip a bottom -> the overall drops into the bag at once -> DONE
+          c. at an NPC shop: BUY something from the Use tab (the window jumps to Use - fine),
+             then click the Etc tab and SELL an Etc item: the window STAYS on Etc -> DONE, and
+             the sold item disappears from the list -> DONE
+               jumps back to Use = old build
+               stays on Etc but the sold item is STILL LISTED = the sell list only redraws on
+               result type 0; say so - that is the whole finding, and it decides the next fix
+
+    28. BOARD + !SCROLL (2026-10-01). A Henesys citizen; the live server is fine for this.
+          a. ONE weekly: the quest log's In Progress shows at most ONE "Donating to Henesys",
+             and a character who had several in progress keeps only one after logging in
+             (the highest one their level can turn in) -> DONE
+               still several = old build; paste the "board 510002" log lines
+          b. the posted donation is one the character can TURN IN: a level-17..21 character at
+             grade 3 gets a level-17 donation, not the level-22 one -> DONE
+          c. turn in the day's resident, then "!citizenship 1 grade 5": NO new daily (no leader,
+             no "Asking After") until tomorrow; a grade-up mid-week posts no new weekly -> DONE
+               a new one appears = the pick is not being kept; paste "board 510001"
+          d. !scroll -> Treasure Scroll -> an item: under the real scrolls, "Scroll of Secrets
+             as a Chaos Scroll" and "... Clean Slate Scroll" (when you hold a Scroll of Secrets).
+             Chaos through it always works and takes one of each scroll -> DONE
+          e. after ANY !scroll result, with scrolls left: "Shall we keep scrolling?" Yes = the
+             !scroll menu again, No = closes -> DONE. The last scroll: just the result -> DONE
+
     27. WEATHER ITEMS (2026-09-30). Two clients on one map; Sprinkled Chocolate (or any 512xxxx).
           a. use it with a message: chocolate falls and the message shows on BOTH screens, one
              spent -> DONE. After ~30 s it fades out -> DONE
@@ -6218,6 +6265,31 @@ function Show-TestPlan {
         Write-Host '          icon stuck at 0 -> paste the "buffs:" lines from world-ch0.log AND world-ch1.log' -ForegroundColor Yellow
         Write-Host '       kill 3 mobs a few seconds apart: all 3 back TOGETHER within 8 s -> DONE' -ForegroundColor Green
         Write-Host '          each back 8 s after its own kill -> old build' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  30. BACKPORTED SCROLLS + LUCKY DAY (2026-10-01) - client data changed, launch from client-patched:' -ForegroundColor White
+        Write-Host '       !item 2049100 / 2049003 / 2049190 / 2530000 (Chaos, Clean Slate 20%, Innocence, Lucky Day)' -ForegroundColor Green
+        Write-Host '       modern icons + names; Lucky Day says "...next scroll by 100%" -> DONE' -ForegroundColor Green
+        Write-Host '       DRAG Chaos onto worn gear: confirm box, animation, ~60% -> DONE' -ForegroundColor Green
+        Write-Host '          nothing after Yes -> grep the log for 0x0125' -ForegroundColor Yellow
+        Write-Host '       DRAG Lucky Day onto gear: confirm, success animation; tooltip shows anything? SAY WHICH' -ForegroundColor Green
+        Write-Host '       then a 10% scroll on it SUCCEEDS, three times running -> DONE' -ForegroundColor Green
+        Write-Host '          the drag does nothing -> grep the log for 0x0126' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  29. OVERALL + SHOP TABS (2026-10-01):' -ForegroundColor White
+        Write-Host '       top + bottom worn, equip an overall: BOTH drop into Equip at once, no map change -> DONE' -ForegroundColor Green
+        Write-Host '       overall worn, equip a bottom: the overall drops into the bag at once -> DONE' -ForegroundColor Green
+        Write-Host '       shop: buy a Use item, click Etc, sell an Etc item: stays on Etc -> DONE' -ForegroundColor Green
+        Write-Host '       and the sold item leaves the list -> DONE' -ForegroundColor Green
+        Write-Host '          stays on Etc but the sold item is STILL LISTED -> say so; that decides the next fix' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  28. BOARD + !SCROLL (2026-10-01), a Henesys citizen; live is fine:' -ForegroundColor White
+        Write-Host '       In Progress shows at most ONE Donating to Henesys; extras gone after login -> DONE' -ForegroundColor Green
+        Write-Host '       the donation is one your LEVEL can turn in (Lv 17-21 at grade 3: the Lv 17 one) -> DONE' -ForegroundColor Green
+        Write-Host '       daily turned in, then !citizenship 1 grade 5: NO new daily until tomorrow -> DONE' -ForegroundColor Green
+        Write-Host '          a new one appears -> paste the "board 510001" / "board 510002" lines' -ForegroundColor Yellow
+        Write-Host '       !scroll -> Treasure -> item: Scroll of Secrets as Chaos / Clean Slate listed;' -ForegroundColor Green
+        Write-Host '       Chaos through it always works and takes one of each -> DONE' -ForegroundColor Green
+        Write-Host '       any !scroll result with scrolls left: "keep scrolling?" Yes = menu again -> DONE' -ForegroundColor Green
         Write-Host ''
         Write-Host '  27. WEATHER ITEMS (2026-09-30): Sprinkled Chocolate etc. with a message, two clients on one map' -ForegroundColor White
         Write-Host '       both see the effect and message, one spent, fades after ~30 s -> DONE' -ForegroundColor Green
