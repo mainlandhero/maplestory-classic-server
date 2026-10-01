@@ -572,7 +572,16 @@ client's own `0x5AD` abort path uses.
         count > 0 -> FUN_1410DB190([this+0xa0], count)
 ```
 
-Both are peripheral. `0x5B9`'s decoded vector is deallocated in both branches of the arm
+**Correction, 2026-09-26: `0x5B9` flag 0 is NOT peripheral - it is the beauty coupons' preview
+data**, and the Cash Shop's coupon preview panel is empty without it (the owner: *"the Mystery Hair and
+Signature Hair Coupon should show previews"*). `FUN_1401C2910` clears and refills a global
+`std::map<int couponId, entry>` at `0x143A410A8`; the panel `FUN_1410B3440` reads it through
+`FUN_1401C34D0(gender, couponItemId, &out)` - block 0 for gender 0, block 1 for gender 1. The
+client never reads `Etc/BeautyPreview.img` (no string for the path or its `MaleHair`/`FemaleHair`
+keys; controls `MakeCharInfo`, `SetItemInfo`, `CashPackage`, `Etc/Commodity.img` found). Layout and
+builder: `net::cashshop::CASH_SHOP_BEAUTY_PREVIEW`. The flag-1 arm below is still unused.
+
+The original note: `0x5B9`'s decoded vector is deallocated in both branches of the arm
 without being stored anywhere — read from the listing at `0x140D735D8`/`0x140D7361C`. [L]
 
 ### 6.5 The cash-item record `FUN_1402D0950`, corrected

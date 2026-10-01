@@ -220,6 +220,33 @@ impl Shop {
     }
 }
 
+/// **What each beauty coupon can give, for the Cash Shop's preview panel** (`0x05B9`,
+/// `net::cashshop::beauty_preview`): `(coupon, [male, female])`. A hair coupon lists every
+/// style ANY salon offers for that tier - the preview is one list per coupon and the pools are
+/// per salon - in first-seen order without repeats; a face coupon lists the surgery pool, which
+/// is the same in both. Base ids: the panel draws each one in the colour the player picks.
+/// The owner, 2026-09-26: *"the Mystery Hair and Signature Hair Coupon should show previews."*
+pub fn cash_shop_previews() -> Vec<(u32, [Vec<u32>; 2])> {
+    let salons = [Shop::HenesysSalon, Shop::KerningSalon];
+    let hair = |tier: Tier, gender: u8| {
+        let mut out: Vec<u32> = Vec::new();
+        for shop in salons {
+            for &id in shop.styles(tier, gender) {
+                if !out.contains(&id) {
+                    out.push(id);
+                }
+            }
+        }
+        out
+    };
+    vec![
+        (MYSTERY_HAIR_COUPON, [hair(Tier::Mystery, 0), hair(Tier::Mystery, 1)]),
+        (SIGNATURE_HAIR_COUPON, [hair(Tier::Signature, 0), hair(Tier::Signature, 1)]),
+        (MYSTERY_FACE_COUPON, [faces(Tier::Mystery, 0).to_vec(), faces(Tier::Mystery, 1).to_vec()]),
+        (SIGNATURE_FACE_COUPON, [faces(Tier::Signature, 0).to_vec(), faces(Tier::Signature, 1).to_vec()]),
+    ]
+}
+
 /// The face pool for `tier` and `gender` - the same in both surgeries.
 pub fn faces(tier: Tier, gender: u8) -> &'static [u32] {
     match (tier, gender) {
@@ -427,6 +454,42 @@ mod tests {
             rows.insert(cols[0].parse::<u32>().unwrap(), (cols[1].to_string(), cols[2].to_string()));
         }
         Some(rows)
+    }
+
+    /// **The Cash Shop's preview lists** (`0x05B9`, the owner 2026-09-26): the four coupons, a
+    /// non-empty list for BOTH genders each, hair lists in base ids (colour digit 0) that are
+    /// the union of the salons' pools for that tier, and every id one this client can draw.
+    #[test]
+    fn the_cash_shop_previews_are_every_style_each_coupon_can_give() {
+        let previews = cash_shop_previews();
+        let coupons: Vec<u32> = previews.iter().map(|(c, _)| *c).collect();
+        assert_eq!(coupons, vec![MYSTERY_HAIR_COUPON, SIGNATURE_HAIR_COUPON, MYSTERY_FACE_COUPON, SIGNATURE_FACE_COUPON]);
+        for (coupon, lists) in &previews {
+            for (gender, ids) in lists.iter().enumerate() {
+                assert!(!ids.is_empty(), "{coupon} gender {gender}: an empty list is the bug");
+                let mut seen = std::collections::HashSet::new();
+                assert!(ids.iter().all(|id| seen.insert(*id)), "{coupon} gender {gender}: no repeats");
+            }
+        }
+        for (tier, coupon) in [(Tier::Mystery, MYSTERY_HAIR_COUPON), (Tier::Signature, SIGNATURE_HAIR_COUPON)] {
+            let lists = &previews.iter().find(|(c, _)| *c == coupon).unwrap().1;
+            for gender in 0..2u8 {
+                for shop in [Shop::HenesysSalon, Shop::KerningSalon] {
+                    for id in shop.styles(tier, gender) {
+                        assert!(lists[gender as usize].contains(id), "{coupon}: {id} from {} is offered", shop.name());
+                    }
+                }
+                assert!(lists[gender as usize].iter().all(|id| id % 10 == 0), "base ids: the panel colours them");
+            }
+        }
+        if let (Some(hair), Some(face)) = (beauty_rows("[hair]"), beauty_rows("[face]")) {
+            for (coupon, lists) in &previews {
+                for id in lists.iter().flatten() {
+                    let known = if *coupon / 1000 == 5150 { hair.contains_key(id) } else { face.contains_key(id) };
+                    assert!(known, "{coupon}: {id} has no art in this client");
+                }
+            }
+        }
     }
 
     /// Every listed hair base is one this client can draw, with all eight colours, and every

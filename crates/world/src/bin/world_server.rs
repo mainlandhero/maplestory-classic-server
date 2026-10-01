@@ -355,6 +355,9 @@ fn main() -> ExitCode {
     // destination and says so per request rather than failing to start.
     (config.portals, config.portal_index, config.portal_positions) =
         world::config::Config::load_portals_with_positions(&portals_path);
+    // The spawn points among them: where a returning character comes back in (the nearest to
+    // where they left) and where a teleport lands (a random one). 2026-09-26.
+    config.spawn_points = world::config::Config::load_spawn_points(&portals_path);
     if !config.portal_index.is_empty() && config.portal_positions.is_empty() {
         eprintln!(
             "maplecw-world: {} has no x, y columns, so an arriving character is announced at the map ORIGIN until their first step. Regenerate with: python tools/dump_portals.py",

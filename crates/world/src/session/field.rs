@@ -23,6 +23,9 @@ impl Session {
         // well is the one that cannot be forgotten, because it does not depend on the Exit
         // button being the way out. See `Session::in_cash_shop`.
         self.in_cash_shop = false;
+        // A feed still waiting for its line belongs to the field it happened on: neither the
+        // relay nor the fallback may play it on this one. session/pet.rs.
+        self.pending_pet_line = None;
         // The NPC pool is destroyed and rebuilt on every field entry, so the chatter cursors
         // go with it: an object id from the previous map addresses nothing here, or worse,
         // addresses a different NPC.
@@ -467,6 +470,38 @@ impl Session {
     ///
     /// Shared by the portal walk and the `/map` GM command, so both go through one path -
     /// a second copy of this is how the two would drift.
+    /// **Record the spawn point nearest where this character stands** as the one they come back
+    /// in at. The owner, 2026-09-26: *"spawn the player to the closest spawn point where they last
+    /// were before they disconnect, change channel, go into cash shop, or otherwise would cause
+    /// them to load in to the map again."* Nothing is written when the position or the map's
+    /// spawn points are unknown - the character then comes back at the map's default, as before.
+    pub(super) fn remember_spawn_point(&self, why: &str) {
+        let Some(chr) = self.claimed_character() else { return };
+        self.record_spawn_point(chr.id, chr.map_id, why);
+    }
+
+    /// [`Session::remember_spawn_point`] for a map the caller names - `go_to_map` knows the
+    /// destination before the stored record does.
+    pub(super) fn record_spawn_point(&self, character_id: u32, map: u32, why: &str) {
+        let Some(at) = self.last_position else { return };
+        let Some(portal) = self.config.nearest_spawn_point(map, at) else { return };
+        match self.store.set_spawn_point(character_id, map, portal) {
+            Ok(()) => crate::server::log(&format!(
+                "   spawn point: character {character_id} at {at:?} on map {map} -> comes back in at portal {portal} ({why})"
+            )),
+            Err(e) => crate::server::log(&format!("   spawn point: could not record it for {character_id} ({why}): {e}")),
+        }
+    }
+
+    /// **A teleport: onto a random spawn point of `map`.** The owner, 2026-09-26: *"if a player is
+    /// teleported into a map, the server will choose a random spawn point. Such as when Nella
+    /// teleports the player back to Kerning City from the exit map."* A portal walk is NOT a
+    /// teleport - it arrives at the door the portal names - and goes through `go_to_map`.
+    pub(super) fn teleport(&mut self, chr: &mut net::opcode::Character, map: u32, why: String) -> Vec<Reply> {
+        let portal = self.config.random_spawn_point(map, self.rng.next());
+        self.go_to_map(chr, map, portal, format!("{why} (teleport: random spawn point {portal})"))
+    }
+
     pub(super) fn go_to_map(&mut self, chr: &mut net::opcode::Character, map: u32, portal: u8, why: String)
         -> Vec<Reply>
     {
@@ -510,6 +545,9 @@ impl Session {
         // coordinate**, so a `portals.txt` without positions falls back to `None` and the
         // origin, exactly as before, and the startup banner says so.
         self.last_position = self.config.portal_positions.get(&(map, portal)).copied();
+        // A crash before they take a step still brings them back here, not at portal 0.
+        // Against `map` directly: the stored record may not have moved yet.
+        self.record_spawn_point(chr.id, map, "arrived by a map change");
         // The stance goes with it: landing, not the pose from the map we just left.
         // `remote_at` falls back to standing when this is `None`.
         self.last_move_action = self.last_position.map(|_| net::userpool::MOVE_ACTION_LANDING);
@@ -680,6 +718,9 @@ impl Session {
         // The socket that closes after this reply is a handover, not a departure: the party
         // keeps this character's seat for the session that claims the migration.
         self.handing_over = true;
+        // **Now, not only in `Drop`**: the new channel can claim the character before this
+        // connection's teardown runs, and it reads the spawn point as it claims.
+        self.remember_spawn_point("changing channel");
         // **We used to answer this with `0x0011`, and that is worse than useless.**
         //
         // The owner, 2026-08-21: *"I tried swapping to channel 2, the transfer did not go
@@ -1133,7 +1174,7 @@ impl Session {
                 DeathCost::SafetyCharm => format!("a Safety Charm was spent instead of -{penalty} exp"),
             }
         );
-        let mut out = self.go_to_map(&mut chr, target, 0, note);
+        let mut out = self.teleport(&mut chr, target, note);
 
         // After the SetField, deliberately. Without a positive HP in the client's own copy
         // the action gates stay shut and the player arrives in town unable to move.
