@@ -141,6 +141,62 @@ pub fn parse_use_return_scroll(body: &[u8]) -> Option<UseItem> {
     })
 }
 
+/// **A pet drinking a potion for its owner** - Auto HP / Auto MP. **Inbound `0x0206`, 15
+/// bytes.**
+///
+/// The owner, 2026-09-25: *"once the players taught pet skills such as Auto HP and Auto MP, the pet
+/// attempts to drink the potion for the player, but the client never actually performs the
+/// restoration ... potions are never consumed and clients never recover."* The deployed
+/// server's logs (`Server Investigation/world-ch0.log.4` and `.3`, 2026-09-18..19) hold 25 of these from
+/// Moth, every one logged `0x0206 UNKNOWN ... not answered yet`:
+///
+/// ```text
+/// 00 | fb1d5e1e | 0800 | 80841e00 | 01000000     slot 8, 2000000 Red Potion
+/// 00 | db2e5e1e | 0600 | 83841e00 | 01000000     slot 6, 2000003 Blue Potion
+/// ```
+///
+/// The builder is `FUN_142cca680` (`research/msexe-send-opcodes.txt`). **[L]**, from its
+/// listing: `w_u8` its own fifth argument, `w_u32` the tick (`FUN_1429e3ef0`, the clock every
+/// builder stamps), `w_u16` the slot, `w_u32` the item id, `w_u32` **the literal `1`**. Then,
+/// after the send, `mov [rbx+0x2330], 1` at `142cca8cc` - **the exclusive-request latch**, the
+/// same one `0x010E` sets. So an unanswered pet drink did not only skip the potion: it left
+/// the latch set and refused every later inventory action for the session.
+///
+/// **[I]** that the first byte is the pet's index - 0 in every capture, one pet out. Nothing
+/// on the server reads it: the potion is the owner's, out of the owner's bag.
+pub const CLIENT_PET_USE_ITEM: u16 = 0x0206;
+
+/// Length of a [`CLIENT_PET_USE_ITEM`] body.
+pub const PET_USE_ITEM_LEN: usize = 15;
+
+/// Parse a [`CLIENT_PET_USE_ITEM`] body (opcode stripped): the pet's byte, and the same
+/// request a bag double-click makes. [`UseItem::tail`] is the builder's literal `1`.
+pub fn parse_pet_use_item(body: &[u8]) -> Option<(u8, UseItem)> {
+    if body.len() < PET_USE_ITEM_LEN {
+        return None;
+    }
+    Some((
+        body[0],
+        UseItem {
+            tick: u32::from_le_bytes([body[1], body[2], body[3], body[4]]),
+            slot: i16::from_le_bytes([body[5], body[6]]),
+            item_id: u32::from_le_bytes([body[7], body[8], body[9], body[10]]),
+            tail: u32::from_le_bytes([body[11], body[12], body[13], body[14]]),
+        },
+    ))
+}
+
+/// Build a [`CLIENT_PET_USE_ITEM`] body, in the builder's field order.
+pub fn pet_use_item(pet: u8, tick: u32, slot: i16, item_id: u32) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(pet);
+    w.u32(tick);
+    w.i16(slot);
+    w.u32(item_id);
+    w.u32(1);
+    w.into_vec()
+}
+
 /// Build a [`CLIENT_USE_RETURN_SCROLL`] body - ten bytes, so a test cannot accidentally
 /// exercise the fourteen-byte shape the client does not send.
 pub fn use_return_scroll(tick: u32, slot: i16, item_id: u32) -> Vec<u8> {
@@ -149,6 +205,24 @@ pub fn use_return_scroll(tick: u32, slot: i16, item_id: u32) -> Vec<u8> {
     w.i16(slot);
     w.u32(item_id);
     w.into_vec()
+}
+
+#[cfg(test)]
+mod pet_use_item_tests {
+    use super::*;
+
+    /// **The two deployed captures, byte for byte** - not a body built by [`pet_use_item`],
+    /// which would only prove the parser agrees with the builder beside it.
+    #[test]
+    fn the_deployed_servers_two_captures_parse() {
+        let hex = |h: &str| (0..h.len()).step_by(2).map(|i| u8::from_str_radix(&h[i..i + 2], 16).unwrap()).collect::<Vec<u8>>();
+        let (pet, red) = parse_pet_use_item(&hex("00fb1d5e1e080080841e0001000000")).unwrap();
+        assert_eq!((pet, red.slot, red.item_id, red.tail), (0, 8, 2_000_000, 1), "Red Potion, Use slot 8");
+        let (_, blue) = parse_pet_use_item(&hex("00db2e5e1e060083841e0001000000")).unwrap();
+        assert_eq!((blue.slot, blue.item_id), (6, 2_000_003), "Blue Potion, Use slot 6");
+        assert_eq!(pet_use_item(0, red.tick, 8, 2_000_000), hex("00fb1d5e1e080080841e0001000000"), "the builder writes the same bytes");
+        assert_eq!(parse_pet_use_item(&hex("00fb1d5e1e080080841e00010000")), None, "14 bytes is short");
+    }
 }
 
 #[cfg(test)]

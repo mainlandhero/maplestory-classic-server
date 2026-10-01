@@ -54,6 +54,14 @@
 
 use super::*;
 
+/// How long a feed waits for its line (`0x0203`) before the map gets the eating packet
+/// instead. The deployed captures put the report 50-200 ms after the feed's reply.
+pub(super) const PET_LINE_WAIT_MS: u64 = 2_000;
+
+/// The longest pet line relayed. The longest the client has produced is 29 characters
+/// ("Yum, yum! Pet Food x195 left!"); this is headroom, not a measurement.
+pub(super) const PET_LINE_MAX_CHARS: usize = 80;
+
 /// The worn slot a pet's equip goes to, as the Deco tab numbers it: the Blue Top Hat went
 /// `Deco slot 1 -> -114` (`world-ch0.log` 2026-09-15 02:59:25, `0x0107`), i.e. cash worn slot
 /// 114 = body slot 14 plus the cash base. One pet, one slot. **[L]** The move handler
@@ -553,14 +561,75 @@ impl Session {
             body: net::pet::pet_ate(chr.id, net::pet::PET_FOOD_NONE),
             what: format!("PetActionCommand: {}'s pet eats ({item_id}, sent as food id 0: the animation without the auto-feed balloon) - type 2", chr.name),
         };
+        // **Not published yet.** The owner's client picks the pet's line and reports it
+        // (`0x0203`); the map is then shown that same line as `0x0279`, so every screen reads
+        // the same bubble - the owner, 2026-09-25. Held until the report, or until the fallback
+        // puts this `0x027E` on the map after all ([`Session::pet_line_fallback_tick`]).
         if self.config.broadcast_pets {
-            self.bus().publish(self.subscriber, self.field_of(&chr), ate.clone(), None);
+            self.pending_pet_line = Some((self.clock_ms + PET_LINE_WAIT_MS, ate.clone()));
         }
         out.push(ate);
         if level > st.level {
             out.extend(self.pet_level_up_replies(&chr, st.level, level));
         }
         out
+    }
+
+    /// `0x0203` - **the line the owner's pet just said, shown to everyone else.** The owner,
+    /// 2026-09-25: *"Please relay these pet packets so everyone see the pet feed speech bubbles.
+    /// If possible, sync the chat bubbles so that the dialogues are the same."*
+    ///
+    /// The owner's client picks the line when the pet eats and reports it; this relays it
+    /// to the field as `0x0279`, whose handler performs with the reported bytes and string
+    /// and flag 0, so the others show the owner's exact line and report nothing back
+    /// (`net::pet::pet_line_relay`). The map is no longer sent the `0x027E` itself - that made
+    /// each client pick its own random line.
+    ///
+    /// **Only one report per feed, and only within [`PET_LINE_WAIT_MS`] of it.** Anything else -
+    /// a report with no feed pending, or a second one - is logged and dropped: nothing is
+    /// shown for it, so it cannot stack bubbles on other screens or put arbitrary text over a
+    /// pet. Never answered: the builder sets no latch.
+    pub(super) fn on_pet_line_report(&mut self, body: &[u8]) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let Some(report) = net::pet::parse_pet_line_report(body) else {
+            crate::server::log(&format!("   pet line: a {} byte 0x0203 body did not decode; dropped", body.len()));
+            return Vec::new();
+        };
+        let Some((deadline, _)) = self.pending_pet_line.take() else {
+            crate::server::log(&format!(
+                "   pet line: character {} reported {:?} with no feed waiting for it; not relayed",
+                chr.id, report.line
+            ));
+            return Vec::new();
+        };
+        if self.clock_ms > deadline || report.line.chars().count() > PET_LINE_MAX_CHARS {
+            crate::server::log(&format!(
+                "   pet line: character {}'s report {:?} came late or too long; the map gets the eating packet instead",
+                chr.id, report.line
+            ));
+            return Vec::new();
+        }
+        let relay = Reply {
+            opcode: net::pet::PET_ACTION,
+            body: net::pet::pet_line_relay(chr.id, &report),
+            what: format!("PetAction: {}'s pet says {:?} (bytes {} {}, as the owner's client picked it)", chr.name, report.line, report.first, report.second),
+        };
+        self.bus().publish(self.subscriber, self.field_of(&chr), relay, None);
+        crate::server::log(&format!("   pet line: character {}'s pet said {:?}; relayed to the field", chr.id, report.line));
+        Vec::new()
+    }
+
+    /// A feed whose line never came back: the map gets the eating packet after all, so
+    /// nobody sees less than before the relay existed.
+    pub(super) fn pet_line_fallback_tick(&mut self, now_ms: u64) {
+        let due = matches!(self.pending_pet_line, Some((deadline, _)) if now_ms > deadline);
+        if !due {
+            return;
+        }
+        let Some((_, ate)) = self.pending_pet_line.take() else { return };
+        let Some(chr) = self.claimed_character() else { return };
+        crate::server::log(&format!("   pet line: no line from character {} within {PET_LINE_WAIT_MS} ms; the map gets 0x027E instead", chr.id));
+        self.bus().publish(self.subscriber, self.field_of(&chr), ate, None);
     }
 
     /// **The pet levelled up: the flash, for the owner and the map.** The owner, 2026-09-16: *"When

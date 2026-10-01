@@ -1,0 +1,188 @@
+# Every 0x0203 in the deployed server's logs (Server Investigation/, 2026-09-14..24), each with
+# the feed (0x0112) and the server's 0x027E before it. 59 events, 59 from the feeder, 0 from a bystander;
+# no bystander was ever on the field (no 0x027E delivered to anyone else - bus deliveries ARE logged).
+# --- world-ch0.log.4
+23:00:59.093 <- [Moth#219] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 26b13b1d130040592000
+23:00:59.096 -> [Moth#219] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Moth's pet eats 2120000 - type 2, the food'
+23:00:59.117 <- [Moth#219] 0x0203 UNKNOWN, 41 byte body 0000000044b13b1d020a1d0059756d2c2079756d212050657420466f6f642078313938206c65667421
+23:02:46.360 <- [Moth#219] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 32493d1d130040592000
+23:02:46.364 -> [Moth#219] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Moth's pet eats 2120000 - type 2, the food'
+23:02:46.384 <- [Moth#219] 0x0203 UNKNOWN, 41 byte body 000000006e493d1d020a1d0059756d2c2079756d212050657420466f6f642078313937206c65667421
+23:02:47.847 <- [Moth#219] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 0e4f3d1d130040592000
+23:02:47.850 -> [Moth#219] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Moth's pet eats 2120000 - type 2, the food'
+23:02:47.866 <- [Moth#219] 0x0203 UNKNOWN, 41 byte body 000000002c4f3d1d020a1d0059756d2c2079756d212050657420466f6f642078313936206c65667421
+00:37:11.576 <- [Moth#219] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body f9b2931d0a0040592000
+00:37:11.585 -> [Moth#219] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Moth's pet eats 2120000 - type 2, the food'
+00:37:11.615 <- [Moth#219] 0x0203 UNKNOWN, 41 byte body 0000000017b3931d020a1d0059756d2c2079756d212050657420466f6f642078313935206c65667421
+00:49:02.024 <- [Moth#219] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body d5719e1d0a0040592000
+00:49:02.033 -> [Moth#219] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Moth's pet eats 2120000 - type 2, the food'
+00:49:02.064 <- [Moth#219] 0x0203 UNKNOWN, 41 byte body 00000000f3719e1d020a1d0059756d2c2079756d212050657420466f6f642078313934206c65667421
+00:58:46.774 <- [Moth#219] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 1b41a71d0a0040592000
+00:58:46.782 -> [Moth#219] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Moth's pet eats 2120000 - type 2, the food'
+00:58:46.803 <- [Moth#219] 0x0203 UNKNOWN, 41 byte body 000000003941a71d020a1d0059756d2c2079756d212050657420466f6f642078313933206c65667421
+02:33:29.128 <- [Cobalt#213] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 28778d020b0040592000
+02:33:29.139 -> [Cobalt#213] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Cobalt's pet eats 2120000 - type 2, the f
+02:33:29.153 <- [Cobalt#213] 0x0203 UNKNOWN, 40 byte body 0000000046778d0202001c0059756d2c2079756d212050657420466f6f6420783938206c65667421
+02:33:31.658 <- [Cobalt#213] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 00818d020b0040592000
+02:33:31.661 -> [Cobalt#213] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Cobalt's pet eats 2120000 - type 2, the f
+02:33:31.669 <- [Cobalt#213] 0x0203 UNKNOWN, 40 byte body 000000001e818d0202001c0059756d2c2079756d212050657420466f6f6420783937206c65667421
+# --- world-ch0.log.3
+04:31:44.455 <- [Moth#219] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 9f8b6a1e0a0040592000
+04:31:44.459 -> [Moth#219] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Moth's pet eats (2120000, sent as food id 0
+04:31:44.480 <- [Moth#219] 0x0203 UNKNOWN, 33 byte body 00000000bd8b6a1e020a1500546869732069732064656c6963696f75732e2e2e21
+05:39:59.412 <- [Moth#219] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 83b4a81e0a0040592000
+05:39:59.416 -> [Moth#219] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Moth's pet eats (2120000, sent as food id 0
+05:39:59.442 <- [Moth#219] 0x0203 UNKNOWN, 33 byte body 0000000083b4a81e020a1500546869732069732064656c6963696f75732e2e2e21
+23:17:23.947 <- [Moth#219] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 431071220a0040592000
+23:17:23.958 -> [Moth#219] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Moth's pet eats (2120000, sent as food id 0
+23:17:23.981 <- [Moth#219] 0x0203 UNKNOWN, 33 byte body 0000000061107122020a1500546869732069732064656c6963696f75732e2e2e21
+# --- world-ch0.log.2
+02:33:38.683 <- [Moth#219] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 519c712d0a0040592000
+02:33:38.696 -> [Moth#219] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Moth's pet eats (2120000, sent as food id 0
+02:33:38.727 <- [Moth#219] 0x0203 UNKNOWN, 33 byte body 000000006f9c712d020a1500546869732069732064656c6963696f75732e2e2e21
+01:53:16.167 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 6c96ee190e0040592000
+01:53:16.171 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats (2120000, sent as food 
+01:53:16.237 <- [Pebble#217] 0x0203 UNKNOWN, 35 byte body 00000000a896ee19020017004261726b21204261726b206261726b206261726b212121
+# --- world-ch0.log
+04:41:35.351 <- [Moth#219] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body e57033380a0040592000
+04:41:35.355 -> [Moth#219] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Moth's pet eats (2120000, sent as food id 0
+04:41:35.382 <- [Moth#219] 0x0203 UNKNOWN, 33 byte body 0000000003713338020a1500546869732069732064656c6963696f75732e2e2e21
+# --- previous-runs/world-ch0-20260917-232858.log
+02:01:34.915 <- [purr#218] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body bd851000130040592000
+02:01:34.917 -> [purr#218] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: purr's pet eats 2120000 - type 2, the food'
+02:01:34.995 <- [purr#218] 0x0203 UNKNOWN, 40 byte body 00000000f985100002001c0059756d2c2079756d212050657420466f6f6420783938206c65667421
+02:01:36.665 <- [purr#218] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 898c1000130040592000
+02:01:36.667 -> [purr#218] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: purr's pet eats 2120000 - type 2, the food'
+02:01:36.750 <- [purr#218] 0x0203 UNKNOWN, 40 byte body 00000000e38c100002001c0059756d2c2079756d212050657420466f6f6420783937206c65667421
+02:05:17.952 <- [purr#218] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 7be21300130040592000
+02:05:17.955 -> [purr#218] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: purr's pet eats 2120000 - type 2, the food'
+02:05:18.040 <- [purr#218] 0x0203 UNKNOWN, 40 byte body 00000000d5e2130002001c0059756d2c2079756d212050657420466f6f6420783936206c65667421
+02:05:38.732 <- [purr#218] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body c52e1400130040592000
+02:05:38.734 -> [purr#218] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: purr's pet eats 2120000 - type 2, the food'
+02:05:38.812 <- [purr#218] 0x0203 UNKNOWN, 40 byte body 000000003d2f140002001c0059756d2c2079756d212050657420466f6f6420783935206c65667421
+02:05:56.673 <- [purr#218] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 936f1400130040592000
+02:05:56.677 -> [purr#218] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: purr's pet eats 2120000 - type 2, the food'
+02:05:56.872 <- [purr#218] 0x0203 UNKNOWN, 40 byte body 000000002970140002001c0059756d2c2079756d212050657420466f6f6420783934206c65667421
+02:07:13.033 <- [purr#218] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body c7941500130040592000
+02:07:13.040 -> [purr#218] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: purr's pet eats 2120000 - type 2, the food'
+02:07:13.120 <- [purr#218] 0x0203 UNKNOWN, 40 byte body 000000000395150002001c0059756d2c2079756d212050657420466f6f6420783933206c65667421
+01:30:28.325 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body a6471a000e0040592000
+01:30:28.334 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+01:30:28.383 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 00000000e2471a0002001c0059756d2c2079756d212050657420466f6f6420783938206c65667421
+01:30:30.582 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 70501a000e0040592000
+01:30:30.589 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+01:30:30.644 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 00000000ac501a0002001c0059756d2c2079756d212050657420466f6f6420783937206c65667421
+01:31:58.006 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body f29f1b000e0040592000
+01:31:58.015 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+01:31:58.070 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 000000004ca01b0002001c0059756d2c2079756d212050657420466f6f6420783936206c65667421
+01:34:17.963 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 94bf1d000e0040592000
+01:34:17.972 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+01:34:18.032 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 00000000d0bf1d0002001c0059756d2c2079756d212050657420466f6f6420783935206c65667421
+01:42:36.936 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 224825000e0040592000
+01:42:36.946 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+01:42:37.016 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 000000005e48250002001c0059756d2c2079756d212050657420466f6f6420783934206c65667421
+01:45:24.308 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 86d227000e0040592000
+01:45:24.316 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+01:45:24.386 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 00000000c2d2270002001c0059756d2c2079756d212050657420466f6f6420783933206c65667421
+01:45:59.761 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 2c5928000e0040592000
+01:45:59.769 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+01:45:59.836 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 000000008659280002001c0059756d2c2079756d212050657420466f6f6420783932206c65667421
+01:46:38.736 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body d2ee28000e0040592000
+01:46:38.744 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+01:46:38.818 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 000000002cef280002001c0059756d2c2079756d212050657420466f6f6420783931206c65667421
+01:49:38.668 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body e6aa2b000e0040592000
+01:49:38.676 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+01:49:38.782 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 0000000040ab2b0002001c0059756d2c2079756d212050657420466f6f6420783930206c65667421
+01:50:38.482 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body b68e2c000e0040592000
+01:50:38.491 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+01:50:38.565 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 00000000108f2c0002001c0059756d2c2079756d212050657420466f6f6420783839206c65667421
+01:57:35.635 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body d8de32000e0040592000
+01:57:35.642 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+01:57:35.693 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 0000000014df320002001c0059756d2c2079756d212050657420466f6f6420783838206c65667421
+01:58:26.308 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body ea9e33000e0040592000
+01:58:26.316 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+01:58:26.391 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 00000000269f330002001c0059756d2c2079756d212050657420466f6f6420783837206c65667421
+02:00:44.578 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body eaba35000e0040592000
+02:00:44.581 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:00:44.647 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 0000000044bb350002001c0059756d2c2079756d212050657420466f6f6420783836206c65667421
+02:01:44.368 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 96a436000e0040592000
+02:01:44.370 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:01:44.447 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 00000000d2a4360002001c0059756d2c2079756d212050657420466f6f6420783835206c65667421
+02:01:54.617 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 8ccc36000e0040592000
+02:01:54.619 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:01:54.674 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 00000000e6cc360002001c0059756d2c2079756d212050657420466f6f6420783834206c65667421
+02:09:56.903 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body b2083e000e0040592000
+02:09:56.912 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:09:56.964 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 00000000ee083e0002001c0059756d2c2079756d212050657420466f6f6420783833206c65667421
+02:11:50.908 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body c6c53f000e0040592000
+02:11:50.916 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:11:50.973 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 000000003ec63f0002001c0059756d2c2079756d212050657420466f6f6420783832206c65667421
+02:12:38.258 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body ee7e40000e0040592000
+02:12:38.269 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:12:38.349 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 00000000487f400002001c0059756d2c2079756d212050657420466f6f6420783831206c65667421
+02:13:35.403 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 6c5a41000e0040592000
+02:13:35.412 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:13:35.460 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 00000000e45a410002001c0059756d2c2079756d212050657420466f6f6420783830206c65667421
+02:19:16.140 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body c68246000e0040592000
+02:19:16.149 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:19:16.218 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 000000000283460002001c0059756d2c2079756d212050657420466f6f6420783739206c65667421
+02:20:29.090 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 709b47000e0040592000
+02:20:29.099 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:20:29.141 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 000000008e9b470002001c0059756d2c2079756d212050657420466f6f6420783738206c65667421
+02:20:47.352 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body b0e247000e0040592000
+02:20:47.360 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:20:47.404 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 000000000ae3470002001c0059756d2c2079756d212050657420466f6f6420783737206c65667421
+02:21:04.883 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 3e2748000e0040592000
+02:21:04.885 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:21:04.971 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 000000007a27480002001c0059756d2c2079756d212050657420466f6f6420783736206c65667421
+02:21:27.042 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 9c7d48000e0040592000
+02:21:27.045 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:21:27.120 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 00000000147e480002001c0059756d2c2079756d212050657420466f6f6420783735206c65667421
+02:22:06.480 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body d41749000e0040592000
+02:22:06.487 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:22:06.561 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 000000002e18490002001c0059756d2c2079756d212050657420466f6f6420783734206c65667421
+02:25:18.533 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body f2054c000e0040592000
+02:25:18.542 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:25:18.587 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 000000004c064c0002001c0059756d2c2079756d212050657420466f6f6420783733206c65667421
+02:28:37.633 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body d60f4f000e0040592000
+02:28:37.637 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:28:37.713 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 0000000012104f0002001c0059756d2c2079756d212050657420466f6f6420783732206c65667421
+02:31:13.575 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body d46951000e0040592000
+02:31:13.584 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:31:13.648 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 00000000106a510002001c0059756d2c2079756d212050657420466f6f6420783731206c65667421
+02:42:44.466 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body a8f45b000e0040592000
+02:42:44.475 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:42:44.563 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 00000000e4f45b0002001c0059756d2c2079756d212050657420466f6f6420783730206c65667421
+02:43:10.213 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 34595c000e0040592000
+02:43:10.216 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:43:10.293 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 0000000070595c0002001c0059756d2c2079756d212050657420466f6f6420783639206c65667421
+02:43:25.504 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body bc945c000e0040592000
+02:43:25.510 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:43:25.562 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 0000000016955c0002001c0059756d2c2079756d212050657420466f6f6420783638206c65667421
+02:45:38.534 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 949c5e000e0040592000
+02:45:38.541 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:45:38.627 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 00000000d09c5e0002001c0059756d2c2079756d212050657420466f6f6420783637206c65667421
+02:46:38.919 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 7a885f000e0040592000
+02:46:38.926 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+02:46:39.001 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 00000000b6885f0002001c0059756d2c2079756d212050657420466f6f6420783636206c65667421
+03:18:06.532 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 4c037c000e0040592000
+03:18:06.540 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+03:18:06.606 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 00000000a6037c0002001c0059756d2c2079756d212050657420466f6f6420783635206c65667421
+03:21:16.580 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 942680000e0040592000
+03:21:16.582 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+03:21:16.652 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 00000000ee26800002001c0059756d2c2079756d212050657420466f6f6420783634206c65667421
+03:22:47.842 <- [Pebble#217] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 2e8b81000e0040592000
+03:22:47.850 -> [Pebble#217] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Pebble's pet eats 2120000 - type 2, the f
+03:22:47.936 <- [Pebble#217] 0x0203 UNKNOWN, 40 byte body 00000000888b810002001c0059756d2c2079756d212050657420466f6f6420783633206c65667421
+# --- previous-runs/world-ch0-20260919-001132.log
+03:50:47.114 <- [Moth#219] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body 492b431e0a0040592000
+03:50:47.118 -> [Moth#219] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Moth's pet eats 2120000 - type 2, the food'
+03:50:47.141 <- [Moth#219] 0x0203 UNKNOWN, 41 byte body 00000000672b431e020a1d0059756d2c2079756d212050657420466f6f642078313932206c65667421
+# --- previous-runs/world-ch0-20260921-222655.log
+23:51:26.800 <- [Moth#219] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body a3eb8f220a0040592000
+23:51:26.804 -> [Moth#219] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Moth's pet eats (2120000, sent as food id 0
+23:51:26.825 <- [Moth#219] 0x0203 UNKNOWN, 33 byte body 00000000a3eb8f22020a1500546869732069732064656c6963696f75732e2e2e21
+# --- previous-runs/world-ch0-20260924-001031.log
+03:16:55.645 <- [Moth#219] 0x0112 CLIENT_USE_PET_FOOD (u32 tick, u16 slot, u32 itemId) - items 2120000..2129999; 0x1428b022f picks the builder by that range, 10 byte body c91cbf320a0040592000
+03:16:55.652 -> [Moth#219] 0x027E PET_ACTION_COMMAND (u32 charId, u32 petIdx, u8 type; 2 = food: u8 success, u32 foodId) - FUN_141ec4780; the eating animation PetActionCommand: Moth's pet eats (2120000, sent as food id 0
+03:16:55.679 <- [Moth#219] 0x0203 UNKNOWN, 33 byte body 00000000e71cbf32020a1500546869732069732064656c6963696f75732e2e2e21

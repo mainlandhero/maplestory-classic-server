@@ -30,6 +30,28 @@ impl Session {
         self.use_parsed_item(req)
     }
 
+    /// `0x0206` - a pet with Auto HP or Auto MP drinking one of its owner's potions
+    /// (`net::useitem::CLIENT_PET_USE_ITEM`). **The same walk as a double-click**: the slot is
+    /// checked against the bag, the potion's restore is capped at what is missing, the stack
+    /// shrinks, and every path answers - the builder sets the same latch `0x010E` does.
+    ///
+    /// The owner, 2026-09-25: the pet tried, and *"potions are never consumed and clients never
+    /// recover"*. This opcode had no handler at all; the deployed server logged 25 of them as
+    /// UNKNOWN and answered none.
+    ///
+    /// Only a potion: Auto HP and Auto MP drink nothing else, so anything that is not one - a
+    /// Return Scroll above all, which would move the player - is refused rather than walked.
+    pub(super) fn on_pet_use_item(&mut self, payload: &[u8]) -> Vec<Reply> {
+        let Some((pet, req)) = net::useitem::parse_pet_use_item(payload) else {
+            return self.use_refused(format!("the 0x0206 body did not parse ({} bytes)", payload.len()));
+        };
+        if self.config.consumables.get(req.item_id).is_none_or(|r| r.is_nothing()) {
+            return self.use_refused(format!("pet {pet} offered item {}, which is not a potion", req.item_id));
+        }
+        crate::server::log(&format!("   pet {pet} drinks {} from Use slot {} for its owner", req.item_id, req.slot));
+        self.use_parsed_item(req)
+    }
+
     pub(super) fn on_use_item(&mut self, payload: &[u8]) -> Vec<Reply> {
         let Some(req) = net::useitem::parse_use_item(payload) else {
             return self.use_refused("the 0x010E body did not parse".to_string());
@@ -437,11 +459,10 @@ impl Session {
             ),
         }];
         out.extend(self.stack_change_replies(inv, slot, left));
-        // Portal 0 is the map's spawn point, which is where `gm_map` lands a warp too.
-        out.extend(self.go_to_map(
+        // A teleport: a random spawn point of the town (the owner, 2026-09-26), like `!map`.
+        out.extend(self.teleport(
             chr,
             to,
-            0,
             format!("{why}, item {item_id} from Use slot {slot}"),
         ));
         Some(out)
