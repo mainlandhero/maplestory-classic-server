@@ -127,6 +127,8 @@ impl Session {
             None => format!("unreadable {}-byte body {body:02x?}", body.len()),
         };
 
+        // Where they stood, for the way back out (and for a log off from inside the shop).
+        self.remember_spawn_point("went into the Cash Shop");
         // The client stops drawing the field from here until the Exit button. See
         // `Session::in_cash_shop` - this suppresses the idle chatter and nothing else.
         self.in_cash_shop = true;
@@ -194,6 +196,21 @@ impl Session {
         // check the stage.
         out.extend(self.restore_bag_and_mesos());
         out.push(self.locker_reload_reply(account_id, "at entry"));
+        // **The beauty coupons' preview lists.** The panel under a coupon reads them from a
+        // map only this packet fills - the client never reads its own BeautyPreview.img.
+        // The owner, 2026-09-26. `net::cashshop::CASH_SHOP_BEAUTY_PREVIEW`. Before the wallet,
+        // which stays last: it is what clears the shop's in-flight latch.
+        let previews = crate::salon::cash_shop_previews();
+        let styles: usize = previews.iter().map(|(_, l)| l[0].len() + l[1].len()).sum();
+        out.push(Reply {
+            opcode: net::cashshop::CASH_SHOP_BEAUTY_PREVIEW,
+            body: net::cashshop::beauty_preview(self.clock_base(), &previews),
+            what: format!(
+                "CashShopBeautyPreview 0x05B9: {} coupon(s) {:?}, {styles} style id(s) - what each can give, male list then female, for the preview panel",
+                previews.len(),
+                previews.iter().map(|(c, _)| *c).collect::<Vec<_>>()
+            ),
+        });
         out.extend(self.cash_wallet_reply(account_id, "sent unprompted with SetCashShop"));
         out
     }
@@ -215,6 +232,64 @@ impl Session {
     /// bag row is written; if the write fails the item goes back into the locker (lowest free
     /// slot, which is what `put_cash_item` promises) and the move is refused. The one outcome
     /// this must never produce is an item in neither place.
+    /// **`0x03E1 0x1C`: delete a cash item from the locker.**
+    ///
+    /// The owner, 2026-09-24: *"I just tried deleting an item in Cash Shop, but this is currently
+    /// unhandled. Please handle deletion of cash items."* It was refused with the generic
+    /// `0x3D`, which is the *"Due to an unknown error, the Cash Shop request has failed."* on
+    /// their screen.
+    ///
+    /// **Checked again here**, because nothing on this socket authenticates: the serial must be
+    /// one this server minted for *this* account ([`locker_slot_of_serial`]), and it must name
+    /// an occupied locker slot. The client refuses refundable and undeletable items before it
+    /// sends; the server has no refundable items, so there is nothing further to re-check.
+    ///
+    /// **The row goes first, then the reply** - the Heena rule: `0x3C` is sent only if
+    /// `take_cash_item` said the row was deleted. Then the wallet, because `0x3C` alone does
+    /// not clear the client's in-flight latch and the shop would be dead after one delete
+    /// ([`net::cashshop::RESULT_DELETED`]). Any refusal is `0x3D`, which clears the latch and
+    /// keeps the rest of a multi-select delete queued.
+    fn on_delete_cash_item(&mut self, rest: &[u8]) -> Vec<Reply> {
+        use net::cashshop::reason;
+        let no = |s: &Self, why: String| s.refuse_cash_shop_queue(u16::from(reason::UNKNOWN_ERROR), why);
+        let head = format!("0x03E1 0x1C delete, {} byte payload {:02x?}", rest.len(), rest);
+
+        let Some(serial) = net::cashshop::parse_delete(rest) else {
+            return no(self, format!("{head} - not an 8-byte serial; nothing deleted"));
+        };
+        let Some(claimed) = self.claimed() else {
+            return no(self, format!("{head} - no claim on this connection; nothing deleted"));
+        };
+        let account_id = claimed.account_id;
+        let Some(locker_slot) = locker_slot_of_serial(serial, account_id) else {
+            return no(
+                self,
+                format!("{head} - serial {serial:#x} is not one this server minted for account {account_id}; nothing deleted"),
+            );
+        };
+        let item = match self.store.take_cash_item(account_id, locker_slot) {
+            Ok(item) => item,
+            Err(e) => {
+                return no(self, format!("{head} - locker slot {locker_slot} could not be taken ({e}); nothing deleted"))
+            }
+        };
+        let name = self.config.item_names.get(&item.item_id).cloned().unwrap_or_default();
+        let mut out = vec![Reply {
+            opcode: net::cashshop::CASH_SHOP_RESULT,
+            body: net::cashshop::cash_item_deleted(serial),
+            what: format!(
+                "CashShopResult 0x3C: DELETED locker slot {locker_slot} (serial {serial:#x}) = item {} {name} x{} for account {account_id}. The client erases it and says \"The cash item has been deleted.\"",
+                item.item_id,
+                item.kind.quantity()
+            ),
+        }];
+        out.extend(self.cash_wallet_reply(
+            account_id,
+            "after a delete: 0x3C does not clear the in-flight latch and this does",
+        ));
+        out
+    }
+
     fn on_locker_to_bag(&mut self, rest: &[u8]) -> Vec<Reply> {
         use net::cashshop::reason;
         let no = |s: &Self, why: String| s.refuse_cash_shop_queue(u16::from(reason::UNKNOWN_ERROR), why);
@@ -612,6 +687,9 @@ impl Session {
                 if action.sub_op == net::cashshop::ACTION_MOVE_BAG_TO_LOCKER =>
             {
                 return self.on_bag_to_locker(action.rest);
+            }
+            net::cashshop::ActionFamily::Queued if action.sub_op == net::cashshop::ACTION_DELETE => {
+                return self.on_delete_cash_item(action.rest);
             }
             net::cashshop::ActionFamily::Queued => {
                 return self.refuse_cash_shop_queue(

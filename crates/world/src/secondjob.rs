@@ -12,12 +12,13 @@
 //! As everywhere in this project, the channel socket carries no credentials. A second job
 //! advancement is granted on the say-so of whoever holds the socket.
 //!
-//! # THIS MODULE IS NOT WIRED
+//! # Wired
 //!
-//! `crates/world/src/session/` belongs to the coordinator and was not touched. Nothing calls
-//! anything in this file. `research/second-job.md` §9 is the "WIRE IT LIKE THIS", and saying
-//! so out loud is `CLAUDE.md`'s *"built is not wired"* rule, which has caught two subsystems
-//! that `STATUS.md` listed as done while nothing called them.
+//! This header said "THIS MODULE IS NOT WIRED" long after it was. It is: `session/npc.rs` calls
+//! [`advancement_for_holding`] at the four instructors, [`examiner_talk`] at the four Job
+//! Instructors (regular talk), [`warden_step`] inside the test fields, [`is_test_quest`] to put
+//! Accept/Decline on the *Test of Qualification*'s opening, and `session/combat.rs` calls
+//! [`marble_for_kill`]. Corrected 2026-09-26.
 //!
 //! It is the **pure decision**, the same shape as [`crate::jobs`]: given a character and the
 //! NPC they clicked, may they advance and to what. It sends no packets, touches no database
@@ -845,7 +846,7 @@ pub fn refusal(chr: &Character, npc_template: u32) -> Option<String> {
 /// It is a **narrower** requirement than [`REQUIRE_QUEST_CHAIN`] and deliberately so. The
 /// quest rows can be missing, refused or out of order for reasons that have nothing to do
 /// with the player; the item is a fact about the bag, it is granted by exactly one place
-/// ([`TestStep::Pass`]), and `!item` can put one there for a test run without pretending a
+/// (quest `20x03`'s start, *The Proof of a Hero*), and `!item` can put one there for a test run without pretending a
 /// quest happened. `CLAUDE.md` asks for a gate whose answer is actually consulted, and this
 /// one is - see [`advancement_for_holding`].
 pub const REQUIRE_PROOF_ITEM: bool = true;
@@ -908,100 +909,103 @@ pub const MARBLE_ITEM_NAME: &str = "Dark Marble";
 /// What `String.wz/Item.img` calls all four proofs. **[L]**
 pub const PROOF_ITEM_NAME: &str = "The Proof of a Hero";
 
-/// What clicking one of the four **examiners** should do.
+/// **The spawn point beside every examiner.** Each of the four examiner maps carries a portal
+/// named `job00` - a spawn point, target map 0 - a few pixels from its Job Instructor **[L]**
+/// (`gm-handbook/portals.txt` / `npcs.txt`):
 ///
-/// Pure, like everything else here: it is told how many marbles and whether the proof is held,
-/// and it decides. The caller does the bag arithmetic and the warp.
+/// ```text
+/// 10002070 Magician  job00 #32 (-28, -4120)    Magician Job Instructor (8, -4117)
+/// 10004023 Warrior   job00  #6 (-472, 1513)    Warrior Job Instructor  (-422, 1516)
+/// 10001090 Bowman    job00 #19 (2468, -716)    Bowman Job Instructor   (2554, -715)
+/// 10003080 Thief     job00 #10 (-3389, -917)   Thief Job Instructor    (-3298, -916)
+/// ```
 ///
-/// **Every effect hangs off one arm.** Only [`TestStep::Enter`] carries a map and only
-/// [`TestStep::Pass`] carries items to move, so a refusal cannot warp anybody and cannot pay
-/// anybody - there is nothing on the other arms to read. That is `CLAUDE.md`'s Heena rule
-/// applied in the type rather than in the caller.
+/// The owner, 2026-09-26: *"when leaving the test area, the player should be placed right next to
+/// the spawn point at Magician Job Instructor instead of at the origin of the map."* Portal 0
+/// on the Magician's map is at the bottom, 6 000 pixels below the instructor.
+pub const EXAMINER_SPAWN_PORTAL: &str = "job00";
+
+/// Where the character stands on their branch's *Test of Qualification* - the chain's third
+/// quest (`20002` / `20102` / `20202` / `20302`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestQuest {
+    NotStarted,
+    InProgress,
+    Completed,
+}
+
+/// What a **regular talk** to one of the four examiners - the Job Instructors - says. The
+/// test itself is a quest now: accepting *Test of Qualification* is what sends the player in
+/// (`Session::enter_test_field_on_quest_start`), and handing it in with the marbles is its
+/// completion, which chains into *The Proof of a Hero*. The owner, 2026-09-26:
+///
+/// > *"If the player leave the place for whatever reason and have not finished the quest for
+/// > 30 dark marbles, they can re-enter using regular talk ... If it is active, it will ask the
+/// > player to confirm if they would like to re-enter the test area. If they are not yet at the
+/// > level or do not have the quest, regular talking to the Magician Job Instructor will say
+/// > that they are not ready yet, talk to Grendel the Really Old for 2nd job advancement. If
+/// > they have already achieved 2nd job advancement, the Job Instructor will say that they have
+/// > nothing more to teach the player."*
+///
+/// **Only [`ExaminerTalk::OfferReEntry`] can lead to a warp, and only after a Yes** - every other
+/// arm is a sentence. It replaces the old click-to-exchange (`TestStep::Pass`), which handed out
+/// the proof outside the quests and so left *Test of Qualification* in progress forever.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TestStep {
-    /// The examiner will not test this character. The sentence is the whole answer, and there
-    /// **is** one - an unanswered click freezes the client's UI.
-    Refused(String),
-    /// Send them in. The line goes out as a notice **before** the field change, because a
-    /// script box sent with or just before a `SetField` is torn down silently by field entry -
-    /// the same ordering `jobguide::Step::Ride` uses and the same one observed working.
-    Enter { branch: &'static Branch, field: TestField, line: String },
-    /// The marbles are in the bag. Take `take_marbles` of `marble_item`, hand over
-    /// `proof_item`, and send them back to the instructor.
-    Pass {
-        branch: &'static Branch,
-        marble_item: u32,
-        take_marbles: u32,
-        proof_item: u32,
-        line: String,
-    },
-    /// The proof is already held. Nothing to take, nothing to give, and **nothing to warp** -
-    /// re-entering the field for a test that is already passed would only strand them.
-    AlreadyPassed { branch: &'static Branch, line: String },
+pub enum ExaminerTalk {
+    /// Already a second job (or beyond).
+    NothingMoreToTeach(String),
+    /// No test under way: not the level, not the job, or the chain not reached yet.
+    NotReady(String),
+    /// The test is under way and the marbles are short: ask whether to go back in.
+    OfferReEntry { branch: &'static Branch, question: String },
+    /// The test is under way and every marble is in the bag: hand them in through the quest.
+    HandIn(String),
+    /// The test is passed; the proof goes to the instructor.
+    Passed(String),
 }
 
-/// Whether this character may take this branch's test at all, or the sentence saying why not.
-///
-/// Reuses [`advancement_for`] against the branch's **instructor** rather than restating the
-/// rules, because the test and the advancement are gated on exactly the same two facts -
-/// `Check.0.lvmin` and `Check.0.job.0`, identical on all sixteen chain quests. **[L]** Two
-/// copies of one predicate is how one of them gets missed.
-fn may_take_the_test(chr: &Character, branch: &'static Branch) -> Result<(), String> {
-    match advancement_for(chr, branch.instructor_npc) {
-        Advancement::Choose { .. } => Ok(()),
-        // Not a refusal in `refusal_for`'s eyes - it is a hand-off to `crate::jobs`. Here it
-        // is a real answer, because the examiner is not where a beginner's story starts.
-        Advancement::StillABeginner => Err(format!(
-            "You have no job to advance from. See {} in {} first.",
-            branch.instructor_name, branch.instructor_map_name
-        )),
-        other => {
-            Err(refusal_for(&other).unwrap_or_else(|| String::from("I cannot test you.")))
-        }
-    }
-}
-
-/// The examiner's whole decision. `None` for any NPC that is not one of the four.
-pub fn test_step(
-    chr: &Character,
-    npc_template: u32,
-    marbles_held: u32,
-    holds_proof: bool,
-) -> Option<TestStep> {
+/// The examiner's regular-talk decision. `None` for any NPC that is not one of the four.
+pub fn examiner_talk(chr: &Character, npc_template: u32, test: TestQuest, marbles_held: u32) -> Option<ExaminerTalk> {
     let branch = branch_examined_by(npc_template)?;
-    if let Err(why) = may_take_the_test(chr, branch) {
-        return Some(TestStep::Refused(why));
-    }
-    if holds_proof {
-        return Some(TestStep::AlreadyPassed {
-            branch,
-            line: format!(
-                "You already carry {PROOF_ITEM_NAME}. Take it to {} in {} - the advancement is                  theirs to give, not mine.",
-                branch.instructor_name, branch.instructor_map_name
-            ),
-        });
+    // A first job is `x00`; anything past it has a non-zero tens digit - `210`, `111`, `412`.
+    if chr.job >= 100 && chr.job % 100 != 0 {
+        return Some(ExaminerTalk::NothingMoreToTeach(
+            "You have already made your 2nd job advancement. I have nothing more to teach you.".to_string(),
+        ));
     }
     let wanted = branch.chain.marble_count_items;
-    if marbles_held >= wanted {
-        return Some(TestStep::Pass {
+    Some(match test {
+        TestQuest::InProgress if marbles_held >= wanted => ExaminerTalk::HandIn(format!(
+            "You have all {wanted} {MARBLE_ITEM_NAME}s. Choose #bTest of Qualification#k and hand them to me."
+        )),
+        TestQuest::InProgress => ExaminerTalk::OfferReEntry {
             branch,
-            marble_item: branch.chain.marble_item,
-            take_marbles: wanted,
-            proof_item: branch.chain.proof_item,
-            line: format!(
-                "{wanted} {MARBLE_ITEM_NAME}s. You have passed. Take {PROOF_ITEM_NAME} to {} in                  {} and your new path is yours.",
-                branch.instructor_name, branch.instructor_map_name
+            question: format!(
+                "You have {marbles_held} of {wanted} {MARBLE_ITEM_NAME}s. Would you like to go back into the test area?"
             ),
-        });
-    }
-    Some(TestStep::Enter {
-        branch,
-        field: branch.test_field,
-        line: format!(
-            "Into {} with you. Bring me {wanted} {MARBLE_ITEM_NAME}s - you have {marbles_held}.              Talk to the instructor inside when you want to come out.",
-            branch.test_field.map_name
-        ),
+        },
+        TestQuest::Completed => ExaminerTalk::Passed(format!(
+            "You have passed my test. Take {PROOF_ITEM_NAME} to {} in the {}.",
+            branch.instructor_name, branch.instructor_map_name
+        )),
+        TestQuest::NotStarted => ExaminerTalk::NotReady(format!(
+            "You are not ready yet. Talk to {} for your 2nd job advancement.",
+            branch.instructor_name
+        )),
     })
+}
+
+/// The conversation path the re-entry yes/no is parked under.
+pub const REENTER_PATH: &str = "secondjob.reenter";
+
+/// The *Test of Qualification* quest of the branch whose examiner this is, if it is one.
+pub fn test_quest_of(npc_template: u32) -> Option<u32> {
+    branch_examined_by(npc_template).map(|b| b.chain.quests[2])
+}
+
+/// Whether `quest_id` is one of the four *Test of Qualification* quests.
+pub fn is_test_quest(quest_id: u32) -> bool {
+    BRANCHES.iter().any(|b| b.chain.quests[2] == quest_id)
 }
 
 /// What clicking the **warden** - the NPC inside the test field - should do.
@@ -1025,12 +1029,12 @@ pub fn warden_step(npc_template: u32, marbles_held: u32) -> Option<WardenStep> {
     let wanted = branch.chain.marble_count_items;
     let line = if marbles_held >= wanted {
         format!(
-            "{marbles_held} {MARBLE_ITEM_NAME}s - that is enough. I will send you back to {};              the {} is waiting there.",
+            "{marbles_held} {MARBLE_ITEM_NAME}s - that is enough. I will send you back to {}; the {} is waiting there.",
             branch.examiner_map_name, branch.examiner_name
         )
     } else {
         format!(
-            "You have {marbles_held} of {wanted} {MARBLE_ITEM_NAME}s. Leave whenever you like -              I will put you back in {}.",
+            "You have {marbles_held} of {wanted} {MARBLE_ITEM_NAME}s. Leave whenever you like - I will put you back in {}.",
             branch.examiner_map_name
         )
     };
@@ -2006,62 +2010,38 @@ mod tests {
         assert!(!is_marble(2000000), "a Red Potion is not a marble");
     }
 
-    /// **The examiner's four outcomes, and the one that must not carry an effect.**
+    /// **A regular talk to the examiner, every arm** (the owner, 2026-09-26). Only the re-entry offer
+    /// can lead anywhere, and it needs the test in progress AND marbles short of 30.
     #[test]
-    fn the_examiner_tests_and_advances_nobody() {
-        let b = &BRANCHES[0]; // Warrior
-        let ready = character(30, 100);
-
-        // Not enough marbles -> in you go, and the arm carries the field.
-        match test_step(&ready, b.examiner_npc, 0, false) {
-            Some(TestStep::Enter { field, .. }) => {
-                assert_eq!(field.map_id, 80001300);
-                assert_eq!(field.warden_npc, 800006);
+    fn a_regular_talk_to_the_examiner_follows_wisps_four_rules() {
+        for b in BRANCHES {
+            let ready = character(30, b.from_job);
+            let talk = |chr: &Character, t: TestQuest, m: u32| examiner_talk(chr, b.examiner_npc, t, m).unwrap();
+            match talk(&ready, TestQuest::InProgress, 29) {
+                ExaminerTalk::OfferReEntry { branch, question } => {
+                    assert_eq!(branch.examiner_npc, b.examiner_npc);
+                    assert!(question.contains("29 of 30") && question.contains("go back into the test area"), "{question}");
+                }
+                other => panic!("{}: expected the re-entry offer, got {other:?}", b.from_job_name),
             }
-            other => panic!("expected Enter, got {other:?}"),
-        }
-        // One short is still short.
-        assert!(matches!(
-            test_step(&ready, b.examiner_npc, 29, false),
-            Some(TestStep::Enter { .. })
-        ));
-        // Thirty passes, and the arm carries exactly what moves.
-        match test_step(&ready, b.examiner_npc, 30, false) {
-            Some(TestStep::Pass { marble_item, take_marbles, proof_item, .. }) => {
-                assert_eq!(marble_item, 4031017);
-                assert_eq!(take_marbles, 30);
-                assert_eq!(proof_item, 4031018);
+            assert!(matches!(talk(&ready, TestQuest::InProgress, 30), ExaminerTalk::HandIn(_)), "30 in hand: no re-entry");
+            match talk(&ready, TestQuest::NotStarted, 0) {
+                ExaminerTalk::NotReady(line) => {
+                    assert!(line.contains("not ready yet") && line.contains(b.instructor_name), "{line}")
+                }
+                other => panic!("expected NotReady, got {other:?}"),
             }
-            other => panic!("expected Pass, got {other:?}"),
+            assert!(matches!(talk(&character(29, b.from_job), TestQuest::NotStarted, 0), ExaminerTalk::NotReady(_)), "under level");
+            match talk(&character(35, b.choices[0].job), TestQuest::Completed, 0) {
+                ExaminerTalk::NothingMoreToTeach(line) => assert!(line.contains("nothing more to teach"), "{line}"),
+                other => panic!("a second job: expected NothingMoreToTeach, got {other:?}"),
+            }
+            assert!(matches!(talk(&ready, TestQuest::Completed, 0), ExaminerTalk::Passed(_)));
+            assert_eq!(test_quest_of(b.examiner_npc), Some(b.chain.quests[2]));
+            assert!(is_test_quest(b.chain.quests[2]) && !is_test_quest(b.chain.quests[1]));
         }
-        // Holding the proof already: nothing to take, nothing to give, and NO field to
-        // re-enter. That last one matters - a second Enter would strand a finished player.
-        match test_step(&ready, b.examiner_npc, 99, true) {
-            Some(TestStep::AlreadyPassed { .. }) => {}
-            other => panic!("expected AlreadyPassed, got {other:?}"),
-        }
-        // A beginner is refused with a sentence rather than warped, and the sentence names
-        // where to actually go.
-        match test_step(&character(30, 0), b.examiner_npc, 99, false) {
-            Some(TestStep::Refused(line)) => assert!(
-                line.contains("Dances with Balrog"),
-                "a beginner is sent to the instructor, got {line:?}"
-            ),
-            other => panic!("expected Refused, got {other:?}"),
-        }
-        // Level 29 with 30 marbles is still refused - the marbles do not buy the level.
-        assert!(matches!(
-            test_step(&character(29, 100), b.examiner_npc, 30, false),
-            Some(TestStep::Refused(_))
-        ));
-        // Wrong branch.
-        assert!(matches!(
-            test_step(&character(30, 200), b.examiner_npc, 30, false),
-            Some(TestStep::Refused(_))
-        ));
-        // And the examiner is not an NPC that advances: every other template is None.
-        assert!(test_step(&ready, b.instructor_npc, 30, false).is_none());
-        assert!(test_step(&ready, 9_999_999, 30, false).is_none());
+        assert!(examiner_talk(&character(30, 200), 313, TestQuest::InProgress, 0).is_none(), "Grendel is not an examiner");
+        assert_eq!(test_quest_of(9_999_999), None);
     }
 
     /// **The warden never refuses**, because refusing would strand somebody.

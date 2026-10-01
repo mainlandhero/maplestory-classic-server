@@ -90,6 +90,36 @@ pub fn parse_cash_shop_request(body: &[u8]) -> Option<CashShopRequest> {
 }
 
 #[cfg(test)]
+mod beauty_preview_tests {
+    use super::*;
+
+    /// The body walks exactly the way the client's decoder reads it.
+    #[test]
+    fn the_preview_body_is_the_decoders_shape() {
+        let body = beauty_preview(7, &[(5_150_000, [vec![30000, 30060], vec![31030]])]);
+        let mut r = PacketReader::new(&body);
+        assert_eq!(r.u8().unwrap(), 0, "flag 0: the fill arm");
+        assert_eq!(r.u64().unwrap(), 7);
+        assert_eq!(r.u32().unwrap(), 1, "one coupon");
+        assert_eq!(r.u32().unwrap(), u32::MAX);
+        assert_eq!(r.u32().unwrap(), 5_150_000, "the key is the coupon id");
+        assert_eq!(r.u32().unwrap(), 0);
+        assert_eq!(r.u64().unwrap(), BEAUTY_PREVIEW_UNTIL);
+        assert_eq!(r.u64().unwrap(), BEAUTY_PREVIEW_FROM);
+        assert_eq!(r.u32().unwrap(), 2, "two blocks: gender 0, gender 1");
+        for (g, ids) in [(0u8, vec![30000u32, 30060]), (1, vec![31030])] {
+            assert_eq!(r.u8().unwrap(), g);
+            assert_eq!(r.u32().unwrap(), 0);
+            assert_eq!(r.u32().unwrap(), ids.len() as u32);
+            for id in ids {
+                assert_eq!(r.u32().unwrap(), id);
+            }
+        }
+        assert_eq!(body.len(), 1 + 8 + 4 + (4 + 4 + 4 + 8 + 8 + 4) + (1 + 4 + 4 + 8) + (1 + 4 + 4 + 4), "nothing left over");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -235,6 +265,70 @@ pub const CASH_SHOP_WALLET: u16 = 0x05AD;
 
 /// Body length of a [`CASH_SHOP_WALLET`]: three `u32`s.
 pub const CASH_SHOP_WALLET_LEN: usize = 12;
+
+/// **`0x05B9` - the beauty coupons' preview lists.** The owner, 2026-09-26: *"In Cash Shop, the
+/// Mystery Hair and Signature Hair Coupon should show previews, but currently it doesn't do
+/// that."*
+///
+/// The client does **not** read its own `Etc/BeautyPreview.img`: no string in the image names
+/// that path or its `MaleHair`/`FemaleHair` keys (controls `MakeCharInfo`, `SetItemInfo`,
+/// `CashPackage` and `Etc/Commodity.img` are all found). The preview panel `FUN_1410B3440`
+/// asks `FUN_1401C34D0(gender, couponItemId, &out)`, which looks the coupon up in a global map
+/// at `0x143A410A8` - empty unless the server fills it - and the map's only filler is
+/// `FUN_1401C2910`, reached from the Cash Shop stage's `0x05B9` arm with a `u8 0`
+/// (`research/cash-shop-stage.md` §6.4, where it was filed as "peripheral"). **[L]** Layout,
+/// the listing and the decompiler agreeing read for read:
+///
+/// ```text
+/// u8     0                         the arm's flag: 0 -> FUN_1401C2910 (fill); 1 -> a u32 list read and discarded
+/// raw8   stamp                     -> 0x143A41098
+/// u32    n coupons
+/// n x {  FUN_1401C1010
+///   u32    ?                       the caller's default is -1
+///   u32    coupon item id          THE MAP KEY
+///   raw4   ?                       default 0
+///   raw8   FILETIME                default 2079-01-01
+///   raw8   FILETIME                default 1900-01-01
+///   u32    b blocks                the getter takes block 0 for gender 0, block 1 for gender 1
+///   b x { u8, raw4, u32 m, m x u32 base style id }
+/// }
+/// ```
+///
+/// Mode 2 (both genders) runs a consistency check that logs *"[BeautyData] coupon (%d) common
+/// id (%d) position differs"*; the panel asks for the character's own gender, 0 or 1.
+pub const CASH_SHOP_BEAUTY_PREVIEW: u16 = 0x05B9;
+
+/// The client's own "no limit" FILETIMEs, the defaults `FUN_1401C2910` puts in the two `raw8`
+/// slots before decoding (`0x143273480` and `0x143273478`). Sent as-is, so whatever reads them
+/// sees exactly what it would with no packet.
+pub const BEAUTY_PREVIEW_UNTIL: u64 = 0x0217_E646_BB05_8000; // 2079-01-01
+pub const BEAUTY_PREVIEW_FROM: u64 = 0x014F_373B_FDE0_4000; // 1900-01-01
+
+/// Build a [`CASH_SHOP_BEAUTY_PREVIEW`]: per coupon, the male list then the female list, as
+/// base style ids (the panel colours them itself).
+pub fn beauty_preview(stamp: u64, coupons: &[(u32, [Vec<u32>; 2])]) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(0);
+    w.u64(stamp);
+    w.u32(coupons.len() as u32);
+    for (coupon, lists) in coupons {
+        w.u32(u32::MAX);
+        w.u32(*coupon);
+        w.u32(0);
+        w.u64(BEAUTY_PREVIEW_UNTIL);
+        w.u64(BEAUTY_PREVIEW_FROM);
+        w.u32(lists.len() as u32);
+        for (gender, ids) in lists.iter().enumerate() {
+            w.u8(gender as u8);
+            w.u32(0);
+            w.u32(ids.len() as u32);
+            for id in ids {
+                w.u32(*id);
+            }
+        }
+    }
+    w.into_vec()
+}
 
 /// `0x03E0` - the client asking for its balance. **Empty body**, throttled 60 s.
 pub const CLIENT_CASH_SHOP_QUERY: u16 = 0x03E0;
@@ -1045,6 +1139,52 @@ pub fn parse_locker_to_bag(rest: &[u8]) -> Option<LockerToBag> {
 /// Coupons could not. Giving bag-restored cash items a serial is the follow-up; this parser
 /// is for the request the client does build.
 pub const ACTION_MOVE_BAG_TO_LOCKER: u8 = 0x0B;
+
+/// `0x03E1` sub-op **`0x1C`: delete a cash item from the locker.** `raw[8] liCashItemSN`,
+/// nothing else. Builder `FUN_140D75480`, request kind 6. **[L]**,
+/// `research/cash-shop-actions.md` section 5.
+///
+/// Captured 2026-09-24 when the owner pressed the Cash Inventory's trash button - *"I just tried
+/// deleting an item in Cash Shop, but this is currently unhandled"*: `1c 01000000 01000000`,
+/// which is this server's own serial for account 1, locker slot 1 (`(account << 32) | slot`).
+///
+/// The client has already refused the two cases it knows about before this is ever built:
+/// string 651 *"A refundable item cannot be deleted."* (record `+67`) and 694 *"This item
+/// cannot be deleted."* So anything that reaches the server is a delete the client agreed to.
+pub const ACTION_DELETE: u8 = 0x1C;
+
+/// Parse a [`ACTION_DELETE`] payload (the bytes after the sub-op): the serial, and nothing
+/// else. Anything but exactly eight bytes is refused rather than guessed at.
+pub fn parse_delete(rest: &[u8]) -> Option<u64> {
+    let bytes: [u8; 8] = rest.try_into().ok()?;
+    Some(u64::from_le_bytes(bytes))
+}
+
+/// `0x05AE` sub-op **`0x3C`: the delete succeeded.** `raw[8]` - the serial that was deleted.
+///
+/// The arm (`0x140D7DF3C`) erases that serial from the locker map, refreshes the two locker
+/// windows, and shows string 696 *"The cash item has been deleted."* - but only when the
+/// in-flight kind is 6, and **it does not clear the in-flight latch `[stage+0x74]`**
+/// (`research/cash-shop-buy-done.md` section 3, the `0x3C` row). Every request entry point
+/// refuses while that byte is set, so a bare `0x3C` would leave the shop dead after one
+/// delete. It must be followed by a [`CASH_SHOP_WALLET`], whose arm clears the latch at
+/// `0x140D736DC` - and re-sends a purchase only when the pending kind is 1, which `0x3C` has
+/// already reset. **[L]** on every link.
+pub const RESULT_DELETED: u8 = 0x3C;
+
+/// Build a [`RESULT_DELETED`] body.
+///
+/// ```
+/// use net::cashshop::{cash_item_deleted, RESULT_DELETED};
+/// let b = cash_item_deleted(0x0000_0001_0000_0001);
+/// assert_eq!(b, vec![RESULT_DELETED, 1, 0, 0, 0, 1, 0, 0, 0]);
+/// ```
+pub fn cash_item_deleted(serial: u64) -> Vec<u8> {
+    let mut b = Vec::with_capacity(9);
+    b.push(RESULT_DELETED);
+    b.extend_from_slice(&serial.to_le_bytes());
+    b
+}
 
 /// Payload length of an [`ACTION_MOVE_BAG_TO_LOCKER`] after the sub-op byte.
 pub const BAG_TO_LOCKER_LEN: usize = 8 + 4 + 1 + 4;
