@@ -2987,6 +2987,18 @@ pub const NO_SCISSOR_RESTRICTION: u8 = 0xFF;
 /// reasons that were not established. Prefer [`NO_SCISSOR_RESTRICTION`].
 pub const ATTRIBUTE_BIT_3: u16 = 1 << 3;
 
+/// Attribute bit 9 - **a Lucky Day Scroll has been used on this item**: the next scroll put on
+/// it succeeds whatever its rate, and spends the bit.
+///
+/// **[L] that bits 8 and 9 are the pair:** `0x1417e9a30` calls the item's `vtable+0x58`
+/// (bit 8, `FUN_1402FD4D0`) and `vtable+0x60` (bit 9, `FUN_1402FD950`) and, if either is set,
+/// shows `0x0F0F` *"Lucky Protection Scrolls cannot be used on items that already have a Lucky
+/// Day Scroll or Protection Scroll applied."* **Which of the two is Lucky Day is [I]**: the v214
+/// reference's `EquipAttribute` gives `ProtectionScroll 0x100` and `LuckyDay 0x200`, which
+/// agrees with this client on the pair. Server-side it is only a stored flag either way; what
+/// the tooltip draws for it is unmeasured.
+pub const ATTRIBUTE_LUCKY_DAY: u16 = 1 << 9;
+
 /// Everything the four bitmasks in one equipped item can carry.
 ///
 /// [`Default`] is **all masks zero**, which is the 125-byte body confirmed on screen on

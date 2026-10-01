@@ -182,7 +182,8 @@ impl Session {
                 }
                 Branch::Treasure => {
                     let offered = self.real_scrolls_that_fit(chr.id, equip_id);
-                    if offered.is_empty() {
+                    let secrets = self.secrets_held(chr.id);
+                    if offered.is_empty() && secrets == 0 {
                         return Some(self.admin_says(
                             template,
                             &npc::no_scroll_fits(&item_name),
@@ -192,14 +193,15 @@ impl Session {
                             ),
                         ));
                     }
-                    let text = npc::real_scroll_menu(&item_name, &offered);
+                    let text = npc::real_scroll_menu(&item_name, &offered, secrets);
                     self.park(template, npc::real_path(equip_slot), false);
                     vec![self.menu_reply(
                         template,
                         text,
                         format!(
                             "ScriptMessage MENU: character {} is choosing which of {} scroll(s) \
-                             the Treasure Scroll guarantees on {item_name}",
+                             the Treasure Scroll guarantees on {item_name} (Scrolls of Secrets \
+                             held: {secrets})",
                             chr.id,
                             offered.len()
                         ),
@@ -218,6 +220,27 @@ impl Session {
             ));
         };
         let offered = self.real_scrolls_that_fit(chr.id, equip_id);
+        // Past the real scrolls: the Scroll of Secrets rows, while one is in the bag.
+        let secrets_mode = sel
+            .checked_sub(offered.len())
+            .filter(|_| self.secrets_held(chr.id) > 0)
+            .and_then(|j| npc::TREASURE_SECRETS_MODES.get(j).copied());
+        if let Some(mode) = secrets_mode {
+            let action = Confirmed::TreasureSecrets { mode, equip_slot };
+            let item_name = self.item_name(equip_id);
+            let text = npc::confirm(action, &item_name, "", true);
+            self.park(template, npc::confirm_path(action), true);
+            return Some(vec![self.ask_reply(
+                template,
+                text,
+                format!(
+                    "ScriptMessage YES/NO: character {} confirming a Treasure Scroll guaranteeing \
+                     a Scroll of Secrets as {} on equip slot {equip_slot} ({item_name})",
+                    chr.id,
+                    mode.name()
+                ),
+            )]);
+        }
         let Some((real_scroll, real_name, _, _)) = offered.get(sel).cloned() else {
             let item_name = self.item_name(equip_id);
             return Some(self.admin_says(
@@ -273,6 +296,14 @@ impl Session {
         };
         let template = convo.npc_template;
         self.conversation = None;
+        // "Keep scrolling?" - Yes is `!scroll` again; anything else closes, and silence is
+        // safe on `0x00F3`.
+        if convo.path == npc::AGAIN_PATH {
+            if action_byte == net::script::SCRIPT_ACTION_YES {
+                return self.open_scroll_picker();
+            }
+            return Vec::new();
+        }
         let Some(action) = npc::confirmed_from_path(&convo.path) else {
             return Vec::new();
         };
@@ -311,6 +342,9 @@ impl Session {
         // which is what the wire edge does for the same row. Not zeros: `None` is "derive from
         // the WZ", and treating it as zero would strip a fresh item on its first scroll.
         let current = stats.unwrap_or_else(|| net::opcode::EquipStats::fresh(base.stats, base.tuc));
+        // The Lucky Day Scroll's mark (`net::opcode::ATTRIBUTE_LUCKY_DAY`): the next scroll on this
+        // item succeeds - `!scroll`'s included - and spends it.
+        let lucky = current.options.attribute & net::opcode::ATTRIBUTE_LUCKY_DAY != 0;
         let state = EquipState {
             remaining: current.options.remaining_enhancements,
             failed_slots,
@@ -319,14 +353,16 @@ impl Session {
 
         // The Treasure path spends a second item, so it has a second thing to re-read and a
         // second way to refuse. Both are resolved before anything is applied.
-        let mut real_bag_slot = None;
+        let mut second_item: Option<(store::InventoryType, u16)> = None;
         let mut real_name = String::new();
         let applied = match action {
             Confirmed::Secrets { mode, .. } => {
                 // **Read the pass without claiming it**, then claim only on the path that
                 // uses it. `daily_claim_day` only reads.
-                let guaranteed = !mode.always_succeeds() && self.mode_is_free_today(chr.id, mode);
-                let chance = if guaranteed { Chance::Guaranteed } else { Chance::Rolled };
+                // **A Lucky Day mark guarantees it first** (2026-10-01), so the day's free use
+                // is kept for later; the mark is spent below either way.
+                let guaranteed = !lucky && !mode.always_succeeds() && self.mode_is_free_today(chr.id, mode);
+                let chance = if guaranteed || lucky { Chance::Guaranteed } else { Chance::Rolled };
                 // **Innocence keeps a mob drop's roll.** The owner, 2026-09-24: *"Can we make
                 // Innocence Scrolls keep a good base roll?"* An item that rolled when it
                 // dropped (`world::variance`) reverts to THAT, not the template; anything that
@@ -380,7 +416,7 @@ impl Session {
                         "the chosen scroll is no longer in the bag",
                     );
                 };
-                real_bag_slot = Some(slot);
+                second_item = Some((store::InventoryType::Use, slot));
                 real_name = self.item_name(real_scroll);
                 match scrolls::apply_treasure(&base, &state, &scroll_template.increments) {
                     Ok(a) => a,
@@ -393,11 +429,34 @@ impl Session {
                     }
                 }
             }
+            // A Scroll of Secrets that cannot fail. Its own rules (Chaos needs a slot, Clean
+            // Slate a failure) still refuse; no daily pass is read or claimed.
+            Confirmed::TreasureSecrets { mode, .. } => {
+                let Some(slot) = self.bag_slot_of(chr.id, scrolls::SCROLL_OF_SECRETS) else {
+                    return self.admin_says(
+                        template,
+                        &npc::nothing_to_use(),
+                        "the Scroll of Secrets is no longer in the bag",
+                    );
+                };
+                second_item = Some((store::InventoryType::Etc, slot));
+                match scrolls::apply(mode, &base, &state, Chance::Guaranteed, self.next_roll()) {
+                    Ok(a) => a,
+                    Err(refusal) => {
+                        return self.admin_says(
+                            template,
+                            &npc::refused(refusal),
+                            &format!("Treasure Scroll on a {mode:?} refused: {}", refusal.line()),
+                        )
+                    }
+                }
+            }
         };
 
         let mut new_stats = current;
         new_stats.stats = applied.after.stats;
         new_stats.options.remaining_enhancements = applied.after.remaining;
+        new_stats.options.attribute &= !net::opcode::ATTRIBUTE_LUCKY_DAY;
         match self.store.set_worn_equip(chr.id, equip_slot, &new_stats, applied.after.failed_slots)
         {
             Ok(true) => {}
@@ -413,35 +472,43 @@ impl Session {
         // Only now do the scrolls leave the bag.
         let removed =
             self.store.remove_item(chr.id, store::InventoryType::Etc, bag_slot, Some(1));
-        let removed_real = real_bag_slot.map(|slot| {
-            self.store.remove_item(chr.id, store::InventoryType::Use, slot, Some(1))
-        });
+        let removed_real = second_item.map(|(tab, slot)| self.store.remove_item(chr.id, tab, slot, Some(1)));
 
         let item_name = self.item_name(item_id);
         let changes: Vec<(&str, i32)> = applied.changes.clone();
-        let mut out = self.admin_says(
-            template,
-            &npc::outcome(
-                action,
-                &item_name,
-                &real_name,
-                applied.succeeded,
-                &changes,
-                applied.after.remaining,
-            ),
-            &format!(
-                "{} on {item_name}: succeeded={}, slot_spent={}, remaining {} -> {}, \
-                 failed {} -> {}, changes={:?}. Nothing authenticates.",
-                used_item.name(),
-                applied.succeeded,
-                applied.slot_spent,
-                state.remaining,
-                applied.after.remaining,
-                state.failed_slots,
-                applied.after.failed_slots,
-                applied.changes,
-            ),
+        let result = npc::outcome(
+            action,
+            &item_name,
+            &real_name,
+            applied.succeeded,
+            &changes,
+            applied.after.remaining,
         );
+        // **More scrolls in the bag: ask to go on** rather than make them type `!scroll`
+        // again (the owner, 2026-10-01). The bag is read after the removal above.
+        let left = self.scrolls_held(chr.id);
+        let what = format!(
+            "{} on {item_name}: succeeded={}, slot_spent={}, remaining {} -> {}, failed {} -> {},              changes={:?}. Nothing authenticates. | {result:?}",
+            used_item.name(),
+            applied.succeeded,
+            applied.slot_spent,
+            state.remaining,
+            applied.after.remaining,
+            state.failed_slots,
+            applied.after.failed_slots,
+            applied.changes,
+        );
+        let mut out = if left.is_empty() {
+            vec![Reply {
+                opcode: net::script::SCRIPT_MESSAGE,
+                body: net::script::npc_say(template, &result, false, false),
+                what: format!("ScriptMessage Say: the result - {what}"),
+            }]
+        } else {
+            self.park(template, npc::AGAIN_PATH.to_string(), true);
+            let text = npc::again(&result, &left);
+            vec![self.ask_reply(template, text, format!("ScriptMessage YES/NO: the result, and keep scrolling? - {what}"))]
+        };
         if removed.is_err() {
             crate::server::log("   scroll: the equip was written but the scroll would not leave the bag");
         }
@@ -476,6 +543,7 @@ impl Session {
         // path, the repurposed item otherwise.
         let named_scroll = match action {
             Confirmed::Treasure { real_scroll, .. } => real_scroll,
+            Confirmed::TreasureSecrets { .. } => scrolls::SCROLL_OF_SECRETS,
             Confirmed::Secrets { .. } => used_item.item_id(),
         };
         out.push(self.publish_scroll_effect(
@@ -552,6 +620,14 @@ impl Session {
             }
         }
         out
+    }
+
+    /// How many Scrolls of Secrets the bag holds - the Treasure Scroll's menu offers them.
+    fn secrets_held(&self, character_id: u32) -> u16 {
+        self.scrolls_held(character_id)
+            .into_iter()
+            .find(|(scroll, _)| *scroll == Scroll::Secrets)
+            .map_or(0, |(_, n)| n)
     }
 
     /// The first bag slot holding this item. Etc for the repurposed scrolls, Use for the real
@@ -821,6 +897,74 @@ mod tests {
         let (_, stats, _, kept) = innocence(&mut s, None);
         assert_eq!(stats.expect("stored stats").stats, template.stats, "no roll: the template, as before");
         assert_eq!(kept, None);
+    }
+
+    /// A worn hat with 7 slots on a claimed character, and `secrets` / `treasure` of each
+    /// repurposed scroll in the Etc tab.
+    fn hatter(secrets: u16, treasure: u16) -> (Arc<Store>, Session, u32) {
+        const HAT: u32 = 1_002_999;
+        let mut config = Config::default();
+        config.equips.insert(HAT, EquipTemplate { tuc: 7, inc_str: 2, inc_pdd: 40, ..EquipTemplate::default() });
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let id = store.create_character(account, 0, &net::opcode::Character { name: "Hatter".into(), ..Default::default() }).unwrap().id;
+        store.create_migration(account, id, 0, 0).unwrap();
+        let mut s = Session::new(store.clone(), Arc::new(config));
+        assert!(s.claim_for_character(id).contains("claimed the migration"));
+        let _ = store.unequip_to_bag(id, 1, Some(20));
+        store.set_inventory_slot(id, store::InventoryType::Equip, 10, &store::Item::equip(HAT)).unwrap();
+        store.equip_from_bag(id, 10, 1).unwrap();
+        for (item, n) in [(scrolls::SCROLL_OF_SECRETS, secrets), (scrolls::TREASURE_SCROLL, treasure)] {
+            if n > 0 {
+                store.add_item(id, store::InventoryType::Etc, &store::Item::bundle(item, n), 100).unwrap();
+            }
+        }
+        (store, s, id)
+    }
+
+    /// **A Treasure Scroll guarantees a Scroll of Secrets** (the owner, 2026-10-01). Chaos is
+    /// rolled at 60% once today's free use is spent; with the Treasure Scroll it cannot fail,
+    /// takes one of each scroll, and claims no daily pass. Run many times so a 60% roll would
+    /// have failed at least once.
+    #[test]
+    fn a_treasure_scroll_makes_a_scroll_of_secrets_succeed_and_spends_both() {
+        let (store, mut s, id) = hatter(40, 40);
+        let _ = store.claim_daily_perk_now(store::SCOPE_CHARACTER, i64::from(id), &daily_key(SecretsMode::Chaos));
+        for n in 1..=20u16 {
+            let _ = s.apply_scroll(9_010_000, Confirmed::TreasureSecrets { mode: SecretsMode::Chaos, equip_slot: 1 });
+            let (_, stats, failed, _) = store.worn_item(id, 1).unwrap().unwrap();
+            if n <= 7 {
+                assert_eq!(stats.unwrap().options.remaining_enhancements, 7 - n as u8, "a slot per Chaos, as always");
+                assert_eq!(failed, 0, "and never a failure");
+            }
+        }
+        let held = s.scrolls_held(id);
+        assert_eq!(held, vec![(Scroll::Secrets, 33), (Scroll::Treasure, 33)], "7 applied; the 13 refused (no slots) took nothing");
+        assert!(!s.mode_is_free_today(id, SecretsMode::Chaos), "the pass was spent before, and stays spent");
+        assert!(s.mode_is_free_today(id, SecretsMode::CleanSlate), "Clean Slate's pass untouched");
+    }
+
+    /// **After a result, "keep scrolling?"** while either scroll is left - Yes is the picker
+    /// again, No closes without a word. With none left, the plain result.
+    #[test]
+    fn the_result_asks_to_keep_scrolling_and_yes_opens_the_picker() {
+        let (_store, mut s, _id) = hatter(2, 0);
+        let out = s.apply_scroll(9_010_000, Confirmed::Secrets { mode: SecretsMode::Innocence, equip_slot: 1 });
+        assert!(out[0].what.contains("keep scrolling?"), "{:?}", out[0].what);
+        assert_eq!(s.conversation.as_ref().map(|c| c.path.as_str()), Some(npc::AGAIN_PATH));
+        let out = s.scroll_confirm_answer(net::script::SCRIPT_ACTION_YES);
+        assert!(out[0].what.contains("MENU opened"), "{:?}", out[0].what);
+        assert_eq!(s.conversation.as_ref().map(|c| c.path.as_str()), Some(npc::PICK_PATH));
+
+        s.conversation = None;
+        let out = s.apply_scroll(9_010_000, Confirmed::Secrets { mode: SecretsMode::Innocence, equip_slot: 1 });
+        assert!(out[0].what.contains("Say: the result"), "the last one: no question {:?}", out[0].what);
+        assert!(s.conversation.is_none());
+
+        let (_store, mut s, _id) = hatter(3, 0);
+        let _ = s.apply_scroll(9_010_000, Confirmed::Secrets { mode: SecretsMode::Innocence, equip_slot: 1 });
+        assert!(s.scroll_confirm_answer(net::script::SCRIPT_ACTION_NO).is_empty(), "No: closed, nothing said");
+        assert!(s.conversation.is_none());
     }
 
     /// The daily key names the mode, not the item - all three modes now live in one item, so

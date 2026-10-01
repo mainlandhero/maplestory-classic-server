@@ -31,6 +31,17 @@
 //! that correction was itself corrected the same day - `0x007C` already clears the latch, and
 //! it is confirmed on the owner's screen. `0x0070` carries `bExclRequestSent = 1` for the same
 //! reason, so the reply pair unlocks twice over.
+//!
+//! # The backported scrolls, and the Lucky Day Scroll (2026-10-01)
+//!
+//! `crate::scrolls::BACKPORTED` - Pure Clean Slate, Chaos and Innocence from the modern client -
+//! arrive here like any scroll and apply `!scroll`'s rules at their own tooltip rate. They are
+//! not in `0204.img`'s scroll table (`gm-handbook/scrolls.txt`), so they are recognised first.
+//!
+//! The Lucky Day Scroll arrives on `0x0126` instead ([`net::upgrade::CLIENT_ITEM_ENHANCER`]) and
+//! marks the item ([`net::opcode::ATTRIBUTE_LUCKY_DAY`]); **the next scroll on a marked item
+//! succeeds whatever its rate and clears the mark** - a real scroll at 100% (so it cannot
+//! destroy), a backported one guaranteed, and `!scroll`'s Scroll of Secrets too.
 
 use super::{Reply, Session};
 use crate::config::ScrollTemplate;
@@ -96,21 +107,26 @@ impl Session {
             return self.upgrade_refused(character_id, map, 0, 0, "no item in that Use slot");
         };
         let scroll_id = scroll.item_id;
-        let Some(template) = self.config.scrolls.get(&scroll_id).copied() else {
-            return self.upgrade_refused(
-                character_id,
-                map,
-                scroll_id,
-                0,
-                "that item is not a scroll in this client's 0204.img",
-            );
+        let backported = scrolls::backported(scroll_id);
+        let template = match (backported, self.config.scrolls.get(&scroll_id).copied()) {
+            (Some(_), _) => None,
+            (None, Some(t)) => Some(t),
+            (None, None) => {
+                return self.upgrade_refused(
+                    character_id,
+                    map,
+                    scroll_id,
+                    0,
+                    "that item is not a scroll in this client's 0204.img",
+                )
+            }
         };
 
         // ---- the equip --------------------------------------------------------------
         let Some(target) = Target::from_dst_slot(req.dst_slot) else {
             return self.upgrade_refused(character_id, map, scroll_id, 0, "dstSlot names no slot");
         };
-        let Some((equip_id, stored, failed_slots)) = self.read_target(character_id, target) else {
+        let Some((equip_id, stored, failed_slots, rolled_base)) = self.read_target(character_id, target) else {
             return self.upgrade_refused(
                 character_id,
                 map,
@@ -123,7 +139,18 @@ impl Session {
         // **The category check, and it is the client's own id scheme.** A hat scroll on a
         // weapon is refused rather than applied; `ScrollTemplate::category`'s derivation is
         // controlled against the names of all 208 scrolls.
-        if !ScrollTemplate::fits(scroll_id, equip_id) {
+        // A backported scroll goes on any equip but a pet's - the client's own predicate excludes
+        // `1800000..1899999` for exactly these ids (`0x14041754d`). [L]
+        if backported.is_some() && equip_id / 100_000 == 18 {
+            return self.upgrade_refused(
+                character_id,
+                map,
+                scroll_id,
+                equip_id,
+                "that scroll cannot be used on pet equipment",
+            );
+        }
+        if backported.is_none() && !ScrollTemplate::fits(scroll_id, equip_id) {
             return self.upgrade_refused(
                 character_id,
                 map,
@@ -142,14 +169,35 @@ impl Session {
             stats: current.stats,
         };
 
-        let applied = match scrolls::apply_real(
-            &base,
-            &state,
-            template.success,
-            template.cursed,
-            &template.increments,
-            self.next_scroll_roll(),
-        ) {
+        // **A Lucky Day mark makes this one succeed**, whatever its rate - and is spent below.
+        let lucky = current.options.attribute & net::opcode::ATTRIBUTE_LUCKY_DAY != 0;
+        let (success_pct, cursed_pct) = match (backported, template) {
+            (Some((_, pct)), _) => (pct as u16, 0),
+            (None, Some(t)) => (t.success, t.cursed),
+            (None, None) => (0, 0),
+        };
+        let roll = self.next_scroll_roll();
+        let outcome = match (backported, template) {
+            (Some((mode, pct)), _) => {
+                // Innocence reverts a mob drop to its ROLL, as `!scroll`'s does.
+                let base = match (mode, rolled_base) {
+                    (scrolls::SecretsMode::Innocence, Some(rolled)) => EquipBase { tuc: base.tuc, stats: rolled },
+                    _ => base,
+                };
+                let chance = if lucky { scrolls::Chance::Guaranteed } else { scrolls::Chance::Percent(pct) };
+                scrolls::apply(mode, &base, &state, chance, roll)
+            }
+            (None, Some(t)) => scrolls::apply_real(
+                &base,
+                &state,
+                if lucky { 100 } else { t.success },
+                t.cursed,
+                &t.increments,
+                roll,
+            ),
+            (None, None) => Err(scrolls::Refusal::NoScrollFits),
+        };
+        let applied = match outcome {
             Ok(a) => a,
             Err(refusal) => {
                 return self.upgrade_refused(
@@ -170,6 +218,7 @@ impl Session {
         let mut new_stats = current;
         new_stats.stats = applied.after.stats;
         new_stats.options.remaining_enhancements = applied.after.remaining;
+        new_stats.options.attribute &= !net::opcode::ATTRIBUTE_LUCKY_DAY;
 
         let wrote = if applied.destroyed {
             self.destroy_target(character_id, target)
@@ -216,7 +265,7 @@ impl Session {
                     "InventoryOperation REMOVE: {equip_id} was DESTROYED by scroll {scroll_id} \
                      ({}% cursed). 0x0236 alone prints the message and leaves the item on \
                      screen, so this is what actually takes it away.",
-                    template.cursed
+                    cursed_pct
                 ),
             },
             Target::Bagged(slot) if applied.destroyed => Reply {
@@ -230,41 +279,16 @@ impl Session {
                      by scroll {scroll_id}."
                 ),
             },
-            _ => {
-                let refreshed = store::Item {
-                    item_id: equip_id,
-                    kind: store::ItemKind::Equip(Some(new_stats)),
-                    failed_slots: applied.after.failed_slots,
-                    pet_id: None,
-                    rolled_base: None, // server-only; this copy is only drawn
-                };
-                let blob = self.item_blob(&refreshed);
-                let pos = match target {
-                    Target::Worn(slot) => -i16::from(slot),
-                    Target::Bagged(slot) => slot as i16,
-                };
-                Reply {
-                    opcode: net::inventory::INVENTORY_OPERATION,
-                    body: net::inventory::inventory_added(
-                        store::InventoryType::Equip.as_u8() as i8,
-                        pos,
-                        &blob,
-                    ),
-                    what: format!(
-                        "InventoryOperation ADD: re-sending {equip_id} at position {pos} so the \
-                         tooltip shows the new stats and {} enhancement slot(s)",
-                        applied.after.remaining
-                    ),
-                }
-            }
+            _ => self.equip_refresh(target, equip_id, new_stats, applied.after.failed_slots),
         });
 
         crate::server::log(&format!(
-            "   scroll: character {character_id} used {scroll_id} ({}% / {}% cursed) on \
+            "   scroll: character {character_id} used {scroll_id} ({}% / {}% cursed{}) on \
              {equip_id}: {result:?}, remaining {} -> {}, failed {} -> {}, changes {:?}. \
              Nothing authenticates.",
-            template.success,
-            template.cursed,
+            success_pct,
+            cursed_pct,
+            if lucky { ", LUCKY DAY: guaranteed, mark spent" } else { "" },
             state.remaining,
             applied.after.remaining,
             state.failed_slots,
@@ -272,6 +296,94 @@ impl Session {
             applied.changes,
         ));
         out
+    }
+
+    /// The `0x0070` that redraws one equip where it is - the tooltip is the only place the
+    /// player sees its stats, its slots and (perhaps) its Lucky Day mark.
+    fn equip_refresh(&self, target: Target, equip_id: u32, stats: net::opcode::EquipStats, failed_slots: u8) -> Reply {
+        let refreshed = store::Item {
+            item_id: equip_id,
+            kind: store::ItemKind::Equip(Some(stats)),
+            failed_slots,
+            pet_id: None,
+            rolled_base: None, // server-only; this copy is only drawn
+        };
+        let blob = self.item_blob(&refreshed);
+        let pos = match target {
+            Target::Worn(slot) => -i16::from(slot),
+            Target::Bagged(slot) => slot as i16,
+        };
+        Reply {
+            opcode: net::inventory::INVENTORY_OPERATION,
+            body: net::inventory::inventory_added(store::InventoryType::Equip.as_u8() as i8, pos, &blob),
+            what: format!(
+                "InventoryOperation ADD: re-sending {equip_id} at position {pos} so the tooltip shows \
+                 the new stats, {} enhancement slot(s), attribute {:#06x}",
+                stats.options.remaining_enhancements, stats.options.attribute
+            ),
+        }
+    }
+
+    /// `0x0126` - **a Lucky Day Scroll dragged onto an equip** (the owner, 2026-10-01). Marks the
+    /// item; the next scroll on it succeeds (`upgrade_with`). Answered on every path - the
+    /// client latched `+0x2330` when it sent this.
+    pub(super) fn on_item_enhancer(&mut self, body: &[u8]) -> Vec<Reply> {
+        let (Some(req), Some(chr)) = (net::upgrade::parse_item_upgrade(body), self.claimed_character()) else {
+            return crate::mesodrop::unlock_unhandled_latching_request(net::upgrade::CLIENT_ITEM_ENHANCER);
+        };
+        let (character_id, map) = (chr.id, self.field_of(&chr));
+        let Some(scroll) = self.bag_slot_item(character_id, store::InventoryType::Use, req.src_slot) else {
+            return self.upgrade_refused(character_id, map, 0, 0, "no item in that Use slot");
+        };
+        if scroll.item_id != scrolls::LUCKY_DAY {
+            return self.upgrade_refused(
+                character_id,
+                map,
+                scroll.item_id,
+                0,
+                "the only enhancer scroll this server knows is the Lucky Day Scroll (2530000)",
+            );
+        }
+        let Some(target) = Target::from_dst_slot(req.dst_slot) else {
+            return self.upgrade_refused(character_id, map, scrolls::LUCKY_DAY, 0, "dstSlot names no slot");
+        };
+        let Some((equip_id, stored, failed_slots, _)) = self.read_target(character_id, target) else {
+            return self.upgrade_refused(character_id, map, scrolls::LUCKY_DAY, 0, "there is no equipment in that slot");
+        };
+        let base = self.equip_template_base(equip_id);
+        let mut stats = stored.unwrap_or_else(|| net::opcode::EquipStats::fresh(base.stats, base.tuc));
+        // Bits 8 and 9 together are the client's own "already has one" test (`0x1417e9a30`).
+        if stats.options.attribute & (net::opcode::ATTRIBUTE_LUCKY_DAY | 1 << 8) != 0 {
+            return self.upgrade_refused(
+                character_id,
+                map,
+                scrolls::LUCKY_DAY,
+                equip_id,
+                "that item already has a Lucky Day or Protection Scroll on it",
+            );
+        }
+        stats.options.attribute |= net::opcode::ATTRIBUTE_LUCKY_DAY;
+        if !self.write_target(character_id, target, equip_id, &stats, failed_slots) {
+            return self.upgrade_refused(
+                character_id,
+                map,
+                scrolls::LUCKY_DAY,
+                equip_id,
+                "the equipment would not take the write; nothing was consumed",
+            );
+        }
+        if self.store.remove_item(character_id, store::InventoryType::Use, req.src_slot, Some(1)).is_err() {
+            crate::server::log("   lucky day: the item was marked but the scroll would not leave the bag");
+        }
+        crate::server::log(&format!(
+            "   lucky day: character {character_id} marked {equip_id} at {target:?} - its next scroll \
+             succeeds. Nothing authenticates."
+        ));
+        vec![
+            self.upgrade_effect(character_id, map, ItemUpgradeResult::Succeeded, scrolls::LUCKY_DAY, equip_id),
+            self.scroll_slot_reply(character_id, req.src_slot, scrolls::LUCKY_DAY),
+            self.equip_refresh(target, equip_id, stats, failed_slots),
+        ]
     }
 
     /// `0x0236` to the map and back to the scroller. Same two-send rule as `!scroll`'s:
@@ -338,19 +450,20 @@ impl Session {
             .map(|r| r.item)
     }
 
-    /// The equip's id, stored stats and failed-slot count, from wherever it lives.
+    /// The equip's id, stored stats, failed-slot count and rolled base, from wherever it lives.
+    #[allow(clippy::type_complexity)]
     fn read_target(
         &self,
         character_id: u32,
         target: Target,
-    ) -> Option<(u32, Option<net::opcode::EquipStats>, u8)> {
+    ) -> Option<(u32, Option<net::opcode::EquipStats>, u8, Option<net::opcode::EquipStatSet>)> {
         match target {
-            Target::Worn(slot) => self.store.worn_item(character_id, slot).ok().flatten().map(|(id, s, f, _)| (id, s, f)),
+            Target::Worn(slot) => self.store.worn_item(character_id, slot).ok().flatten(),
             Target::Bagged(slot) => {
                 let item = self.bag_slot_item(character_id, store::InventoryType::Equip, slot)?;
                 match item.kind {
                     store::ItemKind::Equip(stats) => {
-                        Some((item.item_id, stats, item.failed_slots))
+                        Some((item.item_id, stats, item.failed_slots, item.rolled_base))
                     }
                     // A bundle in the Equip tab should be impossible; refuse rather than
                     // invent a stat block for it.
@@ -477,5 +590,124 @@ mod tests {
         assert_eq!(Target::from_dst_slot(0), None);
         // And the magnitude cannot overflow a u8 into a wrong slot.
         assert_eq!(Target::from_dst_slot(-300), None);
+    }
+
+    use crate::config::{Config, EquipTemplate};
+    use std::sync::Arc;
+    use store::Store;
+
+    const HAT: u32 = 1_002_999;
+    /// A hat scroll at 10% (category 100, `ScrollTemplate::fits`), +1 DEF.
+    const HAT_SCROLL_10: u32 = 2_040_002;
+    const PET_HAT: u32 = 1_802_000;
+
+    /// A claimed character wearing a 7-slot hat, with `use_items` in the Use tab.
+    fn wearing_a_hat(use_items: &[(u32, u16)]) -> (Arc<Store>, Session, u32) {
+        let mut config = Config::default();
+        config.equips.insert(HAT, EquipTemplate { tuc: 7, inc_pdd: 10, ..EquipTemplate::default() });
+        config.equips.insert(PET_HAT, EquipTemplate { tuc: 0, ..EquipTemplate::default() });
+        config.scrolls.insert(
+            HAT_SCROLL_10,
+            ScrollTemplate { success: 10, cursed: 0, increments: net::opcode::EquipStatSet { inc_pdd: 1, ..Default::default() } },
+        );
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let id = store.create_character(account, 0, &net::opcode::Character { name: "Lucky".into(), ..Default::default() }).unwrap().id;
+        store.create_migration(account, id, 0, 0).unwrap();
+        let mut s = Session::new(store.clone(), Arc::new(config));
+        assert!(s.claim_for_character(id).contains("claimed the migration"));
+        let _ = store.unequip_to_bag(id, 1, Some(20));
+        store.set_inventory_slot(id, store::InventoryType::Equip, 10, &store::Item::equip(HAT)).unwrap();
+        store.equip_from_bag(id, 10, 1).unwrap();
+        for &(item, n) in use_items {
+            store.add_item(id, store::InventoryType::Use, &store::Item::bundle(item, n), 100).unwrap();
+        }
+        (store, s, id)
+    }
+
+    fn use_slot(store: &Store, id: u32, item: u32) -> u16 {
+        store.bag_items(id, store::InventoryType::Use).unwrap().iter().find(|r| r.item.item_id == item).map(|r| r.slot).unwrap()
+    }
+
+    fn held(store: &Store, id: u32, item: u32) -> u16 {
+        store.bag_items(id, store::InventoryType::Use).unwrap().iter().filter(|r| r.item.item_id == item).map(|r| r.item.kind.quantity()).sum()
+    }
+
+    /// `u32 tick, u16 src, u16 dstInvType, i16 dst, u8` - the body both `0x0125` and `0x0126` carry.
+    fn drag(src: u16, dst: i16) -> Vec<u8> {
+        let mut b = 0u32.to_le_bytes().to_vec();
+        b.extend_from_slice(&src.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&dst.to_le_bytes());
+        b.push(0);
+        b
+    }
+
+    /// The `0x0236`'s result byte: `u32 charId`, then the result.
+    fn effect_result(out: &[Reply]) -> u8 {
+        let e = out.iter().find(|r| r.opcode == ITEM_UPGRADE_EFFECT).expect("a 0x0236");
+        e.body[4]
+    }
+
+    fn hat_stats(store: &Store, id: u32) -> net::opcode::EquipStats {
+        store.worn_item(id, 1).unwrap().unwrap().1.expect("stored stats")
+    }
+
+    /// **A Lucky Day Scroll makes the next scroll succeed** (the owner, 2026-10-01: *"automatically
+    /// succeed without respecting its success percentage"*). Seven rounds of mark-then-scroll with
+    /// a 10% scroll: every one succeeds (seven 10% successes in a row by chance is one in ten
+    /// million), each takes one Lucky Day and one scroll, a second mark is refused for free, and
+    /// the mark is spent every time.
+    #[test]
+    fn a_lucky_day_mark_makes_the_next_scroll_succeed_and_is_spent() {
+        let (store, mut s, id) = wearing_a_hat(&[(scrolls::LUCKY_DAY, 12), (HAT_SCROLL_10, 12)]);
+        for round in 1..=7u8 {
+            let out = s.on_item_enhancer(&drag(use_slot(&store, id, scrolls::LUCKY_DAY), -1));
+            assert_eq!(effect_result(&out), ItemUpgradeResult::Succeeded as u8, "round {round}: {out:?}");
+            assert!(hat_stats(&store, id).options.attribute & net::opcode::ATTRIBUTE_LUCKY_DAY != 0, "marked");
+            let again = s.on_item_enhancer(&drag(use_slot(&store, id, scrolls::LUCKY_DAY), -1));
+            assert_eq!(effect_result(&again), ItemUpgradeResult::CannotBeUsed as u8, "one mark at a time");
+
+            let out = s.on_item_upgrade(&drag(use_slot(&store, id, HAT_SCROLL_10), -1));
+            assert_eq!(effect_result(&out), ItemUpgradeResult::Succeeded as u8, "round {round}: a 10% scroll, guaranteed");
+            let hat = hat_stats(&store, id);
+            assert_eq!(hat.stats.inc_pdd, 10 + u16::from(round));
+            assert_eq!(hat.options.remaining_enhancements, 7 - round);
+            assert_eq!(hat.options.attribute & net::opcode::ATTRIBUTE_LUCKY_DAY, 0, "the mark is spent");
+        }
+        assert_eq!(held(&store, id, scrolls::LUCKY_DAY), 5, "one Lucky Day per mark; the refused second ones took nothing");
+        assert_eq!(held(&store, id, HAT_SCROLL_10), 5);
+    }
+
+    /// **The backported scrolls**: a Chaos (60%) on a marked hat cannot fail; a Pure Clean Slate
+    /// with nothing to restore is refused and takes nothing; Innocence (2049190) on a marked hat
+    /// puts it back to the template; and none of them goes on pet equipment.
+    #[test]
+    fn the_backported_scrolls_apply_the_scroll_rules_at_their_own_rate() {
+        const CHAOS: u32 = 2_049_100;
+        const CLEAN_20: u32 = 2_049_003;
+        const INNOCENCE: u32 = 2_049_190;
+        let (store, mut s, id) = wearing_a_hat(&[(scrolls::LUCKY_DAY, 2), (CHAOS, 1), (CLEAN_20, 1), (INNOCENCE, 1)]);
+        let _ = s.on_item_enhancer(&drag(use_slot(&store, id, scrolls::LUCKY_DAY), -1));
+        let out = s.on_item_upgrade(&drag(use_slot(&store, id, CHAOS), -1));
+        assert_eq!(effect_result(&out), ItemUpgradeResult::Succeeded as u8, "{out:?}");
+        assert_eq!(hat_stats(&store, id).options.remaining_enhancements, 6, "Chaos spends a slot");
+        assert_eq!(held(&store, id, CHAOS), 0);
+
+        let out = s.on_item_upgrade(&drag(use_slot(&store, id, CLEAN_20), -1));
+        assert_eq!(effect_result(&out), ItemUpgradeResult::CannotBeUsed as u8, "no failed slot to restore");
+        assert_eq!(held(&store, id, CLEAN_20), 1, "and it is still in the bag");
+
+        let _ = s.on_item_enhancer(&drag(use_slot(&store, id, scrolls::LUCKY_DAY), -1));
+        let out = s.on_item_upgrade(&drag(use_slot(&store, id, INNOCENCE), -1));
+        assert_eq!(effect_result(&out), ItemUpgradeResult::Succeeded as u8);
+        let hat = hat_stats(&store, id);
+        assert_eq!((hat.stats.inc_pdd, hat.options.remaining_enhancements), (10, 7), "the template again");
+
+        // A pet's hat, in the Equip tab: refused before anything is spent.
+        let pet_hat = store.add_item(id, store::InventoryType::Equip, &store::Item::equip(PET_HAT), 1).unwrap()[0].slot;
+        let out = s.on_item_upgrade(&drag(use_slot(&store, id, CLEAN_20), pet_hat as i16));
+        assert_eq!(effect_result(&out), ItemUpgradeResult::CannotBeUsed as u8);
+        assert_eq!(held(&store, id, CLEAN_20), 1);
     }
 }
