@@ -286,6 +286,6 @@ mod tests {
     #[test]
     fn json_strings_are_escaped() {
         assert_eq!(json_str("a\"b\\c\nd\u{1}"), "\"a\\\"b\\\\c\\nd\\u0001\"");
-        assert_eq!(json_str("the owner • ch 1"), "\"the owner • ch 1\"");
+        assert_eq!(json_str("Wisp • ch 1"), "\"Wisp • ch 1\"");
     }
 }

@@ -858,7 +858,7 @@ pub(crate) fn create_tables(conn: &Connection) -> Result<()> {
     // so `failed_slots` would have appeared only in databases built from scratch, and every
     // inventory read on the owner's would have failed with "no such column".
     //
-    // `db::tests::wisps_real_database_upgrades_in_place` caught exactly that, which is what it
+    // `db::tests::remys_real_database_upgrades_in_place` caught exactly that, which is what it
     // is for: it replays their real schema rather than a fresh one.
     add_equip_stat_columns(conn, "inventory")?;
     add_equip_stat_columns(conn, "equipment")?;

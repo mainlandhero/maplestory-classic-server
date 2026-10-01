@@ -737,7 +737,7 @@ mod tests {
     // -- the numbers ---------------------------------------------------------------------
 
     #[test]
-    fn the_leaf_point_grant_is_wisps_thousand() {
+    fn the_leaf_point_grant_is_remys_thousand() {
         assert_eq!(LEAF_POINTS_PER_CLAIM, 1_000);
         assert!(leaf_points_line(LEAF_POINTS_PER_CLAIM, 1_000).contains("1000 Leaf Points"));
     }

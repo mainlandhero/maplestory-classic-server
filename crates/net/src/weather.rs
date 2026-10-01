@@ -28,7 +28,7 @@
 //! # The request [L]
 //!
 //! `0x0116`, the owner's own use, 2026-09-30 04:01:07 (`research/fixtures/weather-item-attempt-
-//! 2026-09-30-world.log`): `tick, u16 slot 8, u32 5120005, str "the owner's Chocolatey Message:
+//! 2026-09-30-world.log`): `tick, u16 slot 8, u32 5120005, str "Wisp's Chocolatey Message:
 //! Message for chocolate"` - the client wrote the prefix itself, and there is no byte after the
 //! text.
 
@@ -94,7 +94,7 @@ mod tests {
     #[test]
     fn the_captured_use_decodes_and_the_effect_is_the_shape_the_client_reads() {
         let mut body = hex("9075f00f080005204e00");
-        let text = "the owner's Chocolatey Message: Message for chocolate";
+        let text = "Wisp's Chocolatey Message: Message for chocolate";
         body.extend((text.len() as u16).to_le_bytes());
         body.extend(text.as_bytes());
         assert_eq!(body.len(), 60, "the captured length");

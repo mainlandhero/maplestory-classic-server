@@ -1,6 +1,6 @@
 # MapleCW
 
-A private, local-only server emulator for the MapleStory "Classic World" client the owner owns.
+A private, local-only server emulator for the owner's own copy of the MapleStory "Classic World" client.
 Rust workspace, SQLite, patched client in `client-patched/`. Testing only.
 
 **Start at `STATUS.md` → NEXT GOALS.** It is kept current; if it contradicts this file, it wins.

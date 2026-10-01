@@ -1798,7 +1798,7 @@ mod tests {
             "the masked address is not in the packet the client reads"
         );
         assert!(
-            !body.windows(21).any(|w| w == "wispplayer@example.com".as_bytes()),
+            !body.windows("wispplayer@example.com".len()).any(|w| w == "wispplayer@example.com".as_bytes()),
             "the FULL address must never reach the client"
         );
     }

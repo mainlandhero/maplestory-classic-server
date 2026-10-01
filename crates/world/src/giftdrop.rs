@@ -165,7 +165,7 @@ mod tests {
         let t = menu_text("Sorry about the crash.", 1_302_000, 1, "Wisp", false, 7, 0);
         assert!(t.starts_with("#bGIFT DROP#k"));
         assert!(t.contains("Sorry about the crash."));
-        assert!(t.contains("Reward: #i1302000# #t1302000# x1 (from the owner)"));
+        assert!(t.contains("Reward: #i1302000# #t1302000# x1 (from Wisp)"));
         assert!(t.contains("Expires in 7 days."), "{t}");
         assert!(!t.contains("For your account"));
         let claim = t.find("#L0# Claim#l").expect("claim");

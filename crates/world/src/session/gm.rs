@@ -1503,7 +1503,7 @@ impl Session {
     pub(super) fn gm_track(&self, arg: &str) -> Vec<Reply> {
         let wanted = arg.trim();
         if wanted.is_empty() {
-            return self.gm_ack("!track: name a character. Try !track the owner.".to_string());
+            return self.gm_ack("!track: name a character. Try !track Wisp.".to_string());
         }
         let found: Option<(u32, u32, String)> = match crate::link::installed() {
             Some(link) => link.find(wanted).map(|(_, e)| (e.channel, e.map, e.name)),
@@ -1710,7 +1710,7 @@ mod npc_reload_tests {
             let out = s.handle(&gm_chat("!online"));
             let said = out.iter().filter(|r| r.opcode == net::notice::CHAT_NOTICE).map(notice_text).collect::<Vec<_>>().join(" ");
             assert!(said.starts_with("Online (2)"), "{said}");
-            assert!(said.contains("the owner (ch 1)") && said.contains("Tester2 (ch 1)"), "{said}");
+            assert!(said.contains("Wisp (ch 1)") && said.contains("Tester2 (ch 1)"), "{said}");
             assert!(said.contains("this channel only"), "no hub is linked here, and it says so: {said}");
         }
 
@@ -1724,7 +1724,7 @@ mod npc_reload_tests {
 
         // A player typing !track is not running a command - it is said out loud, like every
         // other GM word, so the word itself is never confirmed to exist.
-        let out = player.handle(&gm_chat("!track the owner"));
+        let out = player.handle(&gm_chat("!track Wisp"));
         assert!(
             !out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE),
             "a non-GM must get no notice for !track: {out:?}"

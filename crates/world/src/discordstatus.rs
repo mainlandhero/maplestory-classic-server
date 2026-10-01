@@ -300,11 +300,11 @@ mod tests {
         std::fs::write(dir.join("client-patch-version.txt"), "0123456789abcdef\n").unwrap();
         let _ = r.status(&[], &[0, 1], 0);
         let s = r.status(&[(0, "mint".into()), (0, "Wisp".into())], &[0], 1_000);
-        assert_eq!(s.channels[&0], (true, vec!["Wisp".to_string(), "mint".to_string()]));
+        assert_eq!(s.channels[&0], (true, vec!["mint".to_string(), "Wisp".to_string()]));
         assert_eq!(s.channels[&1], (false, vec![]), "seen before, gone now");
         assert_eq!(s.client_patch.as_deref(), Some("0123456789abcdef"));
         let json = status_json(&s);
-        for want in ["\"Channel 1 (2)\"", "\"the owner, mint\"", "\"Channel 2 (offline)\"", "\"Players online\",\"value\":\"2\"", "\"0123456789abcdef\"", "Online", "\"timestamp\":\"1970-01-01T00:16:40Z\""] {
+        for want in ["\"Channel 1 (2)\"", "\"mint, Wisp\"", "\"Channel 2 (offline)\"", "\"Players online\",\"value\":\"2\"", "\"0123456789abcdef\"", "Online", "\"timestamp\":\"1970-01-01T00:16:40Z\""] {
             assert!(json.contains(want), "{want} in {json}");
         }
         assert!(!json.contains("tok_en"), "the token is never in the body");

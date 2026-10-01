@@ -991,7 +991,7 @@ mod tests {
 
     /// The owner's five percentages, the floor for a real level, and nothing at the cap.
     #[test]
-    fn a_stage_clear_pays_wisps_percent_of_the_next_level() {
+    fn a_stage_clear_pays_remys_percent_of_the_next_level() {
         let pct: Vec<Option<u64>> = (0..7).map(|n| stage_exp_percent(STAGE_1 + n * 100)).collect();
         assert_eq!(pct, vec![Some(5), Some(7), Some(9), Some(11), Some(35), None, None]);
         assert_eq!(stage_exp(1_000, 35), 350);
@@ -1323,7 +1323,7 @@ mod tests {
     /// The owner's eight questions and answers, verbatim - and none of the lines Cloto says gives
     /// the answer away.
     #[test]
-    fn the_questions_are_wisps_and_the_wrong_answer_line_does_not_leak_the_number() {
+    fn the_questions_are_remys_and_the_wrong_answer_line_does_not_leak_the_number() {
         let answers: Vec<u32> = QUESTIONS.iter().map(|(_, a)| *a).collect();
         assert_eq!(answers, vec![10, 10, 10, 10, 15, 7, 10, 12]);
         for (i, (text, answer)) in QUESTIONS.iter().enumerate() {

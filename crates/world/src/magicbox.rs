@@ -137,7 +137,7 @@ mod tests {
     /// The owner's quantities: every ore 8, the Screw 10, the potions 100 and the Elixir 20,
     /// everything else one.
     #[test]
-    fn the_quantities_are_wisps() {
+    fn the_quantities_are_remys() {
         for (id, qty) in ETC {
             let want = if id == 4_003_000 { 10 } else { 8 };
             assert_eq!(qty, want, "{id}");

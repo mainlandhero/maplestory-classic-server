@@ -9761,7 +9761,7 @@ fn a_gift_drop_is_queued_by_a_gm_offered_at_once_and_claimed_into_the_bag() {
     assert!(store.bag(their_id).unwrap().items_in(store::InventoryType::Use).next().is_none(), "nothing given on a refuse");
 
     // A non-GM with arguments is said out loud, like every GM word; the bare word still works.
-    let out = them.handle(&gm_chat("!giftdrop the owner 1302000"));
+    let out = them.handle(&gm_chat("!giftdrop Wisp 1302000"));
     assert!(out.iter().any(|r| r.opcode == net::userchat::USER_CHAT), "said out loud: {:?}", out.iter().map(|r| r.opcode).collect::<Vec<_>>());
     assert_eq!(store.pending_gifts(_gm_id, account, now).unwrap().len(), 0, "and nothing queued");
 }
@@ -11352,7 +11352,7 @@ fn session_in_ellinia_with_the_station_door() -> (Session, u32) {
 /// 11:27:53.035: `0x014A`, body `000400696e30333a0303f4`. Yesterday this was logged UNKNOWN
 /// and answered with nothing, with the destination sitting in the table the whole time.
 #[test]
-fn wisps_script_portal_press_reaches_ellinia_station() {
+fn remys_script_portal_press_reaches_ellinia_station() {
     let (mut s, _id) = session_in_ellinia_with_the_station_door();
     let body = [0x00, 0x04, 0x00, b'i', b'n', b'0', b'3', 0x3a, 0x03, 0x03, 0xf4];
     let out = s.on_portal_script(&body);

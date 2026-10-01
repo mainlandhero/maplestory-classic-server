@@ -294,7 +294,7 @@ mod tests {
     }
 
     /// The three bindings from the owner's live client, as `net::keymap` decoded them.
-    fn wisps_three() -> Vec<KeyBinding> {
+    fn remys_three() -> Vec<KeyBinding> {
         vec![
             KeyBinding { preset: 0, key: 0x1D, kind: 1, action: 1_001_002 }, // LCtrl  Slash Blast
             KeyBinding { preset: 0, key: 0x1E, kind: 1, action: 1_001_000 }, // A      Iron Body
@@ -312,15 +312,15 @@ mod tests {
     #[test]
     fn a_delta_round_trips_and_comes_back_ordered_by_scan_code() {
         let (store, chr) = store_with_character();
-        assert_eq!(store.apply_keymap_delta(chr, &wisps_three()).unwrap(), 3);
-        assert_eq!(store.keymap(chr).unwrap(), wisps_three());
+        assert_eq!(store.apply_keymap_delta(chr, &remys_three()).unwrap(), 3);
+        assert_eq!(store.keymap(chr).unwrap(), remys_three());
     }
 
     /// The reason rows beat a blob: a second delta must not disturb the first one's keys.
     #[test]
     fn a_later_delta_merges_instead_of_replacing() {
         let (store, chr) = store_with_character();
-        store.apply_keymap_delta(chr, &wisps_three()).unwrap();
+        store.apply_keymap_delta(chr, &remys_three()).unwrap();
         store
             .apply_keymap_delta(chr, &[KeyBinding { preset: 0, key: 0x10, kind: 4, action: 77 }])
             .unwrap();
@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn rebinding_one_key_overwrites_only_that_key() {
         let (store, chr) = store_with_character();
-        store.apply_keymap_delta(chr, &wisps_three()).unwrap();
+        store.apply_keymap_delta(chr, &remys_three()).unwrap();
         store
             .apply_keymap_delta(chr, &[KeyBinding { preset: 0, key: 0x1D, kind: 1, action: 1_001_000 }])
             .unwrap();
@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn clearing_a_key_removes_its_row_rather_than_storing_an_empty_one() {
         let (store, chr) = store_with_character();
-        store.apply_keymap_delta(chr, &wisps_three()).unwrap();
+        store.apply_keymap_delta(chr, &remys_three()).unwrap();
         store
             .apply_keymap_delta(chr, &[KeyBinding { preset: 0, key: 0x1E, kind: 0, action: 0 }])
             .unwrap();
@@ -368,14 +368,14 @@ mod tests {
             )
             .unwrap()
             .id;
-        store.apply_keymap_delta(chr, &wisps_three()).unwrap();
+        store.apply_keymap_delta(chr, &remys_three()).unwrap();
         assert_eq!(store.keymap(other).unwrap(), Vec::new());
     }
 
     #[test]
     fn clearing_a_layout_returns_the_character_to_never_saved() {
         let (store, chr) = store_with_character();
-        store.apply_keymap_delta(chr, &wisps_three()).unwrap();
+        store.apply_keymap_delta(chr, &remys_three()).unwrap();
         assert_eq!(store.clear_keymap(chr).unwrap(), 3);
         assert_eq!(store.keymap(chr).unwrap(), Vec::new());
     }
@@ -385,7 +385,7 @@ mod tests {
     #[test]
     fn the_controller_table_and_the_keyboard_table_do_not_share_a_slot() {
         let (store, chr) = store_with_character();
-        store.apply_keymap_delta(chr, &wisps_three()).unwrap();
+        store.apply_keymap_delta(chr, &remys_three()).unwrap();
         // Button 0x1D on the controller -> some skill. Scan code 0x1D is LCtrl.
         let button = KeyBinding { preset: 3, key: 0x1D, kind: 1, action: 1000 };
         assert_eq!(store.apply_keymap_delta(chr, &[button]).unwrap(), 1);
@@ -395,7 +395,7 @@ mod tests {
         assert_eq!(got[3], button, "ordered by table, the controller's row is last");
         // Unbinding the button does not touch LCtrl.
         store.apply_keymap_delta(chr, &[KeyBinding { preset: 3, key: 0x1D, kind: 0, action: 0 }]).unwrap();
-        assert_eq!(store.keymap(chr).unwrap(), wisps_three());
+        assert_eq!(store.keymap(chr).unwrap(), remys_three());
     }
 
     /// The deployed table, keyed by (character_id, key), with exactly what the bug left in
