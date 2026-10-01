@@ -412,6 +412,21 @@ pub fn classic_shop_refused(result_type: u8) -> Vec<u8> {
     w.into_vec()
 }
 
+/// `0x055E` type `16` - **reads nothing and draws nothing**; the latch is cleared before the
+/// switch, so this is a bare acknowledgement. **[L]** (`research/classic-shop-rows.md` §8).
+///
+/// **A sale is answered with this, not with [`RESULT_SUCCESS`].** The owner, 2026-10-01: *"subsequent
+/// selling to NPC shop from another tab erroneously goes back to the previously opened shop
+/// tab."* Type 0's arm ends at `141fa68a5`: it reads `shopUI+0x4ac`, and when that is 1..6 it
+/// selects inventory tab `+0x4ac - 1` (`FUN_14170af70` on the tab control at `+0x2d8`). The
+/// ONLY writer of `+0x4ac` in the shop's code is the BUY request (`141fb7fff`, the item's
+/// inventory type, `FUN_1403e8af0`) - `tools/fieldrefs.py 0x4ac` over `0x141f90000..0x141fd0000`
+/// finds that write and the one read, nothing else. So every type-0 after the first purchase
+/// jumped back to the purchase's tab, a sale included. The sale itself is the `0x0070` remove and
+/// the `0x007C` mesos that follow; whether the sell list redraws from those alone is **[I]** -
+/// plan step 29 asks.
+pub const RESULT_ACKNOWLEDGED: u8 = 16;
+
 /// The refusal this server sends when it will not complete a purchase.
 ///
 /// **`2` is "you do not have enough mesos"** in the `0x055E` table (§8). It is used as the

@@ -2606,7 +2606,7 @@ fn selling_never_sends_a_buy_back_row_or_a_list_refresh() {
     let out = s.handle(&classic_sell(slot, 2000000, 3));
 
     // The sale still happens, and all three of its effects go out.
-    assert_eq!(out[0].body[0], net::classicshop::RESULT_SUCCESS, "{}", out[0].what);
+    assert_eq!(out[0].body[0], net::classicshop::RESULT_ACKNOWLEDGED, "a sale must not re-select the last purchase's tab: {}", out[0].what);
     assert!(out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "the bag");
     assert!(out.iter().any(|r| r.opcode == net::combat::STAT_CHANGED), "the meso count");
     assert!(store.mesos(id).unwrap() > before, "selling pays");
@@ -7375,7 +7375,22 @@ fn equipping_an_overall_takes_off_the_bottom() {
         store.bag(id).unwrap().items.iter().any(|i| i.item.item_id == 1_060_002),
         "the bottom must be back in the bag"
     );
-    assert!(out[0].what.contains("overall and a bottom cannot be worn together"), "{}", out[0].what);
+    assert!(out[1].what.contains("overall and a bottom cannot be worn together"), "{}", out[1].what);
+
+    // **And the CLIENT is told the bottom came off** (the owner, 2026-10-01: *"it does happen in
+    // the backend, I just need to change maps for it to show up"*). First the bottom, -6 into
+    // the bag slot the store chose; then the robe's own swap, unchanged.
+    let bag_slot = store
+        .bag(id)
+        .unwrap()
+        .items
+        .iter()
+        .find(|i| i.item.item_id == 1_060_002)
+        .map(|i| i.slot as i16)
+        .unwrap();
+    assert_eq!(out.len(), 2, "{out:?}");
+    assert_eq!(out[0].body, net::inventory::inventory_move_result(net::inventory::INV_EQUIP, -6, bag_slot));
+    assert_eq!(out[1].body, net::inventory::inventory_move_result(net::inventory::INV_EQUIP, robe, -5));
 }
 
 /// **The control, and it is the important half.** A plain top and a bottom are worn together
@@ -7405,7 +7420,9 @@ fn equipping_a_bottom_takes_off_a_worn_overall() {
     assert!(store.equipped_items(id).unwrap().iter().any(|e| e.slot == 5 && e.item_id == 1_050_000));
 
     let trousers = bag_an_equip(&store, id, 1_060_000);
-    s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, trousers, -6, -1));
+    let out = s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, trousers, -6, -1));
+    let robe_slot = store.bag(id).unwrap().items.iter().find(|i| i.item.item_id == 1_050_000).map(|i| i.slot as i16).unwrap();
+    assert_eq!(out[0].body, net::inventory::inventory_move_result(net::inventory::INV_EQUIP, -5, robe_slot), "the robe's take-off reaches the client");
 
     let worn = store.equipped_items(id).unwrap();
     assert!(
