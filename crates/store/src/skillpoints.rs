@@ -1071,14 +1071,14 @@ mod tests {
     /// The synthetic tests above start from a file this suite created, which is exactly the
     /// case a broken migration still passes - `CREATE TABLE IF NOT EXISTS` does nothing to a
     /// table that already exists. The only way to be sure is to open a file an older build
-    /// wrote. Same shape and same reasoning as `db::tests::wisps_real_database_upgrades_in_place`:
+    /// wrote. Same shape and same reasoning as `db::tests::remys_real_database_upgrades_in_place`:
     /// skipped when `maplecw.db` is absent, and it works on a **copy**, sidecars included.
     ///
     /// What it asserts is deliberately what the *upgrade* guarantees, not what the data happens
     /// to look like today: every character keeps every skill level, and every pool reads
     /// exactly its entitlement because no ledger row exists yet.
     #[test]
-    fn wisps_real_database_gains_the_ledger_without_stranding_anyone() {
+    fn remys_real_database_gains_the_ledger_without_stranding_anyone() {
         let live = std::path::Path::new("../../maplecw.db");
         if !live.exists() {
             return; // gitignored live state; the synthetic twins above cover the rest

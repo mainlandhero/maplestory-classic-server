@@ -2013,7 +2013,7 @@ mod tests {
     /// **A regular talk to the examiner, every arm** (the owner, 2026-09-26). Only the re-entry offer
     /// can lead anywhere, and it needs the test in progress AND marbles short of 30.
     #[test]
-    fn a_regular_talk_to_the_examiner_follows_wisps_four_rules() {
+    fn a_regular_talk_to_the_examiner_follows_remys_four_rules() {
         for b in BRANCHES {
             let ready = character(30, b.from_job);
             let talk = |chr: &Character, t: TestQuest, m: u32| examiner_talk(chr, b.examiner_npc, t, m).unwrap();

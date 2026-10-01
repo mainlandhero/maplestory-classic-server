@@ -252,7 +252,7 @@ and `equipment` had been ALTERed, and `cash_locker` and `storage_item` - which s
 had not, so on the owner's file every locker and storage read failed. The handler then reported
 every store error as NOT_ENOUGH_CASH. Fixed: both tables get the same `PRAGMA`-guarded ALTER
 on open; the reason is now the store's own (`NotEnoughMesos` -> 601, `StorageFull` -> 614,
-anything else -> the honest "unknown error"); `wisps_real_database_upgrades_in_place` now reads
+anything else -> the honest "unknown error"); `remys_real_database_upgrades_in_place` now reads
 the locker and storage for every account, and the wind-back test buys on a locker that predates
 the column. **The upgrade test read two of the four item tables and was called a schema test.**
 Step TC is the retest.
@@ -1826,7 +1826,7 @@ ceiling it feeds (regen, potions, the level-up refill, `!heal`, the party bar) c
 now sums the worn items' flats off the same stats the record sends (`Session::dressed`, so a missing
 `equips.txt` leaves both at zero together), flat before percent - the reference server's order
 **[R]**; unmeasured here, and the one character with a percent wears nothing with HP on it.
-`pools::tests::wisps_ceiling_is_199_from_a_base_of_194_and_a_red_headband`,
+`pools::tests::remys_ceiling_is_199_from_a_base_of_194_and_a_red_headband`,
 `regen::tests::a_red_headbands_five_hp_is_regenerated_up_to`. Plan step TO(r).
 
 **2026-09-13: the repeat-dialogue audit, every quest.** The owner: *"Please audit all of the questline

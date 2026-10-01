@@ -885,7 +885,7 @@ mod tests {
             Frame::Online { character: 213, name: "Cobalt".into(), account: 1, channel: 0, map: 0 },
             Frame::Offline { character: 213, channel: 0 },
             Frame::Deliver { character: 214, opcode: 0x01B1, body: vec![1, 2, 3, 0xd6], what: "a line".into() },
-            Frame::PartyRequest { actor: 213, now: 1_789_000_000, request: Request::Create { name: "the owner's Party".into() } },
+            Frame::PartyRequest { actor: 213, now: 1_789_000_000, request: Request::Create { name: "Wisp's Party".into() } },
             Frame::PartyRequest { actor: 213, now: 1, request: Request::Invite { target: 214 } },
             Frame::PartyRequest { actor: 214, now: 2, request: Request::Accept { party: 1 } },
             Frame::PartyRequest { actor: 214, now: 3, request: Request::Decline { party: 1, reason: DeclineReason::Busy } },

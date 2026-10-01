@@ -1043,7 +1043,7 @@ mod tests {
     /// it operates on a **copy**, including the WAL and shm sidecars so the copy is the same
     /// database rather than a truncated one. Nothing here writes to the original.
     #[test]
-    fn wisps_real_database_upgrades_in_place() {
+    fn remys_real_database_upgrades_in_place() {
         let live = std::path::Path::new("../../maplecw.db");
         if !live.exists() {
             return; // gitignored live state; the rest of the suite covers the synthetic cases
@@ -1534,7 +1534,7 @@ mod tests {
     fn identity_lookup_ignores_case_in_both_namespaces() {
         let s = store();
         s.create_account("player_one", "hunter2hunter2").unwrap();
-        s.set_email("player_one", Some("the owner@Example.test")).unwrap();
+        s.set_email("player_one", Some("Wisp@Example.test")).unwrap();
         assert!(s.get_account_by_identity("PLAYER_ONE").unwrap().is_some());
         assert!(s.get_account_by_identity("wisp@EXAMPLE.TEST").unwrap().is_some());
     }

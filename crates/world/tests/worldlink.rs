@@ -18,7 +18,7 @@ use world::fields::Fields;
 use world::session::Session;
 
 /// The Create body the owner's client sent on 2026-09-14 23:38:49 (`world-ch0.log` line 27650):
-/// action 0, tag 5, the name "the owner's Party".
+/// action 0, tag 5, the name "Wisp's Party".
 const CREATE_HEX: &str = "1000000000000a000e000000070008000a000000000000050c000000000006000800040006000000040000000c00000057697370277320506172747900000000";
 
 fn hex(s: &str) -> Vec<u8> {
@@ -95,7 +95,7 @@ fn a_party_created_through_the_hub_is_answered_from_the_echo_and_the_hub_knows_i
     assert_eq!(party, world::party::FIRST_PARTY_ID);
     assert_eq!(
         fields.parties().party_of(id).map(|p| p.name.clone()),
-        Some("the owner's Party".to_string()),
+        Some("Wisp's Party".to_string()),
         "the replica applied the echo"
     );
 
@@ -113,7 +113,7 @@ fn a_party_created_through_the_hub_is_answered_from_the_echo_and_the_hub_knows_i
         std::io::Read::read_exact(&mut late, &mut payload).unwrap();
         match world::link::Frame::decode(&payload) {
             Some(world::link::Frame::PartySnapshot { parties, .. }) => {
-                saw_party = parties.iter().any(|p| p.id == party && p.leader == id && p.name == "the owner's Party");
+                saw_party = parties.iter().any(|p| p.id == party && p.leader == id && p.name == "Wisp's Party");
                 break;
             }
             Some(world::link::Frame::Online { character, .. }) => assert_eq!(character, id, "the directory names Cobalt"),

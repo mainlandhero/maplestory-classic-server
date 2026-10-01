@@ -167,9 +167,9 @@ mod tests {
         let s = super_megaphone(&who, "Hello", 1, true);
         let mut r = PacketReader::new(&s);
         assert_eq!(r.u8().unwrap(), 3);
-        assert_eq!(r.str().unwrap(), "the owner : Hello");
+        assert_eq!(r.str().unwrap(), "Wisp : Hello");
         assert_eq!(r.str().unwrap(), "Wisp");
-        assert_eq!(r.str().unwrap(), "the owner : Hello");
+        assert_eq!(r.str().unwrap(), "Wisp : Hello");
         assert_eq!((r.u32().unwrap(), r.u32().unwrap(), r.u8().unwrap(), r.u32().unwrap()), (7, 215, 0, 215));
         assert_eq!((r.u32().unwrap(), r.str().unwrap(), r.u32().unwrap(), r.str().unwrap(), r.u32().unwrap()), (0, String::new(), 0, String::new(), 0));
         assert_eq!((r.u8().unwrap(), r.u8().unwrap()), (1, 1), "channel, whisper");

@@ -154,7 +154,7 @@ mod tests {
     /// without the generated handbook and pins the arithmetic, not the data file. The MP twin
     /// is asserted on the same item to show the two flats are summed independently.
     #[test]
-    fn wisps_ceiling_is_199_from_a_base_of_194_and_a_red_headband() {
+    fn remys_ceiling_is_199_from_a_base_of_194_and_a_red_headband() {
         let store = Arc::new(Store::open_in_memory().unwrap());
         let account = store.create_account("maplecw", "correct horse battery").unwrap();
         let chr = net::opcode::Character {

@@ -221,7 +221,7 @@ against files the test suite created is the case a broken migration still passes
 |---|---|
 | `a_character_who_already_has_skills_is_not_stranded` | in-memory, synthetic |
 | `a_database_written_before_the_ledger_upgrades` | a real file with the table dropped back out |
-| `wisps_real_database_gains_the_ledger_without_stranding_anyone` | a **copy** of `maplecw.db`, sidecars included — skipped if absent |
+| `remys_real_database_gains_the_ledger_without_stranding_anyone` | a **copy** of `maplecw.db`, sidecars included — skipped if absent |
 
 The last one ran: 3 characters, every pool full, every skill level intact, a spend works on the
 upgraded file, and a second open is a no-op. **[L]**

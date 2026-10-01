@@ -3257,7 +3257,7 @@ level, 200, 1, 0, 15, 50, 15, 7 7 7
         };
         let (mut leader, leader_id) = make("Cobalt");
         let (mut member, member_id) = make("Tester2");
-        let created = leader.run_party_request(leader_id, crate::party::Request::Create { name: "the owner's Party".into() });
+        let created = leader.run_party_request(leader_id, crate::party::Request::Create { name: "Wisp's Party".into() });
         let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
         let _ = leader.run_party_request(leader_id, crate::party::Request::Invite { target: member_id });
         let _ = member.tick(1_000);
@@ -3268,7 +3268,7 @@ level, 200, 1, 0, 15, 50, 15, 7 7 7
         // The request the button sends carries a constant 1; the value is ignored.
         let out = leader.run_party_request(leader_id, crate::party::Request::SetPickupRights { rights: 1 });
         let status = out.iter().find(|r| r.opcode == net::party::PARTY_RESULT && r.body[0] == net::party::result::PUBLIC_PRIVATE).expect("0x2D to the leader");
-        assert_eq!(status.body, net::party::party_status("the owner's Party", false, true), "name, isPublic 0, rights 1 = Party Leader");
+        assert_eq!(status.body, net::party::party_status("Wisp's Party", false, true), "name, isPublic 0, rights 1 = Party Leader");
         assert!(status.what.contains("Party Leader"), "{}", status.what);
         let mail = member.tick(3_000);
         let theirs = mail.iter().find(|r| r.opcode == net::party::PARTY_RESULT && r.body[0] == net::party::result::PUBLIC_PRIVATE).expect("0x2D to the member");
@@ -3320,7 +3320,7 @@ level, 200, 1, 0, 15, 50, 15, 7 7 7
         let (leader_id, mid_id, high_id) = (make("Cobalt", 10), make("Tester2", 15), make("Tester3", 20));
         let ((mut leader, w0), (mut mid, w1), (mut high, w2)) = (join(leader_id), join(mid_id), join(high_id));
         assert_eq!((w0, w1, w2), (0, 0, 0), "no party yet, no window on login");
-        let created = leader.run_party_request(leader_id, crate::party::Request::Create { name: "the owner's Party".into() });
+        let created = leader.run_party_request(leader_id, crate::party::Request::Create { name: "Wisp's Party".into() });
         let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
         for (s, id) in [(&mut mid, mid_id), (&mut high, high_id)] {
             let _ = leader.run_party_request(leader_id, crate::party::Request::Invite { target: id });
