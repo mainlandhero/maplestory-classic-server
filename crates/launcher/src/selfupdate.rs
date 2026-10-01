@@ -14,9 +14,13 @@
 //! 2. This executable is hashed. Equal - nothing to do, one line in the log.
 //! 3. Different - `GET /launcher/file`, verified against the manifest before a byte is
 //!    written, then **swapped in place**: the running executable is renamed aside (Windows
-//!    allows renaming a running program; it forbids overwriting or deleting it), the new one
-//!    is renamed onto its path, and the new one is started with `--updated-from <old>`. The
-//!    window then closes. The new launcher deletes the old file once this process has gone.
+//!    allows renaming a running program; it forbids overwriting or deleting it) and the new
+//!    one is renamed onto its path.
+//! 4. **The window says so before anything closes** (the owner, 2026-09-25: *"it just closes and
+//!    re-opens, and the user doesn't know what happened and doesn't realize that they have to
+//!    login again"*). Only when the player presses OK - or closes the window - is the new one
+//!    started with `--updated-from <old>` ([`restart_into`]), and this window closes. The new
+//!    launcher opens with its own notice that a sign-in is needed, and deletes the old file.
 //!
 //! If the second rename fails the first is undone, so the worst case is the launcher that
 //! was already there. Nothing is written directly onto the executable's path.
@@ -50,8 +54,9 @@ pub enum Outcome {
     UpToDate,
     /// The server publishes no launcher (started without `--launcher`). Not an error.
     NotPublished,
-    /// The new launcher is installed and starting; **this process must exit.**
-    Replaced { version: String, bytes: u64 },
+    /// The new launcher is installed at `exe` and the previous one is at `old`. **Not started
+    /// yet**: the window explains first, then [`restart_into`] starts it and this process exits.
+    Replaced { version: String, bytes: u64, exe: PathBuf, old: PathBuf },
 }
 
 /// **Check this launcher against the server and replace it if it is behind.**
@@ -92,24 +97,24 @@ pub fn check_and_update(
     let bytes = fetch_file(host, port, pin)?;
     verify(&bytes, &want)?;
     let old = swap_in(&exe, &bytes)?;
-    // Start the new one before this one goes; it inherits nothing but the flag.
-    std::process::Command::new(&exe)
-        .arg(UPDATED_FROM_FLAG)
-        .arg(&old)
-        .spawn()
-        .map_err(|e| {
-            format!(
-                "the new launcher is installed at {} but could not be started: {e}. Start it by hand; \
-                 the previous one is beside it as {}",
-                exe.display(),
-                old.display()
-            )
-        })?;
     log(
         Level::Good,
-        format!("launcher updated to version {version}. The new launcher is opening - this window closes now; sign in again there"),
+        format!("launcher updated to version {version}. It restarts when you press OK; sign in again there"),
     );
-    Ok(Outcome::Replaced { version, bytes: want.size })
+    Ok(Outcome::Replaced { version, bytes: want.size, exe, old })
+}
+
+/// **Start the freshly installed launcher.** It inherits nothing but the flag naming the
+/// executable it replaced, which it deletes once this process has gone.
+pub fn restart_into(exe: &Path, old: &Path) -> Result<(), String> {
+    std::process::Command::new(exe).arg(UPDATED_FROM_FLAG).arg(old).spawn().map(|_| ()).map_err(|e| {
+        format!(
+            "the new launcher is installed at {} but could not be started: {e}. Start it by hand; \
+             the previous one is beside it as {}",
+            exe.display(),
+            old.display()
+        )
+    })
 }
 
 /// Called by the NEW launcher at startup with the path it was told: delete the executable it

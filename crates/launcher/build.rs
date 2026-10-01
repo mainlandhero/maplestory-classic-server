@@ -173,6 +173,14 @@ fn main() {
     // different levels is `manifest authoring error c1010001` and `LNK1327`, not an override.
     // Measured by trying it. The manifest file carries the same note.
     println!("cargo:rustc-link-arg-bins=/MANIFESTUAC:level='requireAdministrator' uiAccess='false'");
+    // **A reproducible link: the same inputs give the same bytes.** The owner, 2026-09-25: *"whenever
+    // we package the server and update the server, it causes the launcher to update itself when
+    // we didn't change anything about the launcher."* Every player's launcher compares its own
+    // SHA-256 with the one the server publishes (`selfupdate.rs`), and the MSVC linker stamps
+    // the link TIME into the PE header - so any relink, for any reason, was a new launcher to
+    // every player. Measured: touching `auth-cert-fingerprint.txt` (content unchanged) relinked
+    // it and moved the hash. `/Brepro` writes a content hash where the time was.
+    println!("cargo:rustc-link-arg-bins=/Brepro");
     println!("cargo:rerun-if-changed=launcher.manifest");
     println!("cargo:rerun-if-changed=build.rs");
 }
