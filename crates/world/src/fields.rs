@@ -34,16 +34,24 @@
 //!
 //! Until then a kill booked the dead mob's own point, so a solo map was 49 mobs standing on
 //! the same 49 of 66 points forever and the other 17 were never visited - the population sat
-//! pinned at the cap and never moved. Now a kill books a [`Refill::Anywhere`]: when it comes
-//! due, one **free, ordinary** spawn point is drawn uniformly from the whole map and that
-//! point's mob stands up, which may or may not be the type that died. The cap is untouched -
-//! one death, one refill - and drawing uniformly from the free points keeps each type's
-//! expected share equal to its share of the map (`research/mob-spawn-selection.md` §3).
+//! pinned at the cap and never moved. Now a refill draws one **free, ordinary** spawn point
+//! uniformly from the whole map and that point's mob stands up, which may or may not be the
+//! type that died. Drawing uniformly from the free points keeps each type's expected share
+//! equal to its share of the map (`research/mob-spawn-selection.md` §3).
 //!
-//! Two kinds of point stay out of the draw. A point with a WZ `mobTime > 0` is **timed** - a
-//! boss or a rare spawn - and comes back at its own place on its own clock, as
-//! [`Refill::Point`], because that is what the delay in the data is attached to. A point with
-//! `mobTime -1` never refills at all.
+//! # Ordinary refills come in WAVES, on the field's own clock
+//!
+//! A player, relayed by the owner 2026-10-01: *"Mob respawns should happen every 8 seconds,
+//! currently when something is killed, it schedules another respawn 8 seconds later, this is
+//! not a wave."* So a kill books nothing. Every [`crate::config::DEFAULT_RESPAWN_MS`] from the
+//! field's seed, the field tops itself back up to its cap in one go - however many died, and
+//! whenever in the interval they died. Kill five in the last second before a wave and all
+//! five are back a second later; kill one just after and it waits the whole interval.
+//!
+//! Two kinds of point stay out of the draw and out of the wave. A point with a WZ
+//! `mobTime > 0` is **timed** - a boss or a rare spawn - and comes back at its own place on its
+//! own clock, as [`Refill::Point`], because that is what the delay in the data is attached to.
+//! A point with `mobTime -1` never refills at all.
 //!
 //! # Positions come from the client, because only the client has them
 //!
@@ -193,10 +201,9 @@ impl LiveMob {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Refill {
     /// This exact spawn point: the first fill of a field, and a timed point (WZ `mobTime > 0`)
-    /// that returns at its own place on its own clock.
+    /// that returns at its own place on its own clock. Ordinary points are refilled by the
+    /// field's wave instead (`FieldState::next_wave_ms`).
     Point(u32),
-    /// Any free ordinary spawn point on the map, drawn at random when due. What a kill books.
-    Anywhere,
 }
 
 /// One map's live contents.
@@ -211,6 +218,11 @@ struct FieldState {
     /// Set once the spawn points have been registered, so entering twice does not double
     /// the field.
     seeded: bool,
+    /// How many ordinary-point mobs (WZ `mobTime 0`) the wave keeps standing.
+    ordinary_cap: usize,
+    /// When the next wave tops the ordinary points back up to `ordinary_cap`. `None` on a field
+    /// that was never seeded with spawn points - a field of summoned mobs has no wave.
+    next_wave_ms: Option<u64>,
     /// When each mob may next use each skill, wall-clock ms: `(object id, skill) -> ms`.
     /// `crate::mobskills`.
     skill_ready_at: HashMap<(u32, u32), u64>,
@@ -503,6 +515,9 @@ impl Fields {
         // lay the mobs out identically, and so a test can reproduce one exactly.
         let seed = (key.map as u64) << 32 ^ now_ms.wrapping_mul(0x9E37_79B9);
         field.rng = seed;
+        // The first fill lands at the first wave; every wave after that tops up to the same cap.
+        field.ordinary_cap = alive;
+        field.next_wave_ms = Some(now_ms.saturating_add(crate::config::DEFAULT_RESPAWN_MS));
         for mob in crate::config::share_balanced(&ordinary, alive, seed) {
             if let Some(delay) = crate::config::respawn_delay_ms(mob_time(mob.object_id)) {
                 field.pending.push((now_ms.saturating_add(delay), Refill::Point(mob.object_id)));
@@ -572,9 +587,16 @@ impl Fields {
         if !config.send_mobs {
             return true;
         }
-        for mob in config.mobs.get(&key.map).map(Vec::as_slice).unwrap_or(&[]) {
+        let points = config.mobs.get(&key.map).map(Vec::as_slice).unwrap_or(&[]);
+        for mob in points {
             field.pending.push((now_ms, Refill::Point(mob.object_id)));
         }
+        // Every ordinary point is filled here, so the wave keeps every one of them filled.
+        field.ordinary_cap = points
+            .iter()
+            .filter(|m| config.mob_respawn_s.get(&(key.map, m.object_id)).copied().unwrap_or(0) == 0)
+            .count();
+        field.next_wave_ms = Some(now_ms.saturating_add(crate::config::DEFAULT_RESPAWN_MS));
         true
     }
 
@@ -827,86 +849,73 @@ impl Fields {
             .get(&key.map)
             .is_some_and(|list| list.iter().any(|m| m.object_id == object_id));
         if is_spawn_point {
+            // A timed point keeps its own place and clock. An ordinary one books nothing: the
+            // field's next wave notices it is short and refills it (`due_respawns`).
             let wz = config.mob_respawn_s.get(&(key.map, object_id)).copied().unwrap_or(0);
-            if let Some(delay) = crate::config::respawn_delay_ms(wz) {
-                // A timed point keeps its own place and clock; an ordinary one refills the map.
-                let what = if wz > 0 { Refill::Point(object_id) } else { Refill::Anywhere };
-                field.pending.push((now_ms.saturating_add(delay), what));
+            if wz > 0 {
+                if let Some(delay) = crate::config::respawn_delay_ms(wz) {
+                    field.pending.push((now_ms.saturating_add(delay), Refill::Point(object_id)));
+                }
             }
         }
         Hurt::Died(dead.map(|m| m.shares()).unwrap_or_default())
     }
 
-    /// Spawn every point on this map whose timer is due, and return what arrived.
+    /// Spawn every point on this map whose timer is due, run the field's wave if it is due,
+    /// and return what arrived.
     ///
-    /// Drives both the first fill of a field and every refill after a kill - see the module
-    /// docs on why those are the same mechanism.
+    /// Booked points first - the first fill and the timed returns - then the wave, so a wave
+    /// landing on the same instant as the first fill counts the first fill as standing.
     pub fn due_respawns(&self, key: FieldKey, config: &Config, now_ms: u64) -> Vec<LiveMob> {
         let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
         let field = maps.entry(key).or_default();
-        if field.pending.is_empty() {
-            return Vec::new();
-        }
+        let Some(points) = config.mobs.get(&key.map) else { return Vec::new() };
         let (due, waiting): (Vec<_>, Vec<_>) =
             std::mem::take(&mut field.pending).into_iter().partition(|(at, _)| now_ms >= *at);
         field.pending = waiting;
 
-        let mut out = Vec::new();
-        for (was_due, what) in due {
-            let object_id = match what {
-                Refill::Point(id) => id,
-                Refill::Anywhere => {
-                    // The free ordinary points: not standing, not held for a timed return,
-                    // and not `mobTime -1` or `> 0`. Drawn uniformly, so no point on the map
-                    // is favoured and the type that died has no claim on the slot.
-                    let reserved: Vec<u32> = field
-                        .pending
-                        .iter()
-                        .filter_map(|(_, w)| match w {
-                            Refill::Point(id) => Some(*id),
-                            Refill::Anywhere => None,
-                        })
-                        .collect();
-                    let free: Vec<u32> = config
-                        .mobs
-                        .get(&key.map)
-                        .map(|list| {
-                            list.iter()
-                                .map(|m| m.object_id)
-                                .filter(|id| !field.mobs.contains_key(id))
-                                .filter(|id| !reserved.contains(id))
-                                .filter(|id| {
-                                    config.mob_respawn_s.get(&(key.map, *id)).copied().unwrap_or(0) == 0
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    if free.is_empty() {
-                        // Every ordinary point is standing. Keep the booking rather than lose
-                        // a mob from the cap; it is tried again one interval on.
-                        field.pending.push((
-                            was_due.saturating_add(crate::config::DEFAULT_RESPAWN_MS),
-                            Refill::Anywhere,
-                        ));
-                        continue;
-                    }
-                    let draw = crate::config::splitmix64(&mut field.rng) as usize % free.len();
-                    free[draw]
-                }
-            };
-            let Some(spawn) = config
-                .mobs
-                .get(&key.map)
-                .and_then(|list| list.iter().find(|m| m.object_id == object_id))
-            else {
-                continue;
-            };
+        fn stand(field: &mut FieldState, points: &[net::mob::FieldMob], object_id: u32) -> Option<LiveMob> {
+            let spawn = points.iter().find(|m| m.object_id == object_id)?;
             if field.mobs.contains_key(&object_id) {
-                continue; // already standing - a timed return racing a random draw
+                return None; // already standing - a timed return racing a wave's draw
             }
             let live = LiveMob { spawn: *spawn, hp: spawn.hp, at: None, at_fh: None, damage_by: Vec::new() };
             field.mobs.insert(object_id, live.clone());
-            out.push(live);
+            Some(live)
+        }
+        let mut out: Vec<LiveMob> = due.into_iter().filter_map(|(_, Refill::Point(id))| stand(field, points, id)).collect();
+
+        // **The wave.** Not due, or no wave on this field: done.
+        let Some(wave_at) = field.next_wave_ms.filter(|at| now_ms >= *at) else { return out };
+        // The next one is on the same grid, past `now` - a field nobody ticked for a minute
+        // runs ONE wave when it is next looked at, not seven.
+        let every = crate::config::DEFAULT_RESPAWN_MS;
+        field.next_wave_ms = Some(wave_at + (now_ms - wave_at) / every * every + every);
+
+        let ordinary = |id: &u32| config.mob_respawn_s.get(&(key.map, *id)).copied().unwrap_or(0) == 0;
+        // A point still booked for its first fill is spoken for: it counts toward the cap
+        // and is not drawn, or a wave could double it.
+        let booked: Vec<u32> = field.pending.iter().map(|(_, Refill::Point(id))| *id).collect();
+        let standing = points
+            .iter()
+            .map(|m| m.object_id)
+            .filter(|id| ordinary(id) && (field.mobs.contains_key(id) || booked.contains(id)))
+            .count();
+        // The free ordinary points: not standing, not booked, not timed. Drawn uniformly
+        // without replacement, so no point on the map is favoured and the type that died has
+        // no claim on the slot.
+        let mut free: Vec<u32> = points
+            .iter()
+            .map(|m| m.object_id)
+            .filter(|id| ordinary(id) && !field.mobs.contains_key(id) && !booked.contains(id))
+            .collect();
+        for _ in 0..field.ordinary_cap.saturating_sub(standing) {
+            if free.is_empty() {
+                break;
+            }
+            let draw = crate::config::splitmix64(&mut field.rng) as usize % free.len();
+            let id = free.swap_remove(draw);
+            out.extend(stand(field, points, id));
         }
         out
     }
@@ -1101,25 +1110,77 @@ mod tests {
     }
 
     #[test]
-    fn killing_a_mob_removes_it_and_books_a_refill() {
+    fn killing_a_mob_removes_it_and_the_next_wave_refills_it() {
         let f = Fields::new();
         let c = config_with_one_map();
-        f.seed(crate::fields::FieldKey::world(7), &c, 0);
-        f.due_respawns(crate::fields::FieldKey::world(7), &c, 999_999);
-        let alive = f.mob_count(crate::fields::FieldKey::world(7));
+        let key = crate::fields::FieldKey::world(7);
+        f.seed(key, &c, 0);
+        f.due_respawns(key, &c, 999_999);
+        let alive = f.mob_count(key);
         assert!(alive >= 1);
-        let victim = f.mobs_on(crate::fields::FieldKey::world(7))[0].spawn.object_id;
+        let victim = f.mobs_on(key)[0].spawn.object_id;
 
-        assert_eq!(f.hurt(crate::fields::FieldKey::world(7), victim, 10, 204, &c, 1_000), Hurt::Alive(20), "wounded, not dead");
-        assert!(matches!(f.hurt(crate::fields::FieldKey::world(7), victim, 100, 204, &c, 1_000), Hurt::Died(_)), "dead");
-        assert_eq!(f.mob_count(crate::fields::FieldKey::world(7)), alive - 1);
-        assert_eq!(f.pending_count(crate::fields::FieldKey::world(7)), 1, "and its point is booked to refill");
+        // The waves run on the seed's grid: 8 s, 16 s, ... - 1 000 000 is one, and full, it adds
+        // nothing. The kill lands just after it.
+        assert!(f.due_respawns(key, &c, 1_000_000).is_empty());
+        assert_eq!(f.hurt(key, victim, 10, 204, &c, 1_000_001), Hurt::Alive(20), "wounded, not dead");
+        assert!(matches!(f.hurt(key, victim, 100, 204, &c, 1_000_001), Hurt::Died(_)), "dead");
+        assert_eq!(f.mob_count(key), alive - 1);
+        assert_eq!(f.pending_count(key), 0, "a kill books nothing - the wave notices the gap");
 
-        let back = f.due_respawns(crate::fields::FieldKey::world(7), &c, 1_000 + crate::config::DEFAULT_RESPAWN_MS);
+        assert!(f.due_respawns(key, &c, 1_007_999).is_empty(), "not before the wave");
+        let back = f.due_respawns(key, &c, 1_008_000);
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].hp, 30, "at full HP");
         assert_eq!(back[0].at, None, "and at a spawn point, not where it died");
-        assert_eq!(f.mob_count(crate::fields::FieldKey::world(7)), alive, "one death, one refill - the cap is kept");
+        assert_eq!(f.mob_count(key), alive, "back to the cap");
+    }
+
+    /// **A wave, not a timer per kill.** The player's words, relayed by the owner on 2026-10-01:
+    /// *"Mob respawns should happen every 8 seconds, currently when something is killed, it
+    /// schedules another respawn 8 seconds later, this is not a wave."* Three kills spread over
+    /// one interval all come back at the same instant - the next wave - and a kill just after
+    /// a wave waits the whole interval.
+    #[test]
+    fn kills_spread_over_an_interval_all_return_on_the_next_wave() {
+        let mut mobs = HashMap::new();
+        mobs.insert(7u32, (0..8).map(|i| net::mob::FieldMob::new(2000 + i, 2, 100 + 50 * i as i16, 395, 1, 30)).collect());
+        let c = Config { mobs, send_mobs: true, ..Config::default() };
+        let key = crate::fields::FieldKey::world(7);
+        let f = Fields::new();
+        f.seed(key, &c, 0);
+        assert_eq!(f.due_respawns(key, &c, 8_000).len(), 6, "75% of eight, at the first wave");
+
+        let standing: Vec<u32> = f.mobs_on(key).iter().map(|m| m.spawn.object_id).collect();
+        for (victim, at) in standing.iter().take(3).zip([8_001u64, 11_000, 15_999]) {
+            assert!(matches!(f.hurt(key, *victim, 1_000, 204, &c, at), Hurt::Died(_)));
+            assert!(f.due_respawns(key, &c, at).is_empty(), "nothing comes back at the kill");
+        }
+        assert_eq!(f.mob_count(key), 3);
+        let wave = f.due_respawns(key, &c, 16_000);
+        assert_eq!(wave.len(), 3, "all three at the one wave, though they died up to 8 s apart");
+        assert_eq!(f.mob_count(key), 6, "the cap, not more");
+        assert!(f.due_respawns(key, &c, 23_999).is_empty(), "and nothing between waves");
+    }
+
+    /// **A field nobody looked at for a while runs one wave, not a backlog.** And a wave never
+    /// overfills: with everything standing it puts up nothing.
+    #[test]
+    fn a_late_wave_runs_once_and_never_overfills() {
+        let c = config_with_one_map();
+        let key = crate::fields::FieldKey::world(7);
+        let f = Fields::new();
+        f.seed(key, &c, 0);
+        assert_eq!(f.due_respawns(key, &c, 8_000).len(), 3);
+        assert!(f.due_respawns(key, &c, 16_000).is_empty(), "full: the wave adds nothing");
+        let victim = f.mobs_on(key)[0].spawn.object_id;
+        assert!(matches!(f.hurt(key, victim, 1_000, 204, &c, 16_500), Hurt::Died(_)));
+        assert_eq!(f.due_respawns(key, &c, 100_000).len(), 1, "a minute late: one wave, one mob");
+        assert_eq!(f.mob_count(key), 3);
+        let victim = f.mobs_on(key)[0].spawn.object_id;
+        assert!(matches!(f.hurt(key, victim, 1_000, 204, &c, 100_001), Hurt::Died(_)));
+        assert!(f.due_respawns(key, &c, 103_999).is_empty(), "the grid kept its phase: 104 000 is next, not 108 000");
+        assert_eq!(f.due_respawns(key, &c, 104_000).len(), 1);
     }
 
     /// **A kill refills the map, not the point.** The owner, 2026-09-13: *"once the mob is dead, a

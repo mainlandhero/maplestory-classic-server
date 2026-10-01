@@ -721,6 +721,9 @@ impl Session {
         // **Now, not only in `Drop`**: the new channel can claim the character before this
         // connection's teardown runs, and it reads the spawn point as it claims.
         self.remember_spawn_point("changing channel");
+        // **And the buffs**, for the same reason: the arriving channel takes them on the
+        // migration hello, and only it can send their 0x007E. session/buffcarry.rs.
+        self.carry_buffs_out();
         // **We used to answer this with `0x0011`, and that is worse than useless.**
         //
         // The owner, 2026-08-21: *"I tried swapping to channel 2, the transfer did not go

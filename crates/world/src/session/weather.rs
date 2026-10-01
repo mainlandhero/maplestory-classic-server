@@ -141,7 +141,7 @@ impl Session {
         let expires_ms = self.clock_ms.saturating_add(u64::from(restores.duration_ms));
         for stat in &stats {
             self.buffs.retain(|b| b.bit != stat.bit);
-            self.buffs.push(super::buff::ActiveBuff { bit: stat.bit, skill_id: item_id, expires_ms, value: stat.value });
+            self.buffs.push(super::buff::ActiveBuff { bit: stat.bit, skill_id: item_id, expires_ms, value: stat.value, reason: stat.reason });
         }
         let described: Vec<String> = stats.iter().map(|s| format!("CTS {} = {}", s.bit, s.value)).collect();
         vec![Reply {

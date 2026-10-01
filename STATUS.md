@@ -382,6 +382,19 @@ carries risk**: the handler's trailing virtual call resolves to a method that re
 and if that resolution is wrong the body is short. Plan step 13(b) asks for `client-exit.log`
 rather than assuming. Never on a screen.
 
+**2026-10-01: buffs survive a channel change, and mobs come back in waves.** Two live-server reports
+relayed by the owner. *"Once buff expires, it does not go away"*: an icon comes down only on the
+server's `0x007E`, each channel is its own process, and a connection started with no buffs - so a buff
+carried to another channel had nobody left to expire it. The leaving channel now saves what is held
+(`store::carriedbuffs`, wall-clock, taken once, ignored after 60 s) and the arriving one takes it on the
+migration hello, holds it and re-sends it with the time left (`session/buffcarry.rs`; the EXP coupon's
+rate comes with it). **[I] that a channel change is what happened** - the report had no log, and every
+other path that grants a buff was checked and records it. *"Mob respawns should happen every 8 seconds
+... this is not a wave"*: a kill booked its own point 7 s on. Now a kill books nothing; every 8 s from the
+field's seed (`DEFAULT_RESPAWN_MS`, was 7 s) the field tops its ordinary points back up to the cap in one
+go (`Fields::due_respawns`). Timed points (bosses, `mobTime > 0`) are unchanged. Plan step 29. **Not on a
+screen.**
+
 **2026-09-30: the GM's Blessings are weather and a buff for the whole map.** The owner: *"these two items
 should also be atmospheric effects that gives all players a buff ... it does not give players the
 appropriate buff icon with a duration."* Three gaps, all closed: **Wind sent no buff at all** - its

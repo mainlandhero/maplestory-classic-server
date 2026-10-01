@@ -24,6 +24,7 @@
 
 pub mod abilityspend;
 pub mod buildstamp;
+pub mod carriedbuffs;
 pub mod cash;
 pub mod citizenship;
 pub mod character;

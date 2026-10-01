@@ -1120,12 +1120,14 @@ impl Config {
     }
 }
 
-/// The ordinary field respawn rate, for a spawn point whose WZ node has no `mobTime`.
+/// The ordinary field respawn rate, for a spawn point whose WZ node has no `mobTime`: the
+/// interval between a field's **waves** (`crate::fields`), and the delay before a fresh field's
+/// first fill.
 ///
 /// **Policy, `[I]`.** 9485 of this client's 9928 spawn points have no `mobTime` at all, so
-/// this number decides how almost every map feels. Seven seconds is this game family's
-/// long-standing field rate. It is one constant in one place precisely because it is a guess.
-pub const DEFAULT_RESPAWN_MS: u64 = 7_000;
+/// this number decides how almost every map feels. It was seven seconds; a player, relayed by
+/// the owner on 2026-10-01, asked for *"every 8 seconds"*, as a wave.
+pub const DEFAULT_RESPAWN_MS: u64 = 8_000;
 
 /// The WZ value that means **never respawn this spawn point**.
 pub const MOB_TIME_NEVER: i32 = -1;
