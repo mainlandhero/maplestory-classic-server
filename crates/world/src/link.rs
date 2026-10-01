@@ -68,6 +68,11 @@ pub enum Frame {
     PartyRequest { actor: u32, now: i64, request: crate::party::Request },
     /// Every party the hub knows, for a channel that just connected.
     PartySnapshot { parties: Vec<crate::party::Party>, next_id: u32 },
+    /// A Maple Chat change to be applied everywhere in hub order - [`crate::messenger`].
+    /// The owner, 2026-09-24: *"Maple Chat should work cross channel, please use the hub code."*
+    MessengerRequest { actor: u32, request: crate::messenger::Request },
+    /// Every Maple Chat room the hub knows, for a channel that just connected.
+    MessengerSnapshot { rooms: Vec<crate::messenger::Room>, next_id: u32 },
 }
 
 mod kind {
@@ -77,6 +82,66 @@ mod kind {
     pub const DELIVER: u8 = 4;
     pub const PARTY_REQUEST: u8 = 5;
     pub const PARTY_SNAPSHOT: u8 = 6;
+    pub const MESSENGER_REQUEST: u8 = 7;
+    pub const MESSENGER_SNAPSHOT: u8 = 8;
+}
+
+mod mreq {
+    pub const OPEN: u8 = 0;
+    pub const ENTER: u8 = 1;
+    pub const LEAVE: u8 = 2;
+    pub const DISCONNECT: u8 = 3;
+}
+
+fn write_seat(w: &mut PacketWriter, s: &net::messenger::Seat) {
+    w.u32(s.character_id);
+    w.str(&s.name);
+    w.u32(s.look.len() as u32);
+    w.bytes(&s.look);
+}
+
+fn read_seat(r: &mut PacketReader) -> Option<net::messenger::Seat> {
+    let character_id = r.u32().ok()?;
+    let name = r.str().ok()?;
+    let n = r.u32().ok()? as usize;
+    let look = r.bytes(n).ok()?.to_vec();
+    Some(net::messenger::Seat { character_id, name, look })
+}
+
+fn write_messenger_request(w: &mut PacketWriter, r: &crate::messenger::Request) {
+    use crate::messenger::Request;
+    match r {
+        Request::Open { seat } => {
+            w.u8(mreq::OPEN);
+            write_seat(w, seat);
+        }
+        Request::Enter { room, seat } => {
+            w.u8(mreq::ENTER);
+            w.u32(*room);
+            write_seat(w, seat);
+        }
+        Request::Leave { room } => {
+            w.u8(mreq::LEAVE);
+            w.u32(*room);
+        }
+        Request::Disconnect => {
+            w.u8(mreq::DISCONNECT);
+        }
+    }
+}
+
+fn read_messenger_request(r: &mut PacketReader) -> Option<crate::messenger::Request> {
+    use crate::messenger::Request;
+    Some(match r.u8().ok()? {
+        mreq::OPEN => Request::Open { seat: read_seat(r)? },
+        mreq::ENTER => {
+            let room = r.u32().ok()?;
+            Request::Enter { room, seat: read_seat(r)? }
+        }
+        mreq::LEAVE => Request::Leave { room: r.u32().ok()? },
+        mreq::DISCONNECT => Request::Disconnect,
+        _ => return None,
+    })
 }
 
 mod req {
@@ -208,6 +273,30 @@ impl Frame {
                 w.i64(*now);
                 write_request(&mut w, request);
             }
+            Frame::MessengerRequest { actor, request } => {
+                w.u8(kind::MESSENGER_REQUEST);
+                w.u32(*actor);
+                write_messenger_request(&mut w, request);
+            }
+            Frame::MessengerSnapshot { rooms, next_id } => {
+                w.u8(kind::MESSENGER_SNAPSHOT);
+                w.u32(*next_id);
+                w.u32(rooms.len() as u32);
+                for room in rooms {
+                    w.u32(room.id);
+                    for seat in &room.seats {
+                        match seat {
+                            Some(s) => {
+                                w.u8(1);
+                                write_seat(&mut w, s);
+                            }
+                            None => {
+                                w.u8(0);
+                            }
+                        }
+                    }
+                }
+            }
             Frame::PartySnapshot { parties, next_id } => {
                 w.u8(kind::PARTY_SNAPSHOT);
                 w.u32(*next_id);
@@ -258,6 +347,27 @@ impl Frame {
                 let now = r.i64().ok()?;
                 let request = read_request(&mut r)?;
                 Frame::PartyRequest { actor, now, request }
+            }
+            kind::MESSENGER_REQUEST => {
+                let actor = r.u32().ok()?;
+                let request = read_messenger_request(&mut r)?;
+                Frame::MessengerRequest { actor, request }
+            }
+            kind::MESSENGER_SNAPSHOT => {
+                let next_id = r.u32().ok()?;
+                let n = r.u32().ok()? as usize;
+                let mut rooms = Vec::with_capacity(n.min(1024));
+                for _ in 0..n {
+                    let id = r.u32().ok()?;
+                    let mut room = crate::messenger::Room { id, ..Default::default() };
+                    for slot in room.seats.iter_mut() {
+                        if r.u8().ok()? != 0 {
+                            *slot = Some(read_seat(&mut r)?);
+                        }
+                    }
+                    rooms.push(room);
+                }
+                Frame::MessengerSnapshot { rooms, next_id }
             }
             kind::PARTY_SNAPSHOT => {
                 let next_id = r.u32().ok()?;
@@ -563,6 +673,8 @@ struct HubState {
     /// character -> (entry, the connection that announced it)
     directory: HashMap<u32, (Entry, u64)>,
     parties: crate::party::Parties,
+    /// The world's Maple Chat rooms, applied here only so a late channel's snapshot is right.
+    messengers: crate::messenger::Rooms,
 }
 
 impl HubState {
@@ -581,9 +693,44 @@ impl HubState {
     }
 }
 
-/// Run the hub on `listener` forever. `maplecw-chat` calls this and nothing else.
+/// Run the hub on `listener` forever, with no Discord status.
 pub fn run_hub(listener: TcpListener) {
+    run_hub_with_status(listener, None)
+}
+
+/// Run the hub on `listener` forever. `maplecw-chat` calls this; `status`, when given, is the
+/// live server's Discord message (`crate::discordstatus`), refreshed from the hub's own roster.
+pub fn run_hub_with_status(listener: TcpListener, status: Option<crate::discordstatus::Reporter>) {
     let state = Arc::new(Mutex::new(HubState { parties: crate::party::Parties::new(), ..Default::default() }));
+    if let Some(mut reporter) = status {
+        let state = state.clone();
+        std::thread::spawn(move || {
+            // A few seconds first, so the channels have dialled in before the first refresh.
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            loop {
+                let (roster, connected) = {
+                    let s = state.lock().unwrap_or_else(|e| e.into_inner());
+                    let roster: Vec<(u32, String)> = s.directory.values().map(|(e, _)| (e.channel, e.name.clone())).collect();
+                    let connected: Vec<u32> = s.conns.values().filter_map(|c| c.channel).collect();
+                    (roster, connected)
+                };
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                let status = reporter.status(&roster, &connected, now);
+                match reporter.publish(&crate::discordstatus::status_json(&status)) {
+                    Ok(what) => crate::server::log(&format!(
+                        "discord: {what} - {} player(s) on {} channel(s)",
+                        roster.len(),
+                        connected.len()
+                    )),
+                    Err(e) => crate::server::log(&format!("discord: {e}")),
+                }
+                std::thread::sleep(std::time::Duration::from_secs(crate::discordstatus::REFRESH_SECS));
+            }
+        });
+    }
     let mut next = 1u64;
     for incoming in listener.incoming() {
         let Ok(stream) = incoming else { continue };
@@ -644,6 +791,8 @@ fn hub_handle(state: &Mutex<HubState>, from: u64, frame: Frame, raw: &[u8]) {
             }
             let snapshot = Frame::PartySnapshot { parties: s.parties.snapshot(), next_id: s.parties.next_id() }.encode();
             s.send_to(from, snapshot);
+            let rooms = Frame::MessengerSnapshot { rooms: s.messengers.snapshot(), next_id: s.messengers.next_id() }.encode();
+            s.send_to(from, rooms);
         }
         Frame::Online { character, name, account, channel, map } => {
             crate::server::log(&format!("hub: {name} ({character}) online on channel {channel}, map {map}"));
@@ -683,6 +832,14 @@ fn hub_handle(state: &Mutex<HubState>, from: u64, frame: Frame, raw: &[u8]) {
             s.broadcast(None, &bytes);
         }
         Frame::PartySnapshot { .. } => {}
+        Frame::MessengerRequest { actor, request } => {
+            // The same contract as a party request: applied here for the snapshot, echoed to
+            // EVERY channel (the sender included) so every replica applies the same sequence.
+            let outcome = s.messengers.apply(actor, request.clone());
+            crate::server::log(&format!("hub: maple chat request by {actor}: {request:?} -> {outcome:?}"));
+            s.broadcast(None, &bytes);
+        }
+        Frame::MessengerSnapshot { .. } => {}
     }
 }
 
@@ -699,6 +856,14 @@ fn hub_drop(state: &Mutex<HubState>, id: u64) {
         s.directory.remove(character);
         let f = Frame::Offline { character: *character, channel: *ch }.encode();
         s.broadcast(None, &f);
+        // A channel that died takes its players out of their Maple Chat rooms too, or everyone
+        // else keeps drawing a seat nobody is in. Echoed like any request, so every channel
+        // tells the members it hosts.
+        if s.messengers.room_of(*character).is_some() {
+            let _ = s.messengers.apply(*character, crate::messenger::Request::Disconnect);
+            let f = Frame::MessengerRequest { actor: *character, request: crate::messenger::Request::Disconnect }.encode();
+            s.broadcast(None, &f);
+        }
     }
     crate::server::log(&format!(
         "hub: connection #{id} (channel {channel:?}) closed; {} character(s) taken offline",
@@ -730,6 +895,22 @@ mod tests {
             Frame::PartyRequest { actor: 213, now: 7, request: Request::SetPickupRights { rights: 1 } },
             Frame::PartyRequest { actor: 213, now: 8, request: Request::Disconnect { successor: Some(214), last_online: false } },
             Frame::PartyRequest { actor: 213, now: 9, request: Request::Disconnect { successor: None, last_online: true } },
+            Frame::MessengerRequest {
+                actor: 213,
+                request: crate::messenger::Request::Enter {
+                    room: 0x1_0001,
+                    seat: net::messenger::Seat { character_id: 219, name: "Moth".into(), look: vec![9; 40] },
+                },
+            },
+            Frame::MessengerRequest { actor: 213, request: crate::messenger::Request::Leave { room: 0x1_0001 } },
+            Frame::MessengerRequest { actor: 213, request: crate::messenger::Request::Disconnect },
+            Frame::MessengerSnapshot {
+                rooms: vec![crate::messenger::Room {
+                    id: 0x1_0001,
+                    seats: [Some(net::messenger::Seat { character_id: 213, name: "Cobalt".into(), look: vec![1] }), None, None, None, None, None],
+                }],
+                next_id: 0x1_0002,
+            },
             Frame::PartySnapshot {
                 parties: vec![crate::party::Party { id: 1, name: "P".into(), leader: 213, members: vec![213, 214], pickup_rights: 1 }],
                 next_id: 2,
@@ -769,8 +950,10 @@ mod tests {
 
         let mut a = dial(0);
         assert_eq!(next(&mut a), Frame::PartySnapshot { parties: vec![], next_id: crate::party::FIRST_PARTY_ID }, "an empty world on Hello");
+        assert_eq!(next(&mut a), Frame::MessengerSnapshot { rooms: vec![], next_id: crate::messenger::FIRST_ROOM_ID }, "and no Maple Chat rooms");
         let mut b = dial(1);
         assert!(matches!(next(&mut b), Frame::PartySnapshot { .. }));
+        assert!(matches!(next(&mut b), Frame::MessengerSnapshot { .. }));
 
         a.write_all(&Frame::Online { character: 213, name: "Cobalt".into(), account: 1, channel: 0, map: 0 }.encode()).unwrap();
         assert_eq!(next(&mut b), Frame::Online { character: 213, name: "Cobalt".into(), account: 1, channel: 0, map: 0 }, "b hears a's character");
@@ -790,6 +973,7 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+        assert!(matches!(next(&mut c), Frame::MessengerSnapshot { ref rooms, .. } if rooms.is_empty()));
 
         // A delivery for 213 reaches a (its host) and not c.
         let line = Frame::Deliver { character: 213, opcode: 0x01B1, body: vec![7], what: "hi".into() };
@@ -798,9 +982,20 @@ mod tests {
         c.set_read_timeout(Some(std::time::Duration::from_millis(300))).unwrap();
         assert!(read_frame(&mut c).is_err(), "nothing for c: the read times out");
 
-        // a drops: 213 goes offline for everyone still connected.
+        // **Maple Chat across channels** (2026-09-24): a room opened for 213 is echoed to every
+        // channel, the sender included, so channel 1 can seat an Accept for a room channel 0 made.
+        let seat = net::messenger::Seat { character_id: 213, name: "Cobalt".into(), look: vec![1, 2, 3] };
+        let open = Frame::MessengerRequest { actor: 213, request: crate::messenger::Request::Open { seat } };
+        a.write_all(&open.encode()).unwrap();
+        assert_eq!(next(&mut a), open);
+        assert_eq!(next(&mut b), open);
+        assert_eq!(next(&mut c), open);
+
+        // a drops: 213 goes offline for everyone still connected - and leaves the room, or
+        // everyone else would keep drawing a seat nobody is in.
         drop(a);
         b.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
         assert_eq!(next(&mut b), Frame::Offline { character: 213, channel: 0 });
+        assert_eq!(next(&mut b), Frame::MessengerRequest { actor: 213, request: crate::messenger::Request::Disconnect });
     }
 }

@@ -1,0 +1,16 @@
+[package]
+name = "webhook"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A Discord webhook client for MapleCW's live server status message: HTTPS POST and PATCH, nothing else."
+
+[dependencies]
+# The same rustls, the same `ring` provider and no `tls12` as tlspin - features unify across
+# the workspace, and turning TLS 1.2 on here would turn it on for the pinned sign-in link too.
+# Discord's edge speaks TLS 1.3.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pki-types = { version = "1.12", features = ["std"] }
+# Mozilla's root store, compiled in: the live box's own certificate store is not consulted, so
+# a Windows install with stale roots cannot break this, and nothing is loaded at runtime.
+webpki-roots = "1"

@@ -25,6 +25,13 @@ sockets.log
 # pktmon captures are large binaries; the decoded text summary goes in fixtures instead
 /research/pktmon/
 
+# The live server's Discord webhook - a credential: whoever holds the URL can post as it.
+# `world::discordstatus`. And the two files that travel with it: the id of the one status
+# message it edits, and the client patch id maplecw-auth writes for it.
+discord-webhook.txt
+discord-status-message.txt
+client-patch-version.txt
+
 # The live database. Accounts (argon2id hashes) and characters - real state, not source,
 # and it holds password hashes, so it never goes in the repo.
 maplecw.db

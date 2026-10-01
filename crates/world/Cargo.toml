@@ -8,6 +8,8 @@ description = "The MapleCW game world: one server per channel, entered by migrat
 [dependencies]
 net = { path = "../net" }
 store = { path = "../store" }
+# The live server's Discord status message - the hub only (`discordstatus`).
+webhook = { path = "../webhook" }
 
 [[bin]]
 name = "maplecw-world"

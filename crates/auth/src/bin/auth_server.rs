@@ -123,6 +123,11 @@ fn main() -> std::process::ExitCode {
         match auth::clientpatch::ClientPatchSource::open(std::path::Path::new(dir)) {
             Ok(source) => {
                 println!("{}", source.describe());
+                // For the live server's Discord status (`world::discordstatus`), which the hub
+                // reads from the same folder: the client patch this server publishes.
+                if let Err(e) = std::fs::write("client-patch-version.txt", source.manifest().short_id()) {
+                    eprintln!("client-patch-version.txt not written: {e}");
+                }
                 service = service.with_client_patches(Arc::new(source));
             }
             Err(e) => {

@@ -90,7 +90,20 @@ function Stop-All {
     }
 }
 
+# **The Discord status message, live server only.** It is on when discord-webhook.txt is in
+# this folder (the URL on its first line - a secret: whoever has it can post as the webhook).
+# The hub edits ONE message every minute; this turns it red ("offline for maintenance") before
+# the servers are stopped, because Stop-Process runs no code in them. world::discordstatus.
+$discordWebhook = Join-Path $root 'discord-webhook.txt'
+function Set-DiscordOffline {
+    $hubExe = Join-Path $bin 'maplecw-chat.exe'
+    if ((Test-Path $discordWebhook) -and (Test-Path $hubExe)) {
+        & $hubExe --discord-offline --discord-webhook-file $discordWebhook
+    }
+}
+
 if ($Stop) {
+    Set-DiscordOffline
     Stop-All
     Write-Host 'stopped'
     return
@@ -289,8 +302,13 @@ if (Test-Path $pinFile) {
 # packet), so it does not need the channels' rolling.
 $hubExe = Join-Path $bin 'maplecw-chat.exe'
 if (Test-Path $hubExe) {
+    $hubArgs = @('--bind', "127.0.0.1:$HubPort")
+    if (Test-Path $discordWebhook) {
+        $hubArgs += @('--discord-webhook-file', $discordWebhook)
+        Write-Host "  Discord status: ON (discord-webhook.txt) - one message, edited every minute"
+    }
     $hub = Start-Process -FilePath $hubExe -WorkingDirectory $root `
-        -ArgumentList @('--bind', "127.0.0.1:$HubPort") -PassThru -NoNewWindow `
+        -ArgumentList $hubArgs -PassThru -NoNewWindow `
         -RedirectStandardOutput (Join-Path $root 'chat-hub.log') `
         -RedirectStandardError  (Join-Path $root 'chat-hub.log.err')
     Write-Host "world hub     pid $($hub.Id)  127.0.0.1:$HubPort  (server-internal; parties and chat across channels)"
@@ -389,6 +407,7 @@ try {
 finally {
     Write-Host ''
     Write-Host 'stopping the servers...' -ForegroundColor Cyan
+    Set-DiscordOffline
     Stop-All
     Write-Host 'stopped.' -ForegroundColor Green
 }
