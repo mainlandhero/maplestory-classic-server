@@ -168,11 +168,6 @@ use crate::config::Config;
 /// spreadsheet.
 pub const FARE_MESOS: u32 = 500;
 
-/// What a **ferry** crossing costs. **[I]**, and a different number from [`FARE_MESOS`] on
-/// purpose: a cab crosses a town, the ferry crosses a continent, and charging the same for
-/// both would make the 500 meaningless. Nothing in this client carries either figure.
-pub const FERRY_FARE_MESOS: u32 = 1_000;
-
 /// What a VIP cab charges for the run to Ant Tunnel Park.
 ///
 /// The owner, 2026-09-09: *"VIP Cabs should transport players to Dungeon: Ant Tunnel Park for
@@ -199,9 +194,8 @@ pub const LINE_BREAK: &str = "\\n";
 /// [`destinations`] is derived from [`TAXIS`] rather than typed out, which is what stops a
 /// hand-written route matrix from losing a row - `CLAUDE.md` records a character walking into
 /// map 10 on 2026-08-19 and being unable to get out because every row leading back was
-/// missing. **That derivation is exactly why this field has to exist:** without it, adding the
-/// three ferry rows would silently put Orbis and El Nath on every Victoria cab's menu, and a
-/// 500-meso taxi from Henesys to another continent is not a feature anybody asked for.
+/// missing. **That derivation is exactly why this field has to exist:** without it, the VIP
+/// cabs' dungeon would be a stop on every regular cab's menu, at the regular fare.
 ///
 /// So a row's destinations are the *other rows in its own network*, and the two networks meet
 /// only where a row is deliberately placed in both - which none is today.
@@ -209,15 +203,11 @@ pub const LINE_BREAK: &str = "\\n";
 pub enum Network {
     /// The six towns of Victoria Island, joined by cabs. Eight rows.
     Victoria,
-    /// **The Ossyria line**: Ellinia Station, Orbis, El Nath. Three rows.
-    ///
-    /// This exists because **the two continents are not connected by any portal**. A
-    /// breadth-first walk of `gm-handbook/portals.txt` gives a 223-map component containing
-    /// Lith Harbor and an 87-map component containing Orbis and El Nath, and they do not
-    /// touch. **[L]** `research/third-job.md` §4. The link in the real game is a ship, and a
-    /// ship is not a portal - so without this the third-job instructors in El Nath cannot be
-    /// reached by any means a player has.
-    Ossyria,
+    // **There is no Ossyria line.** Sleepywood, Orbis and El Nath were joined by a ferry -
+    // Eurek the Alchemist (605) at both ends, the Platform Usher (1001) in Orbis - until
+    // 2026-09-29. The owner: *"in Orbis, the ferry to El Nath or Sleepywood should NOT exist"*, then
+    // *"Sleepywood to El Nath should NOT have a ferry"*. The ships (`crate::boat`) join Ellinia
+    // Station and Orbis, and Orbis walks to El Nath, so the third-job instructors stay reachable.
     /// **The VIP cabs' one dungeon run.** The owner, 2026-09-09: *"the VIP Cabs should behave
     /// differently from normal Taxi Cabs. VIP Cabs should transport players to Dungeon: Ant
     /// Tunnel Park for 10,000 mesos."*
@@ -267,40 +257,6 @@ pub enum Voice {
     /// all, so clicking their today prints *"This server has no dialogue for NPC template
     /// 900003 yet."* **[L]** The lines below are written to sit beside those two.
     TourGuide,
-    /// The **Platform Usher** at the Orbis Ticketing Booth. Their own shipped lines are already
-    /// about exactly this, which is why they were chosen and not invented:
-    ///
-    /// ```text
-    ///  1001  idle0  "Orbis Station is huge. I'll take you to the station platform, so talk
-    ///                to me."
-    ///  1001  idle1  "The platform is different according to the final destination. Go
-    ///                through me to use the platforms!"
-    /// ```
-    ///
-    /// **[L]** The second line is a description of a destination menu, written by Nexon.
-    Ferryman,
-    /// **Eurek the Alchemist - one NPC, two continents.**
-    ///
-    /// They are the whole reason this line works without inventing anybody, and the client did
-    /// all of it:
-    ///
-    /// * their own and only `d0` is *"I'm Eurek the Alchemist, and I wander all over the world
-    ///   of MapleStory. I'm just stopping here for a while."* **[L]**
-    /// * `Map.wz` places them **twice** - Sleepywood, 10005000, and El Nath, 20001000. They are
-    ///   the only NPC in this client placed on both continents. **[L]**
-    /// * they carry **zero** quest rows, unlike Jade, Fox, Scadur, Alcaster and Mr. Park, so
-    ///   giving them a menu swallows nothing a player would otherwise have had.
-    ///
-    /// So the man who says they wander the world is the one who takes you across it, and both
-    /// of their placements are used. That they are not a ticket seller is the **[I]** in this
-    /// table; the alternative was an NPC nobody can reach on one side and no NPC at all on
-    /// the other.
-    ///
-    /// **The client's real El Nath clerk is Aileen, template 1003** - ferry-seller lines,
-    /// *"Please purchase a ticket from me and get on board"*, and **no placement anywhere in
-    /// `Map.wz`**. **[L]** They could not be used without a way to put an NPC on a map, which
-    /// this server does not have.
-    Wanderer,
 }
 
 /// One taxi NPC.
@@ -320,8 +276,8 @@ pub struct Taxi {
     pub voice: Voice,
     /// Which set of stops this row belongs to. See [`Network`].
     pub network: Network,
-    /// What a ride from this row costs. [`FARE_MESOS`] for a cab, [`FERRY_FARE_MESOS`] for the
-    /// ferry - carried per row rather than read from a constant, so the two cannot be confused
+    /// What a ride from this row costs. [`FARE_MESOS`] for a cab, [`VIP_FARE_MESOS`] for a VIP
+    /// cab - carried per row rather than read from a constant, so the two cannot be confused
     /// at the one place that actually moves the money. A row's [`Stop`] has its own price;
     /// [`fare_to`] is the one place that decides which applies.
     pub fare: u32,
@@ -368,30 +324,9 @@ pub const TAXIS: &[Taxi] = &[
     Taxi { template: 500, name: "Regular Cab", home_map: 10_004_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS, extra: None },
     Taxi { template: 600, name: "Regular Cab", home_map: 10_005_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS, extra: None },
 
-    // ---- the Ossyria line ---------------------------------------------------------------
-    // Three stops, and the ONLY way a player reaches the third-job instructors: Victoria
-    // Island and Orbis/El Nath are separate portal components with nothing between them, and
-    // the link in the real game is a ship rather than a portal. `research/third-job.md` §4.
-    //
-    //   10005000, 605,  Eurek the Alchemist   Sleepywood             [L] gm-handbook/npcs.txt
-    //   20000010, 1001, Platform Usher        Orbis Ticketing Booth  [L]
-    //   20001000, 605,  Eurek the Alchemist   El Nath                [L]
-    //
-    // **Eurek is one NPC standing on two continents**, which is why `taxi_for` takes the map
-    // as well as the template - and why they are the line rather than a compromise on it. See
-    // `Voice::Wanderer`.
-    //
-    // **The obvious rows are NOT here, and the reason is reachability.** Joel (322) and Cherry
-    // (323) stand at *Ellinia Station*, 10002090, and their shipped lines are exactly about a
-    // ship to Orbis - but **nothing in the entire archive has a portal targeting 10002090**.
-    // Ellinia's own `in03`, which is the station door in the retail game, has `tm = 0`: no
-    // destination. **[L]** So a ferry on Joel would be a ferry nobody can walk to, which is
-    // the same failure as a warden behind a door that does not open. The Orbis Ticketing Booth
-    // is different and was checked separately: `20000000 top00 -> 20000010` is a real portal,
-    // so the Platform Usher is reachable and is used.
-    Taxi { template: 605, name: "Eurek the Alchemist", home_map: 10_005_000, voice: Voice::Wanderer, network: Network::Ossyria, fare: FERRY_FARE_MESOS, extra: None },
-    Taxi { template: 1001, name: "Platform Usher", home_map: 20_000_010, voice: Voice::Ferryman, network: Network::Ossyria, fare: FERRY_FARE_MESOS, extra: None },
-    Taxi { template: 605, name: "Eurek the Alchemist", home_map: 20_001_000, voice: Voice::Wanderer, network: Network::Ossyria, fare: FERRY_FARE_MESOS, extra: None },
+    // **No ferry rows.** The Ossyria line (Eurek in Sleepywood and El Nath, the Platform Usher
+    // in Orbis) was removed on 2026-09-29 at the owner's word - see `Network`. The ships are the
+    // way between the continents.
 ];
 
 /// Is this NPC a taxi? `None` means "not one of mine - carry on down the click chain".
@@ -405,11 +340,9 @@ pub const TAXIS: &[Taxi] = &[
 /// a click against `config.npcs[chr.map_id]`, so the character is standing on `home_map` by
 /// construction.
 ///
-/// **Eurek the Alchemist is placed twice** - Sleepywood and El Nath. **[L]** Matching on the
-/// template alone would make them a ferry port in Sleepywood as well, offering a ride to
-/// Ellinia Station and Orbis but *not* to El Nath, because `destinations` excludes a row's own
-/// `home_map` and their row's home is El Nath. That is a wrong menu on the wrong continent, and
-/// the map is what forecloses it.
+/// An NPC placed on two maps - Eurek the Alchemist, in Sleepywood and El Nath - was a ferry
+/// port on both until 2026-09-29; the map argument is kept because it is still the right
+/// question for any row a future NPC placed twice would add.
 pub fn taxi_for(template: u32, map: u32) -> Option<&'static Taxi> {
     TAXIS.iter().find(|t| t.template == template && t.home_map == map)
 }
@@ -453,9 +386,7 @@ fn network_stops(taxi: &Taxi) -> Vec<u32> {
     }
     let mut maps: Vec<u32> = TAXIS
         .iter()
-        // **Its own network, and only its own.** Without this the three Ossyria rows would
-        // appear on every Victoria cab's menu - a 500-meso taxi to another continent - and
-        // the ferry would offer six Victoria towns it does not sail to. See `Network`.
+        // **Its own network, and only its own.** See `Network`.
         .filter(|t| t.network == taxi.network)
         .map(|t| t.home_map)
         .filter(|&m| m != taxi.home_map)
@@ -551,17 +482,6 @@ pub fn header(taxi: &Taxi) -> String {
             "Welcome to Classic World! I'm Lyn, and I'd love to show you around Victoria \
              Island. The tour is only #b{fare} mesos#k - where shall we start?"
         ),
-        // Written to sit beside Joel's own shipped line about a ticket for the ship, and the
-        // Platform Usher's about the platform differing by destination.
-        Voice::Ferryman => format!(
-            "Passage is #b{fare} mesos#k. Where are you sailing to?"
-        ),
-        // Eurek's own `d0` is *"I wander all over the world of MapleStory."* This is that
-        // sentence turned into an offer, which is the whole reason they are the El Nath port.
-        Voice::Wanderer => format!(
-            "I wander all over the world, and I know the roads off this mountain. \
-             #b{fare} mesos#k and I will see you to one of them - which?"
-        ),
     }
 }
 
@@ -613,13 +533,6 @@ fn cannot_afford(taxi: &Taxi, fare: u32, have: u32) -> String {
             "Oh dear - the tour is #b{fare} mesos#k and you only have #b{have}#k. \
              Go and see a little more of the island, and come back when you can afford it!"
         ),
-        Voice::Ferryman => format!(
-            "Passage is #b{fare} mesos#k and you have #b{have}#k. No ticket, no crossing."
-        ),
-        Voice::Wanderer => format!(
-            "#b{fare} mesos#k is what it costs, and you carry #b{have}#k. \
-             The mountain will still be here when you can pay."
-        ),
     }
 }
 
@@ -632,12 +545,6 @@ fn cannot_go(taxi: &Taxi, map_name: &str) -> String {
             "I'm terribly sorry - the road to {map_name} is closed today. \
              I haven't taken anything from you!"
         ),
-        Voice::Ferryman => {
-            format!("No ship is sailing for {map_name} today. Your mesos are your own.")
-        }
-        Voice::Wanderer => {
-            format!("The road to {map_name} is shut. I have taken nothing from you.")
-        }
     }
 }
 
@@ -649,10 +556,6 @@ fn no_such_stop(taxi: &Taxi, count: usize) -> String {
             "Goodness, I don't know that one! There are only {count} stops on the tour - \
              click me again and take another look."
         ),
-        Voice::Ferryman => {
-            format!("Nothing sails there. There are {count} ports on this line.")
-        }
-        Voice::Wanderer => format!("I know {count} roads from here, and that is not one."),
     }
 }
 
@@ -987,11 +890,11 @@ mod tests {
 
     // -- the table -----------------------------------------------------------------------
 
-    /// The table itself, against the file it came from. **Eleven rows** - eight cabs on the
-    /// six Victoria towns, and three ports on the Ossyria line.
+    /// The table itself, against the file it came from. **Eight rows** - the cabs and Lyn on
+    /// the six Victoria towns. No ferry since 2026-09-29.
     #[test]
     fn the_table_matches_the_npc_dump_it_was_read_from() {
-        assert_eq!(TAXIS.len(), 11, "7 cabs, Lyn, and 3 ferry ports - grep gm-handbook/npcs.txt");
+        assert_eq!(TAXIS.len(), 8, "7 cabs and Lyn - grep gm-handbook/npcs.txt");
         // **A template may now appear twice, but only on different maps.** Eurek does not,
         // today - their Sleepywood placement is deliberately not a row - but the uniqueness
         // that has to hold is `(template, map)`, because that is what `taxi_for` matches on.
@@ -1037,47 +940,19 @@ mod tests {
             assert!(!destinations(t).contains(&10_005_070), "row {} offers the dungeon", t.template);
         }
 
-        let ferry: Vec<&Taxi> = TAXIS.iter().filter(|t| t.network == Network::Ossyria).collect();
-        assert_eq!(ferry.len(), 3, "Sleepywood, Orbis, El Nath");
-        assert_eq!(
-            ferry.iter().map(|t| t.home_map).collect::<Vec<_>>(),
-            vec![10_005_000, 20_000_010, 20_001_000]
-        );
-        assert_eq!(ferry.iter().map(|t| t.template).collect::<Vec<_>>(), vec![605, 1001, 605]);
-        // **Sleepywood is a stop on BOTH networks, and that is the interchange.** A player
-        // cabs to Sleepywood from any Victoria town for the cab fare and crosses from there.
-        // Asserted rather than left implicit, because it is the only map where the two
-        // networks touch and it is what makes the ferry reachable at all.
-        assert_eq!(
-            TAXIS.iter().filter(|t| t.home_map == 10_005_000).count(),
-            2,
-            "Sleepywood has the cab and the ferry"
-        );
-        assert_eq!(
-            TAXIS
-                .iter()
-                .filter(|t| t.home_map == 10_005_000)
-                .map(|t| t.network)
-                .collect::<Vec<_>>(),
-            vec![Network::Victoria, Network::Ossyria]
-        );
-        for t in &ferry {
-            assert_eq!(t.fare, FERRY_FARE_MESOS, "a crossing costs more than a cab ride");
-            assert_ne!(t.fare, FARE_MESOS, "and the two prices must not be the same number");
-        }
+        // **No ferry anywhere** (the owner, 2026-09-29): nothing on Ossyria sells a ride, and the
+        // two NPCs who used to - Eurek, the Platform Usher - are not rows.
+        assert!(TAXIS.iter().all(|t| t.home_map < 20_000_000), "no taxi stands on Ossyria");
+        assert!(TAXIS.iter().all(|t| t.template != 605 && t.template != 1001), "Eurek and the Platform Usher are not taxis");
+        assert!(all_destinations().iter().all(|&m| m < 20_000_000), "and no cab goes there");
+        assert_eq!(TAXIS.iter().filter(|t| t.home_map == 10_005_000).count(), 1, "Sleepywood has its cab and nothing else");
 
         assert_eq!(lyn().voice, Voice::TourGuide);
         assert_eq!(henesys_cab().voice, Voice::Cab);
         assert!(taxi_for(1, 10_000_000).is_none(), "Heena is not a taxi");
-        // And the map half of the question, which is what Eurek needs: they are a ferry
-        // port in El Nath and an ordinary NPC in Sleepywood, on the same template.
-        // **Eurek is a port on both of their placements, and nowhere else.** The map argument
-        // is what makes that expressible: one template, two rows, two different networks'
-        // worth of neighbours.
-        assert!(taxi_for(605, 20_001_000).is_some(), "Eurek is a port in El Nath");
-        assert!(taxi_for(605, 10_005_000).is_some(), "and in Sleepywood - they cross");
-        assert!(taxi_for(605, 10_000_000).is_none(), "but they do not stand in Lith Harbor");
-        assert_eq!(all_destinations().len(), 10, "six towns, Orbis and El Nath, Ant Tunnel Park, and Lyn's Southperry");
+        assert!(taxi_for(605, 20_001_000).is_none() && taxi_for(605, 10_005_000).is_none(), "Eurek is not a ferry, in either town");
+        assert!(taxi_for(1001, 20_000_010).is_none(), "nor is the Platform Usher");
+        assert_eq!(all_destinations().len(), 8, "six towns, Ant Tunnel Park, and Lyn's Southperry");
     }
 
     /// **Every row stands where the table says, read from the dump rather than from memory.**
@@ -1135,14 +1010,12 @@ mod tests {
             );
         }
 
-        // **Eurek is placed twice and only one of them is a port.** That is the fact
-        // `taxi_for`'s map argument exists for, so it is asserted against the file rather
-        // than trusted: if a later dump moves them, this fails here.
+        // **Eurek is still placed in two towns, and neither is a port** (2026-09-29): a click
+        // on them is their own line again.
         let eurek: Vec<u32> =
             rows.iter().filter(|(_, t)| *t == 605).map(|(m, _)| *m).collect();
         assert_eq!(eurek.len(), 2, "Eurek stands in two towns, got {eurek:?}");
-        assert!(eurek.contains(&20_001_000) && eurek.contains(&10_005_000));
-        assert!(taxi_for(605, 10_005_000).is_some(), "and BOTH of their placements are ports");
+        assert!(eurek.iter().all(|&m| taxi_for(605, m).is_none()), "and neither placement is a port");
 
         // **The ferry NPCs the client actually shipped, and why two of them are unused.**
         // Joel (322) sells tickets to Orbis in their own words - and stands at Ellinia Station,
@@ -1195,7 +1068,6 @@ mod tests {
             let d = destinations(t);
             let want = match t.network {
                 Network::Victoria => 5, // six towns minus its own
-                Network::Ossyria => 2,  // three ports minus its own
                 Network::Dungeon => DUNGEON_STOPS.len(), // Ant Tunnel Park, and no cab is in it
             };
             let want = want + usize::from(t.extra.is_some());
@@ -1229,21 +1101,10 @@ mod tests {
             }
         }
         // And the containment, stated as the thing that would actually be a bug: no cab ever
-        // names a map that only the ferry reaches.
-        let ossyria_only = [20_000_010u32, 20_001_000];
-        for t in TAXIS.iter().filter(|t| t.network == Network::Victoria) {
-            for m in ossyria_only {
-                assert!(
-                    !destinations(t).contains(&m),
-                    "cab {} offers {m}, which is another continent",
-                    t.template
-                );
-            }
-        }
-        // Nor does the ferry sell a hop between two Victoria towns - that is the cabs' job.
-        for t in TAXIS.iter().filter(|t| t.network == Network::Ossyria) {
-            for m in [10_000_000u32, 10_001_000, 10_002_000, 10_003_000, 10_004_000] {
-                assert!(!destinations(t).contains(&m), "the ferry does not run to {m}");
+        // names a map on another continent.
+        for t in TAXIS {
+            for m in [20_000_010u32, 20_001_000] {
+                assert!(!destinations(t).contains(&m), "row {} offers {m}, which is another continent", t.template);
             }
         }
         assert_eq!(
@@ -1256,15 +1117,6 @@ mod tests {
             vec![10_000_000, 10_002_000, 10_003_000, 10_004_000, 10_005_000],
             "a cab is exactly as it was"
         );
-        // From Sleepywood, Eurek sails to Orbis and El Nath and to no town on their own island.
-        let out = taxi_for(605, 10_005_000).expect("Eurek is the Sleepywood port");
-        assert_eq!(destinations(out), vec![20_000_010, 20_001_000]);
-        // **And from El Nath they can get a player home**, which is the whole reason their second
-        // placement is in the table. A line that only ran one way would leave a level-70
-        // character with seventeen floors of the Orbis Tower as their only route back.
-        let home = taxi_for(605, 20_001_000).expect("Eurek is the El Nath port");
-        assert_eq!(destinations(home), vec![10_005_000, 20_000_010]);
-        assert!(destinations(home).contains(&10_005_000), "there IS a way back to Victoria");
     }
 
     // -- the menu packet -----------------------------------------------------------------

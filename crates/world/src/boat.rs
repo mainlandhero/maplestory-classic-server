@@ -56,7 +56,7 @@
 //! the `instance` half of `crate::fields::FieldKey` on the three ship fields - the same
 //! mechanism the party quest uses, so who sees whom is decided by the key and nothing else.
 //! Channels have separate `Fields`, and so separate voyages. A Regular ticket opens a voyage of
-//! one, sailing at once.
+//! one: ten seconds in a waiting room of its own, then a one-minute crossing (2026-09-29).
 
 /// Joel, the ticketing usher. Sells both tickets from a menu.
 pub const JOEL: u32 = 322;
@@ -127,6 +127,11 @@ pub const BOARDING_OPENS_S: i64 = 300;
 pub const BOARDING_CLOSES_S: i64 = 60;
 /// The Regular ticket's private crossing takes one minute.
 pub const PRIVATE_RIDE_S: i64 = 60;
+/// **...after ten seconds in the waiting room**, a room of its own (the waiting room is keyed by
+/// the voyage like the ship). The owner, 2026-09-29: *"The before travel should also last 10 seconds
+/// before players get teleported to during the ride for 1 minute. This should happen in both
+/// directions."*
+pub const PRIVATE_WAIT_S: i64 = 10;
 
 /// **The Crimson Balrog invasion.** The owner, 2026-09-26: *"There's a 50% chance that any given
 /// trip will be invaded by 2 Crimson Balrog with the server spawning the two monster and the
@@ -291,8 +296,6 @@ pub const USHER_PATH: &str = "boat.usher";
 pub const USHER_ASK_PATH: &str = "boat.usher.ask";
 /// Usher menu line: the platform to Victoria Island.
 pub const USHER_TO_VICTORIA: u32 = 0;
-/// Usher menu line: their ferry, as before.
-pub const USHER_FERRY: u32 = 1;
 
 /// Is `path` one of this module's conversations?
 pub fn is_boat_path(path: &str) -> bool {
@@ -510,8 +513,9 @@ impl Voyages {
         self.live[at].clone()
     }
 
-    /// **A Regular passenger's own ship** on `route`, sailing from `now` for
-    /// [`PRIVATE_RIDE_S`].
+    /// **A Regular passenger's own ship** on `route`: [`PRIVATE_WAIT_S`] in its own waiting
+    /// room, then [`PRIVATE_RIDE_S`] sailing - the tick's `take_departures` moves it on, as it
+    /// does a shared ship.
     pub fn board_private(&mut self, character: u32, route: u8, now: i64) -> Voyage {
         self.drop_member(character);
         let id = self.new_id();
@@ -519,7 +523,7 @@ impl Voyages {
             id,
             route,
             ride: Ride::Private,
-            phase: Phase::Sailing { arrives: now + PRIVATE_RIDE_S },
+            phase: Phase::Waiting { departs: now + PRIVATE_WAIT_S },
             members: vec![character],
             // The owner: the invasion "does not happen on the 1 minute private rides."
             invasion_at: None,
@@ -543,7 +547,8 @@ impl Voyages {
         for v in &mut self.live {
             if let Phase::Waiting { departs } = v.phase {
                 if now >= departs {
-                    v.phase = Phase::Sailing { arrives: departs + RIDE_S };
+                    let ride = if v.ride == Ride::Private { PRIVATE_RIDE_S } else { RIDE_S };
+                    v.phase = Phase::Sailing { arrives: departs + ride };
                     if v.ride == Ride::Shared && roll() % 100 < INVASION_CHANCE_PERCENT {
                         v.invasion_at = Some(departs + INVASION_AFTER_S);
                     }
@@ -629,8 +634,8 @@ pub fn seller_menu(r: &Route) -> String {
          #d#L{}#{} - {} mesos#l\r\n\
          #L{}#{} - {} mesos#l#k\r\n\r\n\
          With a #bBasic#k ticket you ride the next ship with the other passengers, and the flight \
-         takes {} minutes. A #bRegular#k ticket is a private ship, just for you, that takes off as \
-         soon as you board and arrives in {} minute.",
+         takes {} minutes. A #bRegular#k ticket is a private ship, just for you, that takes off {} \
+         seconds after you board and arrives in {} minute.",
         Ticket::Basic.line(),
         r.ticket_name(Ticket::Basic),
         thousands(BASIC_PRICE),
@@ -638,6 +643,7 @@ pub fn seller_menu(r: &Route) -> String {
         r.ticket_name(Ticket::Regular),
         thousands(REGULAR_PRICE),
         RIDE_S / 60,
+        PRIVATE_WAIT_S,
         PRIVATE_RIDE_S / 60,
     )
 }
@@ -695,8 +701,8 @@ pub const BOARD_ASK_BASIC: &str = "This will not be a short flight, so you need 
 
 /// The boarder's yes/no before a Regular passenger boards. Not a v96 line - v96 had no
 /// private ship.
-pub const BOARD_ASK_REGULAR: &str = "Your private ship will take off as soon as you are on board, and the flight takes only \
-     #b1 minute#k. Do you wish to board the ship?";
+pub const BOARD_ASK_REGULAR: &str = "Your private ship will take off #b10 seconds#k after you are on board, and the flight \
+     takes only #b1 minute#k. Do you wish to board the ship?";
 
 /// The boarder, to a No - the v96 line.
 pub const BOARD_DECLINED: &str = "You must have some business to take care of here, right?";
@@ -744,8 +750,7 @@ pub fn usher_menu() -> String {
     format!(
         "There are many Platforms at the Orbis Station. You must find the correct Platform for your \
          destination. Which Platform would you like to go to?\r\n\
-         #d#L{USHER_TO_VICTORIA}##bPlatform to Board a Ship to Victoria Island#d#l\r\n\
-         #L{USHER_FERRY}#I would rather take the ferry.#l#k"
+         #d#L{USHER_TO_VICTORIA}##bPlatform to Board a Ship to Victoria Island#d#l#k"
     )
 }
 
@@ -825,7 +830,7 @@ mod tests {
         let private = v.board_private(203, TO_ORBIS.id, d - 200);
         assert!(private.id != a.id && private.id != later.id && private.id != back.id, "and a private ship is nobody else's");
         assert_eq!(private.members, vec![203]);
-        assert_eq!(private.remaining_s(d - 200), 60, "one minute");
+        assert_eq!(private.remaining_s(d - 200), 10, "ten seconds in the waiting room first");
     }
 
     /// The two routes, read against the map data they were typed from: every map a route
@@ -929,7 +934,7 @@ mod tests {
         assert!(seller_sold(&TO_ELLINIA, Ticket::Basic).contains("Platform Usher"));
         assert!(seller_sold(&TO_ORBIS, Ticket::Basic).contains("Cherry"));
         assert!(boarder_menu(&TO_ELLINIA).starts_with("If you want to get on the ride to Victoria Island"));
-        assert!(usher_menu().contains(&format!("#L{USHER_TO_VICTORIA}#")) && usher_menu().contains(&format!("#L{USHER_FERRY}#")));
+        assert!(usher_menu().contains(&format!("#L{USHER_TO_VICTORIA}#")) && !usher_menu().contains("ferry"), "the platform, and no ferry (2026-09-29)");
         assert_eq!(Ticket::from_line(2), None);
         let mut words = vec![
             not_boarding(MIDNIGHT + 100).unwrap(),
