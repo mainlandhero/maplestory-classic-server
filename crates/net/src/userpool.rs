@@ -349,6 +349,74 @@ pub fn user_hp_remote(char_id: u32, hp: u32, max_hp: u32) -> Vec<u8> {
     w.into_vec()
 }
 
+/// **The client's emote**, `0x00EA` inbound: `u32 emotion, u32 duration, u8 flag` - nine bytes.
+///
+/// Built by `FUN_142D4D520`, which first applies the face to the local user with
+/// `FUN_14282D710(user, emotion, duration, flag)` and then encodes the same three values
+/// (`0x142D4D603..0x142D4D62A`: the face layer's current id, `r12d`, `r15b`). **[L]** Captured:
+/// Queasy from the F-key bar is `08000000 ffffffff 00` - emotion 8, duration -1, flag 0 (the owner,
+/// 2026-09-29). Nothing is expected back; the client has already drawn it.
+///
+/// Not to be confused with the OUTBOUND `0x00EA`, `net::revive::RUN_CONSOLE_COMMAND` -
+/// directions are separate namespaces.
+pub const CLIENT_EMOTION: u16 = 0x00EA;
+
+/// The emote's body length. Anything else is not this packet's shape and is not relayed.
+pub const CLIENT_EMOTION_LEN: usize = 9;
+
+/// **`0x02A6`: another player's emote.** Table B index 8, handler `FUN_1427862E0`: reads
+/// `u32 emotion, u32 duration, u8 flag` after the router's `u32 charId` and calls
+/// `FUN_14282D710(user, emotion, duration, flag)` - **the very function the sender's client
+/// called on itself** before it sent `0x00EA`. So the relay is the character id plus the
+/// client's own nine bytes, unchanged. **[L]** for both ends (this upgrades
+/// `research/same-map-capability-sweep.md` §4.5's [D]: the local send and the remote handler
+/// meet in the same setter with the same three arguments).
+pub const USER_EMOTION_REMOTE: u16 = 0x02A6;
+
+/// **The client's effect-item toggle**, `0x00EC` inbound: `u32 itemId, u32 slot`. Double-click
+/// (or its hotkey) on a `501xxxx` Cash item - Shadow Style is 5010005. Built by
+/// `FUN_142D4D8C0` / `FUN_142D4B500`, which refuse ids outside `5010000..=5019999`, allow one
+/// switch per 2 s, and **apply it to the local character first** with `FUN_14277CD40(user,
+/// id)` - sending **`0` when the item is already the active one**, which is how "off" is said.
+/// **[L]** Captured 2026-09-29: `55724c00 05000000` (5010005, slot 5), then 2.03 s later
+/// `00000000 05000000` (off). Nothing is expected back.
+pub const CLIENT_EFFECT_ITEM: u16 = 0x00EC;
+
+/// The effect items' id range, as the client checks it (`9999 < id - 0x4C7250` refuses).
+pub const EFFECT_ITEMS: std::ops::RangeInclusive<u32> = 5_010_000..=5_019_999;
+
+/// The item id a `0x00EC` asks for - `0` for "off". `None` for a body too short to be one.
+pub fn parse_effect_item(body: &[u8]) -> Option<u32> {
+    let id = u32::from_le_bytes(body.get(..4)?.try_into().ok()?);
+    Some(id)
+}
+
+/// **`0x02A8`: another player's effect item.** Table B, handler `FUN_1429D4F20` - 32 bytes: one
+/// `u32` after the router's `u32 charId`, then a tail jump into `FUN_14277CD40(user, id)`, the
+/// same setter the sender's client ran on itself (it loads `Item/Cash/0501.img/%08d/effect`;
+/// Shadow Style's is a `spectrum` afterimage, drawn while moving). `0` switches it off. **[L]**
+pub const USER_EFFECT_ITEM_REMOTE: u16 = 0x02A8;
+
+/// Build a [`USER_EFFECT_ITEM_REMOTE`] body: `u32 charId, u32 itemId`.
+pub fn user_effect_item_remote(char_id: u32, item_id: u32) -> Vec<u8> {
+    let mut w = crate::PacketWriter::new();
+    w.u32(char_id);
+    w.u32(item_id);
+    w.into_vec()
+}
+
+/// Build a [`USER_EMOTION_REMOTE`] body from the sender's `0x00EA` body. `None` for a body
+/// that is not exactly [`CLIENT_EMOTION_LEN`] bytes.
+pub fn user_emotion_remote(char_id: u32, emotion_body: &[u8]) -> Option<Vec<u8>> {
+    if emotion_body.len() != CLIENT_EMOTION_LEN {
+        return None;
+    }
+    let mut w = crate::PacketWriter::new();
+    w.u32(char_id);
+    w.bytes(emotion_body);
+    Some(w.into_vec())
+}
+
 #[cfg(test)]
 mod user_hp_remote_tests {
     use super::*;
@@ -441,6 +509,11 @@ pub struct RemoteAt {
     /// Sending a foothold id from a *different* map is still not legal and is the mistake to
     /// watch for when this is wired to a stale position.
     pub foothold: i16,
+    /// Body offset 395: the **active effect item** (Shadow Style and the rest of `501xxxx`),
+    /// `0` for none. Read at `1429ce6f4` and handed straight to `FUN_14277CD40(user, v)`, the
+    /// setter [`USER_EFFECT_ITEM_REMOTE`] also calls - so an arriving client draws a player's
+    /// effect that was switched on before it came. **[L]** (2026-09-29; was an [I] row).
+    pub active_effect_item: u32,
 }
 
 /// **A standing character, facing right** - the fallback when nobody has moved yet.
@@ -729,7 +802,7 @@ pub fn user_enter_field(chr: &crate::opcode::Character, at: RemoteAt) -> Vec<u8>
     w.u32(0); //                  386  passenger id
     w.u8(0); //                   390
     w.u32(0); //                  391
-    w.u32(0); //                  395
+    w.u32(at.active_effect_item); // 395  the active effect item - FUN_14277CD40
     w.u32(0); //                  399
     w.u8(0); //                   403  no trailing string
     w.u32(0); //                  404  damage skin
@@ -983,9 +1056,11 @@ mod tests {
     /// which reads on screen as "the broadcast does not work".
     #[test]
     fn the_position_lands_where_the_client_reads_it() {
-        let at = RemoteAt { x: -1234, y: 567, move_action: 4, foothold: 89 };
+        let at = RemoteAt { x: -1234, y: 567, move_action: 4, foothold: 89, active_effect_item: 5_010_005 };
         let body = user_enter_field(&someone("", &[]), at);
         let p = USER_ENTER_FIELD_POS_AT;
+        let e = p - (426 - 395);
+        assert_eq!(u32::from_le_bytes([body[e], body[e + 1], body[e + 2], body[e + 3]]), 5_010_005, "effect item at 395");
 
         assert_eq!(i16::from_le_bytes([body[p], body[p + 1]]), -1234, "x at 426");
         assert_eq!(i16::from_le_bytes([body[p + 2], body[p + 3]]), 567, "y at 428");

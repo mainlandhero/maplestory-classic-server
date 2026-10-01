@@ -299,7 +299,7 @@ impl Session {
         let move_action =
             self.last_move_action.unwrap_or(net::userpool::MOVE_ACTION_STANDING);
 
-        net::userpool::RemoteAt { x, y, move_action, foothold }
+        net::userpool::RemoteAt { x, y, move_action, foothold, active_effect_item: self.active_effect_item }
     }
 
     /// **Remember where this character is, and tell the bus, so a LATER joiner is not sent
@@ -355,7 +355,7 @@ impl Session {
     /// Both packets are built **now**, including the farewell, because the
     /// farewell has to survive into `Drop` - where there is no store to
     /// load a character from. See `crate::broadcast::Presence`.
-    fn presence(&self, chr: &net::opcode::Character) -> crate::broadcast::Presence {
+    pub(super) fn presence(&self, chr: &net::opcode::Character) -> crate::broadcast::Presence {
         crate::broadcast::Presence {
             character: chr.id,
             map: self.field_of(chr),
@@ -1380,9 +1380,18 @@ mod tests {
             firsttime::EXIT_MAP,
             vec![net::opcode::FieldNpc { object_id: 911, template_id: firsttime::NELLA, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0 }],
         );
+        for (item, name) in [(firsttime::PASS, "Pass"), (firsttime::COUPON, "Coupon"), (4_000_000, "Blue Snail Shell")] {
+            cfg.item_names.insert(item, name.into());
+        }
         let mut s = Session::joining(store.clone(), Arc::new(cfg), fields.clone());
         s.claim_for_character(id);
         let inst = fields.runs().open(9_001, vec![id], store::Store::unix_now());
+        let held = |item: u32| -> u32 {
+            store.bag_items(id, store::InventoryType::Etc).unwrap().iter().filter(|r| r.item.item_id == item).map(|r| u32::from(r.item.kind.quantity())).sum()
+        };
+        let _ = s.give_item(firsttime::PASS, 3, "test").unwrap();
+        let _ = s.give_item(firsttime::COUPON, 5, "test").unwrap();
+        let _ = s.give_item(4_000_000, 2, "test").unwrap();
 
         let click = |object_id: u32| {
             let mut b = net::script::CLIENT_NPC_CLICK.to_le_bytes().to_vec();
@@ -1418,9 +1427,21 @@ mod tests {
         assert!(out.iter().any(|r| r.opcode == net::opcode::SET_FIELD));
         assert_eq!(map_now(&s), firsttime::EXIT_MAP, "out to the Exit");
         assert_eq!(fields.runs().instance_of(id), None, "and out of the run");
+        assert_eq!((held(firsttime::PASS), held(firsttime::COUPON)), (3, 5), "Nella INSIDE takes nothing");
 
-        // 3. Nella on the Exit map sends them to Kerning City.
+        // 3. Nella on the Exit map sends them to Kerning City - and takes every Pass and
+        //    Coupon the moment they are spoken to. The owner, 2026-09-24: *"They may not be taken
+        //    outside of the Party Quest area."* The snail shells are the control.
         let out = s.handle(&click(911));
+        assert_eq!((held(firsttime::PASS), held(firsttime::COUPON)), (0, 0), "none leave the quest");
+        assert_eq!(held(4_000_000), 2, "anything else is theirs to keep");
+        let lines: Vec<Vec<u8>> = out.iter().filter(|r| r.opcode == net::stats::USER_EFFECT_LOCAL).map(|r| r.body.clone()).collect();
+        assert_eq!(
+            lines,
+            vec![net::message::item_lost_in_chat(firsttime::COUPON, 5), net::message::item_lost_in_chat(firsttime::PASS, 3)],
+            "a grey line for each"
+        );
+        assert_eq!(out.last().map(|r| r.opcode), Some(net::script::SCRIPT_MESSAGE), "and then they ask");
         let said = out.iter().find(|r| r.opcode == net::script::SCRIPT_MESSAGE).map(|r| String::from_utf8_lossy(&r.body).to_string()).unwrap_or_default();
         assert!(said.contains("Kerning City"), "{said}");
         let _ = s.handle(&yes());
@@ -2121,6 +2142,92 @@ mod tests {
         assert_eq!(exp_after.iter().zip(&exp_before).map(|(a, b)| a - b).collect::<Vec<_>>(), vec![350, 350]);
         let closed = fields.runs().close(run.id);
         assert!(closed);
+    }
+
+    /// **The King Slime's shoes sit beside the Pass, never on it, and no screen has a hole.**
+    /// The owner, 2026-09-24: the shoes landed *"right on top of the pass"*, and *"the clients
+    /// should also not have weird drop placement such as empty spaces where they do not see a
+    /// drop they can pick up because it's instanced for someone else."*
+    ///
+    /// Claims, with a Pass row and a meso row in the King's table and two members: every
+    /// member's pair lands in the SAME slot; no shared drop is in that slot; and the drops each
+    /// member can see - the shared ones plus their own pair - are one row at an even
+    /// `DROP_STAGGER_PX` spacing, with no two on one spot and no gap. The control for "no gap"
+    /// is the old layout, one slot per member: Mote's row would have had a hole where the
+    /// leader's pair is.
+    #[test]
+    fn the_king_slimes_shoes_share_one_slot_after_the_pass() {
+        use crate::firsttime;
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let stage = firsttime::STAGE_5;
+        let mut cfg = (*config).clone();
+        cfg.fields.insert(stage);
+        cfg.mobs.insert(stage, vec![net::mob::FieldMob::new(1_000, firsttime::KING_SLIME, 162, -435, 1, 100)]);
+        cfg.mob_respawn_s.insert((stage, 1_000), -1);
+        cfg.drops = crate::droptables::DropTables::parse(
+            "800003 | 4001002 | 100 | 1 | 1 | 1 | Pass\n800003 | 0 | 100 | 10 | 10 | 1 | mesos\n",
+        );
+        assert!(cfg.footholds.is_empty(), "no floor data, so every x below is the placement's own");
+        // Squishy Shoes as gm-handbook/equips.txt has them, so item variance has a template.
+        cfg.equips.insert(
+            firsttime::SLIME_SHOES,
+            crate::config::EquipTemplate { tuc: 5, inc_str: 1, inc_dex: 1, inc_int: 1, inc_luk: 1, inc_pdd: 18, inc_mdd: 7, req_level: 28, ..Default::default() },
+        );
+        let config = Arc::new(cfg);
+        let mut ids = Vec::new();
+        let mut sessions = Vec::new();
+        for name in ["Leader", "Mote"] {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: stage, level: 21, ..Default::default() };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.set_character_map(id, stage).unwrap();
+            store.create_migration(account, id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(id);
+            ids.push(id);
+            sessions.push(s);
+        }
+        let created = sessions[0].run_party_request(ids[0], crate::party::Request::Create { name: "P".into() });
+        let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        let _ = sessions[0].run_party_request(ids[0], crate::party::Request::Invite { target: ids[1] });
+        let _ = sessions[1].tick(500);
+        let _ = sessions[1].run_party_request(ids[1], crate::party::Request::Accept { party });
+        let run = fields.runs().open(5_702, ids.clone(), store::Store::unix_now());
+        let key = crate::fields::FieldKey::instanced(stage, run.id);
+        let _ = sessions[0].on_field_entered();
+        let _ = sessions[1].on_field_entered();
+        let _ = sessions[0].tick(1_000);
+        let _ = sessions[1].tick(1_000);
+
+        let _ = sessions[0].deal_to_mob(key, 1_000, 1_000_000, ids[0]);
+        let drops: Vec<crate::drops::LiveDrop> = fields.with_drops(key, |d| d.on_field(key).copied().collect());
+        let shoes: Vec<_> = drops.iter().filter(|d| d.item_id() == firsttime::SLIME_SHOES).collect();
+        let shared: Vec<_> = drops.iter().filter(|d| !d.personal).collect();
+        assert_eq!(shoes.len(), 2, "one pair each");
+        assert_eq!(shared.len(), 2, "the Pass and the mesos: {drops:?}");
+        assert!(shared.iter().any(|d| d.item_id() == firsttime::PASS));
+
+        // Item variance (the owner, 2026-09-24: *"including those dropped by party quests such as
+        // Slime Shoes"*): every pair carries its own rolled stats, inside the caps.
+        for pair in &shoes {
+            let store::ItemKind::Equip(Some(st)) = pair.item.kind else { panic!("unrolled shoes: {pair:?}") };
+            assert!((4..=32).contains(&st.stats.inc_pdd) && st.stats.inc_str <= 2, "{:?}", st.stats);
+        }
+        let slot = (shoes[0].x, shoes[0].y);
+        assert!(shoes.iter().all(|d| (d.x, d.y) == slot), "every member's pair in the one slot: {shoes:?}");
+        assert!(shared.iter().all(|d| d.x != slot.0), "nothing shared under the shoes: {drops:?}");
+        for &viewer in &ids {
+            let mut xs: Vec<i16> = drops.iter().filter(|d| !d.personal || d.owner_id == viewer).map(|d| d.x).collect();
+            xs.sort_unstable();
+            assert_eq!(xs.len(), 3, "character {viewer} sees the Pass, the mesos and their own shoes");
+            let gaps: Vec<i16> = xs.windows(2).map(|w| w[1] - w[0]).collect();
+            assert_eq!(gaps, vec![crate::drops::DROP_STAGGER_PX; 2], "character {viewer}: one even row, no overlap, no hole: {xs:?}");
+            assert!(xs.contains(&162), "the row is still over the corpse: {xs:?}");
+        }
+        // And what each client is actually sent agrees: three drops each, their own pair only.
+        let hers = sessions[1].tick(2_000);
+        assert_eq!(hers.iter().filter(|r| r.opcode == net::drops::DROP_ENTER_FIELD).count(), 3);
+        let _ = fields.runs().close(run.id);
     }
 
     /// **King Slime's MP and summon, on the move acknowledgement.** The owner, 2026-09-24: *"There
@@ -3609,8 +3716,14 @@ level, 200, 1, 0, 15, 50, 15, 7 7 7
     /// **The eating animation and the level-up flash reach the other player.** The owner,
     /// 2026-09-16: *"I do want the eating animation to play for the client and other players.
     /// When closeness levels up, it should also play an animation to the client and other
-    /// players in the map."* The watcher gets `0x027E` type 2 with the food's id and `0x02AF`
-    /// effect 9 / subtype 0 naming the owner.
+    /// players in the map."* The watcher gets `0x02AF` effect 9 / subtype 0 naming the owner.
+    ///
+    /// **And the pet's line is the owner's line** (the owner, 2026-09-25: *"sync the chat bubbles so
+    /// that the dialogues are the same"*). The owner's client reports the line it picked
+    /// (`0x0203`, bytes from the deployed capture) and the watcher is shown exactly that as
+    /// `0x0279` - not a `0x027E` of its own, which made each client pick a random line. Three
+    /// paths, all asserted: the report relays; a report with no feed waiting relays nothing;
+    /// and a feed whose report never comes puts the `0x027E` on the map after the wait.
     #[test]
     fn a_feed_and_the_level_it_earns_are_seen_by_the_other_player() {
         let (store, config, fields) = channel();
@@ -3640,6 +3753,7 @@ level, 200, 1, 0, 15, 50, 15, 7 7 7
         let pet_id = store.pet_id_at(ids[0], store::InventoryType::Cash, 1).unwrap().expect("the Husky is numbered");
         store.set_pet_vitals(pet_id, 1, 0, 50).unwrap();
         let _ = watcher.tick(1_000);
+        let _ = owner.tick(1_000);
 
         let mut body = net::petfood::CLIENT_USE_PET_FOOD.to_le_bytes().to_vec();
         body.extend_from_slice(&0x2050_8e0au32.to_le_bytes());
@@ -3648,18 +3762,39 @@ level, 200, 1, 0, 15, 50, 15, 7 7 7
         let own = owner.handle(&body);
         assert!(own.iter().any(|r| r.opcode == net::pet::PET_ACTION_COMMAND), "the owner sees it eat");
 
+        // 1. The owner's client reports its pet's line - Moth's deployed bytes.
+        let mut report = net::pet::CLIENT_PET_LINE_REPORT.to_le_bytes().to_vec();
+        report.extend(super::tests::hex("0000000061107122020a1500546869732069732064656c6963696f75732e2e2e21"));
+        assert!(owner.handle(&report).is_empty(), "a report is never answered - the builder sets no latch");
         let heard = watcher.tick(2_000);
-        let ate = heard.iter().find(|r| r.opcode == net::pet::PET_ACTION_COMMAND).expect("the watcher sees it eat");
-        assert_eq!(&ate.body[0..4], &ids[0].to_le_bytes(), "the owner's pet");
-        assert_eq!((ate.body[8], ate.body[9]), (net::pet::PET_ACTION_FOOD, 1));
-        // Food id 0 on the map too: a real id draws the auto-feed "Yum, yum!" balloon over the
-        // pet on the watcher's screen as well (2026-09-18; net::pet::pet_ate).
-        assert_eq!(&ate.body[10..14], &net::pet::PET_FOOD_NONE.to_le_bytes());
+        assert!(!heard.iter().any(|r| r.opcode == net::pet::PET_ACTION_COMMAND), "no 0x027E of its own: it would pick its own line");
+        let said = heard.iter().find(|r| r.opcode == net::pet::PET_ACTION).expect("the watcher is shown the owner's line");
+        assert_eq!(&said.body[0..4], &ids[0].to_le_bytes(), "the owner's pet");
+        assert_eq!((said.body[8], said.body[9]), (2, 0x0a), "the two bytes as the owner's client reported them");
+        assert!(said.body.ends_with(b"This is delicious...!"), "the SAME line");
         let flash = heard.iter().find(|r| r.opcode == net::stats::USER_EFFECT_REMOTE).expect("the watcher sees the level-up");
         assert_eq!(&flash.body[0..4], &ids[0].to_le_bytes());
         assert_eq!(&flash.body[4..], &[net::pet::USER_EFFECT_PET, net::pet::PET_EFFECT_LEVEL_UP, 0, 0, 0, 0]);
         // The Cash item itself stays with the owner: nothing the watcher receives is an inventory op.
         assert!(heard.iter().all(|r| r.opcode != net::inventory::INVENTORY_OPERATION));
+
+        // 2. A second report for the same feed - or a bystander's - relays nothing.
+        assert!(owner.handle(&report).is_empty());
+        let _ = owner.tick(5_000);
+        assert!(!watcher.tick(5_000).iter().any(|r| r.opcode == net::pet::PET_ACTION), "one line per feed");
+
+        // 3. A feed whose line never comes: the map gets the eating packet after the wait.
+        let _ = owner.handle(&body);
+        let _ = owner.tick(5_000 + 1_000);
+        assert!(!watcher.tick(6_000).iter().any(|r| r.opcode == net::pet::PET_ACTION_COMMAND), "still waiting for the line");
+        let _ = owner.tick(5_000 + super::super::pet::PET_LINE_WAIT_MS + 1);
+        let late = watcher.tick(8_000);
+        let ate = late.iter().find(|r| r.opcode == net::pet::PET_ACTION_COMMAND).expect("the fallback: the watcher sees it eat");
+        assert_eq!(&ate.body[0..4], &ids[0].to_le_bytes(), "the owner's pet");
+        assert_eq!((ate.body[8], ate.body[9]), (net::pet::PET_ACTION_FOOD, 1));
+        // Food id 0 on the map too: a real id draws the auto-feed "Yum, yum!" balloon over the
+        // pet on the watcher's screen as well (2026-09-18; net::pet::pet_ate).
+        assert_eq!(&ate.body[10..14], &net::pet::PET_FOOD_NONE.to_le_bytes());
     }
 
     /// **A kill on one connection pays a character on another.** This is the whole
