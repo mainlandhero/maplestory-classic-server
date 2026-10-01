@@ -69,7 +69,16 @@ pub fn ensure_identity(dir: &Path) -> io::Result<Identity> {
     let key = PrivateKeyDer::from_pem_file(&key_path)
         .map_err(|e| io::Error::other(format!("{}: {e}", key_path.display())))?;
     let fingerprint = tlspin::Fingerprint::of_der(cert.as_ref());
-    std::fs::write(dir.join(tlspin::FINGERPRINT_FILE), format!("{fingerprint}\n"))?;
+    // **Only when it differs.** `crates/launcher/build.rs` compiles this file's value into the
+    // launcher and cargo decides by modification time, so rewriting the same text at every
+    // start recompiled the launcher on the next package - and every player's launcher then
+    // "updated" to an identical program (the owner, 2026-09-25). The value is unchanged unless the
+    // certificate is new, so an unchanged file is left untouched.
+    let fingerprint_path = dir.join(tlspin::FINGERPRINT_FILE);
+    let fingerprint_text = format!("{fingerprint}\n");
+    if std::fs::read_to_string(&fingerprint_path).ok().as_deref() != Some(fingerprint_text.as_str()) {
+        std::fs::write(&fingerprint_path, fingerprint_text)?;
+    }
     Ok(Identity { cert, key, fingerprint, cert_path, created })
 }
 
@@ -127,8 +136,22 @@ mod tests {
         let written = std::fs::read_to_string(dir.join(tlspin::FINGERPRINT_FILE)).unwrap();
         assert_eq!(tlspin::Fingerprint::parse(&written).unwrap(), first.fingerprint);
 
+        // Backdate the fingerprint file, so a rewrite on the second start would show.
+        let fp = dir.join(tlspin::FINGERPRINT_FILE);
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3_600);
+        std::fs::File::options().write(true).open(&fp).unwrap().set_modified(old).unwrap();
+
         let second = ensure_identity(&dir).unwrap();
         assert!(!second.created, "the files were there, so nothing is regenerated");
+        // **An unchanged fingerprint file is not rewritten** - the launcher's build watches its
+        // modification time, and a rewrite at every start made every package a "new" launcher
+        // for every player (2026-09-25).
+        assert_eq!(std::fs::metadata(&fp).unwrap().modified().unwrap(), old, "left untouched");
+        // A file holding something else IS corrected.
+        std::fs::write(&fp, "stale
+").unwrap();
+        let _ = ensure_identity(&dir).unwrap();
+        assert_eq!(tlspin::Fingerprint::parse(&std::fs::read_to_string(&fp).unwrap()).unwrap(), first.fingerprint, "rewritten when wrong");
         assert_eq!(second.fingerprint, first.fingerprint, "same certificate, same pin");
         assert!(second.server_config().is_ok(), "the pair on disk is a usable TLS identity");
         let _ = std::fs::remove_dir_all(&dir);

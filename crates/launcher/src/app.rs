@@ -42,8 +42,8 @@ enum Msg {
     Registered(RegisterReply),
     Recovered(RecoverReply),
     LaunchFinished(Result<(), String>),
-    /// This executable was replaced and the new one is starting; the window must close.
-    LauncherReplaced { version: String, bytes: u64 },
+    /// This executable was replaced; the new one starts once the player has read why.
+    LauncherReplaced { version: String, bytes: u64, exe: std::path::PathBuf, old: std::path::PathBuf },
     /// The server answered the sign-out.
     SignedOut(crate::http::SignOutReply),
 }
@@ -112,6 +112,16 @@ pub struct LauncherApp {
     /// Set when the launcher has replaced itself: close on the next frame, so the old
     /// executable can be deleted by the new one. `crate::selfupdate`.
     close_after_update: bool,
+    /// **The update this window has installed and not yet restarted into** - the new
+    /// executable, the old one's path, and the version. While it is `Some` the window shows
+    /// the "launcher updated" dialog; OK closes the window, and [`eframe::App::on_exit`]
+    /// starts the new launcher - so closing the window any other way restarts it too.
+    pending_restart: Option<(std::path::PathBuf, std::path::PathBuf, String)>,
+    /// This launcher was started by an update (`--updated-from`): the first thing on screen
+    /// is a dialog saying so, and that a sign-in is needed. The owner, 2026-09-25.
+    show_updated_notice: bool,
+    /// When the log was last copied to the clipboard, for the button's "Copied" feedback.
+    copied_at: Option<std::time::Instant>,
 }
 
 impl LauncherApp {
@@ -148,6 +158,9 @@ impl LauncherApp {
             rx,
             close_after_update: false,
             signing_out: false,
+            pending_restart: None,
+            show_updated_notice: crate::selfupdate::startup_note().is_some(),
+            copied_at: None,
         };
         app.announce_layout();
         // Slightly roomier text than the default; the log pane is the point of the window.
@@ -564,8 +577,8 @@ impl LauncherApp {
             if let Some(pin) = layout.auth_fingerprint {
                 if let Ok(resolved) = plan.resolved() {
                     match crate::selfupdate::check_and_update(&resolved.ip, layout.auth_port, &pin, &mut emit) {
-                        Ok(crate::selfupdate::Outcome::Replaced { version, bytes }) => {
-                            let _ = tx.send(Msg::LauncherReplaced { version, bytes });
+                        Ok(crate::selfupdate::Outcome::Replaced { version, bytes, exe, old }) => {
+                            let _ = tx.send(Msg::LauncherReplaced { version, bytes, exe, old });
                             ctx.request_repaint();
                             return;
                         }
@@ -668,17 +681,18 @@ impl LauncherApp {
                     self.push(level, text.clone());
                     self.status = Some((level, text));
                 }
-                Msg::LauncherReplaced { version, bytes } => {
+                Msg::LauncherReplaced { version, bytes, exe, old } => {
                     self.launching = false;
                     self.remember_settings();
                     self.status = Some((
                         Level::Good,
                         format!(
-                            "launcher updated to {version} ({:.1} MB) - the new launcher is opening; sign in again there",
+                            "launcher updated to {version} ({:.1} MB) - it restarts when you press OK; sign in again there",
                             bytes as f64 / (1024.0 * 1024.0)
                         ),
                     ));
-                    self.close_after_update = true;
+                    // Not closed yet: the dialog explains first (`update_dialogs`).
+                    self.pending_restart = Some((exe, old, version));
                 }
             }
         }
@@ -721,281 +735,415 @@ fn colour(level: Level) -> Color32 {
     }
 }
 
+/// What the old window says before it restarts. The owner, 2026-09-25: *"Can we produce a dialogue
+/// to let users know that the launcher has been updated and it will re-open, they need to login
+/// again?"*
+pub const UPDATED_RESTART_TEXT: &str = "The launcher has been updated.\n\nIt will now close and reopen by itself. \
+     When it does, please sign in again - your account name and server are remembered.";
+
+/// What the NEW window says first.
+pub const UPDATED_WELCOME_TEXT: &str =
+    "The launcher was just updated to the latest version.\n\nPlease sign in again to continue.";
+
+/// The log as plain text for the clipboard: one line each, level first, oldest first, with a
+/// header naming this launcher so a pasted log says where it came from.
+pub fn log_as_text(lines: &[(Level, &str)], exe_dir: &std::path::Path) -> String {
+    let mut out = format!("{WINDOW_TITLE} log - {} line(s) - {}\n", lines.len(), exe_dir.display());
+    for (level, text) in lines {
+        let tag = match level {
+            Level::Info => "info",
+            Level::Good => " ok ",
+            Level::Warn => "WARN",
+            Level::Error => "ERR ",
+        };
+        out.push_str(&format!("[{tag}] {text}\n"));
+    }
+    out
+}
+
+impl LauncherApp {
+    /// The two update dialogs, drawn over the window. egui 0.29 has no modal, so the rest of
+    /// the window is disabled while one is up (`update`).
+    fn update_dialogs(&mut self, ctx: &egui::Context) {
+        if let Some((_, _, version)) = &self.pending_restart {
+            let version = version.clone();
+            egui::Window::new("Launcher updated")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(UPDATED_RESTART_TEXT);
+                    ui.label(RichText::new(format!("version {version}")).small().color(colour(Level::Info)));
+                    ui.add_space(6.0);
+                    if ui.button("  OK - restart the launcher  ").clicked() {
+                        // `on_exit` starts the new one, whichever way the window closes.
+                        self.close_after_update = true;
+                    }
+                });
+        } else if self.show_updated_notice {
+            egui::Window::new("Launcher updated")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(UPDATED_WELCOME_TEXT);
+                    ui.add_space(6.0);
+                    if ui.button("  OK  ").clicked() {
+                        self.show_updated_notice = false;
+                    }
+                });
+        }
+    }
+}
+
 impl eframe::App for LauncherApp {
+    /// **The restart happens here, not on the OK button**, so closing the window with its X
+    /// (or Alt+F4) while the update dialog is up still starts the new launcher - the old one is
+    /// already gone from its path, and a window that closed without restarting would leave the
+    /// player with nothing to click.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some((exe, old, _)) = self.pending_restart.take() {
+            if let Err(e) = crate::selfupdate::restart_into(&exe, &old) {
+                crate::launch::message_box(WINDOW_TITLE, &e);
+            }
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain();
         if self.close_after_update {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+        self.update_dialogs(ctx);
+        let dialog_up = self.pending_restart.is_some() || self.show_updated_notice;
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading(WINDOW_TITLE);
-            ui.label(
-                RichText::new(NO_CREDENTIALS_NOTE)
-                    .small()
-                    .color(colour(Level::Info)),
-            );
-            ui.separator();
+            // Nothing behind an update dialog is clickable - there is nothing to do but read it.
+            ui.add_enabled_ui(!dialog_up, |ui| {
+                ui.heading(WINDOW_TITLE);
+                ui.label(
+                    RichText::new(NO_CREDENTIALS_NOTE)
+                        .small()
+                        .color(colour(Level::Info)),
+                );
+                ui.separator();
 
-            let busy = self.busy() || self.signing_out;
+                let busy = self.busy() || self.signing_out;
 
-            // Which of the three things this window does. Register and Forgot password exist
-            // because a client machine has no database and no useradd: the only way in is a
-            // code from the administrator, typed here.
-            ui.horizontal(|ui| {
-                for (screen, label) in [
-                    (Screen::SignIn, "Sign in"),
-                    (Screen::Register, "Register"),
-                    (Screen::Recover, "Forgot password"),
-                ] {
-                    let selected = self.screen == screen;
-                    if ui.add_enabled(!busy, egui::SelectableLabel::new(selected, label)).clicked()
-                        && !selected
-                    {
-                        self.screen = screen;
-                        self.status = None;
-                    }
-                }
-            });
-            ui.add_space(4.0);
-
-            egui::Grid::new("fields")
-                .num_columns(2)
-                .spacing([10.0, 8.0])
-                .show(ui, |ui| {
-                    match self.screen {
-                        Screen::SignIn => {
-                            Self::text_row(ui, !busy, "Email or account name", &mut self.identity, false, "");
-                            Self::text_row(ui, !busy, "Password", &mut self.password, true, "");
-                        }
-                        Screen::Register => {
-                            Self::text_row(ui, !busy, "Username", &mut self.reg_username, false, "3-24 letters, digits, underscore");
-                            Self::text_row(ui, !busy, "Email", &mut self.reg_email, false, "you@example.com");
-                            Self::text_row(ui, !busy, "Password", &mut self.reg_password, true, store::PASSWORD_POLICY);
-                            Self::text_row(ui, !busy, "Confirm password", &mut self.reg_confirm, true, "");
-                            Self::text_row(ui, !busy, "Registration code", &mut self.reg_code, false, "from the administrator, e.g. 7K3M-PQ2X");
-                        }
-                        Screen::Recover => {
-                            Self::text_row(ui, !busy, "Email or account name", &mut self.rec_identity, false, "");
-                            Self::text_row(ui, !busy, "Recovery code", &mut self.rec_code, false, "from the administrator, e.g. 7K3M-PQ2X");
-                            Self::text_row(ui, !busy, "New password", &mut self.rec_password, true, store::PASSWORD_POLICY);
-                            Self::text_row(ui, !busy, "Confirm new password", &mut self.rec_confirm, true, "");
+                // Which of the three things this window does. Register and Forgot password exist
+                // because a client machine has no database and no useradd: the only way in is a
+                // code from the administrator, typed here.
+                ui.horizontal(|ui| {
+                    for (screen, label) in [
+                        (Screen::SignIn, "Sign in"),
+                        (Screen::Register, "Register"),
+                        (Screen::Recover, "Forgot password"),
+                    ] {
+                        let selected = self.screen == screen;
+                        if ui.add_enabled(!busy, egui::SelectableLabel::new(selected, label)).clicked()
+                            && !selected
+                        {
+                            self.screen = screen;
+                            self.status = None;
                         }
                     }
+                });
+                ui.add_space(4.0);
 
-                    ui.label("Server address (IP or name)");
-                    ui.add_enabled(
-                        !busy,
-                        egui::TextEdit::singleline(&mut self.server_ip).desired_width(300.0),
-                    );
-                    ui.end_row();
+                egui::Grid::new("fields")
+                    .num_columns(2)
+                    .spacing([10.0, 8.0])
+                    .show(ui, |ui| {
+                        match self.screen {
+                            Screen::SignIn => {
+                                Self::text_row(ui, !busy, "Email or account name", &mut self.identity, false, "");
+                                Self::text_row(ui, !busy, "Password", &mut self.password, true, "");
+                            }
+                            Screen::Register => {
+                                Self::text_row(ui, !busy, "Username", &mut self.reg_username, false, "3-24 letters, digits, underscore");
+                                Self::text_row(ui, !busy, "Email", &mut self.reg_email, false, "you@example.com");
+                                Self::text_row(ui, !busy, "Password", &mut self.reg_password, true, store::PASSWORD_POLICY);
+                                Self::text_row(ui, !busy, "Confirm password", &mut self.reg_confirm, true, "");
+                                Self::text_row(ui, !busy, "Registration code", &mut self.reg_code, false, "from the administrator, e.g. 7K3M-PQ2X");
+                            }
+                            Screen::Recover => {
+                                Self::text_row(ui, !busy, "Email or account name", &mut self.rec_identity, false, "");
+                                Self::text_row(ui, !busy, "Recovery code", &mut self.rec_code, false, "from the administrator, e.g. 7K3M-PQ2X");
+                                Self::text_row(ui, !busy, "New password", &mut self.rec_password, true, store::PASSWORD_POLICY);
+                                Self::text_row(ui, !busy, "Confirm new password", &mut self.rec_confirm, true, "");
+                            }
+                        }
 
-                    // **Two ports, and they are two different services.** Sign-in is HTTPS to
-                    // `crates/auth`; the game port is handed to the client afterwards. One box
-                    // labelled "Port" made the invisible one the cause of a failure the
-                    // visible one looked responsible for.
-                    ui.label("Sign-in port");
-                    ui.add_enabled(
-                        !busy,
-                        egui::TextEdit::singleline(&mut self.auth_port_text)
-                            .desired_width(90.0)
-                            .hint_text("8480"),
-                    );
-                    ui.end_row();
-
-                    ui.label("Game port");
-                    ui.add_enabled(
-                        !busy,
-                        egui::TextEdit::singleline(&mut self.port_text)
-                            .desired_width(90.0)
-                            .hint_text("8484"),
-                    );
-                    ui.end_row();
-
-                    // **Where MapleStory.exe is.** Editable and browsable, because every
-                    // install is somewhere different and the resolver can only guess.
-                    ui.label("Game folder");
-                    ui.horizontal(|ui| {
+                        ui.label("Server address (IP or name)");
                         ui.add_enabled(
                             !busy,
-                            egui::TextEdit::singleline(&mut self.client_dir_text)
-                                .desired_width(224.0),
+                            egui::TextEdit::singleline(&mut self.server_ip).desired_width(300.0),
                         );
-                        if ui.add_enabled(!busy, egui::Button::new("Browse…")).clicked() {
-                            self.browse_for_client();
-                        }
-                    });
-                    ui.end_row();
-                });
+                        ui.end_row();
 
-            ui.add_space(4.0);
+                        // **Two ports, and they are two different services.** Sign-in is HTTPS to
+                        // `crates/auth`; the game port is handed to the client afterwards. One box
+                        // labelled "Port" made the invisible one the cause of a failure the
+                        // visible one looked responsible for.
+                        ui.label("Sign-in port");
+                        ui.add_enabled(
+                            !busy,
+                            egui::TextEdit::singleline(&mut self.auth_port_text)
+                                .desired_width(90.0)
+                                .hint_text("8480"),
+                        );
+                        ui.end_row();
 
-            ui.horizontal(|ui| {
-                match self.screen {
-                    Screen::SignIn => {
-                        if ui
-                            .add_enabled(self.can_sign_in(), egui::Button::new("Login"))
-                            .clicked()
-                        {
-                            self.start_sign_in(ctx);
-                        }
+                        ui.label("Game port");
+                        ui.add_enabled(
+                            !busy,
+                            egui::TextEdit::singleline(&mut self.port_text)
+                                .desired_width(90.0)
+                                .hint_text("8484"),
+                        );
+                        ui.end_row();
 
-                        // **Sign out, so a second account does not need a second launcher.**
-                        //
-                        // The owner, 2026-09-02, on the run where two clients first worked: *"I had
-                        // to close and reopen the launcher to be able to login to another
-                        // account since there's no logout button."* Two clients means two
-                        // accounts, and the shape that was fine for one player is a restart for
-                        // every swap.
-                        //
-                        // It clears the sign-in and the password, and **leaves the identity**,
-                        // which is a deliberate asymmetry: the next sign-in is usually the
-                        // OTHER account, so the field wants replacing rather than preserving -
-                        // but retyping a name you can see is cheap, and losing what you typed
-                        // is annoying.
-                        //
-                        // **And it revokes the claim on the server.** The owner, 2026-09-16: *"Can
-                        // we make sign-out button actually revoke the claim please."* Until
-                        // then this was local only, and said so. Now: the sign-in is dropped
-                        // HERE, synchronously - so Start Game (gated on `signed_in`) is
-                        // disabled the instant the button is pressed - then `POST /logout`
-                        // with the session token runs in a worker, and the client credential
-                        // this launch wrote into the game folder is removed, since the claim
-                        // it belonged to is gone.
-                        if ui
-                            .add_enabled(self.signed_in.is_some() && !busy, egui::Button::new("Sign out"))
-                            .clicked()
-                        {
-                            let gone = self.signed_in.take();
-                            wipe(&mut self.password);
-                            self.start_sign_out(ctx, gone);
-                            self.push(
-                                Level::Info,
-                                "--- signed out. The login claim from that sign-in is NOT revoked: it \
-                                 is keyed per launch and expires on its own. A client already running \
-                                 keeps its own session ---"
-                                    .into(),
+                        // **Where MapleStory.exe is.** Editable and browsable, because every
+                        // install is somewhere different and the resolver can only guess.
+                        ui.label("Game folder");
+                        ui.horizontal(|ui| {
+                            ui.add_enabled(
+                                !busy,
+                                egui::TextEdit::singleline(&mut self.client_dir_text)
+                                    .desired_width(224.0),
                             );
-                        }
-
-                        // Disabled until a sign-in has succeeded - the whole point of the
-                        // two-button shape the owner asked for.
-                        let ready = self.signed_in.is_some() && !busy;
-                        let start = ui.add_enabled(ready, egui::Button::new("Start Game"));
-                        if start.clicked() {
-                            // A typed path counts, not only a browsed one.
-                            self.commit_client_dir();
-                            self.commit_auth_port();
-                            match self.port() {
-                                Ok(port) => {
-                                    let plan = Plan {
-                                        ip: self.server_ip.trim().to_string(),
-                                        port,
-                                    };
-                                    self.start_launch(ctx, plan);
-                                }
-                                Err(e) => self.fail(e),
-                            }
-                        }
-                        if self.signed_in.is_none() {
-                            let _ = start.on_disabled_hover_text("sign in first");
-                        }
-                    }
-                    Screen::Register => {
-                        if ui
-                            .add_enabled(self.can_register(), egui::Button::new("Create account"))
-                            .clicked()
-                        {
-                            self.start_register(ctx);
-                        }
-                        ui.label(
-                            RichText::new("The code is single use and comes from the administrator.")
-                                .small()
-                                .color(colour(Level::Info)),
-                        );
-                    }
-                    Screen::Recover => {
-                        if ui
-                            .add_enabled(self.can_recover(), egui::Button::new("Set new password"))
-                            .clicked()
-                        {
-                            self.start_recover(ctx);
-                        }
-                        ui.label(
-                            RichText::new("The code is single use, lasts a day, and is minted for your account only.")
-                                .small()
-                                .color(colour(Level::Info)),
-                        );
-                    }
-                }
-
-                if busy {
-                    ui.spinner();
-                }
-            });
-
-            if let Some((level, text)) = &self.status {
-                ui.add_space(2.0);
-                ui.label(RichText::new(text).color(colour(*level)));
-            }
-
-            // The "Where the launcher is looking" panel was here and is GONE. The owner,
-            // 2026-08-29: *"just remove the entire section."*
-            //
-            // It listed source, launcher, client, stub, output, archives and config - and
-            // most of those are not things a player has any use for. The three that matter
-            // are the fields above: where MapleStory.exe is, which server, which ports.
-            //
-            // **Nothing was hidden by removing it.** The panel also rendered
-            // `Layout::problems()`, and `announce_layout` already pushes exactly those into
-            // the Log pane at startup - so a missing MapleStory.exe still says so, in the
-            // place the rest of the run is reported. `--print-paths` still prints everything
-            // for a machine where a window cannot be scripted into answering.
-
-            ui.separator();
-
-            // **The log is collapsed by default.** The owner, 2026-09-05: *"can we hide it inside
-            // a collapsible panel since the average user will not care?"* The status line
-            // under the buttons is what a player reads; the pane is for the run that went
-            // wrong. Two things keep a collapsed log from hiding a problem: the header counts
-            // warnings, and `push` opens the pane whenever a warning or error arrives - so
-            // `announce_layout`'s "MapleStory.exe not found" at startup is still on screen,
-            // in the place the rest of the run is reported.
-            let warnings = self
-                .log
-                .iter()
-                .filter(|l| matches!(l.level, Level::Warn | Level::Error))
-                .count();
-            let title = if warnings == 0 {
-                format!("Log ({} lines)", self.log.len())
-            } else {
-                format!("Log ({} lines, {warnings} warnings)", self.log.len())
-            };
-            // Forced open for one frame when something worth reading arrived; otherwise the
-            // header keeps whatever the person last set it to.
-            let force_open = std::mem::take(&mut self.reveal_log).then_some(true);
-            egui::CollapsingHeader::new(RichText::new(title).strong())
-                // A fixed id, because the title changes with every line and egui would
-                // otherwise key the open state on the text and forget it each time.
-                .id_salt("log-pane")
-                .default_open(false)
-                .open(force_open)
-                .show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .max_height(260.0)
-                        .auto_shrink([false, false])
-                        .stick_to_bottom(true)
-                        .show(ui, |ui| {
-                            for line in &self.log {
-                                ui.label(
-                                    RichText::new(&line.text)
-                                        .monospace()
-                                        .size(11.0)
-                                        .color(colour(line.level)),
-                                );
+                            if ui.add_enabled(!busy, egui::Button::new("Browse…")).clicked() {
+                                self.browse_for_client();
                             }
                         });
+                        ui.end_row();
+                    });
+
+                ui.add_space(4.0);
+
+                ui.horizontal(|ui| {
+                    match self.screen {
+                        Screen::SignIn => {
+                            if ui
+                                .add_enabled(self.can_sign_in(), egui::Button::new("Login"))
+                                .clicked()
+                            {
+                                self.start_sign_in(ctx);
+                            }
+
+                            // **Sign out, so a second account does not need a second launcher.**
+                            //
+                            // The owner, 2026-09-02, on the run where two clients first worked: *"I had
+                            // to close and reopen the launcher to be able to login to another
+                            // account since there's no logout button."* Two clients means two
+                            // accounts, and the shape that was fine for one player is a restart for
+                            // every swap.
+                            //
+                            // It clears the sign-in and the password, and **leaves the identity**,
+                            // which is a deliberate asymmetry: the next sign-in is usually the
+                            // OTHER account, so the field wants replacing rather than preserving -
+                            // but retyping a name you can see is cheap, and losing what you typed
+                            // is annoying.
+                            //
+                            // **And it revokes the claim on the server.** The owner, 2026-09-16: *"Can
+                            // we make sign-out button actually revoke the claim please."* Until
+                            // then this was local only, and said so. Now: the sign-in is dropped
+                            // HERE, synchronously - so Start Game (gated on `signed_in`) is
+                            // disabled the instant the button is pressed - then `POST /logout`
+                            // with the session token runs in a worker, and the client credential
+                            // this launch wrote into the game folder is removed, since the claim
+                            // it belonged to is gone.
+                            if ui
+                                .add_enabled(self.signed_in.is_some() && !busy, egui::Button::new("Sign out"))
+                                .clicked()
+                            {
+                                let gone = self.signed_in.take();
+                                wipe(&mut self.password);
+                                self.start_sign_out(ctx, gone);
+                                self.push(
+                                    Level::Info,
+                                    "--- signed out. The login claim from that sign-in is NOT revoked: it \
+                                     is keyed per launch and expires on its own. A client already running \
+                                     keeps its own session ---"
+                                        .into(),
+                                );
+                            }
+
+                            // Disabled until a sign-in has succeeded - the whole point of the
+                            // two-button shape the owner asked for.
+                            let ready = self.signed_in.is_some() && !busy;
+                            let start = ui.add_enabled(ready, egui::Button::new("Start Game"));
+                            if start.clicked() {
+                                // A typed path counts, not only a browsed one.
+                                self.commit_client_dir();
+                                self.commit_auth_port();
+                                match self.port() {
+                                    Ok(port) => {
+                                        let plan = Plan {
+                                            ip: self.server_ip.trim().to_string(),
+                                            port,
+                                        };
+                                        self.start_launch(ctx, plan);
+                                    }
+                                    Err(e) => self.fail(e),
+                                }
+                            }
+                            if self.signed_in.is_none() {
+                                let _ = start.on_disabled_hover_text("sign in first");
+                            }
+                        }
+                        Screen::Register => {
+                            if ui
+                                .add_enabled(self.can_register(), egui::Button::new("Create account"))
+                                .clicked()
+                            {
+                                self.start_register(ctx);
+                            }
+                            ui.label(
+                                RichText::new("The code is single use and comes from the administrator.")
+                                    .small()
+                                    .color(colour(Level::Info)),
+                            );
+                        }
+                        Screen::Recover => {
+                            if ui
+                                .add_enabled(self.can_recover(), egui::Button::new("Set new password"))
+                                .clicked()
+                            {
+                                self.start_recover(ctx);
+                            }
+                            ui.label(
+                                RichText::new("The code is single use, lasts a day, and is minted for your account only.")
+                                    .small()
+                                    .color(colour(Level::Info)),
+                            );
+                        }
+                    }
+
+                    if busy {
+                        ui.spinner();
+                    }
                 });
+
+                if let Some((level, text)) = &self.status {
+                    ui.add_space(2.0);
+                    ui.label(RichText::new(text).color(colour(*level)));
+                }
+
+                // The "Where the launcher is looking" panel was here and is GONE. The owner,
+                // 2026-08-29: *"just remove the entire section."*
+                //
+                // It listed source, launcher, client, stub, output, archives and config - and
+                // most of those are not things a player has any use for. The three that matter
+                // are the fields above: where MapleStory.exe is, which server, which ports.
+                //
+                // **Nothing was hidden by removing it.** The panel also rendered
+                // `Layout::problems()`, and `announce_layout` already pushes exactly those into
+                // the Log pane at startup - so a missing MapleStory.exe still says so, in the
+                // place the rest of the run is reported. `--print-paths` still prints everything
+                // for a machine where a window cannot be scripted into answering.
+
+                ui.separator();
+
+                // **The log is collapsed by default.** The owner, 2026-09-05: *"can we hide it inside
+                // a collapsible panel since the average user will not care?"* The status line
+                // under the buttons is what a player reads; the pane is for the run that went
+                // wrong. Two things keep a collapsed log from hiding a problem: the header counts
+                // warnings, and `push` opens the pane whenever a warning or error arrives - so
+                // `announce_layout`'s "MapleStory.exe not found" at startup is still on screen,
+                // in the place the rest of the run is reported.
+                let warnings = self
+                    .log
+                    .iter()
+                    .filter(|l| matches!(l.level, Level::Warn | Level::Error))
+                    .count();
+                let title = if warnings == 0 {
+                    format!("Log ({} lines)", self.log.len())
+                } else {
+                    format!("Log ({} lines, {warnings} warnings)", self.log.len())
+                };
+                // Forced open for one frame when something worth reading arrived; otherwise the
+                // header keeps whatever the person last set it to.
+                let force_open = std::mem::take(&mut self.reveal_log).then_some(true);
+                egui::CollapsingHeader::new(RichText::new(title).strong())
+                    // A fixed id, because the title changes with every line and egui would
+                    // otherwise key the open state on the text and forget it each time.
+                    .id_salt("log-pane")
+                    .default_open(false)
+                    .open(force_open)
+                    .show(ui, |ui| {
+                        // **Copy logs.** The owner, 2026-09-25: *"the launcher client logs needs a "copy
+                        // logs" button to pull all that is printed into their clipboard so that they
+                        // can troubleshoot if they need to by pasting their logs somewhere."*
+                        ui.horizontal(|ui| {
+                            if ui.button("Copy logs").on_hover_text("Copy every line above to the clipboard, to paste where someone can help").clicked() {
+                                let lines: Vec<(Level, &str)> = self.log.iter().map(|l| (l.level, l.text.as_str())).collect();
+                                ui.ctx().copy_text(log_as_text(&lines, &self.layout.exe_dir));
+                                self.copied_at = Some(std::time::Instant::now());
+                            }
+                            if self.copied_at.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(3)) {
+                                ui.label(RichText::new(format!("copied {} line(s)", self.log.len())).small().color(colour(Level::Good)));
+                                ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+                            }
+                        });
+                        egui::ScrollArea::vertical()
+                            .max_height(260.0)
+                            .auto_shrink([false, false])
+                            .stick_to_bottom(true)
+                            .show(ui, |ui| {
+                                for line in &self.log {
+                                    ui.label(
+                                        RichText::new(&line.text)
+                                            .monospace()
+                                            .size(11.0)
+                                            .color(colour(line.level)),
+                                    );
+                                }
+                            });
+                    });
+            });
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **Copy logs** gives every line, oldest first, each with its level, under a header that
+    /// names the launcher - so a pasted log is readable on its own and a warning stands out.
+    #[test]
+    fn the_copied_log_is_every_line_with_its_level() {
+        let lines = [
+            (Level::Info, "launcher: C:/Games/MapleCW"),
+            (Level::Good, "launcher version 7ac7e0bb confirmed with the server"),
+            (Level::Warn, "MapleStory.exe not found"),
+            (Level::Error, "could not reach 10.0.0.5:8484"),
+        ];
+        let text = log_as_text(&lines, std::path::Path::new("C:/Games/MapleCW"));
+        let got: Vec<&str> = text.lines().collect();
+        assert!(got[0].contains("4 line(s)") && got[0].contains(WINDOW_TITLE), "{}", got[0]);
+        assert_eq!(
+            &got[1..],
+            &[
+                "[info] launcher: C:/Games/MapleCW",
+                "[ ok ] launcher version 7ac7e0bb confirmed with the server",
+                "[WARN] MapleStory.exe not found",
+                "[ERR ] could not reach 10.0.0.5:8484",
+            ]
+        );
+        assert_eq!(log_as_text(&[], std::path::Path::new("x")).lines().count(), 1, "an empty log is just the header");
+    }
+
+    /// The two update dialogs say the three things the owner asked for: updated, it reopens, sign in
+    /// again.
+    #[test]
+    fn the_update_dialogs_say_updated_reopens_and_sign_in_again() {
+        for needle in ["updated", "reopen", "sign in again"] {
+            assert!(UPDATED_RESTART_TEXT.to_lowercase().contains(needle), "restart text lacks {needle:?}");
+        }
+        for needle in ["updated", "sign in again"] {
+            assert!(UPDATED_WELCOME_TEXT.to_lowercase().contains(needle), "welcome text lacks {needle:?}");
+        }
     }
 }
