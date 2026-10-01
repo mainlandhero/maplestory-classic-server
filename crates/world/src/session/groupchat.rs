@@ -1,4 +1,12 @@
-//! Party chat - `0x0179` in, `0x01B1` to every other member on this channel.
+//! Party and buddy chat - `0x0179` in, `0x01B1` to every recipient, on any channel.
+//!
+//! **Buddy chat, 2026-09-24.** The owner: *"apparently buddy chat does not work. Buddy chat sent by a
+//! player with buddies should go to all online buddies that the player has added."* Kind 0 was
+//! logged as "not built" and dropped - `Server Investigation/world-ch0.log` 04:32:28, Moth's
+//! `'hewwo'` "went nowhere". It now goes to every **accepted** friend on the sender's list, the
+//! server's own list (`store::friends`), not the recipient list the client sends - the same rule
+//! party chat follows for its roster. Delivery is the same `deliver_anywhere`, so a buddy on
+//! another channel is reached through the hub.
 //!
 //! The owner, 2026-09-14: *"my party member does not receive the message. Party chat works
 //! differently than map all chat. This message should be broadcasted to all party members
@@ -25,22 +33,40 @@ impl Session {
         };
         let Some(chr) = self.claimed_character() else { return Vec::new() };
         let Some(account_id) = self.claimed().map(|c| c.account_id) else { return Vec::new() };
-        if req.kind != net::groupmessage::kind::PARTY {
-            crate::server::log(&format!(
-                "   party chat: kind {} (0 buddy, 2 guild, 3 alliance) is not built; '{}' from {} went nowhere",
-                req.kind, req.text, chr.name
-            ));
-            return Vec::new();
-        }
-        let members: Vec<u32> = match self.fields.parties().party_of(chr.id) {
-            Some(p) => p.members.iter().copied().filter(|&m| m != chr.id).collect(),
-            None => {
-                crate::server::log(&format!("   party chat: {} is in no party; '{}' went nowhere", chr.name, req.text));
+        let (label, members): (&str, Vec<u32>) = match req.kind {
+            net::groupmessage::kind::PARTY => match self.fields.parties().party_of(chr.id) {
+                Some(p) => ("party", p.members.iter().copied().filter(|&m| m != chr.id).collect()),
+                None => {
+                    crate::server::log(&format!("   party chat: {} is in no party; '{}' went nowhere", chr.name, req.text));
+                    return Vec::new();
+                }
+            },
+            // **Buddy chat**: every accepted friend, from the server's own list. A request that
+            // is still waiting is not a friendship, so it does not receive the line.
+            net::groupmessage::kind::BUDDY => (
+                "buddy",
+                self.store
+                    .friends(chr.id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|f| f.state == store::friends::FriendState::Accepted)
+                    .map(|f| f.friend_id)
+                    .collect(),
+            ),
+            _ => {
+                crate::server::log(&format!(
+                    "   group chat: kind {} (2 guild, 3 alliance) is not built; '{}' from {} went nowhere",
+                    req.kind, req.text, chr.name
+                ));
                 return Vec::new();
             }
         };
+        if members.is_empty() {
+            crate::server::log(&format!("   {label} chat: {} has nobody to send '{}' to", chr.name, req.text));
+            return Vec::new();
+        }
         let packet = net::groupmessage::group_message(
-            net::groupmessage::kind::PARTY,
+            req.kind,
             u32::try_from(account_id).unwrap_or(0),
             chr.id,
             u8::try_from(self.config.world_id).unwrap_or(0),
@@ -52,19 +78,19 @@ impl Session {
             let reply = Reply {
                 opcode: net::groupmessage::GROUP_MESSAGE,
                 body: packet.clone(),
-                what: format!("GroupMessage 0x01B1 (party) to character {member}: {} says '{}'", chr.name, req.text),
+                what: format!("GroupMessage 0x01B1 ({label}) to character {member}: {} says '{}'", chr.name, req.text),
             };
             if self.deliver_anywhere(*member, reply) {
                 told += 1;
             } else {
                 crate::server::log(&format!(
-                    "   party chat: member {member} is online nowhere this process can reach (no hub, or between fields) and was NOT told '{}'",
+                    "   {label} chat: {member} is online nowhere this process can reach (offline, no hub, or between fields) and was NOT told '{}'",
                     req.text
                 ));
             }
         }
         crate::server::log(&format!(
-            "   party chat: {} -> {told} of {} member(s), here or via the hub: '{}' (the client listed {:?})",
+            "   {label} chat: {} -> {told} of {} recipient(s), here or via the hub: '{}' (the client listed {:?})",
             chr.name,
             members.len(),
             req.text,

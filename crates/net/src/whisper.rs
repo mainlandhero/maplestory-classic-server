@@ -70,8 +70,15 @@ pub mod kind {
 
 /// The reply's mode byte.
 pub mod mode {
-    /// **Where somebody is**: `str name, u8 place, u32 value`. See [`whisper_found`].
+    /// **Where somebody is**, for a `/find` typed in chat: `str name, u8 place, u32 value`,
+    /// drawn as a chat line. See [`whisper_found`].
     pub const FOUND: u8 = 0x09;
+    /// **The same answer for the buddy window**: `FOUND | 0x40`. The handler's `case 9:
+    /// case 0x48:` shares one arm and then tests `mode & 0x40` - set, the `"%s - %s"` string
+    /// goes into the window's status line where *"Checking location"* was; clear, it is a chat
+    /// line. The request carries the same bit: the window sends kind `0x44` = `0x40 | 5`.
+    /// **[L]**, `FUN_1418486b0`: `bVar7 = read_u8(); switch (bVar7)`.
+    pub const FOUND_IN_WINDOW: u8 = 0x48;
     /// The sender's result: `u8 0, str target, u8 found`.
     pub const SENT: u8 = 0x0A;
     /// A whisper arrives - see the module docs for the body.
@@ -161,16 +168,22 @@ pub fn whisper_receive(from_name: &str, from_id: u32, from_account: u32, from_ch
 ///
 /// ```
 /// use net::whisper::{whisper_found, place};
-/// let b = whisper_found("Wisp", place::MAP, 104040000);
+/// let b = whisper_found("Wisp", place::MAP, 104040000, false);
 /// assert_eq!(b[0], 0x09);
+/// assert_eq!(whisper_found("Wisp", place::MAP, 104040000, true)[0], 0x48);
 /// assert_eq!(&b[1..3], &4u16.to_le_bytes());
 /// assert_eq!(&b[3..7], b"Wisp");
 /// assert_eq!(b[7], place::MAP);
 /// assert_eq!(&b[8..12], &104040000u32.to_le_bytes());
 /// ```
-pub fn whisper_found(name: &str, place: u8, value: u32) -> Vec<u8> {
+///
+/// `in_window` picks the mode: the buddy window's request (kind `0x44`) must be answered with
+/// [`mode::FOUND_IN_WINDOW`], or the client prints *"'Tester2' is currently at 'Victoria Road :
+/// Kerning City'."* in the chat log instead of filling the window - which is exactly what the owner
+/// saw on 2026-09-23 when this sent `0x09` to both.
+pub fn whisper_found(name: &str, place: u8, value: u32, in_window: bool) -> Vec<u8> {
     let mut w = PacketWriter::new();
-    w.u8(mode::FOUND);
+    w.u8(if in_window { mode::FOUND_IN_WINDOW } else { mode::FOUND });
     w.str(name); //              141849833
     w.u8(place); //              14184983c
     w.u32(value); //             141849848

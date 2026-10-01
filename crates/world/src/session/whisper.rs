@@ -107,15 +107,20 @@ impl Session {
                     _ => (net::whisper::place::NOWHERE, 0, "nowhere - not online".to_string()),
                 };
                 let name = target.as_ref().map(|(_, n, _)| n.clone()).unwrap_or_else(|| req.target.clone());
+                // The buddy window asks with kind 0x44 (0x40 | /find) and reads the answer only
+                // if it comes back with the same 0x40 bit - `net::whisper::mode::FOUND_IN_WINDOW`.
+                let in_window = req.kind & 0x40 != 0;
                 crate::server::log(&format!(
                     "   whisper: {} asked where '{}' is -> {said}",
                     chr.name, req.target
                 ));
                 vec![Reply {
                     opcode: net::whisper::WHISPER,
-                    body: net::whisper::whisper_found(&name, place, value),
+                    body: net::whisper::whisper_found(&name, place, value, in_window),
                     what: format!(
-                        "Whisper 0x01B3 mode 0x09: '{name}' is at {said} - the window draws it beside the name, not in chat"
+                        "Whisper 0x01B3 mode {:#04x}: '{name}' is at {said} - {}",
+                        if in_window { net::whisper::mode::FOUND_IN_WINDOW } else { net::whisper::mode::FOUND },
+                        if in_window { "into the buddy window's status line" } else { "a chat line, for /find" }
                     ),
                 }]
             }
