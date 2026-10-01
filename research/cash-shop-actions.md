@@ -523,6 +523,10 @@ classes in the `0x1410Bxxxx` / `0x1410Cxxxx` range. [D]
   `listing.py` refused both (0 instructions), so I could not check whether either reaches the
   stage. Until that is closed, a server should follow `0x3C` with `0x3D` or re-send the
   wallet, and **a delete is the one operation in this family I would not ship first.**
+  **Closed 2026-09-24:** `research/cash-shop-buy-done.md` section 3 lists `0x3C` as clearing
+  `+0x120` but not `+0x74`, so the server now sends `0x3C` followed by `0x05AD`, whose arm clears
+  `+0x74` at `0x140D736DC` and re-triggers a purchase only when `+0x120` is 1 - which `0x3C` has
+  just reset. `session/cashshop.rs::on_delete_cash_item`.
 * **`0x1B`'s fourth `u32`.** It feeds a string-formatting block (`0x1408BC4C0`); whether it
   is a count, a slot or a remaining quantity is not established. Offsets yes, meaning no.
 * **`0x0A`'s `u32` at request `+0x10`.** It is `cashItem + 0x30` (record offset +16) and it
