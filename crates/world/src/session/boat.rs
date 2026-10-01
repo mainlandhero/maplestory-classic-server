@@ -3,11 +3,12 @@
 //!
 //! * **The seller** - Joel in Ellinia Station, Agatha in the Orbis Ticketing Booth - opens with
 //!   a Say and Next brings up a menu of the route's two tickets (`0x055B` type 6).
-//! * **The Platform Usher**, in the booth, takes you to the tunnel to Rini's platform, or
-//!   opens their ferry as before.
+//! * **The Platform Usher**, in the booth, takes you to the tunnel to Rini's platform - and
+//!   nothing else: their ferry was removed on 2026-09-29 (the owner: *"in Orbis, the ferry to El Nath
+//!   or Sleepywood should NOT exist"*).
 //! * **The boarder** - Cherry, or Rini - takes a ticket. A Basic one inside the boarding window
 //!   puts the passenger in the waiting room with everyone else on that departure; a Regular
-//!   one puts them straight on their own ship.
+//!   one puts them in a waiting room of their own for ten seconds, then on their own ship.
 //! * **The tick** sails every waiting voyage whose departure has come and lands every sailing
 //!   voyage whose crossing is over - this session's own passenger directly, the rest through
 //!   `Event::BoatWarp`, because only a passenger's own session can build their `SetField`.
@@ -130,8 +131,6 @@ impl Session {
                 Some(boat::USHER_TO_VICTORIA) => {
                     self.boat_ask(boat::USHER_ASK_PATH, boat::PLATFORM_USHER, boat::USHER_ASK, "to the platform to Victoria Island?")
                 }
-                // Their ferry, exactly as it was before they took anyone to a platform.
-                Some(boat::USHER_FERRY) => self.open_taxi_for(boat::PLATFORM_USHER).unwrap_or_default(),
                 _ => Vec::new(),
             });
         }
@@ -236,10 +235,13 @@ impl Session {
         };
         let mut out = self.take_items(chr.id, store::InventoryType::Etc, r.item(ticket), 1);
         out.push(self.item_chat_line(r.item(ticket), -1));
-        let (voyage, map) = match departs {
-            Some(departs) => (self.fields.voyages().board_shared(chr.id, r.id, departs), r.waiting_room),
-            None => (self.fields.voyages().board_private(chr.id, r.id, now), r.deck),
+        // Both kinds wait in the waiting room: a shared ship until its departure, a private
+        // one for `PRIVATE_WAIT_S` in a room of its own (the owner, 2026-09-29).
+        let voyage = match departs {
+            Some(departs) => self.fields.voyages().board_shared(chr.id, r.id, departs),
+            None => self.fields.voyages().board_private(chr.id, r.id, now),
         };
+        let map = r.waiting_room;
         crate::server::log(&format!(
             "   boat: {} ({}) boarded the ship to {} with a {} - voyage {} ({:?}, {:?}), {} aboard",
             chr.name,
@@ -753,32 +755,54 @@ mod tests {
         assert!(fields.voyages().voyage_of(cat).is_some(), "the next ship has not left");
     }
 
-    /// The Regular ticket: straight onto a ship of one, sailing at once for one minute, whose
-    /// deck is nobody else's.
+    /// The Regular ticket: ten seconds in a waiting room of its own, then a ship of one for a
+    /// minute, whose deck is nobody else's. The owner, 2026-09-29: *"The before travel should also
+    /// last 10 seconds ... This should happen in both directions."*
     #[test]
-    fn a_regular_ticket_is_a_private_one_minute_ship() {
+    fn a_regular_ticket_waits_ten_seconds_alone_then_sails_a_private_minute() {
         let (_, fields, mut ss) = station(&["Solo", "Other"], 50_000);
         let _ = ss[0].0.buy_ticket(O, Ticket::Regular);
         let _ = ss[1].0.buy_ticket(O, Ticket::Regular);
         let now = Store::unix_now();
         // Any time at all - in the last minute before a Basic departure too. The departure
-        // AFTER the next one, so this ship always lands after the first one's minute is up:
-        // the next departure itself can be under 30 s away.
+        // AFTER the next one, so this ship always lands after the first one's is done.
         let closing = boat::next_departure(now) + boat::DEPARTURE_EVERY_S - 30;
         assert!(matches!(boat::boarding(closing), boat::Boarding::Closing { .. }));
         let _ = ss[0].0.board_ship(O, Ticket::Regular, now);
         let _ = ss[1].0.board_ship(O, Ticket::Regular, closing);
-        assert_eq!((map_of(&ss[0].0), map_of(&ss[1].0)), (boat::DECK, boat::DECK), "no waiting room");
-        assert_ne!(ss[0].0.field(), ss[1].0.field(), "each their own ship");
-        let entry = ss[0].0.on_field_entered();
-        assert!(clock_of(&entry).unwrap() <= 60, "one minute");
+        assert_eq!((map_of(&ss[0].0), map_of(&ss[1].0)), (boat::WAITING_ROOM, boat::WAITING_ROOM), "the waiting room first");
+        assert_ne!(ss[0].0.field(), ss[1].0.field(), "each their own waiting room");
+        let entry = ss[0].0.boat_field_entry_at(now);
+        assert_eq!(clock_of(&entry), Some(boat::PRIVATE_WAIT_S as u32), "a ten-second countdown");
         assert_eq!(ss[0].0.held_count(ss[0].1, boat::REGULAR_TICKET), 0);
 
-        let _ = ss[0].0.boat_tick_at(now + boat::PRIVATE_RIDE_S - 1);
+        let t = now + boat::PRIVATE_WAIT_S;
+        let _ = ss[0].0.boat_tick_at(t - 1);
+        assert_eq!(map_of(&ss[0].0), boat::WAITING_ROOM, "not yet");
+        let _ = ss[0].0.boat_tick_at(t);
+        assert_eq!(map_of(&ss[0].0), boat::DECK, "ten seconds, then the deck");
+        assert_ne!(ss[0].0.field(), ss[1].0.field(), "each their own ship");
+        let entry = ss[0].0.boat_field_entry_at(t);
+        assert_eq!(clock_of(&entry), Some(boat::PRIVATE_RIDE_S as u32), "a one-minute countdown");
+
+        let _ = ss[0].0.boat_tick_at(t + boat::PRIVATE_RIDE_S - 1);
         assert_eq!(map_of(&ss[0].0), boat::DECK, "not yet");
-        let _ = ss[0].0.boat_tick_at(now + boat::PRIVATE_RIDE_S);
+        let _ = ss[0].0.boat_tick_at(t + boat::PRIVATE_RIDE_S);
         assert_eq!(map_of(&ss[0].0), boat::ORBIS);
         assert!(fields.voyages().voyage_of(ss[1].1).is_some(), "the other ship is still out");
+
+        // The other direction, the same shape: Orbis platform -> its waiting room -> its deck.
+        let e = &boat::TO_ELLINIA;
+        let (_, _, mut back) = station_at(e.station, &["Home"], 50_000);
+        let (s, id) = &mut back[0];
+        let _ = s.buy_ticket(e, Ticket::Regular);
+        let _ = s.board_ship(e, Ticket::Regular, now);
+        assert_eq!(map_of(s), e.waiting_room, "Erin's waiting room first");
+        let _ = s.boat_tick_at(now + boat::PRIVATE_WAIT_S);
+        assert_eq!(map_of(s), e.deck);
+        let _ = s.boat_tick_at(now + boat::PRIVATE_WAIT_S + boat::PRIVATE_RIDE_S);
+        assert_eq!(map_of(s), e.arrival);
+        assert_eq!(s.held_count(*id, e.item(Ticket::Regular)), 0);
     }
 
     /// **Cherry asks before they board anyone**, as their v96 script does. Refusals come before
@@ -825,7 +849,7 @@ mod tests {
         let _ = s.handle(&click(CHERRY_OBJECT));
         let _ = s.handle(&pick(Ticket::Regular.line()));
         let _ = s.handle(&yes());
-        assert_eq!((map_of(s), s.held_count(id, boat::REGULAR_TICKET)), (boat::DECK, 0), "Yes: aboard");
+        assert_eq!((map_of(s), s.held_count(id, boat::REGULAR_TICKET)), (boat::WAITING_ROOM, 0), "Yes: aboard - its own waiting room first");
     }
 
     /// **The station ship.** Arriving on the station between `:x5` and the departure gets the
@@ -1108,17 +1132,19 @@ mod tests {
         }
     }
 
-    /// **The Platform Usher is still the ferry.** Their second line opens the taxi menu they had
-    /// before, and a menu answer from there is the taxi's, not this module's.
+    /// **The Platform Usher runs no ferry** (the owner, 2026-09-29). Their menu is the platform and
+    /// nothing else; the old ferry line's number answers nothing, costs nothing and moves
+    /// nobody.
     #[test]
-    fn the_platform_usher_still_runs_his_ferry() {
-        let (_, _, mut ss) = station_at(boat::ORBIS, &["Ferryrider"], 10_000);
-        let s = &mut ss[0].0;
-        let _ = s.handle(&click(USHER_OBJECT));
-        let out = s.handle(&pick(boat::USHER_FERRY));
-        assert_eq!(out.len(), 1, "one box: {out:?}");
-        assert_eq!(s.conversation.as_ref().map(|c| c.path.clone()), Some(crate::taxi::MENU_PATH.to_string()), "the taxi's menu is parked");
-        assert!(!said(&out).contains("Platform to Board"), "{}", said(&out));
+    fn the_platform_usher_runs_no_ferry() {
+        let (store, _, mut ss) = station_at(boat::ORBIS, &["Ferryrider"], 10_000);
+        let (s, id) = &mut ss[0];
+        let out = s.handle(&click(USHER_OBJECT));
+        assert!(said(&out).contains("Platform to Board") && !said(&out).contains("ferry"), "{}", said(&out));
+        let out = s.handle(&pick(1));
+        assert!(out.is_empty(), "{out:?}");
+        assert_ne!(s.conversation.as_ref().map(|c| c.path.clone()), Some(crate::taxi::MENU_PATH.to_string()), "no taxi menu");
+        assert_eq!((map_of(s), store.mesos(*id).unwrap()), (boat::ORBIS, 10_000));
     }
 
     /// Both platforms show the station ship, on entry and when it moves; the booth does not.
