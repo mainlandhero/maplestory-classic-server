@@ -1,0 +1,78 @@
+# Excerpt: every 0x0206 line (and the line after it) from the deployed server's
+# Server Investigation/world-ch0.log.4 (15) and world-ch0.log.3 (10), 2026-09-18..19.
+# 25 distinct events, all Moth#219 with an Auto HP/MP pet; none answered.
+# --- world-ch0.log.4
+22:49:12.548 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 007afe301d070083841e0001000000
+22:49:12.549    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+22:49:13.646 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 00b202311d070083841e0001000000
+22:49:13.646    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+22:49:14.650 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 00ae06311d070083841e0001000000
+22:49:14.651    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+22:49:15.635 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 008c0a311d070083841e0001000000
+22:49:15.636    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+22:49:22.833 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 00ac26311d070083841e0001000000
+22:49:22.834    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+22:49:42.488 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 006e73311d100080841e0001000000
+22:49:42.488    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+22:50:06.689 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 0000d2311d100080841e0001000000
+22:50:06.690    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+22:53:07.845 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 009495341d070083841e0001000000
+22:53:07.846    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+22:54:03.785 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 002270351d070083841e0001000000
+22:54:03.785    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+22:54:04.730 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 00c473351d070083841e0001000000
+22:54:04.732    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+22:54:09.247 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 007685351d100080841e0001000000
+22:54:09.248    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+01:01:48.059 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 0025f8a91d080080841e0001000000
+01:01:48.059    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+01:02:00.589 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 002129aa1d080080841e0001000000
+01:02:00.589    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+01:02:05.878 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 00c13daa1d080080841e0001000000
+01:02:05.878    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+01:02:11.036 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 00e951aa1d080080841e0001000000
+01:02:11.037    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+# --- world-ch0.log.3
+04:17:59.921 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 00fb1d5e1e080080841e0001000000
+04:17:59.922    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+04:18:01.419 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 00d7235e1e080080841e0001000000
+04:18:01.419    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+04:18:04.242 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 00db2e5e1e060083841e0001000000
+04:18:04.242    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+04:18:15.863 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 00355c5e1e080080841e0001000000
+04:18:15.864    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+04:18:21.311 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 004d715e1e080080841e0001000000
+04:18:21.311    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+04:19:34.444 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 003d8f5f1e060083841e0001000000
+04:19:34.445    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+04:19:38.195 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 00c59d5f1e060083841e0001000000
+04:19:38.196    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+04:19:39.009 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 000da15f1e060083841e0001000000
+04:19:39.009    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+04:19:39.871 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 0073a45f1e060083841e0001000000
+04:19:39.871    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+--
+04:19:40.754 <- [Moth#219] 0x0206 UNKNOWN, 15 byte body 00bba75f1e060083841e0001000000
+04:19:40.755    0x0206 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/

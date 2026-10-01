@@ -328,13 +328,66 @@ pub fn pet_move_broadcast(character_id: u32, body: &[u8]) -> Option<Vec<u8>> {
 
 /// **`0x0279`**: the pet plays `interact` entry `index` and says `message`.
 pub fn pet_action(character_id: u32, index: u8, success: bool, message: &str) -> Vec<u8> {
+    pet_action_bytes(character_id, index, u8::from(success), message)
+}
+
+/// `0x0279` with both command bytes as given - [`pet_line_relay`] passes on what the owner's
+/// client reported, byte for byte.
+pub fn pet_action_bytes(character_id: u32, first: u8, second: u8, message: &str) -> Vec<u8> {
     let mut w = PacketWriter::new();
     w.u32(character_id);
     w.u32(PET_INDEX);
-    w.u8(index); //           141ec3fa0's first u8  -> FUN_141ec6680's command1
-    w.u8(u8::from(success)); // its second          -> command2, tested as a flag
+    w.u8(first); //  141ec3fa0's first u8  -> FUN_141ec6680's second argument (edi -> edx)
+    w.u8(second); // its second            -> the third (ebx -> r8d)
     w.str(message);
     w.into_vec()
+}
+
+/// **The owner's client reporting the line its pet just said.** Inbound `0x0203`.
+///
+/// The builder is the pet performer itself, `FUN_141ec6680(pet, a, b, line, flag)`, and it
+/// sends only when `flag != 0` (`cmp [rbp+0x4f0],0 / je` at `141ec76a1`) - which of its eight
+/// callers only the `0x027E` arm does, so this follows a feed (`pet_ate`) on the owner's own
+/// client. Fields **[L]** (`tools/encodes.py 0x141ec6680`):
+///
+/// ```text
+/// u32  FUN_14019a5d0(pet+0x138)       0 in all 59 deployed captures
+/// u32  a per-call value               different every time
+/// u8   the performer's second arg     2 in all 59 (food)
+/// u8   its third, written 0 when < 9  0x0a for Moth, 0 for everyone else
+/// str  the line                       "This is delicious...!", "Bark! Bark bark bark!!!"
+/// ```
+///
+/// No latch after the send. `research/pet-line-report-0x0203-2026-09-25.md` has the whole
+/// derivation and the 59 captures.
+pub const CLIENT_PET_LINE_REPORT: u16 = 0x0203;
+
+/// A parsed [`CLIENT_PET_LINE_REPORT`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PetLineReport {
+    pub pet: u32,
+    pub first: u8,
+    pub second: u8,
+    pub line: String,
+}
+
+/// Parse a [`CLIENT_PET_LINE_REPORT`] body (opcode stripped).
+pub fn parse_pet_line_report(body: &[u8]) -> Option<PetLineReport> {
+    let mut r = PacketReader::new(body);
+    let pet = r.u32().ok()?;
+    let _per_call = r.u32().ok()?;
+    let first = r.u8().ok()?;
+    let second = r.u8().ok()?;
+    let line = r.str().ok()?;
+    Some(PetLineReport { pet, first, second, line })
+}
+
+/// **`0x0279` to everyone else on the field: the owner's pet says the owner's line.** The
+/// mirror of [`CLIENT_PET_LINE_REPORT`]: `FUN_141ec3fa0` reads `u8 -> edi, u8 -> ebx, str` and
+/// calls the performer `(pet, edi, ebx, line, 0)` **[L]** - the report's own three fields, and
+/// flag 0, so a relayed line is never reported back.
+pub fn pet_line_relay(character_id: u32, report: &PetLineReport) -> Vec<u8> {
+    pet_action_bytes(character_id, report.first, report.second, &report.line)
 }
 
 /// Server -> client, per user: **the pet performs - a trick by index, or eats.** `FUN_141ec4780`,
@@ -456,6 +509,29 @@ pub fn pet_serial(character_id: u32, pet_id: u32) -> std::num::NonZeroU64 {
 /// Bytes of a `0x0277` activation for a pet whose name is `name_len` bytes long.
 pub const fn pet_activated_len(name_len: usize) -> usize {
     4 + 4 + 1 + 1 + 4 + (2 + name_len) + 8 + 2 + 2 + 1 + 2 + 4 + 4 + 2 + 2 + 1 + 1
+}
+
+#[cfg(test)]
+mod pet_line_tests {
+    use super::*;
+
+    /// Two of the 59 deployed captures, byte for byte, and the relay each becomes.
+    #[test]
+    fn the_deployed_line_reports_parse_and_relay_as_0x0279() {
+        let hex = |h: &str| (0..h.len()).step_by(2).map(|i| u8::from_str_radix(&h[i..i + 2], 16).unwrap()).collect::<Vec<u8>>();
+        let moth = parse_pet_line_report(&hex("0000000061107122020a1500546869732069732064656c6963696f75732e2e2e21")).unwrap();
+        assert_eq!(moth, PetLineReport { pet: 0, first: 2, second: 0x0a, line: "This is delicious...!".into() });
+        let pebble = parse_pet_line_report(&hex("00000000a896ee19020017004261726b21204261726b206261726b206261726b212121")).unwrap();
+        assert_eq!((pebble.first, pebble.second, pebble.line.as_str()), (2, 0, "Bark! Bark bark bark!!!"));
+
+        let relay = pet_line_relay(219, &moth);
+        let mut want = 219u32.to_le_bytes().to_vec();
+        want.extend(PET_INDEX.to_le_bytes());
+        want.extend([2, 0x0a]);
+        want.extend(hex("1500546869732069732064656c6963696f75732e2e2e21"));
+        assert_eq!(relay, want, "charId, petIdx, the two bytes as reported, the same str");
+        assert_eq!(parse_pet_line_report(&hex("0000000061107122020a15")), None, "a cut-off string is refused");
+    }
 }
 
 #[cfg(test)]
