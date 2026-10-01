@@ -9020,7 +9020,9 @@ fn only_the_first_arrival_is_granted_control_and_the_second_is_a_spectator() {
 #[test]
 fn a_respawned_mob_reaches_the_other_player_but_its_grant_does_not() {
     let (store, config, fields, account) = shared_channel(1, 30);
-    // Kill the one mob so its point is booked to refill while both players stand there.
+    // Kill the one mob so the field's next wave refills it while both players stand there.
+    // `shared_channel` ran the field to 999 999, so that wave is at 1 000 000 (`crate::fields`).
+    let wave = 1_000_000;
     let victim = fields.mobs_on(crate::fields::FieldKey::world(SHARED_MAP))[0].spawn.object_id;
     fields.hurt(crate::fields::FieldKey::world(SHARED_MAP), victim, 999, 200, &config, 0);
     assert_eq!(fields.mob_count(crate::fields::FieldKey::world(SHARED_MAP)), 0);
@@ -9029,10 +9031,10 @@ fn a_respawned_mob_reaches_the_other_player_but_its_grant_does_not() {
     let (mut watcher, _) = join_channel(&store, &config, &fields, account, "Watcher");
     ticker.on_field_entered();
     watcher.on_field_entered();
-    let _ = ticker.tick(1_000);
-    let _ = watcher.tick(1_000);
+    let _ = ticker.tick(wave - 1);
+    let _ = watcher.tick(wave - 1);
 
-    let spawned = ticker.tick(1_000 + crate::config::DEFAULT_RESPAWN_MS);
+    let spawned = ticker.tick(wave);
     assert_eq!(count_of(&spawned, net::mob::MOB_ENTER_FIELD), 1, "the refill: {spawned:?}");
     assert_eq!(
         count_of(&spawned, net::mobmove::MOB_CHANGE_CONTROLLER),
@@ -9040,7 +9042,7 @@ fn a_respawned_mob_reaches_the_other_player_but_its_grant_does_not() {
         "claimed by whichever session ticked first"
     );
 
-    let seen = watcher.tick(2_000 + crate::config::DEFAULT_RESPAWN_MS);
+    let seen = watcher.tick(wave + 1_000);
     assert_eq!(
         count_of(&seen, net::mob::MOB_ENTER_FIELD),
         1,

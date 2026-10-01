@@ -344,6 +344,9 @@ impl Store {
         // Citizenship, one row per town a character signed with (2026-09-28). A new table,
         // so CREATE IF NOT EXISTS is the whole migration. `citizenship.rs`.
         crate::citizenship::create_tables(&conn)?;
+        // The buffs a character holds as they change channel (2026-10-01). A new table, so
+        // CREATE IF NOT EXISTS is the whole migration. `carriedbuffs.rs`.
+        crate::carriedbuffs::create_tables(&conn)?;
         // The migration credential columns. These are ALTERed onto `migrations`, which is
         // NOT a new table, so the call carries its own PRAGMA guard - see that module.
         // Every claim entry point already calls this; doing it here too makes the module

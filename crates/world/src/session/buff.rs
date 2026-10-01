@@ -49,6 +49,10 @@ pub(super) struct ActiveBuff {
     /// need it - Hyper Body's percent for the HP ceiling, Power Guard's for the reflection,
     /// Combo's orb count - so the number the server acts on is the number the client drew.
     pub(super) value: i16,
+    /// What the client was told the source is: the skill id, or an item's negative reason
+    /// (`net::buff::item_reason`). Kept because the two id spaces overlap - skill `2001002` is
+    /// Magic Guard and item `2001002` is a potion - and a re-send must say the same thing.
+    pub(super) reason: u32,
 }
 
 /// What one `0x013C` does, decided **before** anything is spent so that a refusal costs
@@ -571,7 +575,7 @@ impl Session {
         };
         for stat in &stats {
             self.buffs.retain(|b| b.bit != stat.bit);
-            self.buffs.push(ActiveBuff { bit: stat.bit, skill_id, expires_ms, value: stat.value });
+            self.buffs.push(ActiveBuff { bit: stat.bit, skill_id, expires_ms, value: stat.value, reason: stat.reason });
         }
         let stat = stats[0];
         let body = net::buff::temporary_stat_set_with_tail(&stats, tail);
@@ -894,7 +898,7 @@ impl Session {
         let stat = net::buff::TemporaryStat {
             bit,
             value,
-            reason: held.skill_id,
+            reason: held.reason,
             duration_ms: if held.expires_ms == u64::MAX {
                 0
             } else {

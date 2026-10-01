@@ -613,6 +613,7 @@ mod megaphone;
 mod weather;
 mod firsttime;
 mod buff;
+mod buffcarry;
 mod chair;
 mod beautycoupon;
 mod salon;
@@ -1338,6 +1339,9 @@ impl Session {
         }
         // And the pet's long-range pickup box. session/pet.rs.
         out.push(self.pet_pickup_range_reply());
+        // The buffs the last channel was holding, re-sent and held here so this channel's tick
+        // takes them down. Nothing on a login from character select. session/buffcarry.rs.
+        out.extend(self.carry_buffs_in());
         out
     }
 

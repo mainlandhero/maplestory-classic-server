@@ -2606,6 +2606,17 @@
              the stat window drops the number. A coupon that outlives its icon or an icon
              that outlives its multiplier is a bug either way - say which.
 
+    29. BUFFS ACROSS A CHANNEL CHANGE + RESPAWN WAVES (2026-10-01). Live is fine for this.
+          a. cast a timed buff (Magic Armor, or a potion), change channel while it runs: the icon
+             is there on the new channel with the time left -> DONE. When it reaches 0 the icon
+             AND the stat go -> DONE
+               icon stuck at 0 = the carry did not land; paste the "buffs:" lines from BOTH
+               channel logs (world-ch0.log and world-ch1.log)
+          b. Magic Guard (no timer) is still on after the change -> DONE
+          c. on a busy field, kill three mobs a few seconds apart: all three come back TOGETHER,
+             at most 8 s after the first kill -> DONE
+               each back 8 s after its own kill = old build
+
     27. WEATHER ITEMS (2026-09-30). Two clients on one map; Sprinkled Chocolate (or any 512xxxx).
           a. use it with a message: chocolate falls and the message shows on BOTH screens, one
              spent -> DONE. After ~30 s it fades out -> DONE
@@ -6174,6 +6185,13 @@ function Show-TestPlan {
         Write-Host '        potion icon yes, coupon icon no -> 163 is not it; kill something,' -ForegroundColor Yellow
         Write-Host '        triple EXP still? report both halves separately' -ForegroundColor Yellow
         Write-Host '     c. wait one out / right-click it: icon AND stat go together' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  29. BUFFS ACROSS CHANNELS + RESPAWN WAVES (2026-10-01), live is fine:' -ForegroundColor White
+        Write-Host '       timed buff on, change channel: icon there with the time left;' -ForegroundColor Green
+        Write-Host '       at 0 the icon AND the stat go -> DONE. Magic Guard survives too -> DONE' -ForegroundColor Green
+        Write-Host '          icon stuck at 0 -> paste the "buffs:" lines from world-ch0.log AND world-ch1.log' -ForegroundColor Yellow
+        Write-Host '       kill 3 mobs a few seconds apart: all 3 back TOGETHER within 8 s -> DONE' -ForegroundColor Green
+        Write-Host '          each back 8 s after its own kill -> old build' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  27. WEATHER ITEMS (2026-09-30): Sprinkled Chocolate etc. with a message, two clients on one map' -ForegroundColor White
         Write-Host '       both see the effect and message, one spent, fades after ~30 s -> DONE' -ForegroundColor Green

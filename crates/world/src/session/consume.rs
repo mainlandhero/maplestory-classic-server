@@ -339,6 +339,7 @@ impl Session {
                 skill_id: item_id,
                 expires_ms,
                 value: stat.value,
+                reason: stat.reason,
             });
         }
         let described: Vec<String> =
