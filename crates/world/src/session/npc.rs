@@ -2685,10 +2685,13 @@ impl Session {
     /// correct book and no book at all; an empty one is the second, and it costs a blank
     /// quest journal instead of a frozen client. The reason travels in the reply's label.
     pub(super) fn quest_book(&self, character_id: u32) -> (net::quest::QuestBook, String) {
+        // Block #28: citizenship (quest 510000) and the Community Board's postings - built
+        // FIRST, because settling the board can give up in-progress board quests (one per
+        // period, `crate::citizenship::settle`) and the book read below must not carry them.
+        let ex = self.quest_ex_records(character_id);
         match self.store.quest_book(character_id) {
             Ok(mut book) => {
-                // Block #28: citizenship (quest 510000) and the Community Board's postings.
-                book.ex = self.quest_ex_records(character_id);
+                book.ex = ex;
                 let note = format!(
                     ", quests: {} started / {} completed / ex records [{}]",
                     book.started.len(),

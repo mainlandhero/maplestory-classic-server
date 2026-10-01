@@ -63,6 +63,9 @@ impl Session {
     /// Block #28's entries for a `SetField`: quest 510000 (when the character ever signed) and
     /// the four board postings. Remembers the postings, so [`Session::board_tick`] can tell
     /// when a day turns under a player who has not changed map.
+    ///
+    /// **Called before the quest book is read** (`Session::quest_book`): settling the board can
+    /// give up in-progress board quests, and the book must not carry them.
     pub(super) fn quest_ex_records(&self, character_id: u32) -> Vec<(u32, String)> {
         let towns = self.standings(character_id);
         let mut out = Vec::new();
@@ -70,7 +73,7 @@ impl Session {
         if !value.is_empty() {
             out.push((net::citizenship::CITIZENSHIP_QUEST, value));
         }
-        let board = cz::board_records(&towns, &self.config.quests, board_now());
+        let (board, _gave_up) = self.board(character_id);
         *self.board_sent.borrow_mut() = Some((store::dailyperks::today(), board.clone()));
         out.extend(board);
         out
@@ -84,13 +87,96 @@ impl Session {
         }
     }
 
+    /// The journal's copy of a board quest the settle gave up.
+    fn gave_up_reply(quest_id: u32) -> Reply {
+        Reply {
+            opcode: net::quest::MESSAGE,
+            body: net::questforfeit::forfeit_reply(quest_id, false),
+            what: format!("quest {quest_id} given up by the server: not this period's board quest (one per character)"),
+        }
+    }
+
+    /// The four board records for `character_id`, each group settled for the period first
+    /// ([`cz::settle`]): a new pick is stored, and in-progress board quests that are not it are
+    /// given up. Returns the records and the quests given up.
+    fn board(&self, character_id: u32) -> (Vec<(u32, String)>, Vec<u32>) {
+        let towns = self.standings(character_id);
+        let level = self.store.character_brief(character_id).ok().flatten().map_or(0, |c| c.level);
+        let rows = self.store.quest_rows(character_id).unwrap_or_default();
+        let now = board_now();
+        let mut records = Vec::new();
+        let mut gave_up = Vec::new();
+        for group in &cz::BOARD_GROUPS {
+            let (posted, dropped) = self.board_group(character_id, group, &towns, level, &rows, now);
+            records.push((group.record_quest, cz::board_record(group, &posted)));
+            gave_up.extend(dropped);
+        }
+        (records, gave_up)
+    }
+
+    /// One group: what it posts for this character now, and what it gave up.
+    fn board_group(
+        &self,
+        character_id: u32,
+        group: &cz::BoardGroup,
+        towns: &[TownStanding],
+        level: u32,
+        rows: &[store::QuestRow],
+        now: i64,
+    ) -> (Vec<u32>, Vec<u32>) {
+        let quests = &self.config.quests;
+        let standing = towns.iter().find(|t| t.town == group.town && t.is_active());
+        // Not a citizen there (the client locks these itself, `st != 1`), or no level to judge
+        // by: what a grade-1 citizen would see, and nothing kept.
+        let Some(standing) = standing.filter(|_| level > 0) else {
+            return (cz::fresh_pick(group, quests, group.period(now), 1, level), Vec::new());
+        };
+        let board_rows: Vec<cz::BoardRow> = rows
+            .iter()
+            .filter(|r| group.contains(r.quest_id))
+            .map(|r| cz::BoardRow {
+                quest_id: r.quest_id,
+                in_progress: r.state == store::QuestState::InProgress,
+                completed_at: r.completed_at,
+            })
+            .collect();
+        let stored = self.store.board_pick(character_id, group.record_quest).ok().flatten();
+        let settled = cz::settle(group, quests, now, standing.grade, level, stored, &board_rows);
+        if settled.save {
+            let period = group.period(now);
+            match self.store.set_board_pick(character_id, group.record_quest, period, &settled.pick) {
+                Ok(()) => crate::server::log(&format!(
+                    "   board {}: character {character_id} (grade {}, level {level}) gets {:?} for period {period}",
+                    group.record_quest, standing.grade, settled.pick
+                )),
+                Err(e) => crate::server::log(&format!("   board {}: pick NOT kept ({e})", group.record_quest)),
+            }
+        }
+        let mut gave_up = Vec::new();
+        for &quest in &settled.drop {
+            match self.store.forget_quest(character_id, quest) {
+                Ok(true) => {
+                    crate::server::log(&format!(
+                        "   board {}: character {character_id}'s quest {quest} given up - one board quest per period",
+                        group.record_quest
+                    ));
+                    gave_up.push(quest);
+                }
+                Ok(false) => {}
+                Err(e) => crate::server::log(&format!("   board {}: quest {quest} NOT given up ({e})", group.record_quest)),
+            }
+        }
+        (settled.posted, gave_up)
+    }
+
     /// The citizenship record and the board postings, live, after anything changed them.
     fn citizenship_record_replies(&self, character_id: u32, why: &str) -> Vec<Reply> {
         let towns = self.standings(character_id);
         let mut out = vec![Self::ex_reply(net::citizenship::CITIZENSHIP_QUEST, &cz::record_value(&towns), why)];
-        let board = cz::board_records(&towns, &self.config.quests, board_now());
+        let (board, gave_up) = self.board(character_id);
+        out.extend(gave_up.into_iter().map(Self::gave_up_reply));
         for (quest, value) in &board {
-            out.push(Self::ex_reply(*quest, value, "the board, for the grade this character has now"));
+            out.push(Self::ex_reply(*quest, value, "the board, as this character's period stands"));
         }
         *self.board_sent.borrow_mut() = Some((store::dailyperks::today(), board));
         out
@@ -109,12 +195,14 @@ impl Session {
             _ => return Vec::new(),
         };
         let Some(chr) = self.claimed_character() else { return Vec::new() };
-        let board = cz::board_records(&self.standings(chr.id), &self.config.quests, board_now());
-        let out = board
-            .iter()
-            .filter(|rec| !sent.contains(rec))
-            .map(|(quest, value)| Self::ex_reply(*quest, value, "the board turned over (UTC)"))
-            .collect();
+        let (board, gave_up) = self.board(chr.id);
+        let mut out: Vec<Reply> = gave_up.into_iter().map(Self::gave_up_reply).collect();
+        out.extend(
+            board
+                .iter()
+                .filter(|rec| !sent.contains(rec))
+                .map(|(quest, value)| Self::ex_reply(*quest, value, "the board turned over (UTC)")),
+        );
         *self.board_sent.borrow_mut() = Some((today, board));
         out
     }
@@ -389,10 +477,22 @@ impl Session {
         }
         let Some(group) = group else { return Ok(false) };
         let now = board_now();
-        let grade = towns.iter().find(|t| t.town == group.town && t.is_active()).map_or(1, |t| t.grade);
-        if !cz::posted_for(group, &self.config.quests, group.period(now), grade).contains(&quest_id) {
-            let when = if group.weekly { "this week" } else { "today" };
-            return Err(self.citizenship_refusal(quest_id, speaker, format!("That notice is not on the board {when}.")));
+        // **This character's posting** - one per period, kept from when the period started.
+        let level = self.store.character_brief(chr.id).ok().flatten().map_or(0, |c| c.level);
+        let rows = self.store.quest_rows(chr.id).unwrap_or_default();
+        let (posted, _gave_up) = self.board_group(chr.id, group, &towns, level, &rows, now);
+        if !posted.contains(&quest_id) {
+            let turned_in = rows.iter().any(|r| {
+                group.contains(r.quest_id) && r.completed_at.is_some_and(|at| group.period(at) == group.period(now))
+            });
+            let text = match (turned_in, group.weekly) {
+                (true, true) => "You have already done this week's notice. The board changes on Monday.".to_string(),
+                (true, false) => "You have already done today's notice. Come back tomorrow.".to_string(),
+                (false, weekly) => {
+                    format!("That notice is not on the board for you {}.", if weekly { "this week" } else { "today" })
+                }
+            };
+            return Err(self.citizenship_refusal(quest_id, speaker, text));
         }
         let row = self.store.quest_row(chr.id, quest_id).ok().flatten();
         match row {
@@ -688,6 +788,7 @@ mod tests {
                     citizenship_check: Some((town, grade)),
                     citizenship_contr: Some(CitizenshipContr { town, amount: None, formula: formula() }),
                     complete_money: 351,
+                    complete_min_level: if grade == 5 { 32 } else { 12 },
                     ..Quest::default()
                 });
             }
@@ -702,6 +803,7 @@ mod tests {
                     citizenship_check: Some((town, g)),
                     citizenship_contr: Some(CitizenshipContr { town, amount: Some(500 + 250 * (u32::from(g) - 1)), formula: None }),
                     complete_money: 351,
+                    complete_min_level: 12 + 5 * (u32::from(g) - 1),
                     ..Quest::default()
                 });
             }
@@ -946,7 +1048,7 @@ mod tests {
     fn board_quests_follow_the_posting_and_the_repeat_rules() {
         let (store, mut s, id) = resident(30, HALL_H, 0);
         let group = &crate::citizenship::BOARD_GROUPS[0];
-        let posted = crate::citizenship::posted_for(group, &s.config.quests, group.period(board_now()), 1);
+        let posted = crate::citizenship::fresh_pick(group, &s.config.quests, group.period(board_now()), 1, 30);
         let asking_after = posted[1];
         let unposted = (506_001..=506_014).find(|q| !posted.contains(q)).unwrap();
 
@@ -990,7 +1092,7 @@ mod tests {
         let (store, mut s, id) = resident(30, HALL_H, 0);
         store.set_citizenship(id, &[active_in(1, 1, 950)]).unwrap();
         let group = &crate::citizenship::BOARD_GROUPS[0];
-        let quest = crate::citizenship::posted_for(group, &s.config.quests, group.period(board_now()), 1)[1];
+        let quest = crate::citizenship::fresh_pick(group, &s.config.quests, group.period(board_now()), 1, 30)[1];
         let _ = s.handle(&quest_request(1, quest, 235));
         let out = s.handle(&quest_request(2, quest, 235));
         assert!(out.iter().any(|r| r.opcode == net::quest::MESSAGE && r.body == net::citizenship::contribution_gained(1, 100)), "{out:?}");
@@ -1024,7 +1126,7 @@ mod tests {
         store.set_rate(store::rates::RateKind::Quest, store::rates::Rate::from_per_cent(1_000), 1).unwrap();
         store.set_citizenship(id, &[active_in(1, 2, 1_000)]).unwrap();
         let group = &crate::citizenship::BOARD_GROUPS[0];
-        let quest = crate::citizenship::posted_for(group, &s.config.quests, group.period(board_now()), 2)[1];
+        let quest = crate::citizenship::fresh_pick(group, &s.config.quests, group.period(board_now()), 2, 30)[1];
         let _ = s.handle(&quest_request(1, quest, 235));
         let out = s.handle(&quest_request(2, quest, 235));
         assert!(out.iter().any(|r| r.body == net::citizenship::contribution_gained(1, 1_500)), "150 at grade 2, x10: {out:?}");
@@ -1054,7 +1156,7 @@ mod tests {
         let id = ss[0].1;
         store.set_citizenship(id, &[active_in(1, 9, 9_950)]).unwrap();
         let group = &crate::citizenship::BOARD_GROUPS[0];
-        let quest = crate::citizenship::posted_for(group, &ss[0].0.config.quests, group.period(board_now()), 9)[1];
+        let quest = crate::citizenship::fresh_pick(group, &ss[0].0.config.quests, group.period(board_now()), 9, 60)[1];
         let _ = ss[0].0.handle(&quest_request(1, quest, 235));
         let out = ss[0].0.handle(&quest_request(2, quest, 235));
         assert_eq!(standing(&store, id), "st1=1;gr1=10;ct1=10450", "500 at grade 9 crosses 10,000");
@@ -1085,7 +1187,7 @@ mod tests {
         store.set_citizenship(id, &[active_in(1, 9, 9_950)]).unwrap();
         while store.add_item(id, store::InventoryType::Equip, &store::Item::equip(1_002_000), 1).is_ok() {}
         let group = &crate::citizenship::BOARD_GROUPS[0];
-        let quest = crate::citizenship::posted_for(group, &s.config.quests, group.period(board_now()), 9)[1];
+        let quest = crate::citizenship::fresh_pick(group, &s.config.quests, group.period(board_now()), 9, 60)[1];
         let _ = s.handle(&quest_request(1, quest, 235));
         let out = s.handle(&quest_request(2, quest, 235));
         assert_eq!(holds(&store, id, HENESYS_EARRINGS), 0);
@@ -1102,6 +1204,71 @@ mod tests {
         let out = s.handle(&click(900));
         assert_ne!(window(&out), Some(net::script::SCRIPT_TYPE_SAY), "next time, the ordinary clerk");
         assert_eq!(holds(&store, id, HENESYS_EARRINGS), 1);
+    }
+
+    /// **One weekly per character per week, at the tier reached when the week began** (the
+    /// owner, 2026-10-01). A grade-up mid-week posts nothing new and the gate refuses the next
+    /// tier's donation; after the turn-in the group posts nothing at all until Monday.
+    #[test]
+    fn a_weekly_is_one_per_week_and_a_grade_up_waits_for_monday() {
+        let (store, mut s, id) = resident(30, HALL_H, 0);
+        store.set_citizenship(id, &[active_in(1, 1, 0)]).unwrap();
+        let group = &crate::citizenship::BOARD_GROUPS[1];
+        let period = group.period(board_now());
+        let tier1 = crate::citizenship::fresh_pick(group, &s.config.quests, period, 1, 30)[0];
+        let tier4 = crate::citizenship::fresh_pick(group, &s.config.quests, period, 4, 30)[0];
+        let (book, _) = s.quest_book(id);
+        assert!(book.ex.contains(&(510_002, format!("q1_w={tier1}"))), "{:?}", book.ex);
+
+        store.set_citizenship(id, &[active_in(1, 4, 3_000)]).unwrap();
+        let out = s.handle(&quest_request(1, tier4, 235));
+        assert!(!accepted(&out, tier4), "grade 4 since Monday: still this week's tier-1 donation");
+        assert!(accepted(&s.handle(&quest_request(1, tier1, 235)), tier1));
+        let out = s.handle(&quest_request(2, tier1, 235));
+        assert_eq!(ex_line(&out, 510_002).as_deref(), Some("q1_w="), "turned in: nothing more this week");
+        let out = s.handle(&quest_request(1, tier4, 235));
+        assert!(!accepted(&out, tier4));
+        assert!(out.iter().any(|r| r.what.contains("already done this week")), "{out:?}");
+    }
+
+    /// The same for a daily: turned in, then a grade-up to 5 offers no leader today.
+    #[test]
+    fn a_daily_turned_in_is_the_days_last_even_after_a_grade_up() {
+        let (store, mut s, id) = resident(40, HALL_H, 0);
+        store.set_citizenship(id, &[active_in(1, 4, 3_990)]).unwrap();
+        let group = &crate::citizenship::BOARD_GROUPS[0];
+        let period = group.period(board_now());
+        let resident_pair = crate::citizenship::fresh_pick(group, &s.config.quests, period, 4, 40);
+        let leader = crate::citizenship::fresh_pick(group, &s.config.quests, period, 5, 40);
+        assert!(accepted(&s.handle(&quest_request(1, resident_pair[1], 235)), resident_pair[1]));
+        let out = s.handle(&quest_request(2, resident_pair[1], 235));
+        assert_eq!(standing(&store, id), "st1=1;gr1=5;ct1=4240", "graded up to 5 on that turn-in");
+        assert_eq!(ex_line(&out, 510_001).as_deref(), Some("q1_d="), "and the daily board is empty");
+        let out = s.handle(&quest_request(1, leader[1], 235));
+        assert!(!accepted(&out, leader[1]), "no leader daily after today's daily");
+    }
+
+    /// **The live server's characters**: three donations in progress from before the rule,
+    /// the top one needing level 22. The next field entry keeps the one the character can
+    /// finish at the highest tier, gives up the rest, and the quest book never shows them.
+    #[test]
+    fn extra_weeklies_in_progress_are_given_up_at_the_next_field_entry() {
+        let (store, s, id) = resident(21, HALL_H, 0);
+        store.set_citizenship(id, &[active_in(1, 3, 2_500)]).unwrap();
+        for quest in [506_019, 506_025, 506_026] {
+            assert!(store.start_quest(id, quest).unwrap());
+        }
+        let (book, _) = s.quest_book(id);
+        let started: Vec<u32> = store
+            .quest_rows(id)
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.state == store::QuestState::InProgress)
+            .map(|r| r.quest_id)
+            .collect();
+        assert_eq!(started, vec![506_025], "the level-17 donation stays; 506019 and the level-22 one go");
+        assert_eq!(book.started.len(), 1, "the journal the client gets agrees");
+        assert!(book.ex.contains(&(510_002, "q1_w=506025".to_string())), "{:?}", book.ex);
     }
 
     /// The field entry's quest book carries quest 510000 and all four board postings.

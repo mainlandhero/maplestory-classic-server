@@ -1649,6 +1649,11 @@ pub struct Quest {
     /// and the purse never moved. `Session::pay_quest_mesos`. The one `Act.0.money` in this
     /// client (quest 10303, `-1000`, a cost to START) is not read.
     pub complete_money: u32,
+    /// `Check.1.lvmin` - the level needed to TURN IT IN (0 when the quest names none). The
+    /// Community Board's weeklies all start at 12 and finish at `12 + 5 (grade - 1)`, so a board
+    /// posting has to look at this one, not the start level (the owner, 2026-10-01: a level-17
+    /// character was offered a donation only level 22 can complete).
+    pub complete_min_level: u32,
 }
 
 /// `Act.1.citizenshipContr`: `town`, and either a flat `amount` (the weeklies, the story arcs)
@@ -1894,6 +1899,9 @@ fn read_quest_rows(text: &str, out: &mut HashMap<u32, Quest>, mode: Overlay) -> 
                     let town = quest.citizenship_check.map_or(0, |(t, _)| t);
                     quest.citizenship_check = Some((town, grade));
                 }
+            }
+            "Check" if fill && dotted == "1.lvmin" => {
+                quest.complete_min_level = value.parse().unwrap_or(0);
             }
             "Act" if fill && dotted == "1.money" => {
                 quest.complete_money = value.parse().unwrap_or(0);
