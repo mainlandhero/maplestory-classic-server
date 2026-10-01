@@ -327,6 +327,8 @@ impl Session {
             // an illegal pair when the bag is full, and a half-applied equip is exactly the
             // state `CLAUDE.md` records as the most expensive kind of bug here.
             let mut freed: Option<String> = None;
+            // The take-off as the CLIENT must see it: `(worn slot, bag slot)`.
+            let mut freed_move: Option<(i16, i16)> = None;
             // The id comes out of the BAG ROW the server owns, never from the slot the client
             // asked for: trusting that would be trusting the client to say what it is wearing,
             // and nothing on this socket is authenticated.
@@ -378,6 +380,7 @@ impl Session {
                         // "unless the player does not have sufficient inventory space" case.
                         match self.store.unequip_to_tab(chr.id, other, tab, None) {
                             Ok(moved) => {
+                                freed_move = Some((-i16::from(other), moved.slot as i16));
                                 freed = Some(format!(
                                     "took off item {} from slot {other} into bag slot {} first \
                                      - an overall and a bottom cannot be worn together",
@@ -399,7 +402,26 @@ impl Session {
                 }
             }
 
-            return match self.store.equip_from_tab(chr.id, tab, src, worn) {
+            // **The take-off goes to the client too, first, as its own move.** The owner,
+            // 2026-10-01: *"by equipping an overall, it takes off the top but leaves the bottom
+            // in conflict. I will try to take off the bottom to no avail, but it does happen in
+            // the backend, I just need to change maps for it to show up."* The store moved the
+            // bottom into the bag and the reply only ever carried the overall's swap, so the
+            // client kept drawing the bottom at -6 - and an unequip of it then named a slot
+            // the server had already emptied, and was refused. A complete `0x0070` of its own
+            // (latch byte and all), so the equip reply after it is unchanged.
+            let mut out: Vec<Reply> = freed_move
+                .map(|(from, to)| Reply {
+                    opcode: net::inventory::INVENTORY_OPERATION,
+                    body: net::inventory::inventory_move_result(m.inv_type, from, to),
+                    what: format!(
+                        "InventoryOperation: move invType {} slot {from} -> {to} - the piece the server took off so the overall/bottom pair is legal",
+                        m.inv_type
+                    ),
+                })
+                .into_iter()
+                .collect();
+            out.extend(match self.store.equip_from_tab(chr.id, tab, src, worn) {
                 Ok(done) => self.inventory_moved(
                     &m,
                     format!(
@@ -422,7 +444,8 @@ impl Session {
                     ),
                 ),
                 Err(e) => self.inventory_refused(&m, &format!("equip refused: {e}")),
-            };
+            });
+            return out;
         }
 
         // **`dst == 0` is a drop**, measured on 2026-08-20: the owner dragged a sword out of the

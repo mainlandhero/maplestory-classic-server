@@ -316,10 +316,13 @@ impl Session {
         let unit = self.config.shops.item_data.get(&item_id).map(|d| d.price).unwrap_or(0);
         match self.store.sell_item(chr.id, inv, slot, Some(quantity), unit) {
             Ok(_) => {
+                // **Type 16, not type 0**: type 0 re-selects the tab of the last PURCHASE
+                // (`net::classicshop::RESULT_ACKNOWLEDGED`), which threw the player back to it
+                // after every sale. 16 only clears the window's latch.
                 let mut out = vec![Reply {
                     opcode: net::classicshop::CLASSIC_SHOP_RESULT,
-                    body: net::classicshop::classic_shop_success(item_id, 0),
-                    what: format!("ClassicShopResult success: sold {quantity}x {item_id} from slot {slot}"),
+                    body: net::classicshop::classic_shop_refused(net::classicshop::RESULT_ACKNOWLEDGED),
+                    what: format!("ClassicShopResult type 16 (acknowledged, no tab change): sold {quantity}x {item_id} from slot {slot}"),
                 }];
                 out.push(Reply {
                     opcode: net::inventory::INVENTORY_OPERATION,
