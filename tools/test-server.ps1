@@ -2606,6 +2606,14 @@
              the stat window drops the number. A coupon that outlives its icon or an icon
              that outlives its multiplier is a bug either way - say which.
 
+    31. V83 DROPS (2026-10-01). Live is fine; note the server's drop rate first.
+          a. Snails and Blue Snails: an equip about 1 kill in 100-200 at 1x (1 in 20-40 at 5x),
+             and no scroll -> DONE. An equip every few kills = the old drop file is still deployed
+          b. Mano: shells nearly every time; at 5x a Wand Magic Attack scroll about 1 kill in 67
+             -> DONE (the drop-table page lists each mob's numbers at any rate)
+          c. Scroll of Secrets / Treasure Scroll: about 1 kill in 200 EACH whatever the rate ->
+             DONE. Far more often at 5x = the global table is still being scaled
+
     30. BEGINNER RECOVERY (2026-10-01). A Beginner with Recovery, hurt.
           a. cast it: a Recovery icon in the tray counting down 30 s, no chat line -> DONE
                no icon = bit 131 is not Recovery's; say so, and whether anything else changed
@@ -6191,6 +6199,12 @@ function Show-TestPlan {
         Write-Host '        potion icon yes, coupon icon no -> 163 is not it; kill something,' -ForegroundColor Yellow
         Write-Host '        triple EXP still? report both halves separately' -ForegroundColor Yellow
         Write-Host '     c. wait one out / right-click it: icon AND stat go together' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  31. V83 DROPS (2026-10-01), live is fine:' -ForegroundColor White
+        Write-Host '       Snails: an equip ~1 kill in 100-200 at 1x (1 in 20-40 at 5x), no scroll -> DONE' -ForegroundColor Green
+        Write-Host '          an equip every few kills -> the old data\drops.txt is still deployed' -ForegroundColor Yellow
+        Write-Host '       Mano at 5x: Wand Magic Attack scroll about 1 kill in 67 -> DONE' -ForegroundColor Green
+        Write-Host '       Scroll of Secrets / Treasure Scroll: ~1 in 200 kills each at ANY rate -> DONE' -ForegroundColor Green
         Write-Host ''
         Write-Host '  30. BEGINNER RECOVERY (2026-10-01), a hurt Beginner:' -ForegroundColor White
         Write-Host '       cast: Recovery icon counting down 30 s, no chat line -> DONE' -ForegroundColor Green

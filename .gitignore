@@ -131,3 +131,7 @@ crates/**/*.dmp
 
 # The launcher.s client checksum cache - a local optimisation, never shared.
 maplecw-hashes.cache
+
+# Third-party files tools/ download at a pinned commit (tools/v83_drops.py: Cosmic's v83 drop
+# tables and String.wz). Re-fetched on demand; never committed.
+/.cache/

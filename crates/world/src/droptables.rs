@@ -12,11 +12,21 @@
 //! cannot be regenerated without network access to a third-party site that may change or
 //! disappear. It is authored source in the same sense `data/shops.txt` is.
 //!
-//! **The item ids are real and the chances are not.** The source gives, per monster, a list
-//! of items and a community *vote score* - no drop rates at all. Mesos are the exception:
-//! those carry a real `min`, `max` and `dropChancePct`. So every item chance in that file is
-//! **our policy**, computed by one function in the scraper from the item's category, and the
-//! raw score is kept in a column so the policy can be changed without scraping again.
+//! **The chances are v83's (2026-10-01).** meowdb gives, per monster, a list of items and a
+//! community *vote score* - no drop rates at all - so the chances used to be a flat policy per
+//! category, and scrolls and early equipment fell several times more often than on any classic
+//! server (`research/drop-rates-vs-v83-2026-10-01.md`). `tools/v83_drops.py` now takes each
+//! matched mob's chances, and the items meowdb was missing, from Cosmic's v83 tables, and puts
+//! meowdb-only rows at the v83 median for their category. The vote score stays in its column.
+//!
+//! # The rate, and the scale, are v83's too
+//!
+//! Chances are held in **parts per million**, as Cosmic's `drop_data` holds them: a v83
+//! equipment row is `0.1287%` and a global Chaos Scroll `0.005%`, neither of which the old
+//! basis points could express. The server's drop rate multiplies every **per-mob** chance; the
+//! **global** table is rolled at its own chance whatever the rate, as Cosmic's
+//! `dropGlobalItemsFromMonsterOnMap` does - a global row is a deliberately rare item, and a 5x
+//! event should not make it five times less rare.
 //!
 //! # Two tables, checked in one order
 //!
@@ -77,17 +87,18 @@ pub const MESOS: u32 = 0;
 /// The line prefix that means "this row belongs to the global table".
 pub const GLOBAL_KEY: &str = "*";
 
-/// Chances are stored in **basis points**, 0..=10000, so `0.01%` is representable and no
-/// float ever decides whether an item dropped.
-pub const BASIS_POINTS: u32 = 10_000;
+/// Chances are stored in **parts per million**, 0..=1 000 000 - v83's own scale (Cosmic's
+/// `drop_data.chance`) - so `0.0001%` is representable and no float ever decides a drop.
+pub const PER_MILLION: u32 = 1_000_000;
 
 /// One row: an item this mob can drop, and how likely it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropEntry {
     /// The game's item id, or [`MESOS`].
     pub item_id: u32,
-    /// 0..=[`BASIS_POINTS`]. **Our policy, not measured** - see the module docs.
-    pub chance_bp: u32,
+    /// 0..=[`PER_MILLION`]. v83's where the mob matched, a v83 category median otherwise -
+    /// see the module docs. Nobody has official per-mob rates.
+    pub chance_ppm: u32,
     /// Inclusive. For [`MESOS`] this is the amount, not a stack size.
     pub min_qty: u32,
     /// Inclusive, and never below `min_qty` - the loader swaps them if a row has it backwards.
@@ -100,9 +111,9 @@ pub struct DropEntry {
 }
 
 impl DropEntry {
-    /// Did this entry drop? `roll` is any number; only `roll % BASIS_POINTS` is used.
+    /// Did this entry drop? `roll` is any number; only `roll % PER_MILLION` is used.
     ///
-    /// `chance_bp == 0` never drops and `chance_bp >= BASIS_POINTS` always does, both
+    /// `chance_ppm == 0` never drops and `chance_ppm >= PER_MILLION` always does, both
     /// without consuming the roll's meaning - a table with a typo'd 0 is silent rather than
     /// surprising.
     pub fn hits(&self, roll: u64) -> bool {
@@ -116,19 +127,19 @@ impl DropEntry {
     /// stack size instead would be a different feature wearing the same name.
     ///
     /// The scaled chance is **capped at certainty**. Without the cap a 40% row at 3x would be
-    /// 120%, and `chance_bp >= BASIS_POINTS` already means "always" - so the cap is what the
+    /// 120%, and `chance_ppm >= PER_MILLION` already means "always" - so the cap is what the
     /// comparison would do anyway, written down where it can be read.
     pub fn hits_at(&self, roll: u64, rate: store::rates::Rate) -> bool {
-        if self.chance_bp == 0 {
+        if self.chance_ppm == 0 {
             // A typo'd 0 stays silent at every rate. Multiplying nothing is still nothing,
             // and `Rate::apply`'s floor-at-1 must not turn a disabled row into a live one.
             return false;
         }
-        let chance = rate.apply(u64::from(self.chance_bp)).min(u64::from(BASIS_POINTS));
-        if chance >= u64::from(BASIS_POINTS) {
+        let chance = rate.apply(u64::from(self.chance_ppm)).min(u64::from(PER_MILLION));
+        if chance >= u64::from(PER_MILLION) {
             return true;
         }
-        (roll % u64::from(BASIS_POINTS)) < chance
+        (roll % u64::from(PER_MILLION)) < chance
     }
 
     /// How many, given a second roll. Inclusive of both ends.
@@ -186,7 +197,7 @@ impl DropTables {
     ///
     /// `#` starts a comment, blank lines are skipped, and a template of `*` puts the row in
     /// the global table. The chance is a **percentage** in the file because that is what a
-    /// human editing it will expect; it is stored in basis points.
+    /// human editing it will expect; it is stored in parts per million.
     pub fn parse(text: &str) -> Self {
         let mut out = DropTables::default();
         for (n, raw) in text.lines().enumerate() {
@@ -244,7 +255,11 @@ impl DropTables {
     ) -> Vec<Rolled> {
         let mine = self.per_mob.get(&template_id).map(Vec::as_slice).unwrap_or(&[]);
         let mut out = Vec::new();
-        for entry in mine.iter().chain(self.global.iter()) {
+        // The mob's own table at the server's rate, then the global one at its own chance
+        // (module docs: v83 never scaled its global drops).
+        let rated = mine.iter().map(|e| (e, rate));
+        let global = self.global.iter().map(|e| (e, store::rates::Rate::NORMAL));
+        for (entry, rate) in rated.chain(global) {
             if entry.hits_at(next(), rate) {
                 out.push(Rolled { item_id: entry.item_id, quantity: entry.quantity(next()) });
             }
@@ -287,7 +302,7 @@ impl DropTables {
 
 fn parse_entry(cols: &[&str]) -> Result<DropEntry, String> {
     let item_id: u32 = cols[1].parse().map_err(|e| format!("item id: {e}"))?;
-    let chance_bp = parse_percent(cols[2])?;
+    let chance_ppm = parse_percent(cols[2])?;
     let min_qty: u32 = cols[3].parse().map_err(|e| format!("min qty: {e}"))?;
     let max_qty: u32 = cols[4].parse().map_err(|e| format!("max qty: {e}"))?;
     let score: i32 = cols.get(5).and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -296,17 +311,17 @@ fn parse_entry(cols: &[&str]) -> Result<DropEntry, String> {
     // the row: `quantity` would otherwise compute a span from a saturating subtraction and
     // silently always return the larger number.
     let (min_qty, max_qty) = if min_qty > max_qty { (max_qty, min_qty) } else { (min_qty, max_qty) };
-    Ok(DropEntry { item_id, chance_bp, min_qty, max_qty, score, name })
+    Ok(DropEntry { item_id, chance_ppm, min_qty, max_qty, score, name })
 }
 
-/// `"40"` -> 4000 bp, `"0.1"` -> 10 bp. Two decimal places, which is the resolution of
-/// basis points; anything finer is rounded rather than rejected.
+/// `"40"` -> 400 000 ppm, `"0.1287"` -> 1287 ppm. Four decimal places, which is the
+/// resolution of parts per million; anything finer is rounded rather than rejected.
 fn parse_percent(s: &str) -> Result<u32, String> {
     let v: f64 = s.parse().map_err(|e| format!("chance: {e}"))?;
     if !(0.0..=100.0).contains(&v) {
         return Err(format!("chance {v} is not a percentage between 0 and 100"));
     }
-    Ok((v * 100.0).round() as u32)
+    Ok((v * 10_000.0).round() as u32)
 }
 
 #[cfg(test)]
@@ -346,9 +361,9 @@ mod tests {
             .unwrap_or_else(|| panic!("the Ligator has no {} row at all", crate::firsttime::COUPON))
             .clone();
         assert!(
-            row.chance_bp >= BASIS_POINTS,
-            "{} bp is not certain - stage 1 counts coupons, it does not gamble for them",
-            row.chance_bp
+            row.chance_ppm >= PER_MILLION,
+            "{} ppm is not certain - stage 1 counts coupons, it does not gamble for them",
+            row.chance_ppm
         );
         assert_eq!((row.min_qty, row.max_qty), (1, 1), "one coupon per Ligator");
         // And it actually drops, for every roll the generator can produce.
@@ -375,7 +390,7 @@ mod tests {
                 .find(|e| e.item_id == crate::firsttime::PASS)
                 .unwrap_or_else(|| panic!("mob {mob} has no Pass row"))
                 .clone();
-            assert!(row.chance_bp >= BASIS_POINTS, "mob {mob}: {} bp is not certain", row.chance_bp);
+            assert!(row.chance_ppm >= PER_MILLION, "mob {mob}: {} ppm is not certain", row.chance_ppm);
             assert_eq!((row.min_qty, row.max_qty), (1, 1), "mob {mob}: one Pass each");
             for roll in [0u64, 1, 9_999, 10_000, u64::MAX] {
                 assert!(row.hits(roll), "mob {mob}: roll {roll} must still drop it");
@@ -402,15 +417,15 @@ mod tests {
                 .iter()
                 .find(|e| e.item_id == id)
                 .unwrap_or_else(|| panic!("{id} is not in the GLOBAL drop table"));
-            assert_eq!(row.chance_bp, 50, "{id} must be 0.5%, which is 50 basis points");
+            assert_eq!(row.chance_ppm, 5_000, "{id} must be 0.5%, which is 5000 per million");
             assert_eq!((row.min_qty, row.max_qty), (1, 1), "{id} drops one at a time");
             // **The dialogue quotes this number, so the quote is tied to the file here.**
             // `crate::scrollnpc::nothing_to_use` tells the player how rare the scrolls are;
             // that text renders `scrolls::GLOBAL_DROP_CHANCE_BP`, and this is what stops the
             // two from drifting apart. Editing either side alone fails.
             assert_eq!(
-                row.chance_bp,
-                crate::scrolls::GLOBAL_DROP_CHANCE_BP,
+                row.chance_ppm,
+                crate::scrolls::GLOBAL_DROP_CHANCE_BP * 100,
                 "{id}'s rate in data/drops.txt and the rate the NPC quotes must be the same"
             );
         }
@@ -484,10 +499,11 @@ mod tests {
     }
 
     #[test]
-    fn a_percentage_becomes_basis_points() {
-        assert_eq!(parse_percent("100").unwrap(), 10_000);
-        assert_eq!(parse_percent("40").unwrap(), 4_000);
-        assert_eq!(parse_percent("0.1").unwrap(), 10);
+    fn a_percentage_becomes_parts_per_million() {
+        assert_eq!(parse_percent("100").unwrap(), 1_000_000);
+        assert_eq!(parse_percent("40").unwrap(), 400_000);
+        assert_eq!(parse_percent("0.1287").unwrap(), 1_287, "a v83 equipment row");
+        assert_eq!(parse_percent("0.005").unwrap(), 50, "v83's global Chaos Scroll");
         assert_eq!(parse_percent("0").unwrap(), 0);
         assert!(parse_percent("101").is_err(), "a percentage cannot exceed 100");
         assert!(parse_percent("-1").is_err());
@@ -498,7 +514,7 @@ mod tests {
     #[test]
     fn the_global_table_is_rolled_even_for_an_unknown_mob() {
         let t = DropTables::parse(SAMPLE);
-        // Always-hit rolls: 0 % 10000 = 0, which is below every non-zero chance.
+        // Always-hit rolls: 0 % 1 000 000 = 0, which is below every non-zero chance.
         let mut always = || 0u64;
         let got = t.roll(9_999_999, &mut always);
         assert_eq!(got.len(), 1, "only the global row exists for an unknown mob");
@@ -518,8 +534,8 @@ mod tests {
     #[test]
     fn nothing_drops_when_every_roll_misses() {
         let t = DropTables::parse(SAMPLE);
-        // 9999 % 10000 = 9999, above every chance in the sample except the 100% mesos row.
-        let mut never = || 9_999u64;
+        // 999 999 is above every chance in the sample except the 100% mesos row.
+        let mut never = || 999_999u64;
         let got = t.roll(2, &mut never);
         assert_eq!(got.len(), 1, "only the guaranteed row survives: {got:?}");
         assert!(got[0].is_mesos());
@@ -529,7 +545,7 @@ mod tests {
     fn quantity_covers_both_ends_inclusively() {
         let e = DropEntry {
             item_id: 2_022_000,
-            chance_bp: 10_000,
+            chance_ppm: PER_MILLION,
             min_qty: 1,
             max_qty: 3,
             score: 0,
@@ -555,14 +571,14 @@ mod tests {
     fn a_zero_chance_never_hits_and_a_full_one_always_does() {
         let zero = DropEntry {
             item_id: 1,
-            chance_bp: 0,
+            chance_ppm: 0,
             min_qty: 1,
             max_qty: 1,
             score: 0,
             name: String::new(),
         };
-        let full = DropEntry { chance_bp: BASIS_POINTS, ..zero.clone() };
-        for roll in [0u64, 1, 5_000, 9_999, u64::MAX] {
+        let full = DropEntry { chance_ppm: PER_MILLION, ..zero.clone() };
+        for roll in [0u64, 1, 5_000, 999_999, u64::MAX] {
             assert!(!zero.hits(roll), "zero chance hit on {roll}");
             assert!(full.hits(roll), "full chance missed on {roll}");
         }
@@ -645,6 +661,51 @@ mod tests {
         assert!(t.has_meso_row(10));
         // A mob with no table at all is not authored either.
         assert!(!t.has_meso_row(999));
+    }
+
+    /// **The server's rate scales a mob's own table and never the global one** - v83's rule
+    /// (Cosmic `dropGlobalItemsFromMonsterOnMap`). A roll of 15% against a 10% mob row and a
+    /// 10% global row: at 2x the mob row hits (20%) and the global one still misses.
+    #[test]
+    fn the_rate_scales_a_mobs_table_but_not_the_global_one() {
+        let t = DropTables::parse("2 | 4000001 | 10 | 1 | 1 | 0 | Snail Shell\n* | 4031065 | 10 | 1 | 1 | 0 | Scroll of Secrets\n");
+        let roll = |rate| {
+            let mut fifteen = || 150_000u64;
+            t.roll_at(2, rate, &mut fifteen).iter().map(|r| r.item_id).collect::<Vec<_>>()
+        };
+        assert!(roll(store::rates::Rate::NORMAL).is_empty(), "15% misses both at 1x");
+        assert_eq!(roll(store::rates::Rate::from_per_cent(200)), vec![4_000_001], "2x: the mob row only");
+    }
+
+    /// **The file is v83's**: a guard against a re-scrape quietly putting the old policy back.
+    /// Snail (template 2) carries v83's numbers - the shell at 60%, mesos 4-6 at 40%, no equipment
+    /// above v83's 0.1287% - and no scroll anywhere in a mob table reaches 1%.
+    #[test]
+    fn the_drop_file_carries_v83_chances() {
+        let tables = DropTables::load(std::path::Path::new("../../data/drops.txt"));
+        assert!(tables.problems.is_empty(), "{:?}", tables.problems);
+        let snail = tables.for_mob(2);
+        let shell = snail.iter().find(|e| e.item_id == 4_000_001).expect("Snail Shell");
+        assert_eq!(shell.chance_ppm, 600_000);
+        let mesos = snail.iter().find(|e| e.item_id == MESOS).expect("a v83 meso row");
+        assert_eq!((mesos.chance_ppm, mesos.min_qty, mesos.max_qty), (400_000, 4, 6));
+        assert!(snail.iter().filter(|e| e.item_id > 0 && e.item_id < 2_000_000).all(|e| e.chance_ppm <= 1_287));
+        let scrolls: Vec<(u32, u32, u32)> = tables
+            .per_mob
+            .iter()
+            .flat_map(|(m, rows)| rows.iter().map(move |e| (*m, e.item_id, e.chance_ppm)))
+            .filter(|&(m, i, c)| m < 700_000 && (2_040_000..2_050_000).contains(&i) && c >= 10_000)
+            .collect();
+        assert!(scrolls.is_empty(), "scroll rows at 1% or more: {scrolls:?}");
+        // The owner, 2026-10-01: *"things such as Wand for Magic Attack scrolls do not drop, but
+        // they should drop from things like Mano."* v83's Mano does; this client renumbered its
+        // scrolls, so they only arrive through `tools/v83_drops.py`'s scroll pairing.
+        for wand in [2_043_701u32, 2_043_702] {
+            assert!(
+                tables.for_mob(700_004).iter().any(|e| e.item_id == wand && e.chance_ppm > 0),
+                "Mano must drop Wand Magic Attack Scroll {wand}"
+            );
+        }
     }
 
     #[test]
