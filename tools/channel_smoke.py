@@ -88,6 +88,9 @@ INVENTORY_SIZE_BLOCK_LEN = INVENTORY_COUNT * 2
 # fold. 24 is the classic-MapleStory bag and it was carried over from a different game
 # version for exactly one commit.
 DEFAULT_INVENTORY_SLOTS = 30
+# The six tabs as a new character gets them: Deco and Cash start at their ceiling of 150 (the
+# owner, 2026-09-12 and 09-13 - net::opcode::DECO_INVENTORY_SLOTS / CASH_INVENTORY_SLOTS).
+DEFAULT_BAG = (30, 30, 30, 30, 150, 150)
 # The owner: the minimum is 30 and going below it has no use - the window draws a fixed
 # 5x6 grid, so a smaller number cannot show on screen.
 MIN_INVENTORY_SLOTS = 30
@@ -155,6 +158,12 @@ db = os.path.join(tmp, "ch.db")
 port = free_port()
 subprocess.run([binary("maplecw-useradd"), "--db", db, "maplecw"],
                input="correct horse battery staple\n", text=True, capture_output=True)
+# **Every `!` command is gated on the account's GM flag** (2026-08-29). Without it the drive's
+# `!map 40` and `!map 104040000` are ordinary chat: no second SetField, no mobs, no refusal, and
+# the balloon checks count three lines instead of one. That was most of nine red checks on
+# 2026-10-02, for one missing flag.
+subprocess.run([binary("maplecw-useradd"), "--db", db, "--gm", "maplecw"],
+               text=True, capture_output=True)
 
 
 def plant_character_and_migration(dbpath, character_id, world_id=0, channel_id=0):
@@ -457,7 +466,18 @@ if PROBE:
         mb = mobs[0]["body"][2:]
         # 137 = 11-byte head + the 20-byte temp-stat mask + the 106-byte encodeInit. The
         # mask gates all 331 optional reads in FUN_14046fba0, so all-zero costs no bytes.
-        check("a mob body is 137 bytes", len(mb) == 137, "%d bytes" % len(mb))
+        # **Byte 10 is the forced-stat flag**, and since the mob-damage work every mob sends the
+        # block: 57 bytes (net::mobdamage::MOB_FORCED_STAT_LEN) carrying the attack power the
+        # client computes contact damage from. It sits BEFORE the temp-stat mask, so everything
+        # after it shifts by 57 - the minimum body is 137 without it and 194 with it.
+        FORCED_STAT_LEN = 8 + 12 * 4 + 1
+
+        def shift(body):
+            return FORCED_STAT_LEN if body[10] == 1 else 0
+
+        check("a mob body is 137 bytes, plus 57 when it carries a forced stat",
+              len(mb) == 137 + shift(mb),
+              "%d bytes, forced stat %d" % (len(mb), mb[10]))
         ids = [struct.unpack_from("<I", r["body"][2:], 1)[0] for r in mobs]
         # A zero object id pulls in an extra u32 and desynchronises the rest; a multiple of
         # 178 takes a branch through a vtable slot on what looks like an exception object.
@@ -466,7 +486,7 @@ if PROBE:
         # 2026-08-19: it takes a callback at 141c50da5 into an interface encodeInit does not
         # build until 0x148 bytes later, so the read lands on a null pointer. Anything with
         # action >= 1 skips it. See net::mob::MOVE_ACTION_MIN_SAFE.
-        actions = [r["body"][2:][35] for r in mobs]
+        actions = [r["body"][2:][35 + shift(r["body"][2:])] for r in mobs]
         check("no mob is sent with move action 0 - that is the crash",
               all(a >= 2 for a in actions), "byte 35 values %s" % sorted(set(actions)))
         check("no mob's object id is a multiple of 178",
@@ -483,8 +503,8 @@ if PROBE:
         # 141c50502 with no zero guard. This is the mob's version of the NPC alpha bug.
         # hp is a u64 at body offset 50 in the 137-byte minimum shape; an appear-option
         # block would shift it by 4, so only read it when the body IS the minimum.
-        hps = [struct.unpack_from("<Q", r["body"][2:], 50)[0]
-               for r in mobs if len(r["body"]) - 2 == 137]
+        hps = [struct.unpack_from("<Q", r["body"][2:], 50 + shift(r["body"][2:]))[0]
+               for r in mobs if len(r["body"]) - 2 == 137 + shift(r["body"][2:])]
         check("no mob is sent with hp = 0 - that is a mob at 0 percent",
               hps and all(h != 0 for h in hps), "%s" % hps[:3])
 
@@ -706,7 +726,11 @@ if PROBE:
             # that had nothing to do with the change in front of it. 8 is the skill block,
             # which is set ONLY for a character that has raised a skill; the smoke character
             # has none, so seeing 8 here would be a real regression.
-            built = (0, 2, 7, 9, 14)
+            # 16 is block #28, the quest ex records: the Community Board's postings
+            # (510001..510004) go to every character, so it is always set now (2026-09-27).
+            # 19 (block #32, the system options) is set only for an account with saved
+            # options, which the smoke account has none of - seeing it would be a regression.
+            built = (0, 2, 7, 9, 14, 16)
             stray = [i for i, b in enumerate(presence) if b and i not in built]
             check("no presence flag is set for a block nobody has built", not stray,
                   "also set: %s" % stray[:6])
@@ -758,9 +782,8 @@ if PROBE:
                 sizes = struct.unpack_from("<6H", body, stat + stat_len + 4)
                 check("all six inventories get a non-zero slot count",
                       all(v > 0 for v in sizes), "%s" % (sizes,))
-                check("the bag is the default size",
-                      all(v == DEFAULT_INVENTORY_SLOTS for v in sizes),
-                      "%s, wanted six of %d" % (sizes, DEFAULT_INVENTORY_SLOTS))
+                check("the bag is the default size - four of 30, Deco and Cash at 150",
+                      sizes == DEFAULT_BAG, "%s, wanted %s" % (sizes, DEFAULT_BAG))
 
                 check("the equipped list carries every item the character wears",
                       [(sl, it) for sl, it, _ in worn] == list(EQUIPS),
