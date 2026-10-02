@@ -382,6 +382,42 @@ carries risk**: the handler's trailing virtual call resolves to a method that re
 and if that resolution is wrong the body is short. Plan step 13(b) asks for `client-exit.log`
 rather than assuming. Never on a screen.
 
+**2026-10-02: a turn-in no longer repeats the quest's completion lines - the client draws `Say.1` itself.**
+Players: *"quests are repeating lines in general."* Decompiling the client's `0x0151` builder
+(`FUN_141f0e4c0`) shows it draws `Say/<state>` - its lines, and the yes/no or menu on the last one -
+before an accept (state 0) AND before a turn-in (state 1), and sends the request only on the positive
+answer [L]. The dialog-free forms are gated on `autoAccept` / `autoCompleteAction`, which no quest in this
+client carries. So the server's answer to action 2 was a second copy of `Say.1`: **287 of 322 quests**
+(82 of them board quests, whose weekly donations repeated a yes/no). Now a turn-in answers `1.yes` if the
+quest has one (140) and otherwise only the record (147); quizzes, chains and action 5 (`endscript`) are
+unchanged. `research/quest-dialogue-who-speaks-2026-10-02.md` has the scan; the 2026-09-13 audit's
+*"`Say.1` is the server's [D]"* is retracted there. Plan step 31.
+
+**2026-10-02: a Yes on a weekly donation's turn-in talk no longer sends two script boxes (a live client
+drop).** The owner reported a client crash on a weekly turn-in "from the amount of contribution"; the
+live log (`research/fixtures/board-weekly-turn-in-yes-sent-two-script-boxes-client-dropped-world.log`,
+handle scrubbed) shows it was the dialogue, not the amount. The quest window's turn-in (`0x0151` action 2)
+completed 506024 and opened its completion talk, which in the client's data is a yes/no ("1": "...are
+you saying you'd like to donate?", "1.yes": thanks). The Yes went through the generic yes/no handler,
+which took EVERY Yes as accepting the quest: the start gate refused ("already done this week"), and the
+`1.yes` branch line was sent after the refusal - two `0x055B` at once. The client returned the second in
+a `0x009E` and dropped 15 s later (`os error 10054`). Fixed in `session/npc.rs`: only a Yes on an offer
+(a state-`0` path) accepts, and a parked refusal is the whole answer, as it already was on the turn-in
+path. Every weekly donation has that yes/no, which is why only weeklies did it. The replay test fails
+with the fix removed, producing exactly the captured pair.
+
+**2026-10-02: citizenship Contribution is per grade and resets on promotion.** The owner, on why the points
+were "very off": *"From grade 1 to grade 2, it requires 1000 contribution from when the player is in grade 1.
+After leveling to grade 2, the contribution resets to 0 (player retains any excess that exceeds the grade
+limit), and it requires 2000 contribution ... From grade 1 to grade 3, it means that total of 3000
+contribution is required."* The table's numbers had been read as cumulative thresholds, so grade 3 came at
+2,000 in total and Citizen of Honor at 10,000 instead of 46,000. Now `GRADE_REQUIREMENTS` (1,000 .. 8,000,
+then 10,000 at grade 9) is what each grade needs of its own, and `regrade` takes it off and carries the
+excess (several grades at once if one turn-in covers them). **The live database converts itself once** on
+the first open (`store::citizenship`, column `per_grade` as the marker, one transaction): every character
+keeps their grade, and `ct` becomes the total minus the old threshold of that grade - nobody is demoted.
+Tests: the owner's own example (3,000 for grade 1 to 3), 46,000 for 1 to 10, the conversion run twice.
+
 **2026-10-01: Chaos, Pure Clean Slate, Innocence and the Lucky Day Scroll, backported from the modern
 client - dragged onto equipment like any scroll.** The owner: *"I want to be able to preserve the click and
 drag scrolling which we cannot achieve with our hacked-together Scroll of Secrets method"*; *"We can use
