@@ -2606,6 +2606,17 @@
              the stat window drops the number. A coupon that outlives its icon or an icon
              that outlives its multiplier is a bug either way - say which.
 
+    35. DEATH WITH A PET + TWO CLIENTS (2026-10-02). Two characters on one map; the dying one has a
+        pet with Auto HP on.
+          a. die: the revive dialog opens and the pet drinks NOTHING; HP stays 0, the stack is unchanged.
+             A potion arriving -> the refusal did not fire; world-ch0.log says "refused, character N
+             is DEAD"
+          b. ON THE OTHER CLIENT: does the dead character lie down as a ghost / get a tombstone?
+             YES -> the forwarded stance is enough. NO -> an observer needs a packet nobody has found
+             yet (research/same-map-capability-sweep.md row 14); say what you DID see
+          c. REVIVE IN TOWN: town, 50 HP. The character that crashed every login (saved on map 0)
+             now logs in to Henesys
+
     34. DROP PAGE: MAPS (2026-10-01). After a redeploy.
           a. no Ludibrium monster (Ratz, Chronos, Thanatos) is listed; Crimson Balrog is, saying it
              invades the ship -> DONE
@@ -6270,6 +6281,12 @@ function Show-TestPlan {
         Write-Host '        potion icon yes, coupon icon no -> 163 is not it; kill something,' -ForegroundColor Yellow
         Write-Host '        triple EXP still? report both halves separately' -ForegroundColor Yellow
         Write-Host '     c. wait one out / right-click it: icon AND stat go together' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  35. DEATH WITH A PET + TWO CLIENTS (2026-10-02) - Auto HP pet on, die near the other client' -ForegroundColor White
+        Write-Host '       a. dialog opens, pet drinks NOTHING, HP stays 0 (a potion = refusal did not fire)' -ForegroundColor Cyan
+        Write-Host '       b. OTHER client: ghost / tombstone on the dead one? YES = stance is enough;' -ForegroundColor Cyan
+        Write-Host '          NO = an observer needs a packet not yet found - say what you saw' -ForegroundColor Yellow
+        Write-Host '       c. REVIVE IN TOWN -> town, 50 HP; the character saved on map 0 logs in to Henesys' -ForegroundColor Cyan
         Write-Host ''
         Write-Host '  34. DROP PAGE MAPS (2026-10-01): no Ludibrium monsters; Slime "Found on" lists its maps, most spawns first -> DONE' -ForegroundColor Green
         Write-Host ''

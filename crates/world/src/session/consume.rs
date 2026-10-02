@@ -65,6 +65,28 @@ impl Session {
         let Some(mut chr) = self.claimed_character() else {
             return self.use_refused("no character is claimed on this connection".to_string());
         };
+        // **The dead drink nothing.** The owner, 2026-10-01: *"The server says I was dead, gave me
+        // the revive in town window, but my pet still auto potioned me."* The pet's `0x0206` was
+        // built while the client still had 225 HP and arrived in the same millisecond as the
+        // `0x007C` that set 0, so the server saw a dead character and healed it to 100. That
+        // undid the death the dialog was about: the client stayed standing, nobody else saw a
+        // death, and REVIVE IN TOWN then reached `on_transfer_field` as a live player's warp to
+        // map 0 - saved, and a client crash on every login after.
+        //
+        // `hp == 0` is the only thing that makes a character dead here, so anything that
+        // raises it is a revive. Refused before the bag is touched: nothing is consumed, and
+        // the empty `0x007C` still clears the latch. No chat line - an Auto HP pet would
+        // repeat it for as long as the dialog stays open.
+        if chr.hp == 0 {
+            return vec![Reply {
+                opcode: net::stats::STAT_CHANGED,
+                body: net::stats::StatChange::default().build(),
+                what: format!(
+                    "StatChanged: EMPTY - item {} from Use slot {} refused, character {} is DEAD (hp 0). Nothing consumed; byte 0 clears the client's request latch",
+                    req.item_id, req.slot, chr.id
+                ),
+            }];
+        }
         let Ok(slot) = u16::try_from(req.slot) else {
             return self.use_refused(format!("slot {} is not a bag slot", req.slot));
         };

@@ -171,6 +171,13 @@ impl Session {
             self.recovering = None;
             return Vec::new();
         };
+        // **Death ends it.** A tick lifting 0 HP to anything is a revive, the same hole
+        // `regen_tick` closed on 2026-08-27 and the pet's potion reopened on 2026-10-01.
+        if chr.hp == 0 {
+            self.recovering = None;
+            crate::server::log("   recovery: the character died, so the heal ends here");
+            return Vec::new();
+        }
 
         // Consume the tick whether or not it heals anything. A full bar does not extend the
         // duration: the tooltip promises HP "in 30 sec", not thirty seconds of *effective*
@@ -379,6 +386,21 @@ mod tests {
         assert!(out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET), "{out:?}");
         assert!(s.recovering.is_none(), "the heal stopped");
         assert!(!s.tick(6_000).iter().any(|r| r.opcode == net::stats::STAT_CHANGED), "and nothing more arrives");
+    }
+
+    /// Dying ends the heal: a tick on 0 HP would be a revive, the hole the pet's potion opened
+    /// on 2026-10-01. HP stays 0 and nothing is owed after.
+    #[test]
+    fn dying_ends_the_heal_instead_of_reviving() {
+        let (store, mut s, _id) = hurt_beginner();
+        s.clock_ms = 1_000;
+        let _ = cast(&mut s);
+        let mut chr = s.claimed_character().unwrap();
+        chr.hp = 0;
+        store.save_character_progress(&chr).unwrap();
+        assert!(!s.tick(6_000).iter().any(|r| r.opcode == net::stats::STAT_CHANGED), "no heal for the dead");
+        assert_eq!(s.claimed_character().unwrap().hp, 0, "still dead");
+        assert!(s.recovering.is_none(), "and the heal is over, not paused");
     }
 
     #[test]
