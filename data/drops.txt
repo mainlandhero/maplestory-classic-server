@@ -1435,7 +1435,7 @@
 1000 | 2040312 | 0.03 | 1 | 1 | 0 | Earring LUK Scroll: Lesser
 1000 | 2040900 | 0.03 | 1 | 1 | 0 | Shield DEF Scroll: Lesser
 1001 | 0 | 40 | 60 | 90 | 0 | mesos
-1001 | 4000000 | 60 | 1 | 1 | 2 | Jr. Sentinel Shellpiece
+1001 | 4000067 | 60 | 1 | 1 | 2 | Jr. Sentinel Shellpiece
 1001 | 2000001 | 2 | 1 | 1 | 2 | Orange Potion
 1001 | 2000003 | 2 | 1 | 1 | 1 | Blue Potion
 1001 | 2060000 | 2 | 10 | 30 | 1 | Arrows for Bows
