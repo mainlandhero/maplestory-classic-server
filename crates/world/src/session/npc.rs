@@ -736,6 +736,10 @@ impl Session {
         let Some(&want) = quest.set_hp.get(&state) else { return Vec::new() };
         let Some(mut chr) = self.claimed_character() else { return Vec::new() };
         let was = chr.hp;
+        // A quest's health is not a revive: only the revive path brings the dead back.
+        if was == 0 {
+            return Vec::new();
+        }
         chr.hp = want.min(self.pools(&chr).max_hp);
         if chr.hp == was {
             return Vec::new();

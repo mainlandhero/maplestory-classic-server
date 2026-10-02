@@ -1289,6 +1289,8 @@ impl Session {
         self.keep_out_of_party_quest_on_login();
         // Nor onto a ship: Ellinia Station instead. session/boat.rs.
         self.keep_off_ship_on_login();
+        // Nor onto a map the client has no field for: it crashes. session/field.rs.
+        self.keep_off_missing_map_on_login();
         // Always answer. An unanswered packet freezes the client's whole UI - every
         // button, including the quit prompt - and reads on screen as a crash. So a
         // character we cannot load falls back to the minimal record rather than silence.

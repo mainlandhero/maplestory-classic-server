@@ -3584,6 +3584,95 @@ fn a_pets_auto_hp_drinks_the_potion_and_answers_the_latch() {
     assert_eq!(s.store.inventory_slot(id, store::InventoryType::Use, 1).unwrap().unwrap().kind.quantity(), 1);
 }
 
+/// **A dead character's pet drinks nothing.** The owner, 2026-10-01: *"The server says I was dead,
+/// gave me the revive in town window, but my pet still auto potioned me."* The deployed log has
+/// the `0x0206` in the same millisecond as the `0x007C` that set hp 0, and the server healed the
+/// corpse to 100.
+///
+/// Every effect named: HP stays 0, nothing leaves the bag or the screen's stack, and the latch
+/// is still cleared. The double-click (`0x010E`) is the same walk and is checked too. The
+/// control is the test above: the same potion at 1 HP heals.
+#[test]
+fn a_dead_characters_potions_are_refused_and_still_answer_the_latch() {
+    let (mut s, acct, id) = session_with_potions(2, 0);
+
+    let mut pet = net::useitem::CLIENT_PET_USE_ITEM.to_le_bytes().to_vec();
+    pet.extend(net::useitem::pet_use_item(0, 0x1e5e_1dfb, 1, 2_000_000));
+    let mut own = net::useitem::CLIENT_USE_ITEM.to_le_bytes().to_vec();
+    own.extend(net::useitem::use_item(0x1e5e_1dfc, 1, 2_000_000, 1));
+    for (what, packet) in [("pet", pet), ("double-click", own)] {
+        let replies = s.handle(&packet);
+        let stat = replies.iter().find(|r| r.opcode == net::stats::STAT_CHANGED).expect("answered");
+        assert_eq!(stat.body[0], 1, "{what}: byte 0 clears the latch");
+        assert_eq!(stat.body, net::stats::StatChange::default().build(), "{what}: an EMPTY change - no HP field");
+        assert!(!replies.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "{what}: nothing taken on screen");
+        assert_eq!(reload(&s, acct, id).hp, 0, "{what}: still dead - a potion is not a revive");
+        assert_eq!(s.store.inventory_slot(id, store::InventoryType::Use, 1).unwrap().unwrap().kind.quantity(), 2, "{what}: nor from the bag");
+    }
+}
+
+/// **REVIVE IN TOWN from a character the server thinks alive goes nowhere new - never map 0.**
+///
+/// 2026-10-01: a pet's potion had healed the corpse, so the town button's `0x00D1` (target 0,
+/// empty name) reached the portal path and the server sent and SAVED map 0. Every login after
+/// crashed the client. The potion is refused now, but the warp is guarded on its own: any
+/// destination without a field image is replaced by the map they are on.
+#[test]
+fn a_transfer_to_a_map_with_no_field_stays_where_it_is() {
+    let path = std::path::Path::new("../../gm-handbook/fields.txt");
+    if !path.exists() {
+        return; // generated data, gitignored
+    }
+    let (mut s, store, id) = gm_session();
+    {
+        let cfg = Arc::get_mut(&mut s.config).expect("sole owner in this test");
+        cfg.fields = Config::load_fields(path);
+    }
+    assert!(!s.config.map_exists(0), "the precondition: this client has no map 0");
+    assert!(s.config.map_exists(crate::dailyperks::HENESYS));
+    let mut chr = s.claimed_character().unwrap();
+    chr.hp = 100;
+    chr.max_hp = 200;
+    store.save_character_progress(&chr).unwrap();
+    store.set_character_map(id, crate::dailyperks::HENESYS).unwrap();
+
+    let mut body = vec![0u8; 16];
+    body.extend_from_slice(&0u32.to_le_bytes());
+    body.extend_from_slice(&0u16.to_le_bytes());
+    let out = s.on_transfer_field(&body);
+    assert!(out.iter().any(|r| r.opcode == net::opcode::SET_FIELD), "always answered");
+    let after = reload(&s, 1, id);
+    assert_eq!(after.map_id, crate::dailyperks::HENESYS, "re-sent where they stand, not map 0");
+    assert_eq!(after.hp, 100, "and it is not a revive: no HP change");
+}
+
+/// **A character already saved on map 0 logs in to a town, through the real login.**
+///
+/// The owner, 2026-10-01: *"I'm in a state where whenever I log into the server, my client
+/// crashes."* The record said map 0. The control is a character saved on Henesys, who stays.
+#[test]
+fn a_login_saved_on_a_missing_map_lands_in_a_town() {
+    let path = std::path::Path::new("../../gm-handbook/fields.txt");
+    if !path.exists() {
+        return; // generated data, gitignored
+    }
+    for (saved, want) in [(0, crate::dailyperks::HENESYS), (crate::dailyperks::HENESYS, crate::dailyperks::HENESYS)] {
+        let config = Arc::new(Config { fields: Config::load_fields(path), ..Config::default() });
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Lost".to_string(), ..Default::default() };
+        let id = store.create_character(account_id, 0, &chr).unwrap().id;
+        store.set_character_map(id, saved).unwrap();
+        store.create_migration(account_id, id, 0, 0).unwrap();
+        let mut s = Session::new(store.clone(), config);
+        s.claim_for_character(id);
+        let out = s.handle(&crate::session::CLIENT_MIGRATION_HELLO.to_le_bytes());
+        let set = out.iter().find(|r| r.opcode == net::opcode::SET_FIELD).expect("the login SetField");
+        assert!(set.what.contains(&format!("carrying map {want} ")), "saved on {saved}: {}", set.what);
+        assert_eq!(reload(&s, account_id, id).map_id, want, "saved on {saved}: and the record is repaired");
+    }
+}
+
 /// **A potion draws no number over the player's head**, and this is a rule about the game
 /// rather than about the packet.
 ///

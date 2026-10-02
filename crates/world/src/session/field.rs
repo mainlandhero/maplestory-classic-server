@@ -493,6 +493,44 @@ impl Session {
         }
     }
 
+    /// A map a character can safely be put on, starting from `map`: `map` itself when it
+    /// exists, else its revive town, else Henesys.
+    pub(super) fn safe_map_for(&self, map: u32) -> u32 {
+        if self.config.map_exists(map) {
+            return map;
+        }
+        self.config
+            .revive_field(map)
+            .filter(|m| self.config.map_exists(*m))
+            .unwrap_or(crate::dailyperks::HENESYS)
+    }
+
+    /// **A character saved on a map that does not exist is moved before the SetField.**
+    ///
+    /// The owner, 2026-10-01: *"I'm in a state where whenever I log into the server, my client
+    /// crashes."* Their character's record said map 0 - see `go_to_map`'s guard for how it got
+    /// there - and the login SetField carried it straight to the client, which faulted ~4 s
+    /// later on every attempt. A guard on the warp stops new ones; this repairs a record that is
+    /// already bad, on the live database, without a migration.
+    pub(super) fn keep_off_missing_map_on_login(&mut self) {
+        let Some(chr) = self.claimed_character() else { return };
+        let to = self.safe_map_for(chr.map_id);
+        if to == chr.map_id {
+            return;
+        }
+        let result = self.store.set_character_map(chr.id, to);
+        crate::server::log(&format!(
+            "   login: {} ({}) was saved on map {}, which this client has no field for; sent to map {to} instead - {}",
+            chr.name,
+            chr.id,
+            chr.map_id,
+            match result {
+                Ok(()) => "saved".to_string(),
+                Err(e) => format!("THE SAVE FAILED ({e}), so this login lands where it was saved"),
+            }
+        ));
+    }
+
     /// **A teleport: onto a random spawn point of `map`.** The owner, 2026-09-26: *"if a player is
     /// teleported into a map, the server will choose a random spawn point. Such as when Nella
     /// teleports the player back to Kerning City from the exit map."* A portal walk is NOT a
@@ -505,6 +543,21 @@ impl Session {
     pub(super) fn go_to_map(&mut self, chr: &mut net::opcode::Character, map: u32, portal: u8, why: String)
         -> Vec<Reply>
     {
+        // **Never into a map this client cannot load.** 2026-10-01: a REVIVE IN TOWN click
+        // from a character the server thought alive came here as "portal \"\" -> map 0", and
+        // map 0 was saved - every later login crashed the client. Whatever the caller
+        // resolved, a destination with no field image is replaced by the map they are on,
+        // or by the town when that one is no good either. `Config::map_exists`.
+        let (map, portal, why) = if self.config.map_exists(map) {
+            (map, portal, why)
+        } else {
+            let fallback = self.safe_map_for(chr.map_id);
+            crate::server::log(&format!(
+                "   REFUSED a warp of character {} to map {map}, which this client has no field for ({why}); map {fallback} instead",
+                chr.id
+            ));
+            (fallback, if fallback == chr.map_id { chr.portal } else { 0 }, format!("{why} - map {map} does not exist, so map {fallback}"))
+        };
         // **The mobs this connection controls on the map it is leaving, given to somebody
         // still standing there.**
         //

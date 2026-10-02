@@ -458,6 +458,33 @@ of each, and claims no daily pass. After any result, with either scroll left, th
 yes/no (`scroll.again`): Yes opens the `!scroll` menu, No closes silently. Tests in `scrollnpc` and
 `session::scroll`. **Unseen on a screen** - plan step 28.
 
+**2026-10-02: the dead drink nothing, and nobody is sent to (or logs in on) a map that does not exist.**
+The owner: *"The server says I was dead, gave me the revive in town window, but my pet still auto potioned
+me"*, then *"whenever I log into the server, my client crashes"*. **One chain, measured in the deployed
+log:**
+* The pet's `0x0206` was built at 225 HP and arrived in the same millisecond as the `0x007C` setting 0.
+  The server healed the corpse to 100, three times in a row. The client stayed standing, so it never
+  sent the dead stance (action 9) and nobody else saw a death.
+* REVIVE IN TOWN then reached `on_transfer_field` as a LIVE player's `0x00D1`: target 0, empty name.
+  The revive branch is on `hp == 0`, so the portal path sent and saved **map 0**. Every login after
+  carried map 0, and the client faulted ~4 s in at `0x140ce89d6`. That is the unwind-funclet refcount
+  release `research/0x0224-dump-read-position.md` section 7 already describes after a decode throw.
+* Fixed:
+  * `use_parsed_item` refuses every item while `hp == 0`, for the pet and the double-click alike:
+    nothing consumed, latch cleared, no chat line.
+  * Recovery's tick ends on death, and a quest's HP no longer touches a dead character. Regen and
+    `heal_flat` already refused.
+  * `go_to_map` replaces any destination without a field image with the current map (or its revive
+    town, or Henesys), for every caller.
+  * `keep_off_missing_map_on_login` repairs a record that is already bad. The owner's character comes
+    back in Henesys on its next login.
+* **Others seeing the death: forwarded, not yet seen.** An earlier clean death
+  (`previous-runs/world-ch0-20260927-000114.log`) shows a dead client sending `move_action 0x13`
+  (action 9, facing left) in its `0x00D9`s. The server already forwards those verbatim as `0x0293`, and
+  a later arrival's `0x0224` carries the last stance. Whether an observer's client draws the ghost and
+  tombstone off action 9 is **unestablished** (`research/same-map-capability-sweep.md` row 14), and is
+  plan step 35.
+
 **2026-10-01: the drop page shows only monsters you can meet, and the maps each one is on.** The owner:
 *"If those monsters do not spawn yet, can we make sure that they are hidden ... can we also list out the maps
 that they are present on, sorted by number of spawns"*.
