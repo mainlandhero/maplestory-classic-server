@@ -1193,6 +1193,9 @@ impl Session {
                 quest_audience.iter().map(|(id, _)| *id).collect::<Vec<_>>()
             ));
         }
+        // **The seven-day drop statistics**: this kill and exactly what fell, counted in memory
+        // and written in batches. `crate::killstats`, read by the drop-table page.
+        crate::killstats::note_kill(template, me.unwrap_or(first_choice), &rolled);
         // **Stagger them.** The owner, with a screenshot of the live server: *"the items that
         // drop should also be slightly staggered from each other"*. Three items landing on
         // exactly the same pixel render as one. Centred on the mob so a single drop is

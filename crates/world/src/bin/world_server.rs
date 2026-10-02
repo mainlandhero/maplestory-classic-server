@@ -37,6 +37,8 @@ maplecw-world - one channel of the MapleCW game world
                    one IPv4 address. --help prints the full description.
   --link ADDR      the world hub (maplecw-chat) to dial for cross-channel parties and
                    chat (default 127.0.0.1:8483). 'none' runs this channel on its own.
+  --drops-web ADDR the drop-table web page and its 7-day kill counts (default 0.0.0.0:8481
+                   on channel 0, off elsewhere). 'none' turns it off. Read-only, no login.
   --migration-peer-policy require|record
                    what to do when the connection claiming a migration does not come
                    from the address the migration was minted for. require (default)
@@ -175,6 +177,8 @@ fn main() -> ExitCode {
             }
         }
     }
+    // `--drops-web`: unset means "the default for this channel", decided once --channel is known.
+    let mut drops_web: Option<Option<std::net::SocketAddr>> = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -193,6 +197,14 @@ fn main() -> ExitCode {
                     Ok(())
                 } else {
                     v.parse().map(|a| config.link = Some(a)).map_err(|e| format!("--link {v}: {e}"))
+                }
+            }),
+            "--drops-web" => value().and_then(|v| {
+                if v.eq_ignore_ascii_case("none") {
+                    drops_web = Some(None);
+                    Ok(())
+                } else {
+                    v.parse().map(|a| drops_web = Some(Some(a))).map_err(|e| format!("--drops-web {v}: {e}"))
                 }
             }),
             "--world-id" => value().and_then(|v| {
@@ -349,6 +361,12 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
+
+    // The drop-table page: channel 0 serves it unless told otherwise. world::dropweb.
+    config.drops_web = drops_web.unwrap_or_else(|| {
+        (config.channel_id == 0)
+            .then(|| std::net::SocketAddr::from(([0, 0, 0, 0], world::dropweb::DEFAULT_PORT)))
+    });
 
     // Portals come from the client's own Map.wz via tools/dump_portals.py. A missing file
     // is not fatal: the server still answers a transfer request, it just cannot resolve a

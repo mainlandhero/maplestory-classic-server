@@ -2606,6 +2606,14 @@
              the stat window drops the number. A coupon that outlives its icon or an icon
              that outlives its multiplier is a bug either way - say which.
 
+    32. DROP PAGE ON 8481 (2026-10-01). On the server box (or forward 8481), after some kills.
+          a. open http://<server>:8481/ - the drop rate box already shows the server's rate, marked
+             (server) -> DONE. 1x when the server runs 5x = it is not reading live.json
+          b. kill 10 Snails, wait up to 35 minutes (5 to write, 30 for the page's cache), reload: the
+             bar's kills and Snail's "kills - players" went up, and Snail Shell's Seen count too
+             -> DONE. Nothing after an hour = paste the "killstats:" lines from world-ch0.log
+          c. search "shoes greater scroll": Shoes Jump Scroll: Greater is listed -> DONE
+
     31. V83 DROPS (2026-10-01). Live is fine; note the server's drop rate first.
           a. Snails and Blue Snails: an equip about 1 kill in 100-200 at 1x (1 in 20-40 at 5x),
              and no scroll -> DONE. An equip every few kills = the old drop file is still deployed
@@ -6246,6 +6254,12 @@ function Show-TestPlan {
         Write-Host '        potion icon yes, coupon icon no -> 163 is not it; kill something,' -ForegroundColor Yellow
         Write-Host '        triple EXP still? report both halves separately' -ForegroundColor Yellow
         Write-Host '     c. wait one out / right-click it: icon AND stat go together' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  32. DROP PAGE (2026-10-01): http://<server>:8481/ - forward 8481 for players' -ForegroundColor White
+        Write-Host '       the rate box starts at the server rate, marked (server) -> DONE' -ForegroundColor Green
+        Write-Host '       10 Snail kills show up within ~35 min (5 to write + 30 cache) -> DONE' -ForegroundColor Green
+        Write-Host '          nothing after an hour -> paste the "killstats:" lines from world-ch0.log' -ForegroundColor Yellow
+        Write-Host '       "shoes greater scroll" finds Shoes Jump Scroll: Greater -> DONE' -ForegroundColor Green
         Write-Host ''
         Write-Host '  31. V83 DROPS (2026-10-01), live is fine:' -ForegroundColor White
         Write-Host '       Snails: an equip ~1 kill in 100-200 at 1x (1 in 20-40 at 5x), no scroll -> DONE' -ForegroundColor Green

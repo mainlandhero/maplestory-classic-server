@@ -32,6 +32,8 @@ pub mod broadcast;
 pub mod chairs;
 pub mod citizenship;
 pub mod discordstatus;
+pub mod dropweb;
+pub mod killstats;
 pub mod commodity;
 pub mod crafting;
 pub mod config;

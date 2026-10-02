@@ -4940,6 +4940,21 @@ fn the_drop_rate_multiplies_the_chance() {
     );
 }
 
+/// **Every kill is counted for the drop-table page**, in memory, with what fell. A template no
+/// other test uses, so the shared in-memory counter cannot be disturbed by a parallel test.
+#[test]
+fn a_kill_and_its_drop_are_counted_for_the_drop_page() {
+    const TEMPLATE: u32 = 424_242;
+    let (mut s, _, _) = gm_session();
+    let drops = crate::droptables::DropTables::parse(&format!("{TEMPLATE} | 4000001 | 100 | 1 | 1 | 0 | Shell\n"));
+    s.config = Arc::new(Config { drops, ..(*s.config).clone() });
+    let map = crate::fields::FieldKey::world(net::opcode::START_MAP_ID);
+    let before = crate::killstats::pending_kills(TEMPLATE);
+    s.drops_from_kill(TEMPLATE, 2000, Some((500, 395)), 204, map);
+    s.drops_from_kill(TEMPLATE, 2001, Some((500, 395)), 204, map);
+    assert_eq!(crate::killstats::pending_kills(TEMPLATE), before + 2);
+}
+
 /// A row disabled with a chance of 0 stays disabled at every rate.
 ///
 /// `Rate::apply` floors at 1 so that a 0.5x event cannot zero a 1-exp mob. Applied to a
