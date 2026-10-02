@@ -22,6 +22,99 @@ A local, testing-only server emulator for the MapleStory **`mscw`** client
 **Start here:** [STATUS.md](STATUS.md) — current state and next steps.
 [STATUS-history.md](STATUS-history.md) has the finished goals, kept for the method.
 
+## What you need that is not in this repository
+
+The repository is code only. To run a server you supply the game and the toolchain yourself:
+
+| what | why | where it comes from |
+|---|---|---|
+| **MapleStory Classic World** (`mscw`), installed | the client, and the source of every game-data table the server loads | the Nexon Launcher. The server is built against **WZ data version 779** (client build of January 2026); a later patch may need [`docs/wz-changes.md`](docs/wz-changes.md) |
+| **Windows 10 or 11, x64** | the client, the launcher and the scripts are Windows-only | - |
+| **Rust** (stable, MSVC toolchain) | builds the servers, the launcher and the client hook | [rustup](https://rustup.rs), plus the **Visual Studio Build Tools** "Desktop development with C++" workload for the linker |
+| **Python 3.10 or later** | generates the game-data tables from your client | [python.org](https://www.python.org). Standard library only; `capstone` is needed only by the reverse-engineering tools |
+| **Visual C++ 2015-2022 Redistributable (x64)** | the launcher and the injected hook import `VCRUNTIME140.dll` | Microsoft (`vc_redist.x64.exe`); usually already installed |
+| **Windows PowerShell 5.1**, run **as administrator** | the scripts; the game client itself demands elevation | built into Windows |
+
+Not needed to run a server: Ghidra and a JDK (reverse engineering only, [`docs/ghidra.md`](docs/ghidra.md)),
+and the modern MapleStory client (only `tools/backport_signature_style.py` reads it, to add the
+backported cosmetics).
+
+## Getting started: a server on your own machine
+
+The paths below assume the repository is at `C:\MapleCW` and the client is installed at
+`C:\Nexon\Library\maplestorycw`; substitute your own. Open **PowerShell as administrator**.
+
+**1. Make a copy of the client to patch.** The original install is never modified - everything
+patches the copy in `client-patched\` (gitignored).
+
+```powershell
+robocopy "C:\Nexon\Library\maplestorycw\appdata" "C:\MapleCW\client-patched" /E
+```
+
+**2. Build everything.**
+
+```powershell
+cd C:\MapleCW
+cargo build --release
+```
+
+**3. Generate the game data** (`gm-handbook\`: maps, portals, mobs, items, skills, quests, ...)
+from your copy of the client. Without it the server starts with empty tables.
+
+```powershell
+python C:\MapleCW\tools\build_handbook.py
+```
+
+**4. Optional: the quest patch.** Lets every class do the Maple Island quests (the client
+otherwise limits them to Beginners). Run it with the client closed; the release packager
+requires it.
+
+```powershell
+python C:\MapleCW\tools\quest_patch.py --install
+```
+
+**5. Create an account** - it prompts for the password and stores only an argon2id hash.
+`--gm` allows the `!` GM commands (`!map`, `!item`, `!exp`, `!job`, ...).
+
+```powershell
+C:\MapleCW\target\release\maplecw-useradd.exe --db C:\MapleCW\maplecw.db <name> --email <address>
+C:\MapleCW\target\release\maplecw-useradd.exe --db C:\MapleCW\maplecw.db --gm <name>
+```
+
+**6. Start it.**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"
+```
+
+That rebuilds what changed, installs the hook into `client-patched\` (GameGuard is replaced by a
+no-op stub and its folder disabled - nothing is installed system-wide), starts the sign-in
+service, the login server, two channels and the world hub, and opens the launcher. Sign in with
+the account from step 5 and press **Start Game**. Add `-ServersOnly` to start only the servers
+and run `target\release\maplecw-launcher.exe` yourself.
+
+What runs where - on `127.0.0.1` under this script, except the drop page:
+
+| port | service | log |
+|---|---|---|
+| 8480 | sign-in (`maplecw-auth`, TLS) | `auth.log` |
+| 8484 | login (`maplecw-login`) | `login.log` |
+| 8485, 8486 | channels 0 and 1 (`maplecw-world`) | `world-ch0.log`, `world-ch1.log` |
+| 8483 | world hub (`maplecw-chat`), loopback only | `chat-hub.log` |
+| 8481 | the drop-table web page - on **all interfaces** (`--drops-web none` turns it off) | - |
+
+**Check it without the client:** `python C:\MapleCW\tools\channel_smoke.py` drives a real channel
+over an independent Python implementation of the protocol and should print `all checks passed`.
+
+**Playing from other machines:** `tools\package-server.ps1` builds a self-contained server
+(`out\MapleCW-server.zip`) and `tools\make-installer.ps1` the client payload; see
+[`docs/deployment.md`](docs/deployment.md), [`docs/server-machine-checklist.md`](docs/server-machine-checklist.md)
+and [`docs/client-machine-checklist.md`](docs/client-machine-checklist.md).
+
+**Nothing authenticates the game socket.** The launcher signs in over TLS and the login server
+ties the client to that sign-in, but the game protocol itself carries no credentials. Run it on
+a network you trust.
+
 ## Status
 
 | Stage | Goal | State |
