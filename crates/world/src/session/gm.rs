@@ -1212,7 +1212,13 @@ impl Session {
             crate::skillpoints::Tier::Second,
             crate::skillpoints::Tier::Third,
         ] {
-            let amount = crate::skillpoints::entitlement(tier, level);
+            let amount = match tier {
+                // The first-job pool past 30 depends on the job's book - session/skills.rs.
+                crate::skillpoints::Tier::First => {
+                    crate::skillpoints::first_job_entitlement(level, self.first_job_book_points(job))
+                }
+                _ => crate::skillpoints::entitlement(tier, level),
+            };
             if amount > 0 {
                 pools.push(net::stats::SpPool {
                     job_level: net::stats::tier_for_job(match tier {

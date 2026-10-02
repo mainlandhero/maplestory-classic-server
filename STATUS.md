@@ -458,6 +458,20 @@ of each, and claims no daily pass. After any result, with either scroll left, th
 yes/no (`scroll.again`): Yes opens the `!scroll` menu, No closes silently. Tests in `scrollnpc` and
 `session::scroll`. **Unseen on a screen** - plan step 28.
 
+**2026-10-02: the first-job SP pool keeps growing past level 30 until the whole book can be maxed - a
+deliberate deviation from classic.** The owner, from player complaints: *"Allow continuous accumulation of skill
+points for 1st job beyond level 30 until all skills can be maxed in first job"*, and *"Make sure that SP reset
+are aware of this change too"*.
+* Maxing every first-job skill costs 105 SP for Warrior, Magician and Bowman, and 110 for Thief; the classic
+  pool stops at 61.
+* `skillpoints::first_job_entitlement` keeps paying 3 a level after 30 and stops at the first grant that
+  covers the book: 106 at level 45, 112 at 47 for a Thief. The book total is read from the loaded skill
+  table (`Session::first_job_book_points`). The second-job pool is unchanged, so past 30 both pools grow.
+* Retroactive with no migration. The pools are entitlement minus the spend ledger, so a level-50 character
+  sees the grown pool on the next SetField.
+* An SP reset (the scroll, the NPC and `!resetsp` all run `gm_reset_sp`) clears the ledger and re-sends the
+  same entitlement, so it refunds to the grown total. Tested end to end.
+
 **2026-10-02: the dead drink nothing, and nobody is sent to (or logs in on) a map that does not exist.**
 The owner: *"The server says I was dead, gave me the revive in town window, but my pet still auto potioned
 me"*, then *"whenever I log into the server, my client crashes"*. **One chain, measured in the deployed

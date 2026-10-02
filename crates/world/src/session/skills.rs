@@ -156,7 +156,7 @@ impl Session {
         // the Heena payout that hung off the request rather than the transition, and the
         // forfeit whose `DELETE` did not carry the guard its own doc block promised.
         let tier = self.pool_tier(req.skill_id);
-        let entitlement = self.pool_entitlement(tier, chr.level);
+        let entitlement = self.pool_entitlement(tier, chr.level, chr.job);
         let up = match self.store.spend_and_raise_skill(
             chr.id,
             req.skill_id,
@@ -233,9 +233,13 @@ impl Session {
     ///
     /// Tier 0 is the beginner pool and returns `0` deliberately - the client computes that one
     /// itself, and the store treats a tier-0 spend as a success that writes no row.
-    pub(super) fn pool_entitlement(&self, tier: u8, level: u32) -> u32 {
+    ///
+    /// **Tier 1 keeps growing past 30** until the character's first-job book can be maxed -
+    /// `skillpoints::first_job_entitlement`, a deliberate deviation the owner asked for on
+    /// 2026-10-02.
+    pub(super) fn pool_entitlement(&self, tier: u8, level: u32, job: u16) -> u32 {
         match tier {
-            1 => crate::skillpoints::entitlement(crate::skillpoints::Tier::First, level),
+            1 => crate::skillpoints::first_job_entitlement(level, self.first_job_book_points(job)),
             2 => crate::skillpoints::entitlement(crate::skillpoints::Tier::Second, level),
             3 => crate::skillpoints::entitlement(crate::skillpoints::Tier::Third, level),
             // Fourth job onward is not modelled - there is no fourth-job book in this client
@@ -243,6 +247,17 @@ impl Session {
             // rather than guessing is the point.
             _ => 0,
         }
+    }
+
+    /// **What maxing every skill in this character's first-job book costs**: the sum of their
+    /// `maxLevel`s - 105 for Warrior, Magician and Bowman, 110 for Thief. `0` for a beginner and
+    /// when the skill table did not load, which leaves the classic 61 in force.
+    pub(super) fn first_job_book_points(&self, job: u16) -> u32 {
+        if net::stats::tier_for_job(job) < 1 {
+            return 0;
+        }
+        let first = job / 100 * 100;
+        self.config.skills.book(first).iter().filter(|s| s.job == first).map(|s| s.max_level).sum()
     }
 
     /// **Every pool, as one `0x007C`.** Sent after anything that moves a balance.
@@ -267,7 +282,7 @@ impl Session {
             if tier > reached {
                 continue;
             }
-            let owed = self.pool_entitlement(tier, chr.level);
+            let owed = self.pool_entitlement(tier, chr.level, chr.job);
             let used = spent.iter().find(|(t, _)| *t == tier).map(|(_, n)| *n).unwrap_or(0);
             let left = store::balance(owed, used);
             if owed > 0 {

@@ -2226,6 +2226,60 @@ fn a_skill_point_is_charged_and_only_a_forget_gives_it_back() {
     );
 }
 
+/// **Past 30 the first-job pool keeps growing until the book can be maxed, and an SP reset
+/// refunds to that total.** The owner, 2026-10-02: *"Allow continuous accumulation of skill
+/// points for 1st job beyond level 30 until all skills can be maxed in first job"*, and *"Make
+/// sure that SP reset are aware of this change too so resets give characters the correct
+/// amount of SP"*.
+///
+/// A level-50 Magician whose job is already second (210) - the case that matters, because both
+/// pools grow. Every effect: tier 1 is 106 (covers the 105-point book) and tier 2 is the classic
+/// 61; spending charges tier 1; `!resetsp` (the same function the SP Reset Scroll runs) gives
+/// all 106 back. A Thief's book costs 110, so its pool is 112.
+#[test]
+fn the_first_job_pool_grows_past_thirty_and_a_reset_refunds_to_it() {
+    let path = std::path::Path::new("../../gm-handbook/skills.txt");
+    if !path.exists() {
+        return;
+    }
+    const MAGIC_CLAW: u32 = 2001003;
+    for (job, want_first) in [(210u16, 106u32), (410, 112)] {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        store.set_gm("maplecw", true).unwrap();
+        let chr = net::opcode::Character { name: "Grown".to_string(), ..Default::default() };
+        let mut made = store.create_character(account_id, 0, &chr).unwrap();
+        made.job = job;
+        made.level = 50;
+        store.save_character_progress(&made).unwrap();
+        store.create_migration(account_id, made.id, 0, 0).unwrap();
+        let config = Config { skills: crate::skilltable::SkillTable::load(path), ..Config::default() };
+        let mut s = Session::new(store.clone(), Arc::new(config));
+        s.claim_for_character(made.id);
+
+        let pools = s.skill_point_reply(&made);
+        assert!(pools[0].what.contains(&format!("tier 1 = {want_first}")), "{job}: {}", pools[0].what);
+        let second = crate::skillpoints::entitlement(crate::skillpoints::Tier::Second, 50);
+        assert!(pools[0].what.contains(&format!("tier 2 = {second}")), "{job}: the second pool is unchanged: {}", pools[0].what);
+        if job != 210 {
+            continue;
+        }
+        let mut b = net::skills::CLIENT_USER_SKILL_UP_REQUEST.to_le_bytes().to_vec();
+        b.extend_from_slice(&0x1187_0e94u32.to_le_bytes());
+        b.extend_from_slice(&MAGIC_CLAW.to_le_bytes());
+        b.extend_from_slice(&20u32.to_le_bytes());
+        let out = s.handle(&b);
+        assert_eq!(store.skill_level(made.id, MAGIC_CLAW).unwrap_or(0), 20);
+        let pool = out.iter().find(|r| r.what.contains("skill points now")).expect("the pool re-sent");
+        assert!(pool.what.contains(&format!("tier 1 = {}", want_first - 20)), "{}", pool.what);
+
+        let out = s.handle(&gm_chat("!resetsp"));
+        assert_eq!(store.skill_points_spent(made.id, 1).unwrap(), 0, "refunded");
+        let pool = out.iter().find(|r| r.what.contains("skill points now")).expect("the refilled pool");
+        assert!(pool.what.contains(&format!("tier 1 = {want_first}")), "the reset gives the grown pool back: {}", pool.what);
+    }
+}
+
 /// **`!learn` grants levels without spending a point**, which is the whole reason it exists.
 ///
 /// If it charged the pool, `!learn` on a Magician book would want far more points than a
