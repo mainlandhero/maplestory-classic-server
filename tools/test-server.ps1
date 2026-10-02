@@ -2606,6 +2606,11 @@
              the stat window drops the number. A coupon that outlives its icon or an icon
              that outlives its multiplier is a bug either way - say which.
 
+    38. SP ON LEVEL-UP (2026-10-02). A first/second-job character one kill from a level.
+          a. level up with the skill window open: the SP count rises AT ONCE and a + button
+             works without a map change. Still needs a map change -> the second 0x007C did not
+             apply; world-ch0.log shows "skill points now [...]" right after the LEVEL line
+
     37. OPTIONS KEPT ON THE SERVER (2026-10-02). Two characters on one account.
           a. log in; System Options: change the HP warning % (the pet's auto-potion threshold),
              the effect volume. world-ch0.log shows "options: account N group ..." for each
@@ -6298,6 +6303,9 @@ function Show-TestPlan {
         Write-Host '        potion icon yes, coupon icon no -> 163 is not it; kill something,' -ForegroundColor Yellow
         Write-Host '        triple EXP still? report both halves separately' -ForegroundColor Yellow
         Write-Host '     c. wait one out / right-click it: icon AND stat go together' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  38. SP ON LEVEL-UP (2026-10-02): skill window open, level up - SP rises at once,' -ForegroundColor White
+        Write-Host '       + works with no map change / channel change' -ForegroundColor Cyan
         Write-Host ''
         Write-Host '  37. OPTIONS PER ACCOUNT (2026-10-02): set HP warning % + effect volume; relog,' -ForegroundColor White
         Write-Host '       change channel, other character on the account: all kept' -ForegroundColor Cyan

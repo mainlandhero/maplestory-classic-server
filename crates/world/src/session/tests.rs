@@ -1363,6 +1363,45 @@ fn enough_experience_levels_the_character_and_says_so() {
     assert_eq!(after.hp, after.max_hp, "a level-up restores");
 }
 
+/// **A level-up sends the skill points with it**, after the level. The owner, 2026-10-02: *"skill
+/// points are not available immediately for use upon level up, a map change and or a cash shop or
+/// change channel has to be performed"*. A level-30 Magician (job 200) reaching 31 is owed 64 in
+/// the first pool; the control is an EXP gain short of a level, which sends no pool at all, and
+/// a beginner, who has no pool to send.
+#[test]
+fn a_level_up_sends_the_new_skill_points_at_once() {
+    let (mut s, store, _id) = gm_session();
+    let curve = crate::expcurve::ExpCurve::parse("30 | 100
+31 | 200
+");
+    s.config = Arc::new(Config { exp_curve: curve, ..(*s.config).clone() });
+    let mut chr = s.claimed_character().unwrap();
+    chr.job = 200;
+    chr.level = 30;
+    chr.exp = 0;
+    store.save_character_progress(&chr).unwrap();
+
+    let short = s.award_experience(50, "a test", true, false);
+    assert!(!short.iter().any(|r| r.what.contains("skill points now")), "no level, no pool");
+
+    let out = s.award_experience(50, "a test", true, false);
+    let level = out.iter().position(|r| r.what.contains("LEVEL 30 -> 31")).expect("the level-up 0x007C");
+    let pool = out.iter().position(|r| r.what.contains("skill points now")).expect("the pools, at once");
+    assert!(pool > level, "after the level they were computed for");
+    let owed = crate::skillpoints::first_job_entitlement(31, s.first_job_book_points(200));
+    assert!(out[pool].what.contains(&format!("tier 1 = {owed}")), "{}", out[pool].what);
+    assert_eq!(out[pool].opcode, net::stats::STAT_CHANGED);
+
+    // A beginner levels with no pool to send.
+    chr.job = 0;
+    chr.level = 30;
+    chr.exp = 0;
+    store.save_character_progress(&chr).unwrap();
+    let out = s.award_experience(100, "a test", true, false);
+    assert!(out.iter().any(|r| r.what.contains("LEVEL 30 -> 31")));
+    assert!(!out.iter().any(|r| r.what.contains("skill points now")), "a beginner has no pool");
+}
+
 /// Experience short of a level is banked and levels nobody.
 #[test]
 fn experience_short_of_a_level_is_just_banked() {
