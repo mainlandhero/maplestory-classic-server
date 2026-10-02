@@ -458,6 +458,20 @@ of each, and claims no daily pass. After any result, with either scroll left, th
 yes/no (`scroll.again`): Yes opens the `!scroll` menu, No closes silently. Tests in `scrollnpc` and
 `session::scroll`. **Unseen on a screen** - plan step 28.
 
+**2026-10-02: a channel no longer drops a player on os error 997.** The owner: *"I (Tester) was in a party quest
+with Cate when I randomly got disconnected from the server."*
+* The server ended the session itself: `ended: Overlapped I/O operation is in progress. (os error 997)`.
+  The client was not at fault: it reconnected to login 16 ms later, and no crash dump was written.
+* Cause: the channel read the socket with a 100 ms `SO_RCVTIMEO` so it could wake to tick. On Windows
+  a timed `recv` that expires as data arrives can return `ERROR_IO_PENDING` instead of a timeout, and
+  the loop treated anything but `WouldBlock`/`TimedOut` as fatal.
+* The client was sending a move every ~510 ms (50.097, 50.597, 51.107, 51.617), and the error landed
+  at ~52.13, when the next was due. One other 997 is in the archive (2026-09-18).
+* Fixed at the root: `world::sockreader` reads on its own thread with no timeout, and the tick is a
+  channel timeout. The socket is shut down when the reader drops, on every return path.
+* Not changed: the login server still uses a 4 s read timeout (`crates/login/src/server.rs`). The same
+  race is possible there but far rarer - it needs 4 s of silence ending exactly as a packet lands.
+
 **2026-10-02: a level-up sends the new skill points at once.** The owner, relaying a player: *"skill points are
 not available immediately for use upon level up, a map change and or a cash shop or change channel has to be
 performed"*.

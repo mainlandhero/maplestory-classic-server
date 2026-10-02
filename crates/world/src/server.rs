@@ -6,7 +6,7 @@
 //! a channel greets and waits. Factoring them together now would mean threading the
 //! differences back out through a trait for the sake of forty shared lines.
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -355,7 +355,13 @@ fn connection(
     // disagree about which one they raise - Windows tends to `TimedOut` where Unix gives
     // `WouldBlock`. Both are handled, because getting it wrong drops every idle connection
     // after one interval and looks exactly like the client disconnecting.
-    stream.set_read_timeout(Some(std::time::Duration::from_millis(TICK_MS)))?;
+    //
+    // **Not on the socket any more** (2026-10-02): a timed `recv` on Windows can fail with os error
+    // 997 when the timeout races arriving data, and that ended a player's session mid party
+    // quest. The reads run on their own thread with no timeout; the tick is a channel timeout.
+    // `crate::sockreader`.
+    let reader = crate::sockreader::SocketReader::spawn(stream.try_clone()?)?;
+    let tick = std::time::Duration::from_millis(TICK_MS);
     // **The channel clock is process-wide, not per-connection**, and that is a bug fix, not a
     // detail. `now_ms` is the milliseconds this clock reads, and it is the ONLY clock the
     // shared field state is timed against: a drop's lifetime, a mob's respawn delay, a drop's
@@ -405,7 +411,6 @@ fn connection(
     let mut kicks: Option<store::KickWatch> = None;
     let mut kick_checked_ms: u64 = 0;
 
-    let mut buf = [0u8; 8192];
     loop {
         // Asked here rather than in the timeout branch below, because that branch only runs
         // when nothing arrived: a client that is moving, attacking or chatting can keep the
@@ -435,13 +440,10 @@ fn connection(
             }
         }
 
-        let read = match stream.read(&mut buf) {
-            Ok(0) => return Ok(Close::Client),
-            Ok(n) => n,
-            Err(e)
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
-            {
+        let read = match reader.next(tick) {
+            crate::sockreader::Inbound::Closed => return Ok(Close::Client),
+            crate::sockreader::Inbound::Data(bytes) => bytes,
+            crate::sockreader::Inbound::Idle => {
                 // Nothing arrived. Give the session the clock and send whatever it owes.
                 let now_ms = started.elapsed().as_millis() as u64;
                 // Keep the lease alive. A player standing still sends nothing at all, and
@@ -500,9 +502,9 @@ fn connection(
                 }
                 continue;
             }
-            Err(e) => return Err(e),
+            crate::sockreader::Inbound::Failed(e) => return Err(e),
         };
-        rx.feed(&buf[..read]);
+        rx.feed(&read);
         loop {
             let body = match rx.next_packet() {
                 Ok(Some(body)) => body,
