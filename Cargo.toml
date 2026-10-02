@@ -5,7 +5,7 @@ members = ["crates/wz", "crates/grap-stub", "crates/net", "crates/store", "crate
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "PolyForm-Noncommercial-1.0.0"
 
 [workspace.dependencies]
 anyhow = "1"

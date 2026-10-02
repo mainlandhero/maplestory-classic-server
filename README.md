@@ -94,10 +94,19 @@ where `<Data>` is `C:\Nexon\Library\maplestorycw\appdata\Data`.
 
 ## License
 
-The code in this repository is released under the **MIT License** - see [`LICENSE`](LICENSE).
-You may use, copy, modify and redistribute it, commercially or not, **as long as the copyright
-notice and the license text stay with every copy or substantial portion**. That notice is the
-credit: `Copyright (c) 2026 mainlandhero`.
+The code in this repository is released under the **PolyForm Noncommercial License 1.0.0** - see
+[`LICENSE`](LICENSE). In short:
+
+* **Free for any noncommercial purpose** - personal use, study, research, hobby projects, and use
+  by charities, schools and public bodies. You may copy, modify and share it.
+* **No commercial use.** Running it as a paid service, selling it, or using it for a business
+  purpose needs separate permission from the copyright holder.
+* **Credit is required.** Anyone who passes on any part of it must include the license terms
+  (or their URL) and this line from the top of `LICENSE`:
+  `Required Notice: Copyright (c) 2026 mainlandhero (https://github.com/mainlandhero/maplestory-classic-server)`
+
+This makes the project **source-available, not "open source"** in the OSI sense - the Open
+Source Definition does not allow a ban on commercial use.
 
 What the license does **not** cover, because it is not this project's to license:
 
