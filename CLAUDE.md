@@ -25,8 +25,10 @@ Rust workspace, SQLite, patched client in `client-patched/`. Testing only.
 
 The owner asked for this explicitly (2026-09-30), and the whole history was rewritten to
 remove what had leaked. It applies to **everything committed**: code, comments, docs,
-`STATUS.md`, `research/`, fixtures, test data and commit messages. The only exception is the
-commit author line.
+`STATUS.md`, `research/`, fixtures, test data, commit messages **and the commit author line**:
+every commit is authored `mainlandhero <337122421+mainlandhero@users.noreply.github.com>` (the
+repo-local `user.name`/`user.email`; the whole history was re-authored to it on 2026-10-02 and
+the remote moved to `mainlandhero/maplestory-classic-server`). Never commit under another identity.
 
 **Never write:**
 
