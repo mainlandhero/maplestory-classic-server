@@ -250,10 +250,11 @@ const num = (n) => Number(n).toLocaleString();
 
 // ---- the item tooltip, drawn the way the game draws one ------------------------------------
 const anchor = (item, name) => item === 0 ? esc(name) : `<span class="it" data-item="${item}" tabindex="0">${esc(name)}</span>`;
-// The client's text: "\n" (two characters) breaks a line, #c...# is the orange highlight, and
+// The client's text: "\n" (two characters) breaks a line - and so do "\r\n" and a lone "\r",
+// which 19 of its descriptions use (the throwing stars) - #c...# is the orange highlight, and
 // the other #-codes are colours this page does not need.
 function gameText(t) {
-  return esc(t).replace(/\\n/g, "<br>").replace(/#c(.*?)#/g, '<span class="hl">$1</span>').replace(/#[bkrgdenl]/g, "");
+  return esc(t).replace(/\\r\\n|\\r|\\n/g, "<br>").replace(/#c(.*?)#/g, '<span class="hl">$1</span>').replace(/#[bkrgdenl]/g, "");
 }
 function tipHtml(id) {
   const [name, cat, quest, desc, lines] = itemOf(id);

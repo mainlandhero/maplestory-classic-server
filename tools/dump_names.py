@@ -120,7 +120,10 @@ def main():
         collect(read_image(args.archive, image), "desc", descs)
     with open(os.path.join(args.out_dir, "itemdesc.txt"), "w", encoding="utf-8", newline="\n") as fh:
         for ident in sorted(descs):
-            text = descs[ident].replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\n").strip()
+            # Real line breaks become the escape; so does the client's own two-character "\r\n"
+            # (19 descriptions, the throwing stars), which the page would otherwise print.
+            text = descs[ident].replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\n")
+            text = text.replace("\\r\\n", "\\n").replace("\\r", "\\n").strip()
             if text:
                 fh.write("%d, %s\n" % (ident, text))
     print("%-10s %6d rows  ->  %s" % ("item descs", len(descs), os.path.join(args.out_dir, "itemdesc.txt")))
