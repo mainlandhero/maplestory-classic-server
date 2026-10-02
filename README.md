@@ -28,7 +28,7 @@ The repository is code only. To run a server you supply the game and the toolcha
 
 | what | why | where it comes from |
 |---|---|---|
-| **MapleStory Classic World** (`mscw`), installed | the client, and the source of every game-data table the server loads | the Nexon Launcher. The server is built against **WZ data version 779** (client build of January 2026); a later patch may need [`docs/wz-changes.md`](docs/wz-changes.md) |
+| **MapleStory Classic World** (`mscw`) from the second closed online test (**COT#2**), installed | the client, and the source of every game-data table the server loads | the Nexon Launcher. The server is built against **WZ data version 779** (client build of January 2026); a later patch may need [`docs/wz-changes.md`](docs/wz-changes.md) |
 | **Windows 10 or 11, x64** | the client, the launcher and the scripts are Windows-only | - |
 | **Rust** (stable, MSVC toolchain) | builds the servers, the launcher and the client hook | [rustup](https://rustup.rs), plus the **Visual Studio Build Tools** "Desktop development with C++" workload for the linker |
 | **Python 3.10 or later** | generates the game-data tables from your client | [python.org](https://www.python.org). Standard library only; `capstone` is needed only by the reverse-engineering tools |
@@ -45,7 +45,8 @@ The paths below assume the repository is at `C:\MapleCW` and the client is insta
 `C:\Nexon\Library\maplestorycw`; substitute your own. Open **PowerShell as administrator**.
 
 **1. Make a copy of the client to patch.** The original install is never modified - everything
-patches the copy in `client-patched\` (gitignored).
+patches the copy in `client-patched\`, whose [README](client-patched/README.md) shows what
+belongs there. Only that README is tracked; the client itself is gitignored.
 
 ```powershell
 robocopy "C:\Nexon\Library\maplestorycw\appdata" "C:\MapleCW\client-patched" /E
