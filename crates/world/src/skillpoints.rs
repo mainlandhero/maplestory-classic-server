@@ -157,6 +157,29 @@ pub fn entitlement(tier: Tier, level: u32) -> u32 {
     SP_ON_ADVANCE + SP_PER_LEVEL * (counted - start)
 }
 
+/// **The first-job pool on this server: it keeps growing past 30 until the whole book can be
+/// maxed.** A deliberate deviation from classic MapleStory - the owner, 2026-10-02, from player
+/// complaints: *"Allow continuous accumulation of skill points for 1st job beyond level 30 until
+/// all skills can be maxed in first job."*
+///
+/// `to_max_book` is the sum of every first-job skill's `maxLevel` in the character's own book:
+/// 105 for Warrior, Magician and Bowman, 110 for Thief in this client. The pool keeps paying
+/// [`SP_PER_LEVEL`] a level after 30 and stops at the first grant that covers the book - 106 at
+/// level 45, 112 at 47 for a Thief. Never less than the classic [`entitlement`], so a book the
+/// classic 61 already covers (or an empty skill table, `0`) changes nothing. The second-job
+/// pool is untouched: past 30 both pools grow.
+pub fn first_job_entitlement(level: u32, to_max_book: u32) -> u32 {
+    let classic = entitlement(Tier::First, level);
+    let start = Tier::First.starts_at();
+    if level < start {
+        return classic;
+    }
+    let uncapped = SP_ON_ADVANCE + SP_PER_LEVEL * (level - start);
+    let covers_book =
+        SP_ON_ADVANCE + SP_PER_LEVEL * to_max_book.saturating_sub(SP_ON_ADVANCE).div_ceil(SP_PER_LEVEL);
+    uncapped.min(covers_book.max(classic))
+}
+
 /// **How many points to grant now**, given how many this tier has already been granted.
 ///
 /// This is the whole retroactivity mechanism and the whole double-grant guard. It is
@@ -173,6 +196,27 @@ pub fn top_up(tier: Tier, level: u32, already_granted: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **Past 30 the first-job pool keeps paying until the book can be maxed, then stops.**
+    /// 105 is a Magician's book (six skills, 15/15/15/20/20/20), 110 a Thief's.
+    #[test]
+    fn the_first_job_pool_grows_until_the_whole_book_can_be_maxed() {
+        for level in 0..=30 {
+            assert_eq!(first_job_entitlement(level, 105), entitlement(Tier::First, level), "unchanged to 30: {level}");
+        }
+        assert_eq!(first_job_entitlement(31, 105), 64, "30 no longer ends it");
+        assert_eq!(first_job_entitlement(44, 105), 103, "one level short of the book");
+        assert_eq!(first_job_entitlement(45, 105), 106, "the first grant that covers 105");
+        assert_eq!(first_job_entitlement(90, 105), 106, "and it stops there");
+        assert_eq!(first_job_entitlement(46, 110), 109);
+        assert_eq!(first_job_entitlement(47, 110), 112, "a Thief's 110");
+        assert_eq!(first_job_entitlement(120, 110), 112);
+        // An empty skill table, or a book the classic 61 covers: the classic rule exactly.
+        for level in [10, 30, 31, 70, 200] {
+            assert_eq!(first_job_entitlement(level, 0), entitlement(Tier::First, level));
+            assert_eq!(first_job_entitlement(level, 40), entitlement(Tier::First, level));
+        }
+    }
 
     /// **The owner's two worked examples, verbatim.**
     #[test]

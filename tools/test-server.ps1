@@ -2606,6 +2606,12 @@
              the stat window drops the number. A coupon that outlives its icon or an icon
              that outlives its multiplier is a bug either way - say which.
 
+    36. FIRST-JOB SP PAST 30 (2026-10-02). A first/second-job character above level 30.
+          a. the skill window's 1st-job tab shows more SP than before: level 45+ has 106 in total
+             (Thief 112 at 47+), minus what is spent. Unchanged -> the skill table did not load
+             (the startup banner says so)
+          b. SP Reset Scroll: every first-job skill back to 0 and the full grown total back
+
     35. DEATH WITH A PET + TWO CLIENTS (2026-10-02). Two characters on one map; the dying one has a
         pet with Auto HP on.
           a. die: the revive dialog opens and the pet drinks NOTHING; HP stays 0, the stack is unchanged.
@@ -6281,6 +6287,9 @@ function Show-TestPlan {
         Write-Host '        potion icon yes, coupon icon no -> 163 is not it; kill something,' -ForegroundColor Yellow
         Write-Host '        triple EXP still? report both halves separately' -ForegroundColor Yellow
         Write-Host '     c. wait one out / right-click it: icon AND stat go together' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  36. FIRST-JOB SP PAST 30 (2026-10-02): 1st-job tab keeps 3/level past 30 to 106 (Thief 112)' -ForegroundColor White
+        Write-Host '       SP Reset Scroll gives the whole grown total back' -ForegroundColor Cyan
         Write-Host ''
         Write-Host '  35. DEATH WITH A PET + TWO CLIENTS (2026-10-02) - Auto HP pet on, die near the other client' -ForegroundColor White
         Write-Host '       a. dialog opens, pet drinks NOTHING, HP stays 0 (a potion = refusal did not fire)' -ForegroundColor Cyan
