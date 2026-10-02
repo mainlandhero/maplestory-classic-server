@@ -76,6 +76,9 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .c-etc { color: var(--etc); } .c-mesos { color: var(--mesos); } .c-setup { color: var(--setup); }
 
 .list { display: grid; gap: 10px; margin-top: 16px; }
+/* A grid item's minimum width is its content's by default, so a wide table would stretch its card
+   past the screen instead of scrolling inside .tbl. */
+.list > *, .items, .global, .panel { min-width: 0; }
 details.mob { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
 details.mob > summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 12px 14px; }
 details.mob > summary::-webkit-details-marker { display: none; }
@@ -122,6 +125,11 @@ footer p { margin: 0 0 8px; }
 td.seen { color: var(--muted); }
 td.seen b { color: var(--ink); font-weight: 500; }
 body { margin: 0; }
+.where { padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: baseline; font-size: 13px; }
+.where .lbl { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; margin-right: 4px; }
+.where .map { background: var(--chip-bg); border-radius: 6px; padding: 2px 8px; }
+.where .map b { font-family: var(--mono); font-weight: 500; color: var(--accent); margin-left: 4px; font-variant-numeric: tabular-nums; }
+.where .other { color: var(--accent); }
 .it { cursor: help; border-bottom: 1px dotted var(--muted); }
 .it:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 #tip { position: fixed; z-index: 30; max-width: min(320px, calc(100vw - 24px)); pointer-events: none; background: var(--tip-bg); color: var(--tip-fg); border: 1px solid var(--tip-line); border-radius: 6px; padding: 10px 12px; font-size: 13px; line-height: 1.45; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); }
@@ -167,6 +175,7 @@ body { margin: 0; }
 
   <footer>
     <p>The <b>Companion's Magic Box</b> from First Time Together is listed with the monsters: its "1 in N" counts boxes, not kills.</p>
+    <p>Only monsters you can meet are listed. <b>Found on</b> names every map that spawns the monster, with how many spawn points it has there, most first. A monster that only appears another way, such as the ship invasion or a summoning sack, says so.</p>
     <p>"1 in N" is the average number of kills per drop, rounded. Expected drops per kill add up the chances of every equipment or scroll row. Rows marked <b>quest</b> drop only for a player who has that quest in progress. Mesos marked <b>by level</b> are the server's default for a monster with no meso row: always dropped, and not affected by the drop rate.</p>
     <p id="livenote" hidden><b>Seen</b> counts what actually dropped on this server over the last 7 days, with the share of kills it dropped from. The counts update at most every 30 minutes, and anything older than 7 days is deleted.</p>
     <p>Search matches every word you type, in any order, against monster and item names, and allows one typo per word of four letters or more.</p>
@@ -216,7 +225,8 @@ function tokenHits(tok, words) {
 const allHit = (tokens, words) => tokens.every((t) => tokenHits(t, words));
 const cache = new Map();
 function wordsCached(key, text) { let w = cache.get(key); if (!w) { w = wordsOf(text); cache.set(key, w); } return w; }
-const mobWords = (m) => wordsCached("m" + m.id, m.name + " " + m.id + " " + (m.kind || ""));
+const mobWords = (m) => wordsCached("m" + m.id, m.name + " " + m.id + " " + (m.kind || "") + " " +
+  (m.maps || []).map((x) => x[1]).join(" ") + " " + (m.also || []).join(" "));
 const itemWords = (id) => { const [n, c] = itemOf(id); return wordsCached("i" + id, n + " " + id + " " + c); };
 // A row matches when every word hits the item or its monster, so "mano wand" finds Mano's wand scrolls.
 const rowMatches = (m, r) => state.q.length > 0 && allHit(state.q, m ? itemWords(r[0]).concat(mobWords(m)) : itemWords(r[0]));
@@ -368,16 +378,28 @@ function renderMobs() {
     const eq = expected(m.rows, "equip"), sc = expected(m.rows, "scroll");
     const kills = mobKills(m);
     const live = LIVE && !m.kind ? `<span>${num(kills)} kills &middot; ${num(mobPlayers(m))} players</span>` : "";
+    const nMaps = (m.maps || []).length;
+    const mapsTag = m.kind ? "" : `<span>${nMaps ? nMaps + (nMaps === 1 ? " map" : " maps") : "no map"}</span>`;
     parts.push(`<details class="mob"${anyRow && !nameHit ? " open" : ""}><summary>` +
       (m.kind ? `<span class="lv pq">PQ</span><span class="mname">${esc(m.name)}<small>${esc(m.kind)}</small></span>`
               : `<span class="lv">Lv ${m.level || "?"}</span><span class="mname">${esc(m.name)}<small>#${m.id}</small></span>`) +
-      `<span class="odds">${live}<span>equips <b class="c-equip">${perKill(eq)}</b></span><span>scrolls <b class="c-scroll">${perKill(sc)}</b></span><span>${m.rows.length} ${m.kind ? "prizes" : "drops"}</span></span>` +
-      `</summary>` + (m.kind ? `<p class="boxnote">Every member gets one box when the last stage clears. Opening it gives exactly one of these ${m.rows.length} prizes, each equally likely. The drop rate does not change it.</p>` : "") +
+      `<span class="odds">${live}${mapsTag}<span>equips <b class="c-equip">${perKill(eq)}</b></span><span>scrolls <b class="c-scroll">${perKill(sc)}</b></span><span>${m.rows.length} ${m.kind ? "prizes" : "drops"}</span></span>` +
+      `</summary>` + whereHtml(m) + (m.kind ? `<p class="boxnote">Every member gets one box when the last stage clears. Opening it gives exactly one of these ${m.rows.length} prizes, each equally likely. The drop rate does not change it.</p>` : "") +
       `<div class="tbl"><table>${head()}<tbody>${rows.map((r) => rowHtml(m, r, true, !nameHit && rowMatches(m, r), kills)).join("")}</tbody></table></div></details>`);
   }
   $("mobs").innerHTML = parts.length ? parts.join("") : '<div class="empty panel">No monster or drop matches that search.</div>';
   $("status").innerHTML = `<b>${shown}</b> sources, <b>${num(rowsShown)}</b> drops shown at <b>${state.rate}x</b>` +
     (state.q.length ? ` for "${esc(state.q.join(" "))}"` : "") + ". Open a monster to see its table.";
+}
+
+// "Found on": every map whose spawn list places it, most spawn points first (the server sorts
+// them), and the other ways the server brings it - the ship invasion, a summoning sack.
+function whereHtml(m) {
+  if (m.kind) return "";
+  const maps = (m.maps || []).map(([, name, n]) =>
+    `<span class="map" title="${n} spawn point${n === 1 ? "" : "s"}">${esc(name)}<b>&times;${n}</b></span>`);
+  const also = (m.also || []).map((t) => `<span class="other">${esc(t)}</span>`);
+  return `<div class="where"><span class="lbl">Found on</span>${maps.concat(also).join("") || "-"}</div>`;
 }
 
 function renderItems() {

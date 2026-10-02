@@ -109,6 +109,32 @@ def tooltip_lines():
     return out
 
 
+def whereabouts(item_names):
+    """dropweb.rs `Whereabouts`: template -> [[map, name, spawn points]] (most first), and
+    template -> the other ways it appears (the ship invasion, a summoning sack)."""
+    counts = {}
+    for line in open(os.path.join(GM, "mobs.txt"), encoding="utf-8"):
+        p = [x.strip() for x in line.split(",")]
+        if p[0].isdigit() and len(p) > 1 and p[1].isdigit():
+            per = counts.setdefault(int(p[1]), {})
+            per[int(p[0])] = per.get(int(p[0]), 0) + 1
+    map_names = read_csv_names(os.path.join(GM, "maps.txt"), 1)
+    maps_of = {t: [[m, map_names.get(m, f"Map {m}"), n] for m, n in sorted(per.items(), key=lambda kv: (-kv[1], kv[0]))]
+               for t, per in counts.items()}
+    also_of = {700005: ["Invades the ship between Ellinia and Orbis"]}
+    for line in open(os.path.join(GM, "summonsacks.txt"), encoding="utf-8"):
+        p = [x.strip() for x in line.split(",")]
+        if not p[0].isdigit() or len(p) < 5:
+            continue
+        seen = []
+        for part in p[4].split(";"):
+            t = part.split(":")[0]
+            if t.isdigit() and int(t) not in seen:
+                seen.append(int(t))
+                also_of.setdefault(int(t), []).append(f"Summoned by {item_names.get(int(p[0]), 'Item ' + p[0])}")
+    return maps_of, also_of
+
+
 def descriptions():
     """gm-handbook/itemdesc.txt (tools/dump_names.py): id -> the client's text, \\n kept as two characters."""
     out = {}
@@ -169,15 +195,19 @@ def main():
         else:
             mobs.setdefault(int(c[0]), []).append(row)
 
+    maps_of, also_of = whereabouts(item_names)
     out_mobs = []
     for tid in sorted(mobs, key=lambda t: (mob_levels.get(t, 0), t)):
+        if tid not in maps_of and tid not in also_of:
+            continue  # on no map and brought no other way: hidden, as the served page does
         rows = mobs[tid]
         level = mob_levels.get(tid, 0)
         if not any(r[0] == 0 for r in rows):
             rng = level_meso_range(level)
             if rng:
                 rows = [[0, 1_000_000, rng[0], rng[1], 1]] + rows  # 5th field: not scaled by the rate
-        out_mobs.append({"id": tid, "name": mob_names.get(tid, f"Mob {tid}"), "level": level, "rows": rows})
+        out_mobs.append({"id": tid, "name": mob_names.get(tid, f"Mob {tid}"), "level": level,
+                         "maps": maps_of.get(tid, []), "also": also_of.get(tid, []), "rows": rows})
 
     # The party quest's reward box, as one more source. Each line is 1 in N per box, the same
     # for every member, and the drop rate does not touch it (5th field 1).
