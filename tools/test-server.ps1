@@ -2688,6 +2688,14 @@
              at most 8 s after the first kill -> DONE
                each back 8 s after its own kill = old build
 
+    31. QUEST LINES ONCE (2026-10-02). Turn in any quest at its NPC (Heena's mirror, a board
+        donation, anything):
+          a. the completion lines appear ONCE - the client's own box - and after you press
+             Next/Yes at most ONE more box (the thank-you) or none -> DONE
+               the same lines a second time = old build
+          b. a weekly donation: "are you saying you'd like to donate?" asked ONCE; Yes ->
+             "Thank you so much!" once, and the client stays up -> DONE
+
     30. BACKPORTED SCROLLS + LUCKY DAY (2026-10-01). The client data changed: launch the
         client from client-patched (or let the launcher patch) BEFORE this step.
           !item 2049100 5   (Chaos 60%)     !item 2049003 5   (Pure Clean Slate 20%)
@@ -6352,6 +6360,11 @@ function Show-TestPlan {
         Write-Host '          icon stuck at 0 -> paste the "buffs:" lines from world-ch0.log AND world-ch1.log' -ForegroundColor Yellow
         Write-Host '       kill 3 mobs a few seconds apart: all 3 back TOGETHER within 8 s -> DONE' -ForegroundColor Green
         Write-Host '          each back 8 s after its own kill -> old build' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  31. QUEST LINES ONCE (2026-10-02): turn in any quest at its NPC ->' -ForegroundColor White
+        Write-Host '       completion lines ONCE, then at most one thank-you box -> DONE' -ForegroundColor Green
+        Write-Host '       a weekly donation asks "...donate?" ONCE; Yes -> thanks, client stays up -> DONE' -ForegroundColor Green
+        Write-Host '          the same lines twice = old build' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  30. BACKPORTED SCROLLS + LUCKY DAY (2026-10-01) - client data changed, launch from client-patched:' -ForegroundColor White
         Write-Host '       !item 2049100 / 2049003 / 2049190 / 2530000 (Chaos, Clean Slate 20%, Innocence, Lucky Day)' -ForegroundColor Green
