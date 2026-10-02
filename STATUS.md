@@ -977,6 +977,11 @@ to everyone ... If the quest was previously completed by the player, they become
   with forget-completion before the accept. Re-sent from the tick when the day turns.
 * **Shops**: the town-hall shops' `min_grade` rows now carry `+0x104` town / `+0x108` grade (the client
   draws them locked) and `classic_buy` refuses them - **the gate that was parsed and never read**.
+* **REVERTED 2026-10-02 for Contribution** - the owner: *"revert the 10x changes for dailies and weeklies"*,
+  after a grade-2 character banked 1000 for a daily and 5000 for a weekly and landed on grade 7 (the
+  table is 1000 a grade). Contribution is the quest's own number again; quest mesos stay at the rate.
+  Totals already banked are not touched - `!citizenship <town> contr|grade <n>` corrects one by hand.
+  What follows is the history.
 * **At the Quest rate** (the owner, same day: *"10x as well, similar to the current 10x global boost"*): a
   board daily/weekly's Contribution is multiplied by the `!setrates` Quest field, the one quest EXP already
   used (so EXP is NOT multiplied twice); story-arc Contribution stays flat. **And quest mesos are paid at
