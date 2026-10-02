@@ -2,7 +2,11 @@
 **/*.rs.bk
 
 # Never commit client binaries or extracted game assets.
-/client-patched/
+# Everything in it except its README, which says what to put there. Ignoring the CONTENTS
+# rather than the directory is what lets the one file back in - git never re-includes a file
+# inside a directory that is itself ignored.
+/client-patched/*
+!/client-patched/README.md
 /research/fixtures/*.bin
 /research/fixtures/*.wz
 /out/
