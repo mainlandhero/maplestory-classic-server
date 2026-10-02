@@ -20,7 +20,9 @@ Measured across the archive and today's runs:
   `0x0151` action 1 only after. **[L]**
 * **The `yes` branch, `Say.0.yes`, is the server's**, in answer to action 1 (2026-08-20, quest
   1000, on screen). **[L]**
-* **The completion, `Say.1`, is the server's**, in answer to action 2. If the client showed it
+* **RETRACTED 2026-10-02 - `Say.1` is the CLIENT's** (`research/quest-dialogue-who-speaks-2026-10-02.md`:
+  the request builder draws `Say/<state>` for a turn-in exactly as for an accept). The original line:
+  **The completion, `Say.1`, is the server's**, in answer to action 2. If the client showed it
   itself, Rain's question would have been drawn twice and the first attempt (a Say with `#L`
   tags) could not have faulted the client on OUR packet. **[D]**
 * **The opening SCRIPT (action 4) is the server's.** A scripted quest has no local text; the

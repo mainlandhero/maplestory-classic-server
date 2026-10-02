@@ -160,9 +160,20 @@ pub const GRADE_NAMES: [&str; 10] = [
 
 pub const MAX_GRADE: u8 = 10;
 
-/// Contribution needed to REACH each grade, index = grade - 1. **[S]** - the client carries no
-/// table for it (`research/citizenship-2026-09-27.md` §2.2).
-pub const GRADE_THRESHOLDS: [u32; 10] = [0, 1_000, 2_000, 3_000, 4_000, 5_000, 6_000, 7_000, 8_000, 10_000];
+/// **Contribution needed AT each grade to reach the next one**, index = grade - 1: 1,000 at
+/// Traveler for Visitor, 2,000 at Visitor for Helpful Stranger ... 10,000 at Guardian of the
+/// Village for Citizen of Honor. **[S]** - the client carries no table for it
+/// (`research/citizenship-2026-09-27.md` §2.2).
+///
+/// **Per grade, not a running total**, and the contribution resets on promotion with the excess
+/// kept. The owner, 2026-10-02, on why the points were "very off": *"From grade 1 to grade 2, it
+/// requires 1000 contribution from when the player is in grade 1. After leveling to grade 2, the
+/// contribution resets to 0 (player retains any excess that exceeds the grade limit), and it
+/// requires 2000 contribution from the player when they are grade 2 ... From grade 1 to grade
+/// 3, it means that total of 3000 contribution is required."* Until then the same numbers were
+/// read as cumulative thresholds, so grade 3 came at 2,000 in total and grade 10 at 10,000
+/// instead of 46,000. `store::citizenship` converted the stored totals once (see its docs).
+pub const GRADE_REQUIREMENTS: [u32; 9] = [1_000, 2_000, 3_000, 4_000, 5_000, 6_000, 7_000, 8_000, 10_000];
 
 /// The Reactivation fee, in mesos. **[S]** for grade 1 (the site's only figure); used for every
 /// grade until a better number exists. Shown to the player in the contract window itself.
@@ -193,14 +204,9 @@ pub fn grade_name(grade: u8) -> &'static str {
     GRADE_NAMES[usize::from(grade.clamp(1, MAX_GRADE) - 1)]
 }
 
-/// The grade a total contribution has earned.
-pub fn grade_for(contribution: u32) -> u8 {
-    GRADE_THRESHOLDS.iter().rposition(|&t| contribution >= t).map_or(1, |i| i as u8 + 1)
-}
-
 /// What the next grade needs, or `None` at the top.
 pub fn next_threshold(grade: u8) -> Option<u32> {
-    GRADE_THRESHOLDS.get(usize::from(grade)).copied()
+    GRADE_REQUIREMENTS.get(usize::from(grade.max(1)) - 1).copied()
 }
 
 /// The active citizenship, if any. There is at most one - every writer keeps it that way.
@@ -383,10 +389,18 @@ impl Banked {
     }
 }
 
-/// The grade a standing should have after its contribution moved - never lower than it was
-/// (a GM may have set it above the threshold), never above ten.
+/// Promote a standing as far as its contribution reaches: each grade's requirement is taken off
+/// and the excess carried, so one large turn-in can cross several grades. Never down, never
+/// above ten; at ten the contribution simply keeps counting.
 pub fn regrade(mut t: TownStanding) -> TownStanding {
-    t.grade = t.grade.max(grade_for(t.contribution)).min(MAX_GRADE);
+    t.grade = t.grade.clamp(1, MAX_GRADE);
+    while let Some(need) = next_threshold(t.grade) {
+        if t.contribution < need {
+            break;
+        }
+        t.contribution -= need;
+        t.grade += 1;
+    }
     t
 }
 
@@ -671,13 +685,21 @@ mod tests {
 
     #[test]
     fn grades_follow_the_thresholds_and_stop_at_ten() {
-        assert_eq!(grade_for(0), 1);
-        assert_eq!(grade_for(999), 1);
-        assert_eq!(grade_for(1_000), 2);
-        assert_eq!(grade_for(8_000), 9);
-        assert_eq!(grade_for(9_999), 9);
-        assert_eq!(grade_for(10_000), 10);
-        assert_eq!(grade_for(u32::MAX), 10);
+        // Per grade, the excess carried: the owner's own example - 3,000 in all from grade 1 to 3.
+        let up = |grade: u8, contribution: u32| {
+            let t = regrade(standing(1, 1, grade, contribution));
+            (t.grade, t.contribution)
+        };
+        assert_eq!(up(1, 999), (1, 999));
+        assert_eq!(up(1, 1_000), (2, 0), "1,000 at grade 1 is Visitor, and the counter resets");
+        assert_eq!(up(1, 1_250), (2, 250), "the excess is kept");
+        assert_eq!(up(2, 1_999), (2, 1_999), "grade 2 needs 2,000 of its own");
+        assert_eq!(up(1, 3_000), (3, 0), "grade 1 to 3 is 3,000 in total");
+        assert_eq!(up(9, 9_999), (9, 9_999));
+        assert_eq!(up(9, 10_400), (10, 400), "Citizen of Honor needs 10,000 at grade 9");
+        assert_eq!(up(1, 46_000), (10, 0), "1 to 10 is 46,000");
+        assert_eq!(up(10, 70_000), (10, 70_000), "at ten it keeps counting");
+        assert_eq!(next_threshold(1), Some(1_000));
         assert_eq!(next_threshold(9), Some(10_000));
         assert_eq!(next_threshold(10), None);
         assert_eq!(regrade(standing(1, 1, 4, 100)).grade, 4, "never down");

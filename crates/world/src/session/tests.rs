@@ -214,7 +214,10 @@ fn a_turn_in_into_a_full_tab_is_refused_at_the_npc_and_the_quest_stays_in_progre
     assert_eq!(bag.items_in(store::InventoryType::Equip).filter(|i| i.item.item_id == 1_002_005).count(), 1, "the hat");
     assert_eq!(bag.items_in(store::InventoryType::Etc).filter(|i| i.item.item_id == 4_031_002).count(), 0, "the letter went back");
     assert_eq!(exp_now(&store) - exp_before, 10);
-    assert!(out.iter().any(|r| r.what.contains("on path \"1\"")), "and the closing line is said this time: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    // The closing line itself is the client's (it drew `Say.1` before sending the turn-in), so
+    // what matters is that nothing contradicts it: no refusal box this time.
+    assert!(!out.iter().any(|r| r.what.contains("bag is full") || r.what.contains("Your bag")), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(!out.iter().any(|r| r.what.contains("on path \"1\"")), "and Say.1 is not repeated: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
 }
 
 /// **A stack that still has room is room.** The hat quest's twin with a potion reward: a
@@ -5352,7 +5355,9 @@ fn completing_a_quest_never_replays_its_opening() {
     );
 }
 
-/// A quest that DOES have completion lines speaks them, and chains nothing.
+/// **A quest with its own completion lines does NOT repeat them** - the client drew `Say.1`
+/// before it sent the turn-in (`FUN_141f0e4c0`, 2026-10-02). It chains nothing, says its `1.yes`
+/// when it has one, and otherwise sends the record alone.
 #[test]
 fn a_quest_with_its_own_completion_lines_uses_them() {
     let (mut s, _, _) = gm_session();
@@ -5371,8 +5376,21 @@ fn a_quest_with_its_own_completion_lines_uses_them() {
 
     let out = s.handle(&quest_request(net::script::QUEST_ACTION_COMPLETE, 1001, 1));
     let said: Vec<String> = out.iter().map(|r| r.what.clone()).collect();
-    assert!(said.iter().any(|w| w.contains("on path \"1\"")), "{said:?}");
+    assert!(!said.iter().any(|w| w.contains("on path \"1\"")), "the client already said Say.1: {said:?}");
+    assert!(!out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE), "no yes branch, so no box: {said:?}");
     assert!(said.iter().any(|w| w.contains("quest 1001 completed")), "{said:?}");
+
+    // With a `1.yes`, that is the answer - once.
+    let mut q = s.config.quests[&1001].clone();
+    q.say.insert("1.yes".to_string(), vec!["Thank you!".to_string()]);
+    let mut quests = std::collections::HashMap::new();
+    quests.insert(1002u32, q);
+    s.config = Arc::new(Config { quests, ..(*s.config).clone() });
+    s.handle(&quest_request(net::script::QUEST_ACTION_START, 1002, 2));
+    let out = s.handle(&quest_request(net::script::QUEST_ACTION_COMPLETE, 1002, 1));
+    let boxes: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::script::SCRIPT_MESSAGE).collect();
+    assert_eq!(boxes.len(), 1, "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert!(boxes[0].what.contains("on path \"1.yes\""), "{}", boxes[0].what);
 }
 
 /// `0x0151` body: u8 action, u32 questId, u32 npcTemplateId, then a tail we do not read.
@@ -14361,7 +14379,8 @@ fn no_quest_answers_its_accept_or_turn_in_with_its_own_opening_lines() {
     let mut board_skipped = 0;
     let mut accepted_silently = 0;
     let mut accepted_with_yes = 0;
-    let mut turned_in_with_line = 0;
+    let mut turned_in_with_yes = 0;
+    let mut turned_in_after_client_line = 0;
     let mut turned_in_with_quiz = 0;
     let mut turned_in_chained = 0;
     let mut turned_in_silently = 0;
@@ -14416,6 +14435,12 @@ fn no_quest_answers_its_accept_or_turn_in_with_its_own_opening_lines() {
         let out = s.on_quest_request(&request(2, qid, end_npc));
         assert!(own_opening(&out, qid).is_none(), "quest {qid}: turn-in answered with its own opening: {:?}", own_opening(&out, qid));
         assert!(boxes(&out) <= 1, "quest {qid}: turn-in opened {} boxes at once", boxes(&out));
+        // **And never with its own `Say.1`**: the client drew it before sending the turn-in.
+        assert!(
+            !out.iter().any(|r| r.what.contains(&format!("for quest {qid},")) && r.what.contains("on path \"1\"")),
+            "quest {qid}: turn-in repeated Say.1, which the client already showed: {:?}",
+            out.iter().map(|r| &r.what).collect::<Vec<_>>()
+        );
         let is_quiz = q.say.contains_key("1.ask");
         if is_quiz {
             // The client conducts the quiz and sends the turn-in on a right answer; the server
@@ -14423,9 +14448,12 @@ fn no_quest_answers_its_accept_or_turn_in_with_its_own_opening_lines() {
             assert!(out.iter().any(|r| r.opcode == net::quest::MESSAGE), "quest {qid}: a quiz turn-in must record the completion: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
             assert_eq!(boxes(&out), 0, "quest {qid}: a quiz turn-in must not open a box - the client drew the quiz: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
             turned_in_with_quiz += 1;
+        } else if q.say.contains_key("1") && q.say.contains_key("1.yes") {
+            assert!(out.iter().any(|r| r.what.contains(&format!("for quest {qid}, line 1 of")) && r.what.contains("on path \"1.yes\"")), "quest {qid}: has 1.yes and did not say it: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+            turned_in_with_yes += 1;
         } else if q.say.contains_key("1") {
-            assert!(out.iter().any(|r| r.what.contains(&format!("for quest {qid}, line 1 of")) && r.what.contains("on path \"1\"")), "quest {qid}: has Say.1 and did not say it: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
-            turned_in_with_line += 1;
+            assert_eq!(boxes(&out), 0, "quest {qid}: the client said Say.1 and there is no 1.yes, yet a box: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+            turned_in_after_client_line += 1;
         } else if let Some(next) = q.next_quest.filter(|n| quests.get(n).is_some_and(|nq| nq.say.contains_key("0"))) {
             // The chain: the NEXT quest's opening, spoken because the finished one has nothing.
             // The next quest is accepted in the same breath, so the client will not offer it a
@@ -14439,7 +14467,7 @@ fn no_quest_answers_its_accept_or_turn_in_with_its_own_opening_lines() {
         }
     }
     eprintln!(
-        "audited {audited} quests: accept -> {accepted_with_yes} spoke the yes branch, {accepted_silently} sent the record alone; turn-in -> {turned_in_with_line} spoke Say.1, {turned_in_with_quiz} completed a quiz silently, {turned_in_chained} chained, {turned_in_silently} sent the record alone"
+        "audited {audited} quests: accept -> {accepted_with_yes} spoke the yes branch, {accepted_silently} sent the record alone; turn-in -> {turned_in_with_yes} spoke 1.yes, {turned_in_after_client_line} sent the record after the client's own Say.1, {turned_in_with_quiz} completed a quiz silently, {turned_in_chained} chained, {turned_in_silently} sent the record alone"
     );
     assert_eq!(board_skipped, 71, "the four Community Board groups");
     assert!(audited > 230, "the client ships 322 quests, 71 of them board quests; {audited} audited");

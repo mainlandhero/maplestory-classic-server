@@ -102,6 +102,40 @@ pub(crate) fn create_tables(conn: &Connection) -> Result<()> {
     if !has {
         conn.execute("ALTER TABLE citizenship ADD COLUMN honor_earring INTEGER NOT NULL DEFAULT 0", [])?;
     }
+    convert_to_per_grade_contribution(conn)?;
+    Ok(())
+}
+
+/// **Contribution became per grade on 2026-10-02** (`world::citizenship::GRADE_REQUIREMENTS`):
+/// it now counts toward the NEXT grade and resets on promotion. Until then it was a running total
+/// against cumulative thresholds - the same numbers, read the wrong way.
+///
+/// The rows written under the old reading are converted **once**, the first time a database is
+/// opened by this code: the `per_grade` column's arrival is the marker, and the ALTER and the
+/// UPDATE share one transaction, so a database is either wholly old or wholly converted.
+/// **Every character keeps the grade they have** - nobody is demoted, and an earring already
+/// handed out stays deserved - and what they had toward the next grade is the total minus the
+/// old threshold of the grade they are at (floored at 0: a GM may have set a grade the total
+/// never reached). A fresh database runs the same steps on an empty table.
+fn convert_to_per_grade_contribution(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(citizenship)")?;
+    let has = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .iter()
+        .any(|name| name == "per_grade");
+    drop(stmt);
+    if has {
+        return Ok(());
+    }
+    conn.execute_batch(
+        "BEGIN;
+         ALTER TABLE citizenship ADD COLUMN per_grade INTEGER NOT NULL DEFAULT 1;
+         UPDATE citizenship SET contribution = MAX(0, contribution - (CASE grade
+             WHEN 1 THEN 0 WHEN 2 THEN 1000 WHEN 3 THEN 2000 WHEN 4 THEN 3000 WHEN 5 THEN 4000
+             WHEN 6 THEN 5000 WHEN 7 THEN 6000 WHEN 8 THEN 7000 WHEN 9 THEN 8000 ELSE 10000 END));
+         COMMIT;",
+    )?;
     Ok(())
 }
 
@@ -283,6 +317,29 @@ mod tests {
         assert_eq!(store.board_pick(chr, 510_001).unwrap(), Some((20_730, vec![506_005, 506_006])));
         store.set_board_pick(chr, 510_002, 2_961, &[]).unwrap();
         assert_eq!(store.board_pick(chr, 510_002).unwrap(), Some((2_961, vec![])), "an empty posting is a posting");
+    }
+
+    /// **The one-time conversion to per-grade contribution**: an old-shaped table's running totals
+    /// become progress within the grade each character already has (total minus the old
+    /// threshold, floored at 0); a second open changes nothing.
+    #[test]
+    fn running_totals_become_progress_within_the_grade_once() {
+        let old = Connection::open_in_memory().unwrap();
+        old.execute_batch(
+            "CREATE TABLE citizenship (character_id INTEGER, town INTEGER, state INTEGER, grade INTEGER, contribution INTEGER, certified_grade INTEGER, PRIMARY KEY (character_id, town));
+             INSERT INTO citizenship VALUES (1, 1, 1, 1, 950, 1), (2, 1, 1, 3, 2500, 3), (3, 2, 2, 10, 10450, 10), (4, 1, 1, 5, 100, 5);",
+        )
+        .unwrap();
+        create_tables(&old).unwrap();
+        create_tables(&old).unwrap();
+        let rows: Vec<(i64, i64, i64)> = old
+            .prepare("SELECT character_id, grade, contribution FROM citizenship ORDER BY character_id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+        assert_eq!(rows, vec![(1, 1, 950), (2, 3, 500), (3, 10, 450), (4, 5, 0)], "grades kept, totals made per grade, once");
     }
 
     /// Contribution banks only in the active town; a frozen one is untouched and says so.

@@ -135,6 +135,21 @@ impl Session {
             // nothing a box has to say and no NPC d0 fallback either - `silent_accept`
             // returns before `say_line`.
             Some(_) if accepted => None,
+            // **A turn-in is answered the way an accept is: the CLIENT already said `Say.1`.**
+            // Players, 2026-10-02: *"quests are repeating lines in general"*. [L] from the
+            // client's own request builder `FUN_141f0e4c0` (decompiled 2026-10-02,
+            // `research/quest-dialogue-who-speaks-2026-10-02.md`): for state 0 AND state 1 it
+            // loads `Say/<state>`, runs the local dialog over its lines (`FUN_141f13360`, or
+            // `FUN_141f146a0` when the node has `ask`), and only then builds `0x0151` - action 1
+            // for an offer, action 2 for a turn-in (with `FUN_141f15fb0` reading a reward pick off
+            // the last line). The one dialog-free action-2 form is gated on `autoCompleteAction`,
+            // which no quest in this client carries. So `Say.1` reached the screen twice - and on
+            // a weekly donation its yes/no twice, which is how one player was dropped. The answer
+            // is the `yes` branch, the same as an accept's `0.yes` (measured on screen
+            // 2026-08-20), or nothing; a quiz (`ask` on `1`) has no `1.yes` and stays silent.
+            Some(q) if req.action == net::script::QUEST_ACTION_COMPLETE && q.say.contains_key(state) => {
+                (!q.say.contains_key(&format!("{state}.ask")) && q.say.contains_key(&branch)).then_some(branch)
+            }
             Some(q) if q.say.contains_key(state) => Some(state.to_string()),
             // A completion whose quest has nothing to say hands over to the next quest in
             // the chain, and the conversation belongs to THAT quest from here on - the
@@ -2607,7 +2622,23 @@ impl Session {
             // **Record the acceptance before the branch-text check**, not after. A quest
             // whose `yes` path has no line in `Quest.wz` is still a quest the player just
             // accepted, and ordering these the other way would silently drop exactly those.
-            let mut out = if accepted { self.accept_quest(&convo) } else { Vec::new() };
+            //
+            // **Only an OFFER's Yes accepts** - a Say path under state `0`. The weekly
+            // donations' completion talk (`1`, "...are you saying you'd like to donate?") is a
+            // yes/no too, and its Yes was being taken as accepting the quest again: on the live
+            // server 2026-10-02 a turn-in answered Yes, the start gate refused ("already done
+            // this week"), and the `1.yes` line followed the refusal - two `0x055B` boxes at
+            // once. The client rejected the second (`0x009E`) and dropped 15 s later. The
+            // turn-in is recorded by `0x0151` action 2 before this talk opens, so the Yes here
+            // only reads the `1.yes` line.
+            let offer = convo.path.split('.').next() == Some("0");
+            let mut out = if accepted && offer { self.accept_quest(&convo) } else { Vec::new() };
+            // **A refused accept is the whole answer.** `citizenship_start_gate` and the bag
+            // check park their own box under `REFUSAL_PATH`; a branch line after it is a
+            // second script box on screen at once, which is what took that client down.
+            if self.conversation.as_ref().is_some_and(|c| c.path == crate::questroom::REFUSAL_PATH) {
+                return out;
+            }
             if !self.has_branch(&convo, branch) {
                 self.conversation = None;
                 return out;
