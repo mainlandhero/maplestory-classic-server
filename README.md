@@ -74,12 +74,12 @@ requires it.
 python C:\MapleCW\tools\quest_patch.py --install
 ```
 
-**5. Create an account** - it prompts for the password and stores only an argon2id hash.
-`--gm` allows the `!` GM commands (`!map`, `!item`, `!exp`, `!job`, ...).
+**5. Create your account, and make it a GM** - see [Managing accounts](#managing-accounts) for
+the rules and everything else the tool does.
 
 ```powershell
-C:\MapleCW\target\release\maplecw-useradd.exe --db C:\MapleCW\maplecw.db <name> --email <address>
-C:\MapleCW\target\release\maplecw-useradd.exe --db C:\MapleCW\maplecw.db --gm <name>
+C:\MapleCW\target\release\maplecw-useradd.exe --db C:\MapleCW\maplecw.db Wisp --email wisp@example.com
+C:\MapleCW\target\release\maplecw-useradd.exe --db C:\MapleCW\maplecw.db --gm Wisp
 ```
 
 **6. Start it.**
@@ -115,6 +115,64 @@ and [`docs/client-machine-checklist.md`](docs/client-machine-checklist.md).
 **Nothing authenticates the game socket.** The launcher signs in over TLS and the login server
 ties the client to that sign-in, but the game protocol itself carries no credentials. Run it on
 a network you trust.
+
+## Managing accounts
+
+Accounts live in the server's database (`maplecw.db`, beside the repository or the packaged
+server) and are managed with **`maplecw-useradd`**, which `cargo build --release` puts in
+`target\release\` and the server package ships in `bin\`. Every command takes **`--db <path>`**;
+without it the tool opens `maplecw.db` in the current directory, which in an administrator window
+is `C:\Windows\System32` - so always pass it. The servers can keep running while you use it.
+
+```powershell
+$useradd = "C:\MapleCW\target\release\maplecw-useradd.exe"
+$db      = "C:\MapleCW\maplecw.db"
+```
+
+**Create an account.** The password is asked for twice at a hidden prompt (or read from piped
+input) and is never accepted on the command line, where it would land in shell history. Only an
+argon2id hash is stored.
+
+```powershell
+& $useradd --db $db Wisp                              # name only
+& $useradd --db $db Wisp --email wisp@example.com     # with an email (put --email AFTER the name)
+```
+
+* **Name:** 3 to 24 characters, letters, digits and `_` only.
+* **Password:** at least 8 characters. Players registering through the launcher must also use at
+  least one letter and one digit.
+* **Email** is optional. The launcher's sign-in box accepts either the name or the email.
+
+**Give or take GM rights** - the `!` commands (`!map`, `!item`, `!exp`, `!job`, `!heal`, ...).
+A GM flag says which *account* may use them; it is authorisation, not authentication.
+
+```powershell
+& $useradd --db $db --gm Wisp
+& $useradd --db $db --no-gm Wisp
+```
+
+**Everything else:**
+
+| command | what it does |
+|---|---|
+| `--list` | every account: id, name, email, state (enabled or disabled), GM, last login |
+| `--passwd <name\|email>` | set a new password (the old one is not asked for) |
+| `--email <name> <address>` | set an email; `""` clears it |
+| `--disable <name>` / `--enable <name>` | stop or allow an account signing in |
+| `--claims` | who is signed in through a launcher, one row per launch |
+| `--clear-claims` | forget them all, if a crashed launcher left an account marked as playing |
+
+**Players on other machines** have no database and no `maplecw-useradd`, so they register in the
+launcher instead, with a single-use code you give them:
+
+```powershell
+& $useradd --db $db --registration-code               # valid 7 days: the player enters it on Register
+& $useradd --db $db --recovery-code Wisp              # valid 24 hours: lets that account set a new password
+& $useradd --db $db --codes                           # how many of each are still live
+```
+
+A GM can mint the same codes in game with `!registrationcode` and `!recoverycode <name|email>`.
+The code is printed once and only its hash is kept, so copy it before closing the window.
 
 ## Status
 
