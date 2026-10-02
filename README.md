@@ -91,3 +91,20 @@ where `<Data>` is `C:\Nexon\Library\maplestorycw\appdata\Data`.
   original `COutPacket`/`CInPacket`/`CWvsContext` class structure.
 - The real obstacles are **nProtect GameGuard** (kernel driver) and **MapleSecurePC64**
   (packet crypto), not the data format. See [research/client-recon.md](research/client-recon.md).
+
+## License
+
+The code in this repository is released under the **MIT License** - see [`LICENSE`](LICENSE).
+You may use, copy, modify and redistribute it, commercially or not, **as long as the copyright
+notice and the license text stay with every copy or substantial portion**. That notice is the
+credit: `Copyright (c) 2026 mainlandhero`.
+
+What the license does **not** cover, because it is not this project's to license:
+
+* **MapleStory itself** - the client, its WZ data, art, sound and text belong to their owners.
+  Nothing here ships the client; `gm-handbook/` and `client-patched/` are generated locally
+  and gitignored.
+* **Decompiled client excerpts** under `research/` (`msexe-*.c` and the listings quoted in the
+  notes) are reverse-engineering notes about software this project does not own.
+* **Data gathered from other sites** (`data/drops.txt` and others name their source in their own
+  headers) - check the source's terms before reusing it outside this project.
