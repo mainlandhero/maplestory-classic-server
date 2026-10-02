@@ -1,0 +1,63 @@
+04:18:33.131 <- [Moth#219] 0x0202 CLIENT_PET_MOVE (u32 petIdx, u32 tick, u8, then the movement path) - rebroadcast as 0x0278, 62 byte body 000000000000000000eb01ce0000000000020000eb01ce000000000017000000000000001678000000eb01ce000000000017000000000000000486010000
+04:18:33.137    0x0202 CLIENT_PET_MOVE (u32 petIdx, u32 tick, u8, then the movement path) - rebroadcast as 0x0278 is not answered yet - see crates/world/src/session/
+04:18:33.198 <- [Moth#219] 0x0151 CLIENT_QUEST_REQUEST (u8 action, u32 questId, u32 npcTemplateId, shape-dependent tail), 17 byte body 02a8b80700e5000000eb01ce00ffffffff
+04:18:33.225 -> [Moth#219] 0x0089 UNKNOWN quest 506024 completed for character 219
+04:18:33.225    body 01a8b80700029930bf6a00000000
+04:18:33.225 -> [Moth#219] 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation REMOVE: 100 x 4000013 from Etc slot 9 - taken back by a quest
+04:18:33.225    body 0100010000000003040900
+04:18:33.225 -> [Moth#219] 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation ADD: item 2000003 into Use slot 2 - 41 byte blob. a quest reward.
+04:18:33.225    body 01000100000000000202000283841e0000008005bb46e6170200000000005f000000000000000000000000000000000000000000
+04:18:33.225 -> [Moth#219] 0x02D1 UNKNOWN UserEffectLocal item line: quest 506024 rewarded 2000003 x20 - chat category 6, which is grey. NOT the 0x0089 pick-up line, whose chat route is gated on a fieldType no map has
+04:18:33.225    body 080183841e001400000000
+04:18:33.225 -> [Moth#219] 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: +3210 exp from quest 506024 (321 at 10x) -> 77255 total. Bit 16 carries the NEW                  TOTAL; the client differences its own snapshot to draw the gain.
+04:18:33.225    body 01000100000100c72d0100000000000000
+04:18:33.225 -> [Moth#219] 0x0089 UNKNOWN Message: +3210 exp, WHITE (majority damage), to the CHAT LOG (type 6)
+04:18:33.225    body 03018a0c00000000000001000000000000000000
+04:18:33.225 -> [Moth#219] 0x0089 UNKNOWN Message 35: +5000 Contribution to town 1 for quest 506024 (1100 -> 6100)
+04:18:33.225    body 230188130000
+04:18:33.225 -> [Moth#219] 0x0089 UNKNOWN Message 13 (quest ex record): quest 510000 = "st1=1;gr1=7;ct1=6100" - Contribution banked
+04:18:33.225    body 0d30c8070014007374313d313b6772313d373b6374313d36313030
+04:18:33.225 -> [Moth#219] 0x0089 UNKNOWN Message 13 (quest ex record): quest 510001 = "q1_d=" - the board, as this character's period stands
+04:18:33.225    body 0d31c80700050071315f643d
+04:18:33.225 -> [Moth#219] 0x0089 UNKNOWN Message 13 (quest ex record): quest 510002 = "q1_w=" - the board, as this character's period stands
+04:18:33.225    body 0d32c80700050071315f773d
+04:18:33.225 -> [Moth#219] 0x0089 UNKNOWN Message 13 (quest ex record): quest 510003 = "q1_d=506113|506114" - the board, as this character's period stands
+04:18:33.225    body 0d33c80700120071315f643d3530363131337c353036313134
+04:18:33.225 -> [Moth#219] 0x0089 UNKNOWN Message 13 (quest ex record): quest 510004 = "q1_w=506123" - the board, as this character's period stands
+04:18:33.225    body 0d34c807000b0071315f773d353036313233
+04:18:33.225 -> [Moth#219] 0x02D1 UNKNOWN UserEffectLocal 84 CitizenshipGradeUp - Effect/BasicEff.img/CitizenshipGradeUp
+04:18:33.225    body 54
+04:18:33.225 -> [Moth#219] 0x00BB CHAT_NOTICE ChatNotice: Your citizenship grade in Henesys is now 7 - Distinguished Citizen! See Arthur at the Town Hall for your certificate.
+04:18:33.225    body 017500596f757220636974697a656e7368697020677261646520696e2048656e65737973206973206e6f772037202d2044697374696e6775697368656420436974697a656e2120536565204172746875722061742074686520546f776e204861...(+24 bytes, known opcode so capped)
+04:18:33.225 -> [Moth#219] 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: mesos now 1979649
+04:18:33.225    body 0100010000040001351e00000000000000
+04:18:33.225 -> [Moth#219] 0x0089 UNKNOWN Message: quest 506024 paid 3510 mesos (351 at 10x)
+04:18:33.225    body 00000100b60d0000000000000000
+04:18:33.225 -> [Moth#219] 0x02D1 UNKNOWN UserEffectLocal QuestClear for quest 506024 - plays Sound/Game.img/QuestClear. The animation node Effect/BasicEff.img/QuestClear is NOT in this client's WZ, so sound and no picture is the EXPECTED result.
+04:18:33.225    body 0f
+04:18:33.225 -> [Moth#219] 0x055B SCRIPT_MESSAGE ScriptMessage yes/no prompt from NPC template 229 for quest 506024, line 1 of 1 on path "1"
+04:18:33.225    body 0000000000e50000000010000000690057656c636f6d652c20236830232e2057686174206272696e677320796f7520627920746f6461793f20576169742e2e2e2061726520796f7520736179696e6720796f752764206c696b6520746f20646f...(+25 bytes, known opcode so capped)
+04:18:33.643 <- [Moth#219] 0x0202 CLIENT_PET_MOVE (u32 petIdx, u32 tick, u8, then the movement path) - rebroadcast as 0x0278, 83 byte body 000000000000000000eb01ce0000000000030000eb01ce0000000000170000000000000004d2000000eb01ce00000000001700000000000000160e010000ea01ce00d6ff00001700000000000000031e000000
+04:18:33.649    0x0202 CLIENT_PET_MOVE (u32 petIdx, u32 tick, u8, then the movement path) - rebroadcast as 0x0278 is not answered yet - see crates/world/src/session/
+04:18:34.161 <- [Moth#219] 0x0202 CLIENT_PET_MOVE (u32 petIdx, u32 tick, u8, then the movement path) - rebroadcast as 0x0278, 104 byte body 000000000000000000ea01ce00d6ff0000040000d201ce005eff0000170000000000000003b4000000ca01ce008eff00001700000000000000053c000000bc01ce005eff00001700000000000000035a000000ac01ce00eeff00001700000000...(+8 bytes, known opcode so capped)
+04:18:34.168    0x0202 CLIENT_PET_MOVE (u32 petIdx, u32 tick, u8, then the movement path) - rebroadcast as 0x0278 is not answered yet - see crates/world/src/session/
+04:18:34.648 <- [Moth#219] 0x013D CLIENT_SEND_COUNTER_CENSUS (every 30 s; counts of packets sent; MUST NOT be answered - research/buffs.md sec 2), 65 byte body 0002000000e100000002000000ab9521009d010000ac952100090000003c0100000300000068881e000100000069881e0004000000a99521006b00000000000000
+04:18:34.651    0x013D CLIENT_SEND_COUNTER_CENSUS (every 30 s; counts of packets sent; MUST NOT be answered - research/buffs.md sec 2) is a client report; nothing is expected back
+04:18:34.715 <- [Moth#219] 0x0202 CLIENT_PET_MOVE (u32 petIdx, u32 tick, u8, then the movement path) - rebroadcast as 0x0278, 62 byte body 000000000000000000ac01ce00eeff0000020000ac01ce0000000000170000000000000005a4010000ac01ce00000000001700000000000000175a000000
+04:18:34.721    0x0202 CLIENT_PET_MOVE (u32 petIdx, u32 tick, u8, then the movement path) - rebroadcast as 0x0278 is not answered yet - see crates/world/src/session/
+04:18:35.317 <- [Moth#219] 0x00F3 CLIENT_SCRIPT_REPLY (u32 handle, u8 msgType, u32 echo, str the box's own text, i8 action), 6 byte body 000000001001
+04:18:35.322    quest 506024: NOT accepted - You have already done this week's notice. The board changes on Monday.
+04:18:35.325 -> [Moth#219] 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 229: quest 506024 not accepted - You have already done this week's notice. The board changes on Monday.
+04:18:35.325    body 0000000000e50000000000000000000000004600596f75206861766520616c726561647920646f6e652074686973207765656b2773206e6f746963652e2054686520626f617264206368616e676573206f6e204d6f6e6461792e000000000000
+04:18:35.325 -> [Moth#219] 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 229, line 1 of 1 on path "1.yes"
+04:18:35.325    body 0000000000e5000000000000000000000000270057656c636f6d65212054686973206973207468652048656e6573797320546f776e2048616c6c2e000000000000
+04:18:35.347 <- [Moth#219] 0x009E CLIENT_PACKET_REJECTED (14-byte header, then the offending packet with its opcode), 81 byte body 0300030000214700d4a197a15b050000000000e5000000000000000000000000270057656c636f6d65212054686973206973207468652048656e6573797320546f776e2048616c6c2e0000000000005b05
+04:18:35.351    0x009E CLIENT_PACKET_REJECTED (14-byte header, then the offending packet with its opcode) is not answered yet - see crates/world/src/session/
+04:18:40.596 -> [Moth#219] 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: idle regen +0 hp +18 mp -> 562/562 hp, 592/842 mp - HP is full, so the packet does not mention it [Improved MP Recovery: +8 MP on top of the flat 10, 1% of 842 max MP]
+04:18:40.596    body 01000100100000500200000000
+04:18:50.312    spawn point: character 219 at (491, 206) on map 10001007 -> comes back in at portal 0 (the connection closed)
+04:18:50.314    party: character 219, leader of party 1 is leaving the game - no other member is online, so the party is disbanded
+04:18:50.314    party: Disconnect { successor: None, last_online: true } by character 219 sent to the hub; the answer follows its echo
+04:18:50.323    mob control: 7 mob(s) on map 80000400#1 released - nobody else is here to hand them to. The next arrival claims them
+04:18:50.323 ch0 #1 203.0.113.42:10512 ended: An existing connection was forcibly closed by the remote host. (os error 10054)
+04:19:19.668 connection from ch0 #5 203.0.113.42:11343

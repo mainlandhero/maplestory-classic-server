@@ -799,6 +799,14 @@ mod tests {
                     citizenship_contr: Some(CitizenshipContr { town, amount: Some(500 + 250 * (u32::from(g) - 1)), formula: None }),
                     complete_money: 351,
                     complete_min_level: 12 + 5 * (u32::from(g) - 1),
+                    // The donations' completion talk is a yes/no in the client's data - "1" asks,
+                    // "1.yes" thanks (506024's own lines, gm-handbook/questlines.txt).
+                    say: [
+                        ("1".to_string(), vec!["Are you saying you'd like to donate?".to_string()]),
+                        ("1.yes".to_string(), vec!["Thank you so much!".to_string()]),
+                    ]
+                    .into_iter()
+                    .collect(),
                     ..Quest::default()
                 });
             }
@@ -1091,8 +1099,8 @@ mod tests {
         let _ = s.handle(&quest_request(1, quest, 235));
         let out = s.handle(&quest_request(2, quest, 235));
         assert!(out.iter().any(|r| r.opcode == net::quest::MESSAGE && r.body == net::citizenship::contribution_gained(1, 100)), "{out:?}");
-        assert_eq!(standing(&store, id), "st1=1;gr1=2;ct1=1050");
-        assert_eq!(ex_line(&out, 510_000).as_deref(), Some("st1=1;gr1=2;ct1=1050"));
+        assert_eq!(standing(&store, id), "st1=1;gr1=2;ct1=50", "1,000 spent on the promotion, 50 carried");
+        assert_eq!(ex_line(&out, 510_000).as_deref(), Some("st1=1;gr1=2;ct1=50"));
         assert!(has_effect(&out, net::citizenship::EFFECT_CITIZENSHIP_GRADE_UP));
 
         let out = s.handle(&click(900));
@@ -1154,7 +1162,7 @@ mod tests {
         let quest = crate::citizenship::fresh_pick(group, &ss[0].0.config.quests, group.period(board_now()), 9, 60)[1];
         let _ = ss[0].0.handle(&quest_request(1, quest, 235));
         let out = ss[0].0.handle(&quest_request(2, quest, 235));
-        assert_eq!(standing(&store, id), "st1=1;gr1=10;ct1=10450", "500 at grade 9 crosses 10,000");
+        assert_eq!(standing(&store, id), "st1=1;gr1=10;ct1=450", "500 at grade 9 crosses its 10,000; 450 carried");
         assert_eq!(holds(&store, id, HENESYS_EARRINGS), 1, "the Henesys Earrings, in the Equip tab");
         assert!(store.honor_earring_given(id, 1).unwrap());
         let sentence = crate::citizenship::honor_announcement("Honored", 1);
@@ -1226,6 +1234,37 @@ mod tests {
         assert!(out.iter().any(|r| r.what.contains("already done this week")), "{out:?}");
     }
 
+    /// **A Yes on the donation's turn-in talk is one box, and accepts nothing.** The live server,
+    /// 2026-10-02: a weekly was turned in from the quest window, the completion talk asked
+    /// "...are you saying you'd like to donate?", and the Yes was taken as ACCEPTING the quest
+    /// again - the start gate refused it and the `1.yes` line followed the refusal, two script
+    /// boxes at once. The client rejected the second (`0x009E`) and dropped. Replayed here with
+    /// the captured answer body (`00000000 10 01`: handle 0, quest yes/no, Yes).
+    #[test]
+    fn a_yes_on_the_donation_turn_in_talk_is_one_box_and_accepts_nothing() {
+        let (store, mut s, id) = resident(30, HALL_H, 0);
+        store.set_citizenship(id, &[active_in(1, 1, 0)]).unwrap();
+        let group = &crate::citizenship::BOARD_GROUPS[1];
+        let weekly = crate::citizenship::fresh_pick(group, &s.config.quests, group.period(board_now()), 1, 30)[0];
+        assert!(accepted(&s.handle(&quest_request(1, weekly, 235)), weekly));
+        // Since 2026-10-02 the turn-in itself no longer re-asks: the client asked "...are you
+        // saying you'd like to donate?" before it sent this. The answer is the thank-you.
+        let out = s.handle(&quest_request(2, weekly, 229));
+        let boxes: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::script::SCRIPT_MESSAGE).collect();
+        assert_eq!(boxes.len(), 1, "{out:?}");
+        assert!(boxes[0].what.contains("path \"1.yes\"") && !boxes[0].what.contains("yes/no"), "the thank-you, not the question again: {}", boxes[0].what);
+
+        // And a Yes arriving anyway (the old talk still open on a client) is still one box at most.
+
+        let mut yes = net::script::CLIENT_SCRIPT_REPLY.to_le_bytes().to_vec();
+        yes.extend_from_slice(&[0, 0, 0, 0, 0x10, 0x01]);
+        let out = s.handle(&yes);
+        let boxes: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::script::SCRIPT_MESSAGE).collect();
+        assert!(boxes.len() <= 1, "never two script boxes at once - that is what dropped the client: {out:?}");
+        assert!(!out.iter().any(|r| r.what.contains("not accepted")), "nothing tried to accept it again: {out:?}");
+        assert_eq!(store.quest_row(id, weekly).unwrap().unwrap().state, store::QuestState::Complete);
+    }
+
     /// The same for a daily: turned in, then a grade-up to 5 offers no leader today.
     #[test]
     fn a_daily_turned_in_is_the_days_last_even_after_a_grade_up() {
@@ -1237,7 +1276,7 @@ mod tests {
         let leader = crate::citizenship::fresh_pick(group, &s.config.quests, period, 5, 40);
         assert!(accepted(&s.handle(&quest_request(1, resident_pair[1], 235)), resident_pair[1]));
         let out = s.handle(&quest_request(2, resident_pair[1], 235));
-        assert_eq!(standing(&store, id), "st1=1;gr1=5;ct1=4240", "graded up to 5 on that turn-in");
+        assert_eq!(standing(&store, id), "st1=1;gr1=5;ct1=240", "graded up to 5 on that turn-in");
         assert_eq!(ex_line(&out, 510_001).as_deref(), Some("q1_d="), "and the daily board is empty");
         let out = s.handle(&quest_request(1, leader[1], 235));
         assert!(!accepted(&out, leader[1]), "no leader daily after today's daily");
