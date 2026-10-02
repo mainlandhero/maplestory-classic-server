@@ -39,6 +39,9 @@ maplecw-world - one channel of the MapleCW game world
                    chat (default 127.0.0.1:8483). 'none' runs this channel on its own.
   --drops-web ADDR the drop-table web page and its 7-day kill counts (default 0.0.0.0:8481
                    on channel 0, off elsewhere). 'none' turns it off. Read-only, no login.
+  --system-options on|off
+                   send each account's saved sound/system options at field entry
+                   (default on). 'off' if logins fail to decode after 2026-10-02.
   --migration-peer-policy require|record
                    what to do when the connection claiming a migration does not come
                    from the address the migration was minted for. require (default)
@@ -206,6 +209,17 @@ fn main() -> ExitCode {
                 } else {
                     v.parse().map(|a| drops_web = Some(Some(a))).map_err(|e| format!("--drops-web {v}: {e}"))
                 }
+            }),
+            "--system-options" => value().and_then(|v| match v.to_ascii_lowercase().as_str() {
+                "on" => {
+                    config.system_options = true;
+                    Ok(())
+                }
+                "off" => {
+                    config.system_options = false;
+                    Ok(())
+                }
+                _ => Err(format!("--system-options {v}: expected on or off")),
             }),
             "--world-id" => value().and_then(|v| {
                 v.parse().map(|n| config.world_id = n).map_err(|e| format!("--world-id {v}: {e}"))

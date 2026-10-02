@@ -2462,6 +2462,12 @@ pub fn character_record_for_set_field_with_quests_and_skills(
         out.extend_from_slice(&crate::citizenship::quest_ex_block(&quests.ex));
     }
     out.push(tail);
+    // Block #32, the system options (`crate::clientsettings`). Its gate (0x140308e79) is AFTER
+    // the final ungated byte, so the block follows it; every gate in between is unset here.
+    if !quests.shared_ex.is_empty() {
+        out[crate::clientsettings::PRESENCE_SHARED_QUEST_EX] = 1;
+        out.extend_from_slice(&crate::clientsettings::shared_quest_ex_block(&quests.shared_ex));
+    }
     out
 }
 

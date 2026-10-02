@@ -2606,6 +2606,17 @@
              the stat window drops the number. A coupon that outlives its icon or an icon
              that outlives its multiplier is a bug either way - say which.
 
+    37. OPTIONS KEPT ON THE SERVER (2026-10-02). Two characters on one account.
+          a. log in; System Options: change the HP warning % (the pet's auto-potion threshold),
+             the effect volume. world-ch0.log shows "options: account N group ..." for each
+          b. Change Channel, then log out and back in: both kept. Then the OTHER character:
+             the same values (per account)
+          c. THE RISK: a login now carries record block #32 for the first time. Login fails
+             or the client dies right after SetField -> restart the server with
+             -NoSystemOptions and log in again. Works then -> #32's placement is wrong; the
+             HP warning should still be kept (it is block #28)
+          d. HP warning kept but sound not -> #32 decoded but the sound reader looks elsewhere
+
     36. FIRST-JOB SP PAST 30 (2026-10-02). A first/second-job character above level 30.
           a. the skill window's 1st-job tab shows more SP than before: level 45+ has 106 in total
              (Thief 112 at 47+), minus what is spent. Unchanged -> the skill table did not load
@@ -6287,6 +6298,11 @@ function Show-TestPlan {
         Write-Host '        potion icon yes, coupon icon no -> 163 is not it; kill something,' -ForegroundColor Yellow
         Write-Host '        triple EXP still? report both halves separately' -ForegroundColor Yellow
         Write-Host '     c. wait one out / right-click it: icon AND stat go together' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  37. OPTIONS PER ACCOUNT (2026-10-02): set HP warning % + effect volume; relog,' -ForegroundColor White
+        Write-Host '       change channel, other character on the account: all kept' -ForegroundColor Cyan
+        Write-Host '       login fails after SetField -> restart with -NoSystemOptions; works then =' -ForegroundColor Yellow
+        Write-Host '       block #32 placement wrong (HP warning should still be kept)' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  36. FIRST-JOB SP PAST 30 (2026-10-02): 1st-job tab keeps 3/level past 30 to 106 (Thief 112)' -ForegroundColor White
         Write-Host '       SP Reset Scroll gives the whole grown total back' -ForegroundColor Cyan
