@@ -5415,11 +5415,11 @@ fn the_tutorial_sentinel_always_drops_its_shellpiece() {
     // rate. That was 1 basis point until `c0f1d87` raised it to 50 (0.5%); the owner, 2026-09-25:
     // *"Accept the new drop rate."* Two rows at 0.5% put an extra scroll on the tutorial floor
     // about once in 100 kills. A row above the rate the scroll NPC quotes still fails here.
+    // Since 2026-10-01 the global rows are the four backported scrolls, 1 in 500 at most.
     for row in table.global() {
-        assert_eq!(
-            row.chance_ppm,
-            crate::scrolls::GLOBAL_DROP_CHANCE_BP * 100,
-            "a global row above the scroll rate would land on the tutorial floor: {row:?}"
+        assert!(
+            crate::scrolls::GLOBAL_SCROLLS.contains(&(row.item_id, row.chance_ppm)),
+            "a global row that is not one of the owner's four would land on the tutorial floor: {row:?}"
         );
     }
 

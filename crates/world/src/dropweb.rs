@@ -45,7 +45,13 @@ const PAGE: &str = concat!(
 
 /// Bind `addr` and serve on a thread of its own. A port that cannot be bound is logged and the
 /// channel carries on - the page is a convenience, never a reason for the game not to start.
-pub fn spawn(addr: SocketAddr, store: Arc<store::Store>, config: Arc<Config>, mob_names: HashMap<u32, String>) {
+pub fn spawn(
+    addr: SocketAddr,
+    store: Arc<store::Store>,
+    config: Arc<Config>,
+    mob_names: HashMap<u32, String>,
+    descs: HashMap<u32, String>,
+) {
     let listener = match TcpListener::bind(addr) {
         Ok(l) => l,
         Err(e) => {
@@ -53,7 +59,7 @@ pub fn spawn(addr: SocketAddr, store: Arc<store::Store>, config: Arc<Config>, mo
             return;
         }
     };
-    let tables = tables_json(&config, &mob_names);
+    let tables = tables_json(&config, &mob_names, &descs);
     crate::server::log(&format!(
         "drop-table page: http://{addr}/ ({} KB of tables; live counts refreshed at most every {} min). Read-only, unauthenticated.",
         tables.len() / 1024,
@@ -92,8 +98,10 @@ fn answer(mut stream: TcpStream, tables: &str, live: &Mutex<Option<(Instant, Str
     }
     let head_only = method == "HEAD";
     match path {
-        "/" | "/index.html" => respond(&mut stream, "200 OK", "text/html; charset=utf-8", PAGE, "max-age=300", head_only),
-        "/tables.json" => respond(&mut stream, "200 OK", "application/json", tables, "max-age=3600", head_only),
+        // The page and the tables change only on a redeploy, but a redeploy must reach players
+        // promptly: the page is revalidated every load, the tables kept five minutes.
+        "/" | "/index.html" => respond(&mut stream, "200 OK", "text/html; charset=utf-8", PAGE, "no-cache", head_only),
+        "/tables.json" => respond(&mut stream, "200 OK", "application/json", tables, "max-age=300", head_only),
         "/live.json" => {
             let body = live_json_cached(live, store);
             respond(&mut stream, "200 OK", "application/json", &body, "max-age=300", head_only)
@@ -194,12 +202,87 @@ fn esc(s: &str) -> String {
     out
 }
 
+/// `gm-handbook/itemdesc.txt` - `id, desc`, one per line, line breaks as the two characters
+/// `\n` (`tools/dump_names.py`). A missing file is an empty map: the tooltips then show the
+/// name and stats without the client's text.
+pub fn load_descs(path: &std::path::Path) -> HashMap<u32, String> {
+    let Ok(text) = std::fs::read_to_string(path) else { return HashMap::new() };
+    text.lines()
+        .filter_map(|l| {
+            let (id, desc) = l.split_once(", ")?;
+            Some((id.trim().parse().ok()?, desc.to_string()))
+        })
+        .collect()
+}
+
+/// **The tooltip's lines below the description**, the way the client draws an item: an
+/// equip's level requirement, stats and upgrade slots from its own template, and for the
+/// four backported scrolls, how THIS server applies them - their client text is the modern
+/// game's (Innocence's mentions Hidden Potentials), and the owner's rules differ
+/// (`crate::scrolls`).
+fn tip_lines(config: &Config, item: u32) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(e) = config.equips.get(&item) {
+        if e.req_level > 0 {
+            out.push(format!("REQ LEV : {}", e.req_level));
+        }
+        for (label, v) in [
+            ("STR", e.inc_str),
+            ("DEX", e.inc_dex),
+            ("INT", e.inc_int),
+            ("LUK", e.inc_luk),
+            ("MaxHP", e.inc_mhp),
+            ("MaxMP", e.inc_mmp),
+            ("Weapon Attack", e.inc_wat),
+            ("Magic Attack", e.inc_mad),
+            ("Weapon Def.", e.inc_pdd),
+            ("Magic Def.", e.inc_mdd),
+            ("Accuracy", e.inc_acc),
+            ("Evasion", e.inc_eva),
+            ("Speed", e.inc_speed),
+            ("Jump", e.inc_jump),
+        ] {
+            if v > 0 {
+                out.push(format!("{label} : +{v}"));
+            }
+        }
+        if e.tuc > 0 {
+            out.push(format!("Number of upgrades available : {}", e.tuc));
+        }
+        if e.trade_block {
+            out.push("Untradeable".to_string());
+        }
+    }
+    let rule: Option<&str> = match crate::scrolls::backported(item) {
+        Some((crate::scrolls::SecretsMode::Chaos, _)) => Some(
+            "Changes one of the item's own stats by -5 to +5, never 0. Uses an upgrade slot whether it \
+             succeeds or fails; a failed slot can be restored with a Clean Slate.",
+        ),
+        Some((crate::scrolls::SecretsMode::CleanSlate, _)) => Some("Restores one upgrade slot lost to a failed scroll."),
+        Some((crate::scrolls::SecretsMode::Innocence, _)) => Some(
+            "Returns the item to its original stats and all of its upgrade slots. Does not use an upgrade slot.",
+        ),
+        None if item == crate::scrolls::LUCKY_DAY => Some(
+            "The next scroll used on the item succeeds and cannot destroy it - Chaos, Clean Slate and \
+             Innocence included. Does not use an upgrade slot.",
+        ),
+        None => None,
+    };
+    if let Some(rule) = rule {
+        let pct = crate::scrolls::backported(item).map_or(100, |(_, p)| p);
+        out.push(format!("Success rate: {pct}%"));
+        out.push(format!("On this server: {rule}"));
+    }
+    out
+}
+
 /// `/tables.json`: the shape the page reads - `mobs` (`id`, `name`, `level`, `rows` of
-/// `[item, ppm, min, max, fixed]`), `global`, and `items` (`id -> [name, kind, quest]`). A mob
+/// `[item, ppm, min, max, fixed]`), `global`, and `items` (`id -> [name, kind, quest, desc,
+/// [tooltip lines]]`). A mob
 /// with no meso row gets the server's level-scaled default as a `fixed` row: always dropped,
 /// not scaled by the rate (`session/combat.rs`). The First Time Together box is the last
 /// "mob", `kind` set, one line per prize at `1 / LINES`.
-pub fn tables_json(config: &Config, mob_names: &HashMap<u32, String>) -> String {
+pub fn tables_json(config: &Config, mob_names: &HashMap<u32, String>, descs: &HashMap<u32, String>) -> String {
     let mut items: HashMap<u32, ()> = HashMap::new();
     let mut s = String::with_capacity(256 * 1024);
     s.push_str("{\"mobs\":[");
@@ -252,13 +335,16 @@ pub fn tables_json(config: &Config, mob_names: &HashMap<u32, String>) -> String 
     ids.sort();
     for (i, id) in ids.iter().enumerate() {
         let name = config.item_names.get(id).cloned().unwrap_or_else(|| format!("Item {id}"));
+        let lines: Vec<String> = tip_lines(config, *id).iter().map(|l| format!("\"{}\"", esc(l))).collect();
         let _ = write!(
             s,
-            "{}\"{id}\":[\"{}\",\"{}\",{}]",
+            "{}\"{id}\":[\"{}\",\"{}\",{},\"{}\",[{}]]",
             if i > 0 { "," } else { "" },
             esc(&name),
             category(*id),
-            u8::from(config.quest_items.is_quest_item(*id))
+            u8::from(config.quest_items.is_quest_item(*id)),
+            esc(descs.get(id).map_or("", String::as_str)),
+            lines.join(",")
         );
     }
     s.push_str("}}");
@@ -287,14 +373,40 @@ mod tests {
     fn the_tables_carry_every_source_and_escape_names() {
         let mut names = HashMap::new();
         names.insert(2, "Snail".to_string());
-        let j = tables_json(&config(), &names);
+        let mut descs = HashMap::new();
+        descs.insert(4_000_001, "A shell from a snail.\\nAn etc item.".to_string());
+        let j = tables_json(&config(), &names, &descs);
         assert!(j.contains("{\"id\":2,\"name\":\"Snail\",\"level\":0,\"rows\":[[4000001,600000,1,1,0],[0,400000,4,6,0]]}"), "{j}");
         assert!(j.contains("\"id\":7,\"name\":\"Mob 7\",\"level\":6,\"rows\":[[0,1000000,10,13,1],"), "level 6: 10-13 mesos, fixed: {j}");
         assert!(j.contains("\"global\":[[4031065,5000,1,1,0]]"));
         assert!(j.contains("\"kind\":\"First Time Together reward\""));
         assert!(j.contains(&format!("[2043701,{},1,1,1]", 1_000_000 / crate::magicbox::LINES as u32)), "the Wand scroll in the box");
-        assert!(j.contains("\"4000004\":[\"Squishy \\\"Liquid\\\"\",\"etc\",0]"), "{j}");
+        assert!(j.contains("\"4000004\":[\"Squishy \\\"Liquid\\\"\",\"etc\",0,\"\",[]]"), "{j}");
+        // The client's description, its escape kept for the page to break the line on.
+        assert!(j.contains("\"4000001\":[\"Snail Shell\",\"etc\",0,\"A shell from a snail.\\\\nAn etc item.\",[]]"), "{j}");
         assert!(!j.contains("<"), "no raw angle bracket can close the page's script");
+    }
+
+    /// **The tooltip lines**: an equip shows its requirement, stats and slots the way the client
+    /// does; each backported scroll states this server's rule and rate; anything else has none.
+    #[test]
+    fn tooltips_carry_equip_stats_and_the_backported_rules() {
+        let mut c = config();
+        c.equips.insert(
+            1_002_007,
+            crate::config::EquipTemplate { tuc: 7, inc_pdd: 6, inc_dex: 1, req_level: 10, ..Default::default() },
+        );
+        assert_eq!(
+            tip_lines(&c, 1_002_007),
+            vec!["REQ LEV : 10", "DEX : +1", "Weapon Def. : +6", "Number of upgrades available : 7"]
+        );
+        let chaos = tip_lines(&c, 2_049_100);
+        assert_eq!(chaos[0], "Success rate: 60%");
+        assert!(chaos[1].contains("never 0"), "{chaos:?}");
+        assert_eq!(tip_lines(&c, 2_049_003)[0], "Success rate: 20%");
+        assert_eq!(tip_lines(&c, 2_049_190)[0], "Success rate: 70%");
+        assert!(tip_lines(&c, crate::scrolls::LUCKY_DAY)[1].contains("cannot destroy"));
+        assert!(tip_lines(&c, 4_000_001).is_empty());
     }
 
     /// The live counts are the store's, with the server's drop rate.
@@ -334,7 +446,7 @@ mod tests {
         let probe = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = probe.local_addr().unwrap();
         drop(probe);
-        spawn(addr, Arc::new(store::Store::open_in_memory().unwrap()), Arc::new(config()), HashMap::new());
+        spawn(addr, Arc::new(store::Store::open_in_memory().unwrap()), Arc::new(config()), HashMap::new(), HashMap::new());
         let get = |req: &str| {
             let mut s = TcpStream::connect(addr).unwrap();
             s.write_all(req.as_bytes()).unwrap();

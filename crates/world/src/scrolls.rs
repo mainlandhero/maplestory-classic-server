@@ -118,19 +118,23 @@ pub const LUCKY_DAY: u32 = 2_530_000;
 /// The success chance of Chaos and Clean Slate when the daily free pass is spent, in percent.
 pub const ROLLED_SUCCESS_PCT: u32 = 60;
 
-/// **How often each scroll drops, in basis points**, for the one screen that has to tell a
-/// player where to find them.
+/// **The global drop table: the four backported scrolls**, as `(item, chance per million)`.
 ///
-/// The number that matters lives in `data/drops.txt`, not here - this is the copy the dialogue
-/// renders, and a copy is a claim. `droptables`'
-/// `the_two_scrolls_drop_globally_at_half_a_percent` asserts the file's rows equal this
-/// constant, so the two cannot drift: change the file and that test fails, change this and it
-/// fails too.
+/// The owner, 2026-10-01: *"Remove Scroll of Secrets and Treasure Scroll from global drop
+/// tables. Here are the new global scrolls: Innocence scroll 70%: 1 in 1000 ... Chaos Scroll
+/// 60%: 1 in 500 ... Pure Clean Slate Scroll 20%: 1 in 500 ... Lucky Day Scroll 100%: 1 in
+/// 1000."* The two repurposed scrolls still work from a bag; they no longer drop.
 ///
-/// 50 basis points is 0.5%, or one kill in two hundred, per monster. It was 1 (0.01%) until
-/// 2026-09-25, when the owner raised it: *"seems like no player has been able to find it so far,
-/// let's increase both of their droprate to 0.5%"*.
-pub const GLOBAL_DROP_CHANCE_BP: u32 = 50;
+/// The number that matters lives in `data/drops.txt`, not here - this is the copy the `!scroll`
+/// dialogue renders, and a copy is a claim. `droptables`'
+/// `the_global_table_is_the_four_backported_scrolls` asserts the file's global rows are exactly
+/// these, so the two cannot drift. The global table is not scaled by the server's drop rate.
+pub const GLOBAL_SCROLLS: [(u32, u32); 4] = [
+    (2_049_190, 1_000), // Innocence Scroll 70% - 1 in 1000
+    (2_049_100, 2_000), // Chaos Scroll 60% - 1 in 500
+    (2_049_003, 2_000), // Pure Clean Slate Scroll 20% - 1 in 500
+    (LUCKY_DAY, 1_000), // Lucky Day Scroll - 1 in 1000
+];
 
 /// **How many of one scroll fit in a bag slot.** The owner, 2026-09-09: *"can we make all of these
 /// items stackable up to a 100 please?"*
@@ -142,9 +146,11 @@ pub const STACK_LIMIT: u16 = 100;
 
 /// The largest amount Chaos moves a stat by, in either direction.
 ///
-/// The owner: *"randomly rolls one item stat to go up or down 0 to 5 points"*, so the swing is
-/// `-5..=5` **inclusive of zero** - a roll that moves nothing is a success that did nothing,
-/// which is different from a failure and must not be reported as one.
+/// The swing is `-5..=-1` or `1..=5`, **never zero**. The owner, 2026-10-01, of the Chaos Scroll:
+/// *"the result will change the item either positively or negatively, it cannot roll 0."* It
+/// was `-5..=5` inclusive of zero until then, from the 2026-09-09 wording *"up or down 0 to 5
+/// points"*. A stat already at 0 cannot go down, so a downward roll there goes up instead - the
+/// alternative is a successful Chaos that changed nothing, which is the outcome the owner ruled out.
 pub const CHAOS_MAX_SWING: i32 = 5;
 
 /// Which of the two repurposed items the player used.
@@ -632,11 +638,17 @@ fn roll_one_stat(
     // to each other, or a given roll could never produce some pairs at all.
     let pick = candidates[(roll / 100) as usize % candidates.len()];
     let (name, get, set) = STATS[pick];
-    let span = (CHAOS_MAX_SWING * 2 + 1) as u64; // -5..=5
-    let delta = ((roll / 100 / 64) % span) as i32 - CHAOS_MAX_SWING;
+    // Ten outcomes, -5..=-1 and 1..=5: never zero (`CHAOS_MAX_SWING`'s docs).
+    let span = (CHAOS_MAX_SWING * 2) as u64;
+    let r = ((roll / 100 / 64) % span) as i32;
+    let mut delta = if r < CHAOS_MAX_SWING { r - CHAOS_MAX_SWING } else { r - CHAOS_MAX_SWING + 1 };
     let now = i32::from(get(stats));
+    if now == 0 && delta < 0 {
+        delta = -delta; // nothing to take away, so it goes up rather than moving nothing
+    }
     // Clamped at zero: `EquipStatSet` is `u16`, so a negative stat is not representable, and
-    // clamping is the only behaviour that does not silently wrap to 65535.
+    // clamping is the only behaviour that does not silently wrap to 65535. A stat of 2 rolled
+    // -5 lands on 0, a change of -2 - still a change.
     let next = (now + delta).max(0);
     set(stats, next as u16);
     Some((name, next - now))
@@ -743,6 +755,32 @@ mod tests {
             assert_eq!(name, "Weapon Attack", "the only non-zero base stat");
             assert!((-CHAOS_MAX_SWING..=CHAOS_MAX_SWING).contains(&delta), "delta {delta}");
             assert_eq!(i32::from(out.after.stats.inc_wat), 20 + delta);
+        }
+    }
+
+    /// **Chaos never rolls 0** - the owner, 2026-10-01: *"the result will change the item either
+    /// positively or negatively, it cannot roll 0."* Over 20 000 rolls every one of the ten
+    /// outcomes -5..=-1, 1..=5 appears and 0 never does; and on a stat Chaos already drove to
+    /// 0 it still moves - upward - rather than succeeding at nothing.
+    #[test]
+    fn chaos_never_rolls_zero_and_reaches_every_other_swing() {
+        let b = base(7, 20);
+        let mut seen = std::collections::BTreeSet::new();
+        // Spread like the session's random u64s: the swing reads `roll / 6400`, which 0..20 000
+        // would barely move.
+        for i in 0..20_000u64 {
+            let roll = i.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let out = apply(SecretsMode::Chaos, &b, &state(7, 0, 20), Chance::Guaranteed, roll).unwrap();
+            let (_, delta) = out.changes[0];
+            assert_ne!(delta, 0, "roll {roll}");
+            seen.insert(delta);
+        }
+        assert_eq!(seen.into_iter().collect::<Vec<_>>(), vec![-5, -4, -3, -2, -1, 1, 2, 3, 4, 5]);
+        for i in 0..2_000u64 {
+            let roll = i.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let out = apply(SecretsMode::Chaos, &b, &state(7, 0, 0), Chance::Guaranteed, roll).unwrap();
+            let (_, delta) = out.changes[0];
+            assert!(delta > 0, "roll {roll}: a stat at 0 must go up, got {delta}");
         }
     }
 

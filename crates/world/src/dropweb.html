@@ -20,6 +20,12 @@
   --setup: #a33a5c;
   --chip-bg: #eef1ee;
   --hot: #fff4c7;
+  /* The item tooltip keeps the game's own look - a dark plate in both themes, on purpose. */
+  --tip-bg: rgba(18, 22, 38, 0.96);
+  --tip-fg: #f2f4f8;
+  --tip-muted: #aab3c5;
+  --tip-hl: #ffb347;
+  --tip-line: #5d6b8f;
   --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
   --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
@@ -116,6 +122,16 @@ footer p { margin: 0 0 8px; }
 td.seen { color: var(--muted); }
 td.seen b { color: var(--ink); font-weight: 500; }
 body { margin: 0; }
+.it { cursor: help; border-bottom: 1px dotted var(--muted); }
+.it:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#tip { position: fixed; z-index: 30; max-width: min(320px, calc(100vw - 24px)); pointer-events: none; background: var(--tip-bg); color: var(--tip-fg); border: 1px solid var(--tip-line); border-radius: 6px; padding: 10px 12px; font-size: 13px; line-height: 1.45; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); }
+#tip .tn { text-align: center; font-weight: 600; font-size: 14px; }
+#tip .tk { text-align: center; color: var(--tip-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+#tip .td { padding-top: 6px; border-top: 1px solid var(--tip-line); }
+#tip .tl { padding-top: 6px; margin-top: 6px; border-top: 1px solid var(--tip-line); font-family: var(--mono); font-size: 12px; }
+#tip .tl div + div { margin-top: 1px; }
+#tip .hl { color: var(--tip-hl); }
+#tip .rule { font-family: var(--body); color: var(--tip-hl); }
 </style>
 
 <div class="wrap">
@@ -157,6 +173,8 @@ body { margin: 0; }
     <p>No source has Nexon's official per-monster rates. The v83 numbers come from Cosmic, the maintained OdinMS/HeavenMS server, and are the closest classic calibration there is.</p>
   </footer>
 </div>
+
+<div id="tip" role="tooltip" hidden></div>
 
 <script>
 let DATA = /*__DATA__*/null;
@@ -230,6 +248,51 @@ function qty(item, lo, hi) {
 }
 const num = (n) => Number(n).toLocaleString();
 
+// ---- the item tooltip, drawn the way the game draws one ------------------------------------
+const anchor = (item, name) => item === 0 ? esc(name) : `<span class="it" data-item="${item}" tabindex="0">${esc(name)}</span>`;
+// The client's text: "\n" (two characters) breaks a line, #c...# is the orange highlight, and
+// the other #-codes are colours this page does not need.
+function gameText(t) {
+  return esc(t).replace(/\\n/g, "<br>").replace(/#c(.*?)#/g, '<span class="hl">$1</span>').replace(/#[bkrgdenl]/g, "");
+}
+function tipHtml(id) {
+  const [name, cat, quest, desc, lines] = itemOf(id);
+  let h = `<div class="tn">${esc(name)}</div><div class="tk">${esc(cat)}${quest ? " &middot; quest item" : ""}</div>`;
+  if (desc) h += `<div class="td">${gameText(desc)}</div>`;
+  if (lines && lines.length) {
+    h += '<div class="tl">' + lines.map((l) => l.startsWith("On this server: ")
+      ? `<div class="rule">${esc(l)}</div>` : `<div>${esc(l)}</div>`).join("") + "</div>";
+  }
+  if (!desc && !(lines && lines.length)) h += '<div class="td">No description in the game data.</div>';
+  return h;
+}
+let tipFor = null;
+function showTip(el, x, y) {
+  const tip = $("tip");
+  const id = Number(el.dataset.item);
+  if (tipFor !== el) { tip.innerHTML = tipHtml(id); tipFor = el; }
+  tip.hidden = false;
+  if (x === undefined) { const r = el.getBoundingClientRect(); x = r.left; y = r.bottom; }
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  const left = Math.min(x + 14, window.innerWidth - w - 8);
+  const top = y + 16 + h > window.innerHeight ? Math.max(8, y - h - 12) : y + 16;
+  tip.style.left = Math.max(8, left) + "px";
+  tip.style.top = top + "px";
+}
+function hideTip() { $("tip").hidden = true; tipFor = null; }
+document.addEventListener("mousemove", (e) => {
+  const el = e.target.closest && e.target.closest(".it");
+  if (el) showTip(el, e.clientX, e.clientY); else if (tipFor) hideTip();
+});
+document.addEventListener("focusin", (e) => { const el = e.target.closest && e.target.closest(".it"); if (el) showTip(el); });
+document.addEventListener("focusout", hideTip);
+document.addEventListener("click", (e) => {
+  // A tap on a phone: show it under the name, and a tap anywhere else puts it away.
+  const el = e.target.closest && e.target.closest(".it");
+  if (el) { e.preventDefault(); showTip(el); } else hideTip();
+});
+window.addEventListener("scroll", hideTip, { passive: true });
+
 // ---- live counts ----------------------------------------------------------------------------
 const mobKills = (m) => (LIVE && LIVE.mobs[m.id]) ? LIVE.mobs[m.id][0] : 0;
 const mobPlayers = (m) => (LIVE && LIVE.mobs[m.id]) ? LIVE.mobs[m.id][1] : 0;
@@ -276,7 +339,7 @@ function rowHtml(m, r, scaled, highlight, kills) {
   const tags = (quest ? '<span class="tag q" title="Drops only while the quest is in progress">quest</span>' : "") +
     (fixed && item === 0 ? '<span class="tag fixed" title="Server default for a monster with no meso row">by level</span>' : "");
   const seen = m === null ? seenCell(seenEverywhere(item), LIVE && LIVE.kills) : (m.kind ? (LIVE ? '<td class="num seen">-</td>' : "") : seenCell(seenOf(m, item), kills));
-  return `<tr class="${highlight ? "hit" : ""}"><td>${esc(name)}${tags}</td><td><span class="cat c-${cat}">${cat}</span></td>` +
+  return `<tr class="${highlight ? "hit" : ""}"><td>${anchor(item, name)}${tags}</td><td><span class="cat c-${cat}">${cat}</span></td>` +
     `<td class="num">${qty(item, lo, hi)}</td><td class="num">${pct(ppm)}</td>` +
     `<td class="num eff ${capped ? "capped" : ""}">${pct(eff)}</td><td class="num">${oneIn(eff)}</td>${seen}</tr>`;
 }
@@ -331,7 +394,7 @@ function renderItems() {
   const body = flat.slice(0, LIMIT).map(({ m, r, name, eff }) => {
     const [, cat, quest] = itemOf(r[0]);
     const seen = m.kind ? (LIVE ? '<td class="num seen">-</td>' : "") : seenCell(seenOf(m, r[0]), mobKills(m));
-    return `<tr><td>${esc(name)}${quest ? '<span class="tag q">quest</span>' : ""}${r[4] && r[0] === 0 ? '<span class="tag fixed">by level</span>' : ""}</td>` +
+    return `<tr><td>${anchor(r[0], name)}${quest ? '<span class="tag q">quest</span>' : ""}${r[4] && r[0] === 0 ? '<span class="tag fixed">by level</span>' : ""}</td>` +
       `<td><span class="cat c-${cat}">${cat}</span></td><td>${esc(m.name)} <span class="status">${m.kind ? esc(m.kind) : "Lv " + (m.level || "?")}</span></td>` +
       `<td class="num">${qty(r[0], r[2], r[3])}</td><td class="num">${pct(r[1])}</td><td class="num eff">${pct(eff)}</td><td class="num">${oneIn(eff)}</td>${seen}</tr>`;
   }).join("");

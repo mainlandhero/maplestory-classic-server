@@ -108,7 +108,36 @@ def main():
         walk(read_image(args.archive, image), ["name"], items)
         print("  %-14s +%d" % (image, len(items) - before))
     write(os.path.join(args.out_dir, "items.txt"), items, "items")
+
+    # **Each item's own description**, for the drop-table page's tooltips (crates/world/src/
+    # dropweb.rs; the owner, 2026-10-01: "on hover should also show the item description text
+    # similar to regular MapleStory client"). `id, desc` with every line break written as the
+    # two characters backslash-n - the client's own text already uses that escape, and the
+    # backported items carry real newlines - so one row is one line. The client's #c...#
+    # highlight codes are kept; the page renders them.
+    descs = {}
+    for image in ITEM_IMAGES:
+        collect(read_image(args.archive, image), "desc", descs)
+    with open(os.path.join(args.out_dir, "itemdesc.txt"), "w", encoding="utf-8", newline="\n") as fh:
+        for ident in sorted(descs):
+            text = descs[ident].replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\n").strip()
+            if text:
+                fh.write("%d, %s\n" % (ident, text))
+    print("%-10s %6d rows  ->  %s" % ("item descs", len(descs), os.path.join(args.out_dir, "itemdesc.txt")))
     return 0
+
+
+def collect(node, key, out):
+    """Every all-digit node's `key` string, at any depth - `walk` for a field other than a name."""
+    if not isinstance(node, dict):
+        return
+    for k, value in node.items():
+        if not isinstance(value, dict):
+            continue
+        if k.isdigit() and isinstance(value.get(key), str):
+            out[int(k)] = value[key]
+            continue
+        collect(value, key, out)
 
 
 if __name__ == "__main__":

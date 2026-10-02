@@ -458,6 +458,30 @@ of each, and claims no daily pass. After any result, with either scroll left, th
 yes/no (`scroll.again`): Yes opens the `!scroll` menu, No closes silently. Tests in `scrollnpc` and
 `session::scroll`. **Unseen on a screen** - plan step 28.
 
+**2026-10-01: the global drops are the four backported scrolls; Chaos never rolls 0; the drop page has
+item tooltips.**
+* **Global drops.** Scroll of Secrets and Treasure Scroll no longer drop from anything. The global table
+  is now, unscaled by the server's rate:
+  * Innocence Scroll 70% (`2049190`), 1 in 1000;
+  * Chaos Scroll 60% (`2049100`), 1 in 500;
+  * Pure Clean Slate Scroll 20% (`2049003`), 1 in 500;
+  * Lucky Day Scroll (`2530000`), 1 in 1000.
+
+  `scrolls::GLOBAL_SCROLLS` is the copy `!scroll` quotes ("monsters no longer drop these two ... what they
+  drop now"), pinned to `data/drops.txt` by `droptables`' `the_global_table_is_the_four_backported_scrolls`.
+* **The owner's rules.** Checked against `ef92e1e`'s implementation:
+  * already true: Innocence and Lucky Day take no slot, Chaos takes one either way and a failed one goes
+    back with a Clean Slate, Clean Slate returns one failed slot, Lucky Day's mark makes the next scroll
+    succeed (Chaos, Clean Slate and Innocence included). New test: a marked item survives a scroll that
+    destroys on every failure;
+  * changed: **Chaos could roll 0** (`-5..=5`, from the 2026-09-09 wording). Now `-5..=-1` or `1..=5`, and a
+    stat already at 0 goes up rather than nowhere. This applies to the Scroll of Secrets' Chaos mode too.
+* **Tooltips.** `tools/dump_names.py` now also writes `gm-handbook/itemdesc.txt`, the client's own
+  descriptions (963), which `/tables.json` carries with an equip's REQ LEV, stats and upgrades and each
+  backported scroll's rate and rule here. Hovering, focusing or tapping an item name draws a game-style
+  tooltip (`dropweb.html`). The page is revalidated on every load and the tables are kept 5 minutes, so a
+  redeploy reaches players promptly. Plan step 33. **Not on a screen in-game.**
+
 **2026-10-01: the drop-table page is served by the game, with seven days of real kills.** The owner:
 *"serve a http web service on port 8481 of the drop table, a live drop stat for the last 7 days of all the
 kills ... how many player (and how many mob kills) ... purged on a rolling 7 days"*, fuzzy search, the global

@@ -13,41 +13,20 @@
 # here, which is what those chances were derived from.
 #
 # ---------------------------------------------------------------------------------
-# THE THREE SCROLLS, added by hand 2026-09-09 on the owner's instruction:
-#   "These 3 items will be added to the global drop table at a 0.01%% drop rate each."
+# THE GLOBAL SCROLLS, set by hand 2026-10-01 on the owner's instruction:
+#   "Remove Scroll of Secrets and Treasure Scroll from global drop tables. Here are the new
+#    global scrolls: Innocence scroll 70%: 1 in 1000 ... Chaos Scroll 60%: 1 in 500 ... Pure
+#    Clean Slate Scroll 20%: 1 in 500 ... Lucky Day Scroll 100%: 1 in 1000"
 #
-# 0.01 is EXACTLY 1 basis point - parse_percent multiplies by 100 and BASIS_POINTS is
-# 10000 - so this is the finest rate the format can express, with no rounding.
-#
-# These are NOT scraped and never will be: they are ours, repurposed as scrolls this
-# client's data does not contain. See crates/world/src/scrolls.rs and
-# research/scroll-command-2026-09-09.md.
-#
-# THE HEADER ABOVE APPLIES TO THEM TOO: "Hand edits survive only until the next
-# scrape." If tools/scrape_drops.py is ever run again these two rows go with it and
-# the scrolls stop dropping, silently. Whoever runs it next has to put them back or
-# teach the script to keep the global table.
-#
-# THE LIGATOR'S COUPON IS 100%, set by hand 2026-09-22 on the owner's instruction: "the coupon
-# drop from Ligators should be a 100% drop rate." 4001001 is stage 1 of the First Time
-# Together party quest - every Ligator owes one coupon, so the stage is a counting exercise
-# rather than a lottery. It was 6% from the scrape, which is a vote score and not a measured
-# rate (see the header).
-#
-# The same fragility applies: a re-scrape would put 6 back. `droptables.rs`'s
-# `the_ligator_always_drops_its_party_quest_coupon` is what turns that into a failure
-# instead of a party standing in stage 1 wondering why nothing drops.
-#
-# 4001009 Event Trophy was a third row here until 2026-09-09. The owner: "Do not use event
-# trophy since it does not stack" - itemdata.txt gives it slotMax 0. Innocence did not
-# go with it; it became one of the Scroll of Secrets' three modes.
-# ---------------------------------------------------------------------------------
-#
-# RAISED TO 0.5% on 2026-09-25, the owner: "seems like no player has been able to find it so far,
-# let's increase both of their droprate to 0.5%". 0.5 is 50 basis points - one kill in 200.
-# The NPC quotes crate::scrolls::GLOBAL_DROP_CHANCE_BP, and droptables.rs pins these rows to it.
-* | 4031065 | 0.5 | 1 | 1 | 0 | Scroll of Secrets (Chaos, Innocence or Clean Slate)
-* | 4031066 | 0.5 | 1 | 1 | 0 | Treasure Scroll (guarantees a real scroll)
+# The four backported items (crates/world/src/scrolls.rs BACKPORTED and LUCKY_DAY), rolled for
+# every kill and NOT scaled by the server's drop rate. Scroll of Secrets (4031065) and Treasure
+# Scroll (4031066) - 0.01% from 2026-09-09, 0.5% from 2026-09-25 - no longer drop at all.
+# crate::scrolls::GLOBAL_SCROLLS is the copy the !scroll dialogue quotes, and droptables.rs
+# pins these rows to it. tools/v83_drops.py copies this section untouched.
+* | 2049190 | 0.1 | 1 | 1 | 0 | Innocence Scroll 70%
+* | 2049100 | 0.2 | 1 | 1 | 0 | Chaos Scroll 60%
+* | 2049003 | 0.2 | 1 | 1 | 0 | Pure Clean Slate Scroll 20%
+* | 2530000 | 0.1 | 1 | 1 | 0 | Lucky Day Scroll
 
 # ---- the global table: event items, rolled for every mob -----------------------
 # (empty - no events yet. One line here and every mob in the game can drop it.)

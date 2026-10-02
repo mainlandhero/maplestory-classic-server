@@ -60,6 +60,66 @@ def level_meso_range(level):
 
 MAGIC_BOX = os.path.join("crates", "world", "src", "magicbox.rs")
 
+#: The four backported scrolls' rules on this server, for their tooltips. A copy of
+#: `tip_lines` in crates/world/src/dropweb.rs, which is what the served page uses - keep them
+#: together.
+BACKPORTED_RULES = {
+    2049100: (60, "Changes one of the item's own stats by -5 to +5, never 0. Uses an upgrade slot whether it "
+                  "succeeds or fails; a failed slot can be restored with a Clean Slate."),
+    2049000: (1, "Restores one upgrade slot lost to a failed scroll."),
+    2049001: (3, "Restores one upgrade slot lost to a failed scroll."),
+    2049002: (5, "Restores one upgrade slot lost to a failed scroll."),
+    2049003: (20, "Restores one upgrade slot lost to a failed scroll."),
+    2049190: (70, "Returns the item to its original stats and all of its upgrade slots. Does not use an upgrade slot."),
+    2530000: (100, "The next scroll used on the item succeeds and cannot destroy it - Chaos, Clean Slate and "
+                   "Innocence included. Does not use an upgrade slot."),
+}
+
+#: gm-handbook/equips.txt columns -> the client's tooltip labels, in the order the client draws them.
+EQUIP_LINES = [("incSTR", "STR"), ("incDEX", "DEX"), ("incINT", "INT"), ("incLUK", "LUK"), ("incMHP", "MaxHP"),
+               ("incMMP", "MaxMP"), ("incWAT", "Weapon Attack"), ("incMAD", "Magic Attack"), ("incPDD", "Weapon Def."),
+               ("incMDD", "Magic Def."), ("incACC", "Accuracy"), ("incEVA", "Evasion"), ("incSpeed", "Speed"),
+               ("incJump", "Jump")]
+
+
+def tooltip_lines():
+    """item -> the lines under the description (dropweb.rs `tip_lines`)."""
+    out = {}
+    path = os.path.join(GM, "equips.txt")
+    cols = None
+    for line in open(path, encoding="utf-8"):
+        if line.startswith("# itemId"):
+            cols = [c.strip() for c in line[2:].split(",")]
+            continue
+        if line.startswith("#") or not line.strip() or cols is None:
+            continue
+        p = dict(zip(cols, [x.strip() for x in line.split(",")]))
+        num = lambda k: int(p.get(k) or 0) if (p.get(k) or "0").lstrip("-").isdigit() else 0
+        lines = []
+        if num("reqLevel"):
+            lines.append(f"REQ LEV : {num('reqLevel')}")
+        lines += [f"{label} : +{num(k)}" for k, label in EQUIP_LINES if num(k) > 0]
+        if num("tuc"):
+            lines.append(f"Number of upgrades available : {num('tuc')}")
+        if num("tradeBlock"):
+            lines.append("Untradeable")
+        out[int(p["itemId"])] = lines
+    for item, (pct, rule) in BACKPORTED_RULES.items():
+        out[item] = [f"Success rate: {pct}%", f"On this server: {rule}"]
+    return out
+
+
+def descriptions():
+    """gm-handbook/itemdesc.txt (tools/dump_names.py): id -> the client's text, \\n kept as two characters."""
+    out = {}
+    path = os.path.join(GM, "itemdesc.txt")
+    if os.path.exists(path):
+        for line in open(path, encoding="utf-8"):
+            ident, _, desc = line.rstrip("\n").partition(", ")
+            if ident.isdigit():
+                out[int(ident)] = desc
+    return out
+
 
 def magic_box_lines():
     """First Time Together's reward box (crates/world/src/magicbox.rs), read from the source so the
@@ -127,6 +187,11 @@ def main():
         items.setdefault(item, [item_names.get(item, f"Item {item}"), category(item), 1 if item in quest_items else 0])
     out_mobs.append({"id": "box", "name": "Companion's Magic Box", "level": 0, "kind": "First Time Together reward",
                      "rows": [[item, share, q, q, 1] for item, q in box]})
+
+    # The tooltip: the client's description and the lines under it, as the served page has them.
+    descs, lines = descriptions(), tooltip_lines()
+    for item, entry in items.items():
+        entry[3:] = [descs.get(item, ""), lines.get(item, [])]
 
     data = {"mobs": out_mobs, "global": glob, "items": {str(k): v for k, v in items.items()}}
     blob = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")

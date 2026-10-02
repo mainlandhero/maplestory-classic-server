@@ -679,6 +679,28 @@ mod tests {
         assert_eq!(held(&store, id, HAT_SCROLL_10), 5);
     }
 
+    /// **A Lucky Day mark means the next scroll cannot destroy the item.** The owner, 2026-10-01:
+    /// *"The scroll will not cause destruction"*. A 10% scroll that destroys on EVERY failure
+    /// (cursed 100), five times on a marked hat: the hat survives and gains each time. Without
+    /// the mark the same scroll would take the hat nine times in ten.
+    #[test]
+    fn a_lucky_day_mark_protects_the_item_from_a_cursed_scroll() {
+        const CURSED_10: u32 = 2_040_099;
+        let (store, mut s, id) = wearing_a_hat(&[(scrolls::LUCKY_DAY, 5), (CURSED_10, 5)]);
+        let mut cfg = (*s.config).clone();
+        cfg.scrolls.insert(
+            CURSED_10,
+            ScrollTemplate { success: 10, cursed: 100, increments: net::opcode::EquipStatSet { inc_pdd: 1, ..Default::default() } },
+        );
+        s.config = Arc::new(cfg);
+        for round in 1..=5u8 {
+            let _ = s.on_item_enhancer(&drag(use_slot(&store, id, scrolls::LUCKY_DAY), -1));
+            let out = s.on_item_upgrade(&drag(use_slot(&store, id, CURSED_10), -1));
+            assert_eq!(effect_result(&out), ItemUpgradeResult::Succeeded as u8, "round {round}: {out:?}");
+            assert_eq!(hat_stats(&store, id).stats.inc_pdd, 10 + u16::from(round), "round {round}: still worn, and gained");
+        }
+    }
+
     /// **The backported scrolls**: a Chaos (60%) on a marked hat cannot fail; a Pure Clean Slate
     /// with nothing to restore is refused and takes nothing; Innocence (2049190) on a marked hat
     /// puts it back to the template; and none of them goes on pet equipment.

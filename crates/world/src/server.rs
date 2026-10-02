@@ -732,7 +732,8 @@ pub fn serve(config: Config) -> std::io::Result<()> {
     crate::killstats::spawn_flusher(store.clone());
     if let Some(addr) = config.drops_web {
         let mob_names = Config::load_id_names(std::path::Path::new("gm-handbook/mobnames.txt"));
-        crate::dropweb::spawn(addr, store.clone(), config.clone(), mob_names);
+        let descs = crate::dropweb::load_descs(std::path::Path::new("gm-handbook/itemdesc.txt"));
+        crate::dropweb::spawn(addr, store.clone(), config.clone(), mob_names, descs);
     }
 
     let mut nth = 0u64;

@@ -406,16 +406,18 @@ pub fn mode_menu(guaranteed: [bool; 3]) -> String {
 /// a player what to hunt for, so the name it shows must be the name the *item* shows when it
 /// lands on the ground. If the two ever disagreed, this is the screen that would be lying.
 ///
-/// # The rate is rendered, not typed
+/// # The rates are rendered, not typed
 ///
-/// From [`crate::scrolls::GLOBAL_DROP_CHANCE_BP`], which `droptables`' test pins to the actual
-/// rows in `data/drops.txt`. A hand-typed "0.01%" here would survive a change to the drop table
-/// and quietly become false.
+/// Since 2026-10-01 monsters no longer drop the two repurposed scrolls; they drop the four
+/// backported ones instead (the owner: *"Remove Scroll of Secrets and Treasure Scroll from global
+/// drop tables"*). So this screen says so and lists those four, with odds rendered from
+/// [`crate::scrolls::GLOBAL_SCROLLS`], which `droptables`' test pins to the actual rows in
+/// `data/drops.txt`. A hand-typed "1 in 500" here would survive a change to the drop table and
+/// quietly become false.
 ///
 /// This is a plain say, not a menu - there is no `#L` in it - so the "nothing after `#l`" rule
 /// does not apply. The [`LINE_BREAK`] encoding does, and this screen is where that was found.
 pub fn nothing_to_use() -> String {
-    let bp = crate::scrolls::GLOBAL_DROP_CHANCE_BP;
     let mut s = String::from("You are not carrying either of my scrolls. These are the two to look for:");
     for scroll in [Scroll::Secrets, Scroll::Treasure] {
         let id = scroll.item_id();
@@ -425,11 +427,13 @@ pub fn nothing_to_use() -> String {
         ));
     }
     s.push_str(&format!(
-        "{PARAGRAPH}Any monster in Maple World may drop one, at {}% - about one in {}. \
-         Keep hunting, and one will find you.",
-        f64::from(bp) / 100.0,
-        10_000 / bp.max(1)
+        "{PARAGRAPH}Monsters no longer drop these two. What they drop now are the real scrolls, which \
+         you drag straight onto an equip:"
     ));
+    for (id, ppm) in crate::scrolls::GLOBAL_SCROLLS {
+        s.push_str(&format!("{LINE_BREAK}#i{id}# #b#t{id}##k - about one in {}", 1_000_000 / ppm.max(1)));
+    }
+    s.push_str(&format!("{PARAGRAPH}Any monster in Maple World may drop them. Keep hunting."));
     s
 }
 
@@ -874,9 +878,13 @@ mod tests {
             assert!(text.contains(&format!("#t{id}#")), "no name link for {id}: {text}");
             assert!(text.contains(describe_item(scroll)), "no description for {id}: {text}");
         }
-        // The rate, rendered from the constant the drop-table test pins to the real file.
-        assert!(text.contains("0.5%"), "{text}");
-        assert!(text.contains("one in 200"), "{text}");
+        // What drops now, rendered from the constant the drop-table test pins to the real file:
+        // each of the four with its icon, its name link and its odds.
+        assert!(text.contains("no longer drop these two"), "{text}");
+        for (id, ppm) in crate::scrolls::GLOBAL_SCROLLS {
+            assert!(text.contains(&format!("#i{id}# #b#t{id}##k - about one in {}", 1_000_000 / ppm)), "{id}: {text}");
+        }
+        assert!(text.contains("one in 500") && text.contains("one in 1000"), "{text}");
         // And it must not be a menu: a `#L` here would put selectable rows on a say box.
         assert!(!text.contains("#L"), "{text}");
         assert!(!text.contains("#l"), "{text}");

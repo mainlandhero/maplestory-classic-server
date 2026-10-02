@@ -414,27 +414,32 @@ mod tests {
         );
     }
 
+    /// **The global table is exactly the four backported scrolls, at the owner's odds**, and the two
+    /// repurposed scrolls are in no table at all. The owner, 2026-10-01: *"Remove Scroll of
+    /// Secrets and Treasure Scroll from global drop tables"*, then Innocence 1 in 1000, Chaos and
+    /// Pure Clean Slate 1 in 500 each, Lucky Day 1 in 1000.
+    ///
+    /// **The dialogue quotes these numbers, so the quote is tied to the file here.**
+    /// `crate::scrollnpc::nothing_to_use` renders `scrolls::GLOBAL_SCROLLS`; this is what stops
+    /// the two drifting apart. Editing either side alone fails.
     #[test]
-    fn the_two_scrolls_drop_globally_at_half_a_percent() {
+    fn the_global_table_is_the_four_backported_scrolls() {
         let tables = DropTables::load(std::path::Path::new("../../data/drops.txt"));
         assert!(tables.problems.is_empty(), "{:?}", tables.problems);
+        let global: Vec<(u32, u32, u32, u32)> =
+            tables.global.iter().map(|e| (e.item_id, e.chance_ppm, e.min_qty, e.max_qty)).collect();
+        let want: Vec<(u32, u32, u32, u32)> =
+            crate::scrolls::GLOBAL_SCROLLS.iter().map(|&(id, ppm)| (id, ppm, 1, 1)).collect();
+        assert_eq!(global, want);
+        assert_eq!(
+            crate::scrolls::GLOBAL_SCROLLS.map(|(_, p)| 1_000_000 / p),
+            [1_000, 500, 500, 1_000],
+            "Innocence, Chaos, Pure Clean Slate, Lucky Day"
+        );
         for id in crate::scrolls::REPURPOSED {
-            let row = tables
-                .global
-                .iter()
-                .find(|e| e.item_id == id)
-                .unwrap_or_else(|| panic!("{id} is not in the GLOBAL drop table"));
-            assert_eq!(row.chance_ppm, 5_000, "{id} must be 0.5%, which is 5000 per million");
-            assert_eq!((row.min_qty, row.max_qty), (1, 1), "{id} drops one at a time");
-            // **The dialogue quotes this number, so the quote is tied to the file here.**
-            // `crate::scrollnpc::nothing_to_use` tells the player how rare the scrolls are;
-            // that text renders `scrolls::GLOBAL_DROP_CHANCE_BP`, and this is what stops the
-            // two from drifting apart. Editing either side alone fails.
-            assert_eq!(
-                row.chance_ppm,
-                crate::scrolls::GLOBAL_DROP_CHANCE_BP * 100,
-                "{id}'s rate in data/drops.txt and the rate the NPC quotes must be the same"
-            );
+            let mobs: Vec<u32> =
+                tables.per_mob.iter().filter(|(_, rows)| rows.iter().any(|e| e.item_id == id)).map(|(t, _)| *t).collect();
+            assert!(mobs.is_empty(), "{id} still drops from {mobs:?}");
         }
     }
 
@@ -474,14 +479,14 @@ mod tests {
         // **The control: this search can find something.** An assertion that nothing matches
         // is worthless if the walk is broken - `per_mob` empty, or the file unread - and both
         // failures look exactly like a pass. `4000001` Snail Shell is in the per-mob table and
-        // the two scrolls are in the global one, so each half is proved able to speak.
+        // the Chaos Scroll is in the global one, so each half is proved able to speak.
         assert!(
             tables.per_mob.values().any(|rows| rows.iter().any(|e| e.item_id == 4_000_001)),
             "the per-mob walk found no Snail Shell, so it could not have found a trophy either"
         );
         assert!(
-            tables.global.iter().any(|e| e.item_id == crate::scrolls::SCROLL_OF_SECRETS),
-            "the global walk found no Scroll of Secrets, so it proves nothing about 4001009"
+            tables.global.iter().any(|e| e.item_id == 2_049_100),
+            "the global walk found no Chaos Scroll, so it proves nothing about 4001009"
         );
     }
 
