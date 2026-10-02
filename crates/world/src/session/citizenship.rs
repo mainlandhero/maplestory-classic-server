@@ -549,17 +549,12 @@ impl Session {
             ));
             return Vec::new();
         };
-        let base = cz::contribution_for(&contr, before.grade);
-        // **The Community Board's dailies and weeklies pay at the Quest rate**, the same
-        // `!setrates` field every quest's EXP already goes through (the owner, 2026-09-28: *"10x as
-        // well, similar to the current 10x global boost from all quest rewards"*). The story
-        // arcs' Contribution is not a daily or weekly and stays flat.
-        let rate = self.rate(store::rates::RateKind::Quest);
-        let amount = if cz::board_group_of(quest_id).is_some() {
-            u32::try_from(rate.apply(u64::from(base))).unwrap_or(u32::MAX)
-        } else {
-            base
-        };
+        // **Contribution is the quest's own number, never rated.** The Community Board's dailies
+        // and weeklies paid at the Quest rate from 2026-09-28 (*"10x as well"*); the owner reverted
+        // that on 2026-10-02 after a grade-2 character banked 1 000 for a daily and 5 000 for a
+        // weekly and landed on grade 7 - the grade table is 1 000 a grade, so at 10x one weekly
+        // was five grades. Quest MESOS still pay at the rate (`pay_quest_mesos`).
+        let amount = cz::contribution_for(&contr, before.grade);
         if amount == 0 {
             crate::server::log(&format!("   quest {quest_id}: Contribution 0 from {contr:?} - nothing banked"));
             return Vec::new();
@@ -1116,12 +1111,11 @@ mod tests {
         assert!(!has_effect(&out, net::citizenship::EFFECT_CITIZENSHIP_GRADE_UP), "no grade-up, no effect");
     }
 
-    /// **At the Quest rate.** The owner, 2026-09-28: board dailies and weeklies pay Contribution and
-    /// mesos at the same multiplier quest EXP gets. At 10x a grade-1 daily banks 1000 (100 x 10)
-    /// and pays 3510 mesos (351 x 10); a story arc step still banks its flat 50 - it is not a
-    /// daily or weekly - but its mesos are paid at the rate like every quest's.
+    /// **Contribution is never rated; mesos are.** At a 10x Quest rate a grade-2 daily banks its
+    /// own 150 Contribution (the owner reverted the 10x on 2026-10-02) and still pays 3510 mesos
+    /// (351 x 10); a story arc step banks its flat 50 and its mesos at the rate like every quest's.
     #[test]
-    fn board_quests_pay_contribution_and_mesos_at_the_quest_rate() {
+    fn board_quests_bank_flat_contribution_and_pay_mesos_at_the_quest_rate() {
         let (store, mut s, id) = resident(30, HALL_H, 0);
         store.set_rate(store::rates::RateKind::Quest, store::rates::Rate::from_per_cent(1_000), 1).unwrap();
         store.set_citizenship(id, &[active_in(1, 2, 1_000)]).unwrap();
@@ -1129,7 +1123,8 @@ mod tests {
         let quest = crate::citizenship::fresh_pick(group, &s.config.quests, group.period(board_now()), 2, 30)[1];
         let _ = s.handle(&quest_request(1, quest, 235));
         let out = s.handle(&quest_request(2, quest, 235));
-        assert!(out.iter().any(|r| r.body == net::citizenship::contribution_gained(1, 1_500)), "150 at grade 2, x10: {out:?}");
+        assert!(out.iter().any(|r| r.body == net::citizenship::contribution_gained(1, 150)), "150 at grade 2, NOT x10: {out:?}");
+        assert!(!out.iter().any(|r| r.body == net::citizenship::contribution_gained(1, 1_500)), "the old 10x is gone");
         assert_eq!(store.mesos(id).unwrap(), 3_510, "351 x10");
         assert!(out.iter().any(|r| r.body == net::message::meso_gained(3_510)));
 
