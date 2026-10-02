@@ -82,6 +82,7 @@ pub mod scrolls;
 pub mod secondjob;
 pub mod shanks;
 pub mod server;
+pub mod sockreader;
 pub mod serverclock;
 pub mod session;
 pub mod skillpoints;
