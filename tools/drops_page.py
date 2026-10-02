@@ -41,7 +41,7 @@ def category(item_id):
         return "mesos"
     if item_id < 2000000:
         return "equip"
-    if 2040000 <= item_id < 2050000:
+    if 2040000 <= item_id < 2050000 or item_id == 2530000:  # Lucky Day: a scroll, outside the 204 block
         return "scroll"
     if item_id < 3000000:
         return "use"

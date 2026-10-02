@@ -179,7 +179,8 @@ fn category(item: u32) -> &'static str {
     match item {
         0 => "mesos",
         1..=1_999_999 => "equip",
-        2_040_000..=2_049_999 => "scroll",
+        // The Lucky Day Scroll is a scroll to a player, though its id sits outside the 204 block.
+        2_040_000..=2_049_999 | crate::scrolls::LUCKY_DAY => "scroll",
         2_000_000..=2_999_999 => "use",
         3_000_000..=3_999_999 => "setup",
         _ => "etc",
@@ -407,6 +408,8 @@ mod tests {
         assert_eq!(tip_lines(&c, 2_049_190)[0], "Success rate: 70%");
         assert!(tip_lines(&c, crate::scrolls::LUCKY_DAY)[1].contains("cannot destroy"));
         assert!(tip_lines(&c, 4_000_001).is_empty());
+        assert_eq!(category(crate::scrolls::LUCKY_DAY), "scroll", "a scroll to a player, outside the 204 block");
+        assert_eq!(category(2_000_000), "use");
     }
 
     /// The live counts are the store's, with the server's drop rate.
