@@ -709,6 +709,13 @@ mod tests {
             .filter(|&(m, i, c)| m < 700_000 && (2_040_000..2_050_000).contains(&i) && c >= 10_000)
             .collect();
         assert!(scrolls.is_empty(), "scroll rows at 1% or more: {scrolls:?}");
+        // The owner, 2026-10-01: *"The non-tutorial Jr. Sentinel should not drop the Jr. Sentinel
+        // Shellpiece quest item, but rather the regular etc item."* Two items share the name:
+        // 4000000 is the tutorial's quest item, 4000067 the monster's part.
+        let jr = tables.for_mob(1_001);
+        assert!(jr.iter().any(|e| e.item_id == 4_000_067), "the field Jr. Sentinel drops its own shellpiece");
+        assert!(!jr.iter().any(|e| e.item_id == 4_000_000), "and not the tutorial's quest item");
+        assert!(tables.for_mob(1).iter().any(|e| e.item_id == 4_000_000), "the tutorial one still does");
         // The owner, 2026-10-01: *"things such as Wand for Magic Attack scrolls do not drop, but
         // they should drop from things like Mano."* v83's Mano does; this client renumbered its
         // scrolls, so they only arrive through `tools/v83_drops.py`'s scroll pairing.

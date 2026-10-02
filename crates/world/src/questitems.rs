@@ -781,7 +781,9 @@ mod tests {
         // - the builder adds a quest item only when a quest of this client names it, which is
         // this module's orphan rule applied at build time, and `orphans` below proves it.
         assert_eq!(rows, 3932, "every parseable row in data/drops.txt");
-        assert_eq!(gated_rows, 43, "rows this filter can remove (quest-item rows, marbles excluded)");
+        // 42 since the field Jr. Sentinel (1001) drops its own shellpiece, not the tutorial's quest
+        // item - the owner, 2026-10-01.
+        assert_eq!(gated_rows, 42, "rows this filter can remove (quest-item rows, marbles excluded)");
         assert!(
             gated.contains(&4_031_047),
             "the screenshot item must be one of the rows this changes: {gated:?}"

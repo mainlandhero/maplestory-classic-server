@@ -255,6 +255,20 @@ def build():
         by_name[norm(n)].append(i)
 
     scrolls = scroll_map()
+    quest_flagged = set()
+    for line in open(ITEM_DATA, encoding="utf-8"):
+        p = [x.strip() for x in line.split(",")]
+        if p[0].isdigit() and len(p) > 2 and p[2] == "1":
+            quest_flagged.add(int(p[0]))
+
+    def regular(candidates):
+        """Of several same-name items, the one that is NOT a quest item, when exactly one is.
+
+        The owner, 2026-10-01: *"The non-tutorial Jr. Sentinel should not drop the Jr. Sentinel
+        Shellpiece quest item, but rather the regular etc item."* This client has two of that name:
+        4000000, the tutorial's quest item, and 4000067, the monster's own part."""
+        plain = [i for i in candidates if i not in quest_flagged]
+        return plain[0] if len(plain) == 1 else None
 
     def here(gms_id):
         if 2_040_000 <= gms_id < 2_050_000:
@@ -269,13 +283,8 @@ def build():
         # Same name AND same subtype (id // 10000 - "Egg" is a setup item in one numbering and a
         # use item in the other, and those are different things), and exactly one candidate.
         same = [i for i in by_name.get(g, []) if i // 10_000 == gms_id // 10_000]
-        return same[0] if len(same) == 1 else None
+        return same[0] if len(same) == 1 else regular(same)
 
-    quest_flagged = set()
-    for line in open(ITEM_DATA, encoding="utf-8"):
-        p = [x.strip() for x in line.split(",")]
-        if p[0].isdigit() and len(p) > 2 and p[2] == "1":
-            quest_flagged.add(int(p[0]))
     quest_text = open(QUESTS, encoding="utf-8").read()
     used_by_a_quest = {i for i in quest_flagged if re.search(rf"(?<![0-9]){i}(?![0-9])", quest_text)}
 
@@ -310,6 +319,15 @@ def build():
             matches[tid] = (cid, bool(same))
         # Hand-set rows: 100% items (the tutorial shellpiece, the Ligator coupon) are the owner's.
         pinned = {r["item"] for r in rows if r["item"] != 0 and r["pct"] >= 100}
+        # A row naming a quest item that has a regular twin of the same name means the twin - the
+        # community site lists items by name. Only the hand-set rows above the per-monster marker
+        # (the tutorial's) ever mean the quest item, and this loop never sees them.
+        for r in rows:
+            if r["item"] in quest_flagged:
+                twin = regular(by_name.get(norm(items.get(r["item"], "")), []))
+                if twin is not None and twin != r["item"]:
+                    report["quest item replaced by its regular twin"] += 1
+                    r["item"], r["name"] = twin, items.get(twin, r["name"])
         mine = {r["item"]: r for r in rows}
         new = []
         if tid >= 800_000:
