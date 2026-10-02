@@ -109,6 +109,13 @@ footer p { margin: 0 0 8px; }
   th, td { padding-inline: 10px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+.livebar { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; padding: 12px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.livebar .big { font: 600 22px var(--display); font-variant-numeric: tabular-nums; }
+.livebar .lbl { color: var(--muted); font-size: 13px; }
+.livebar .when { margin-left: auto; color: var(--muted); font-size: 12px; }
+td.seen { color: var(--muted); }
+td.seen b { color: var(--ink); font-weight: 500; }
+body { margin: 0; }
 </style>
 
 <div class="wrap">
@@ -117,9 +124,11 @@ footer p { margin: 0 0 8px; }
     <p>Every monster's drops on this server, with the chance at the server's current drop rate. Chances follow the <b>v83</b> tables where the monster has one. A monster's own drops scale with the rate and stop at 100%. The global drops never scale.</p>
   </header>
 
+  <div class="livebar" id="live" hidden></div>
+
   <div class="rail">
     <div class="row">
-      <div class="search"><input id="q" type="search" placeholder="Search a monster or an item - Snail, Work Gloves, 1082002" autocomplete="off" aria-label="Search monsters or items"></div>
+      <div class="search"><input id="q" type="search" placeholder="Search monsters or items - shoes greater scroll, mano wand, snail" autocomplete="off" aria-label="Search monsters or items"></div>
       <div class="seg" role="group" aria-label="View">
         <button id="v-mobs" type="button" aria-pressed="true">Monsters</button>
         <button id="v-items" type="button" aria-pressed="false">Items</button>
@@ -133,7 +142,7 @@ footer p { margin: 0 0 8px; }
       </div>
       <div class="chips" id="chips" role="group" aria-label="Item kinds"></div>
     </div>
-    <div class="status" id="status"></div>
+    <div class="status" id="status">Loading the drop tables...</div>
   </div>
 
   <div id="mobs" class="list"></div>
@@ -143,29 +152,59 @@ footer p { margin: 0 0 8px; }
   <footer>
     <p>The <b>Companion's Magic Box</b> from First Time Together is listed with the monsters: its "1 in N" counts boxes, not kills.</p>
     <p>"1 in N" is the average number of kills per drop, rounded. Expected drops per kill add up the chances of every equipment or scroll row. Rows marked <b>quest</b> drop only for a player who has that quest in progress. Mesos marked <b>by level</b> are the server's default for a monster with no meso row: always dropped, and not affected by the drop rate.</p>
+    <p id="livenote" hidden><b>Seen</b> counts what actually dropped on this server over the last 7 days, with the share of kills it dropped from. The counts update at most every 30 minutes, and anything older than 7 days is deleted.</p>
+    <p>Search matches every word you type, in any order, against monster and item names, and allows one typo per word of four letters or more.</p>
     <p>No source has Nexon's official per-monster rates. The v83 numbers come from Cosmic, the maintained OdinMS/HeavenMS server, and are the closest classic calibration there is.</p>
   </footer>
 </div>
 
 <script>
-const DATA = /*__DATA__*/null;
+let DATA = /*__DATA__*/null;
+let LIVE = null;
 const CATS = ["equip", "scroll", "use", "etc", "setup", "mesos"];
 const PRESETS = [1, 2, 3, 5, 10];
 const MILLION = 1e6;
-const state = { q: "", view: "mobs", rate: 1, cats: new Set(CATS) };
+const state = { q: [], view: "mobs", rate: 1, cats: new Set(CATS) };
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const itemOf = (id) => id === 0 ? ["Mesos", "mesos", 0] : (DATA.items[id] || ["Item " + id, "etc", 0]);
 
-try {
-  const saved = JSON.parse(localStorage.getItem("drop-tables") || "{}");
-  if (saved.rate > 0) state.rate = saved.rate;
-  if (saved.view === "items") state.view = "items";
-} catch (e) { /* storage unavailable: defaults */ }
+let saved = {};
+try { saved = JSON.parse(localStorage.getItem("drop-tables") || "{}"); } catch (e) { /* storage unavailable */ }
+if (saved.view === "items") state.view = "items";
 function save() { try { localStorage.setItem("drop-tables", JSON.stringify({ rate: state.rate, view: state.view })); } catch (e) {} }
 
-// The server's arithmetic: Rate::apply is chance * per_cent / 100, floored, never below 1, capped at 100%.
+// ---- fuzzy search: every typed word must hit some word of the row, in any order --------------
+const wordsOf = (s) => String(s).toLowerCase().split(/[^a-z0-9%]+/).filter(Boolean);
+function withinOne(a, b) {
+  // Levenshtein distance <= 1, without building the matrix.
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0, j = 0, edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++edits > 1) return false;
+    if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; }
+  }
+  return edits + (a.length - i) + (b.length - j) <= 1;
+}
+function tokenHits(tok, words) {
+  for (const w of words) {
+    if (w.includes(tok)) return true;
+    if (tok.length >= 4 && (withinOne(tok, w) || withinOne(tok, w.slice(0, tok.length)))) return true;
+  }
+  return false;
+}
+const allHit = (tokens, words) => tokens.every((t) => tokenHits(t, words));
+const cache = new Map();
+function wordsCached(key, text) { let w = cache.get(key); if (!w) { w = wordsOf(text); cache.set(key, w); } return w; }
+const mobWords = (m) => wordsCached("m" + m.id, m.name + " " + m.id + " " + (m.kind || ""));
+const itemWords = (id) => { const [n, c] = itemOf(id); return wordsCached("i" + id, n + " " + id + " " + c); };
+// A row matches when every word hits the item or its monster, so "mano wand" finds Mano's wand scrolls.
+const rowMatches = (m, r) => state.q.length > 0 && allHit(state.q, m ? itemWords(r[0]).concat(mobWords(m)) : itemWords(r[0]));
+const itemOnlyMatch = (r) => state.q.length > 0 && allHit(state.q, itemWords(r[0]));
+
+// ---- the server's arithmetic: Rate::apply is chance * per_cent / 100, floored, at least 1, capped
 function effective(ppm, scaled) {
   if (ppm === 0) return 0;
   if (!scaled) return ppm;
@@ -175,7 +214,7 @@ function effective(ppm, scaled) {
 function pct(ppm) {
   const p = ppm / 1e4;
   if (p >= 100) return "100%";
-  if (p >= 99.99) return p.toFixed(4) + "%"; // v83's "nearly always", 99.9999%
+  if (p >= 99.99) return p.toFixed(4) + "%";
   return (p >= 1 ? p.toFixed(2) : p >= 0.01 ? p.toFixed(3) : p.toFixed(4)).replace(/\.?0+$/, "") + "%";
 }
 function oneIn(ppm) {
@@ -186,24 +225,49 @@ function oneIn(ppm) {
   return "1 in " + (n < 10 ? n.toFixed(1).replace(/\.0$/, "") : Math.round(n).toLocaleString());
 }
 function qty(item, lo, hi) {
-  if (item === 0) return (lo === hi ? lo : lo + "-" + hi).toLocaleString() + " mesos";
-  return lo === hi ? (lo === 1 ? "1" : String(lo)) : lo + "-" + hi;
+  if (item === 0) return (lo === hi ? String(lo) : lo + "-" + hi) + " mesos";
+  return lo === hi ? String(lo) : lo + "-" + hi;
 }
-function matchesText(text) { return text.toLowerCase().includes(state.q); }
-function rowMatches(r) {
-  if (!state.q) return false;
-  const [name] = itemOf(r[0]);
-  return matchesText(name) || String(r[0]) === state.q;
+const num = (n) => Number(n).toLocaleString();
+
+// ---- live counts ----------------------------------------------------------------------------
+const mobKills = (m) => (LIVE && LIVE.mobs[m.id]) ? LIVE.mobs[m.id][0] : 0;
+const mobPlayers = (m) => (LIVE && LIVE.mobs[m.id]) ? LIVE.mobs[m.id][1] : 0;
+function seenOf(m, item) { const d = LIVE && LIVE.drops[m.id]; return d && d[item] ? d[item][0] : 0; }
+function seenEverywhere(item) {
+  let n = 0;
+  if (!LIVE) return 0;
+  for (const t in LIVE.drops) if (LIVE.drops[t][item]) n += LIVE.drops[t][item][0];
+  return n;
+}
+function seenCell(seen, kills) {
+  if (!LIVE) return "";
+  if (!kills) return '<td class="num seen">-</td>';
+  return `<td class="num seen"><b>${num(seen)}</b> &middot; ${pct(Math.round(seen / kills * MILLION))}</td>`;
+}
+const seenHead = () => LIVE ? '<th class="num">Seen, 7 days</th>' : "";
+
+function renderLive() {
+  if (!LIVE) return;
+  const built = new Date(LIVE.built * 1000);
+  $("live").hidden = false;
+  $("livenote").hidden = false;
+  $("live").innerHTML =
+    `<span><span class="big">${num(LIVE.players)}</span> <span class="lbl">players</span></span>` +
+    `<span><span class="big">${num(LIVE.kills)}</span> <span class="lbl">monsters killed in the last 7 days</span></span>` +
+    `<span><span class="big">${LIVE.rate}x</span> <span class="lbl">server drop rate</span></span>` +
+    `<span class="when">Counts as of ${esc(built.toLocaleString())}</span>`;
 }
 
 function renderChips() {
   $("chips").innerHTML = CATS.map((c) =>
     `<button type="button" class="chip c-${c}" data-cat="${c}" aria-pressed="${state.cats.has(c)}"><i></i>${c}</button>`).join("");
-  $("presets").innerHTML = PRESETS.map((p) =>
-    `<button type="button" data-rate="${p}" aria-pressed="${state.rate === p}">${p}x</button>`).join("");
+  const presets = LIVE && !PRESETS.includes(LIVE.rate) ? PRESETS.concat([LIVE.rate]).sort((a, b) => a - b) : PRESETS;
+  $("presets").innerHTML = presets.map((p) =>
+    `<button type="button" data-rate="${p}" aria-pressed="${state.rate === p}"${LIVE && LIVE.rate === p ? ' title="The server\'s current rate"' : ""}>${p}x${LIVE && LIVE.rate === p ? " (server)" : ""}</button>`).join("");
 }
 
-function rowHtml(r, scaled, highlight) {
+function rowHtml(m, r, scaled, highlight, kills) {
   const [item, ppm, lo, hi, fixed] = r;
   const [name, cat, quest] = itemOf(item);
   const isScaled = scaled && !fixed;
@@ -211,11 +275,12 @@ function rowHtml(r, scaled, highlight) {
   const capped = isScaled && ppm * state.rate >= MILLION && ppm < MILLION;
   const tags = (quest ? '<span class="tag q" title="Drops only while the quest is in progress">quest</span>' : "") +
     (fixed && item === 0 ? '<span class="tag fixed" title="Server default for a monster with no meso row">by level</span>' : "");
+  const seen = m === null ? seenCell(seenEverywhere(item), LIVE && LIVE.kills) : (m.kind ? (LIVE ? '<td class="num seen">-</td>' : "") : seenCell(seenOf(m, item), kills));
   return `<tr class="${highlight ? "hit" : ""}"><td>${esc(name)}${tags}</td><td><span class="cat c-${cat}">${cat}</span></td>` +
     `<td class="num">${qty(item, lo, hi)}</td><td class="num">${pct(ppm)}</td>` +
-    `<td class="num eff ${capped ? "capped" : ""}">${pct(eff)}</td><td class="num">${oneIn(eff)}</td></tr>`;
+    `<td class="num eff ${capped ? "capped" : ""}">${pct(eff)}</td><td class="num">${oneIn(eff)}</td>${seen}</tr>`;
 }
-const HEAD = '<thead><tr><th>Drop</th><th>Kind</th><th class="num">Amount</th><th class="num">Base</th><th class="num">At rate</th><th class="num">Odds</th></tr></thead>';
+const head = () => '<thead><tr><th>Drop</th><th>Kind</th><th class="num">Amount</th><th class="num">Base</th><th class="num">At rate</th><th class="num">Odds</th>' + seenHead() + "</tr></thead>";
 
 function expected(rows, cat) {
   return rows.filter((r) => itemOf(r[0])[1] === cat).reduce((s, r) => s + effective(r[1], !r[4]) / MILLION, 0);
@@ -226,38 +291,38 @@ function perKill(x) {
 }
 
 function renderMobs() {
-  const el = $("mobs");
   const parts = [];
   let shown = 0, rowsShown = 0;
   for (const m of DATA.mobs) {
-    const nameHit = !!state.q && (matchesText(m.name) || String(m.id) === state.q);
-    const itemHit = !!state.q && m.rows.some(rowMatches);
-    if (state.q && !nameHit && !itemHit) continue;
+    const nameHit = state.q.length > 0 && allHit(state.q, mobWords(m));
+    const anyRow = state.q.length > 0 && m.rows.some((r) => rowMatches(m, r));
+    if (state.q.length && !nameHit && !anyRow) continue;
     const rows = m.rows.filter((r) => state.cats.has(itemOf(r[0])[1]))
       .sort((a, b) => effective(b[1], !b[4]) - effective(a[1], !a[4]) || a[0] - b[0]);
     if (!rows.length) continue;
     shown++; rowsShown += rows.length;
     const eq = expected(m.rows, "equip"), sc = expected(m.rows, "scroll");
-    parts.push(`<details class="mob"${itemHit && !nameHit ? " open" : ""}><summary>` +
+    const kills = mobKills(m);
+    const live = LIVE && !m.kind ? `<span>${num(kills)} kills &middot; ${num(mobPlayers(m))} players</span>` : "";
+    parts.push(`<details class="mob"${anyRow && !nameHit ? " open" : ""}><summary>` +
       (m.kind ? `<span class="lv pq">PQ</span><span class="mname">${esc(m.name)}<small>${esc(m.kind)}</small></span>`
               : `<span class="lv">Lv ${m.level || "?"}</span><span class="mname">${esc(m.name)}<small>#${m.id}</small></span>`) +
-      `<span class="odds"><span>equips <b class="c-equip">${perKill(eq)}</b></span><span>scrolls <b class="c-scroll">${perKill(sc)}</b></span><span>${m.rows.length} ${m.kind ? "prizes" : "drops"}</span></span>` +
+      `<span class="odds">${live}<span>equips <b class="c-equip">${perKill(eq)}</b></span><span>scrolls <b class="c-scroll">${perKill(sc)}</b></span><span>${m.rows.length} ${m.kind ? "prizes" : "drops"}</span></span>` +
       `</summary>` + (m.kind ? `<p class="boxnote">Every member gets one box when the last stage clears. Opening it gives exactly one of these ${m.rows.length} prizes, each equally likely. The drop rate does not change it.</p>` : "") +
-      `<div class="tbl"><table>${HEAD}<tbody>${rows.map((r) => rowHtml(r, true, rowMatches(r))).join("")}</tbody></table></div></details>`);
+      `<div class="tbl"><table>${head()}<tbody>${rows.map((r) => rowHtml(m, r, true, !nameHit && rowMatches(m, r), kills)).join("")}</tbody></table></div></details>`);
   }
-  el.innerHTML = parts.length ? parts.join("") : '<div class="empty panel">No monster or drop matches that search.</div>';
-  $("status").innerHTML = `<b>${shown}</b> monsters, <b>${rowsShown.toLocaleString()}</b> drops shown at <b>${state.rate}x</b>` +
-    (state.q ? ` for "${esc(state.q)}"` : "") + ". Open a monster to see its table.";
+  $("mobs").innerHTML = parts.length ? parts.join("") : '<div class="empty panel">No monster or drop matches that search.</div>';
+  $("status").innerHTML = `<b>${shown}</b> sources, <b>${num(rowsShown)}</b> drops shown at <b>${state.rate}x</b>` +
+    (state.q.length ? ` for "${esc(state.q.join(" "))}"` : "") + ". Open a monster to see its table.";
 }
 
 function renderItems() {
-  const el = $("items");
   const flat = [];
   for (const m of DATA.mobs) {
     for (const r of m.rows) {
       const [name, cat] = itemOf(r[0]);
       if (!state.cats.has(cat)) continue;
-      if (state.q && !matchesText(name) && String(r[0]) !== state.q && !matchesText(m.name)) continue;
+      if (state.q.length && !rowMatches(m, r)) continue;
       flat.push({ m, r, name, eff: effective(r[1], !r[4]) });
     }
   }
@@ -265,23 +330,24 @@ function renderItems() {
   const LIMIT = 600;
   const body = flat.slice(0, LIMIT).map(({ m, r, name, eff }) => {
     const [, cat, quest] = itemOf(r[0]);
+    const seen = m.kind ? (LIVE ? '<td class="num seen">-</td>' : "") : seenCell(seenOf(m, r[0]), mobKills(m));
     return `<tr><td>${esc(name)}${quest ? '<span class="tag q">quest</span>' : ""}${r[4] && r[0] === 0 ? '<span class="tag fixed">by level</span>' : ""}</td>` +
       `<td><span class="cat c-${cat}">${cat}</span></td><td>${esc(m.name)} <span class="status">${m.kind ? esc(m.kind) : "Lv " + (m.level || "?")}</span></td>` +
-      `<td class="num">${qty(r[0], r[2], r[3])}</td><td class="num">${pct(r[1])}</td><td class="num eff">${pct(eff)}</td><td class="num">${oneIn(eff)}</td></tr>`;
+      `<td class="num">${qty(r[0], r[2], r[3])}</td><td class="num">${pct(r[1])}</td><td class="num eff">${pct(eff)}</td><td class="num">${oneIn(eff)}</td>${seen}</tr>`;
   }).join("");
-  el.innerHTML = `<h2>Who drops it</h2><p class="note">Each row is one monster dropping one item, sorted by item, then by the best odds.</p>` +
-    `<div class="panel tbl"><table><thead><tr><th>Drop</th><th>Kind</th><th>Monster</th><th class="num">Amount</th><th class="num">Base</th><th class="num">At rate</th><th class="num">Odds</th></tr></thead><tbody>${body || ""}</tbody></table>` +
+  $("items").innerHTML = `<h2>Who drops it</h2><p class="note">Each row is one monster dropping one item, sorted by item, then by the best odds.</p>` +
+    `<div class="panel tbl"><table><thead><tr><th>Drop</th><th>Kind</th><th>Source</th><th class="num">Amount</th><th class="num">Base</th><th class="num">At rate</th><th class="num">Odds</th>${seenHead()}</tr></thead><tbody>${body}</tbody></table>` +
     (flat.length ? "" : '<div class="empty">Nothing matches that search.</div>') +
-    (flat.length > LIMIT ? `<div class="more">Showing the first ${LIMIT} of ${flat.length.toLocaleString()} rows. Search for an item to narrow it down.</div>` : "") + "</div>";
-  $("status").innerHTML = `<b>${flat.length.toLocaleString()}</b> monster-and-item pairs at <b>${state.rate}x</b>` + (state.q ? ` for "${esc(state.q)}"` : "") + ".";
+    (flat.length > LIMIT ? `<div class="more">Showing the first ${LIMIT} of ${num(flat.length)} rows. Search for an item to narrow it down.</div>` : "") + "</div>";
+  $("status").innerHTML = `<b>${num(flat.length)}</b> source-and-item pairs at <b>${state.rate}x</b>` + (state.q.length ? ` for "${esc(state.q.join(" "))}"` : "") + ".";
 }
 
 function renderGlobal() {
-  const rows = DATA.global.filter((r) => state.cats.has(itemOf(r[0])[1]) && (!state.q || rowMatches(r)));
-  $("global").hidden = !rows.length && !!state.q;
+  const rows = DATA.global.filter((r) => state.cats.has(itemOf(r[0])[1]) && (!state.q.length || itemOnlyMatch(r)));
+  $("global").hidden = !rows.length && state.q.length > 0;
   $("global").innerHTML = `<h2>Every monster</h2><p>Rolled once for every kill, on top of the monster's own table. The drop rate does not change these, as in v83.</p>` +
-    `<div class="panel tbl"><table>${HEAD}<tbody>${rows.map((r) => rowHtml(r, false, rowMatches(r))).join("") ||
-      '<tr><td colspan="6" class="empty">No global drops of the selected kinds.</td></tr>'}</tbody></table></div>`;
+    `<div class="panel tbl"><table>${head()}<tbody>${rows.map((r) => rowHtml(null, r, false, itemOnlyMatch(r), 0)).join("") ||
+      `<tr><td colspan="${LIVE ? 7 : 6}" class="empty">No global drops of the selected kinds.</td></tr>`}</tbody></table></div>`;
 }
 
 function render() {
@@ -294,7 +360,7 @@ function render() {
   renderChips();
 }
 
-$("q").addEventListener("input", (e) => { state.q = e.target.value.trim().toLowerCase(); render(); });
+$("q").addEventListener("input", (e) => { state.q = wordsOf(e.target.value); render(); });
 $("rate").addEventListener("input", (e) => {
   const v = parseFloat(e.target.value);
   if (v > 0 && v <= 1000) { state.rate = v; save(); render(); }
@@ -313,6 +379,19 @@ $("chips").addEventListener("click", (e) => {
   if (state.cats.has(c) && state.cats.size > 1) state.cats.delete(c); else state.cats.add(c);
   render();
 });
-$("rate").value = state.rate;
-render();
+
+function start() {
+  // Served by the game server: the rate starts at the server's own. As a saved page: the last one used.
+  state.rate = LIVE ? LIVE.rate : (saved.rate > 0 ? saved.rate : 1);
+  $("rate").value = state.rate;
+  renderLive();
+  render();
+}
+if (DATA) {
+  start();
+} else {
+  Promise.all([fetch("tables.json").then((r) => r.json()), fetch("live.json").then((r) => r.json()).catch(() => null)])
+    .then(([tables, live]) => { DATA = tables; LIVE = live; start(); })
+    .catch((e) => { $("status").textContent = "The drop tables did not load (" + e.message + "). Reload the page to try again."; });
+}
 </script>

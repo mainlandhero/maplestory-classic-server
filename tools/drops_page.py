@@ -130,7 +130,7 @@ def main():
 
     data = {"mobs": out_mobs, "global": glob, "items": {str(k): v for k, v in items.items()}}
     blob = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
-    page = open(os.path.join(os.path.dirname(__file__), "drops_page.html"), encoding="utf-8").read()
+    page = open(os.path.join("crates", "world", "src", "dropweb.html"), encoding="utf-8").read()
     page = page.replace("/*__DATA__*/null", blob)
     with open(sys.argv[1], "w", encoding="utf-8", newline="\n") as f:
         f.write(page)

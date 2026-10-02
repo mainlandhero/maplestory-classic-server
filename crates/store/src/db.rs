@@ -347,6 +347,9 @@ impl Store {
         // The buffs a character holds as they change channel (2026-10-01). A new table, so
         // CREATE IF NOT EXISTS is the whole migration. `carriedbuffs.rs`.
         crate::carriedbuffs::create_tables(&conn)?;
+        // Seven days of kills and drops in hour buckets, for the drop-table page (2026-10-01).
+        // New tables, so CREATE IF NOT EXISTS is the whole migration. `killstats.rs`.
+        crate::killstats::create_tables(&conn)?;
         // The migration credential columns. These are ALTERed onto `migrations`, which is
         // NOT a new table, so the call carries its own PRAGMA guard - see that module.
         // Every claim entry point already calls this; doing it here too makes the module

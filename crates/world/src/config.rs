@@ -50,6 +50,11 @@ pub struct Config {
     /// `--link ADDR`, default `127.0.0.1:8483`; `--link none` clears it. `crate::link`.
     pub link: Option<std::net::SocketAddr>,
 
+    /// **Where the drop-table page listens** (`crate::dropweb`), or `None` for nowhere.
+    /// `--drops-web ADDR|none`; the default is `0.0.0.0:8481` on channel 0 and nowhere on the
+    /// others, so one process per world serves it. Read-only and unauthenticated.
+    pub drops_web: Option<std::net::SocketAddr>,
+
     /// **Which host a Change Channel answer names** - `--advertise`, the same flag and the
     /// same rule as the login server's, because both write a channel address into a packet
     /// the client dials. `channels` above keeps the ports; this decides the host per
@@ -2673,6 +2678,7 @@ impl Default for Config {
             shop_by_template: HashMap::new(),
             channels: Vec::new(),
             link: None,
+            drops_web: None,
             advertise: std::sync::Arc::new(net::advertise::Advertiser::default()),
             map_names: HashMap::new(),
             item_names: HashMap::new(),

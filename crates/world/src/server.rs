@@ -727,6 +727,14 @@ pub fn serve(config: Config) -> std::io::Result<()> {
         None => log("world link: OFF (--link none); parties and party chat stay on this channel"),
     }
 
+    // **The seven-day kill and drop counts**, written in batches by every channel; and the page
+    // that shows them, on the channel told to serve it. `crate::killstats`, `crate::dropweb`.
+    crate::killstats::spawn_flusher(store.clone());
+    if let Some(addr) = config.drops_web {
+        let mob_names = Config::load_id_names(std::path::Path::new("gm-handbook/mobnames.txt"));
+        crate::dropweb::spawn(addr, store.clone(), config.clone(), mob_names);
+    }
+
     let mut nth = 0u64;
     for incoming in listener.incoming() {
         match incoming {

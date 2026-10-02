@@ -458,6 +458,28 @@ of each, and claims no daily pass. After any result, with either scroll left, th
 yes/no (`scroll.again`): Yes opens the `!scroll` menu, No closes silently. Tests in `scrollnpc` and
 `session::scroll`. **Unseen on a screen** - plan step 28.
 
+**2026-10-01: the drop-table page is served by the game, with seven days of real kills.** The owner:
+*"serve a http web service on port 8481 of the drop table, a live drop stat for the last 7 days of all the
+kills ... how many player (and how many mob kills) ... purged on a rolling 7 days"*, fuzzy search, the global
+drops and the PQ box, the rate defaulting to the server's; then *"Make this data cached ... at worst can be
+30 or 60 minutes out of date."*
+* Every kill and exactly what fell (after the marble and quest-item filters) is counted **in memory**
+  (`world::killstats`). Each channel writes its counts every 5 minutes as one transaction into hour buckets
+  (`store::killstats`: `kill_hours`, `kill_players`, `drop_hours`), and buckets older than 7 days are deleted
+  at start and hourly. A crash loses at most 5 minutes of counts.
+* Channel 0 serves `http://<host>:8481/` (`world::dropweb`, `--drops-web ADDR|none`): `/` is the page,
+  `/tables.json` is built once at start from the loaded tables, the level-scaled meso default, the global rows
+  and the box (from `magicbox.rs`), and `/live.json` is the drop rate plus the 7-day sums, rebuilt at most every
+  30 minutes. GET only, one request at a time, 5-second timeouts, read-only; **nothing authenticates it**.
+* The page (`crates/world/src/dropweb.html`, the same template `tools/drops_page.py` embeds):
+  * a players, kills and rate bar, kills and players per mob, and a **Seen, 7 days** column with the observed share;
+  * the rate starts at the server's own;
+  * search needs every typed word to hit the item or its monster, in any order, with one typo allowed per word
+    of four letters or more ("shoes greater scroll" finds Shoes Jump Scroll: Greater; "mano wand" finds Mano's).
+* Measured on a scratch channel over a copy of the database: the three routes, the server's 5x read back as
+  the default, live counts and the search.
+* The package now says to open 8481. Plan step 32. **Not seen with real kills.**
+
 **2026-10-01: drops are v83's - chances, the rate rule and the missing items - and a drop-table page.**
 The owner: *"Please make them closer to v83 drop rates and drop behavior ... If there's an item in our server
 not dropped but the old sources have them as dropping as such, add them"*, after

@@ -289,6 +289,13 @@ impl DropTables {
         &self.global
     }
 
+    /// Every mob's table, in template order - for the drop-table page (`crate::dropweb`).
+    pub fn mobs(&self) -> Vec<(u32, &[DropEntry])> {
+        let mut out: Vec<(u32, &[DropEntry])> = self.per_mob.iter().map(|(t, rows)| (*t, rows.as_slice())).collect();
+        out.sort_by_key(|(t, _)| *t);
+        out
+    }
+
     /// How many mobs have a table, for the startup banner.
     pub fn mobs_with_drops(&self) -> usize {
         self.per_mob.len()
