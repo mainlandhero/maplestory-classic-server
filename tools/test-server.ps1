@@ -2606,6 +2606,16 @@
              the stat window drops the number. A coupon that outlives its icon or an icon
              that outlives its multiplier is a bug either way - say which.
 
+    33. GLOBAL SCROLLS + CHAOS + TOOLTIPS (2026-10-01). Redeploy: data\drops.txt, the binaries and
+        gm-handbook\itemdesc.txt (python tools/dump_names.py) all changed.
+          a. !scroll with no Scroll of Secrets / Treasure Scroll: the box says they no longer drop
+             and lists Innocence (1 in 1000), Chaos (1 in 500), Pure Clean Slate (1 in 500) and
+             Lucky Day (1 in 1000) with icons -> DONE
+          b. a Chaos Scroll on an item: whatever happens, a success changes a stat by 1-5 points,
+             never 0 -> DONE. A success with no change = old build
+          c. drop page: hover a scroll or an equip name - a dark tooltip with the game's text, an
+             equip's REQ LEV and stats, a backported scroll's "On this server" rule -> DONE
+
     32. DROP PAGE ON 8481 (2026-10-01). On the server box (or forward 8481), after some kills.
           a. open http://<server>:8481/ - the drop rate box already shows the server's rate, marked
              (server) -> DONE. 1x when the server runs 5x = it is not reading live.json
@@ -6254,6 +6264,11 @@ function Show-TestPlan {
         Write-Host '        potion icon yes, coupon icon no -> 163 is not it; kill something,' -ForegroundColor Yellow
         Write-Host '        triple EXP still? report both halves separately' -ForegroundColor Yellow
         Write-Host '     c. wait one out / right-click it: icon AND stat go together' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  33. GLOBAL SCROLLS + CHAOS + TOOLTIPS (2026-10-01) - redeploy incl. gm-handbook\itemdesc.txt' -ForegroundColor White
+        Write-Host '       !scroll with no Secrets/Treasure: lists the 4 scrolls monsters drop now -> DONE' -ForegroundColor Green
+        Write-Host '       a successful Chaos always moves a stat 1-5 points, never 0 -> DONE' -ForegroundColor Green
+        Write-Host '       drop page: hover an item name, the game-style tooltip appears -> DONE' -ForegroundColor Green
         Write-Host ''
         Write-Host '  32. DROP PAGE (2026-10-01): http://<server>:8481/ - forward 8481 for players' -ForegroundColor White
         Write-Host '       the rate box starts at the server rate, marked (server) -> DONE' -ForegroundColor Green
