@@ -1826,6 +1826,16 @@ impl Session {
                 }
             ),
         }];
+        // **The skill points, with the level that earned them.** The owner, 2026-10-02: *"skill points
+        // are not available immediately for use upon level up, a map change and or a cash shop
+        // or change channel has to be performed"*. The level-up `0x007C` above never carried
+        // mask bit 15, and the client never raises a pool itself (`research/skill-points.md`
+        // §6.2) - so the new points appeared only when a SetField re-sent every pool. Every
+        // source of levelling funnels through here. After the level, so the client holds the
+        // level the pools were computed for; `skill_point_reply` sends nothing for a beginner.
+        if a.levels > 0 {
+            out.extend(self.skill_point_reply(&chr));
+        }
         // **The right-hand message area, not the chat log.** The owner: *"it should actually show
         // on the right hand side of the client. We should not be outputting in the chat log
         // regarding level ups and item pickups."*

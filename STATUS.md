@@ -458,6 +458,16 @@ of each, and claims no daily pass. After any result, with either scroll left, th
 yes/no (`scroll.again`): Yes opens the `!scroll` menu, No closes silently. Tests in `scrollnpc` and
 `session::scroll`. **Unseen on a screen** - plan step 28.
 
+**2026-10-02: a level-up sends the new skill points at once.** The owner, relaying a player: *"skill points are
+not available immediately for use upon level up, a map change and or a cash shop or change channel has to be
+performed"*.
+* The level-up `0x007C` carried level, HP/MP and AP but never mask bit 15. The client never raises a
+  pool itself (`research/skill-points.md` section 6.2), so the points appeared only when a SetField
+  re-sent every pool.
+* `award_experience` (every source of levelling: kills, party shares, quests, `!exp`) now follows
+  the level-up with `skill_point_reply`.
+* Test: `a_level_up_sends_the_new_skill_points_at_once`. Plan step 38.
+
 **2026-10-02: the client's options are kept per account on the server - the HP/MP warning (the pet's
 auto-potion threshold), sound and the rest.** The owner: *"Saving of settings such as audio, HP thresholds, etc
 on server side per account"*. `research/client-options-2026-10-02.md`.
