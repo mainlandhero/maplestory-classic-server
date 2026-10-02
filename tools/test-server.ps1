@@ -2606,6 +2606,12 @@
              the stat window drops the number. A coupon that outlives its icon or an icon
              that outlives its multiplier is a bug either way - say which.
 
+    34. DROP PAGE: MAPS (2026-10-01). After a redeploy.
+          a. no Ludibrium monster (Ratz, Chronos, Thanatos) is listed; Crimson Balrog is, saying it
+             invades the ship -> DONE
+          b. open Slime: "Found on" lists its maps, most spawn points first (The Tree That Grew II
+             x30 at the top) -> DONE. Search a map name and its monsters come up -> DONE
+
     33. GLOBAL SCROLLS + CHAOS + TOOLTIPS (2026-10-01). Redeploy: data\drops.txt, the binaries and
         gm-handbook\itemdesc.txt (python tools/dump_names.py) all changed.
           a. !scroll with no Scroll of Secrets / Treasure Scroll: the box says they no longer drop
@@ -6264,6 +6270,8 @@ function Show-TestPlan {
         Write-Host '        potion icon yes, coupon icon no -> 163 is not it; kill something,' -ForegroundColor Yellow
         Write-Host '        triple EXP still? report both halves separately' -ForegroundColor Yellow
         Write-Host '     c. wait one out / right-click it: icon AND stat go together' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '  34. DROP PAGE MAPS (2026-10-01): no Ludibrium monsters; Slime "Found on" lists its maps, most spawns first -> DONE' -ForegroundColor Green
         Write-Host ''
         Write-Host '  33. GLOBAL SCROLLS + CHAOS + TOOLTIPS (2026-10-01) - redeploy incl. gm-handbook\itemdesc.txt' -ForegroundColor White
         Write-Host '       !scroll with no Secrets/Treasure: lists the 4 scrolls monsters drop now -> DONE' -ForegroundColor Green

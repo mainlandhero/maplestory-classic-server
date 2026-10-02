@@ -277,9 +277,71 @@ fn tip_lines(config: &Config, item: u32) -> Vec<String> {
     out
 }
 
+/// **Where each monster can be met**: the maps whose spawn list places it, each with how many
+/// spawn points it has there, most first; and the ways it appears without a spawn point.
+///
+/// The owner, 2026-10-01: *"If those monsters do not spawn yet, can we make sure that they are
+/// hidden from the drop table ... can we also list out the maps that they are present on, sorted
+/// by number of spawns for that monster on that map?"* 57 of the 170 templates with a drop
+/// table are on no map in this client - Ludibrium is not in it at all - and a monster with
+/// neither a map nor another way in is left off the page.
+///
+/// The other ways in are the ones the server itself spawns: the ship invasion
+/// (`boat::CRIMSON_BALROG`) and the summoning sacks (`Config::summon_sacks`). A monster another
+/// monster summons by skill is not listed - King Slime's Slimes are the only such summon here,
+/// and Slimes are on maps anyway.
+pub struct Whereabouts {
+    /// `template -> [(map, spawn points)]`, most spawn points first, then by map id.
+    pub maps: HashMap<u32, Vec<(u32, u32)>>,
+    /// `template -> other ways it appears`, as lines the page shows.
+    pub also: HashMap<u32, Vec<String>>,
+}
+
+impl Whereabouts {
+    pub fn of(config: &Config) -> Self {
+        let mut counts: HashMap<u32, HashMap<u32, u32>> = HashMap::new();
+        for (map, points) in &config.mobs {
+            for p in points {
+                *counts.entry(p.template_id).or_default().entry(*map).or_default() += 1;
+            }
+        }
+        let maps = counts
+            .into_iter()
+            .map(|(t, per_map)| {
+                let mut v: Vec<(u32, u32)> = per_map.into_iter().collect();
+                v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                (t, v)
+            })
+            .collect();
+        let mut also: HashMap<u32, Vec<String>> = HashMap::new();
+        also.entry(crate::boat::CRIMSON_BALROG)
+            .or_default()
+            .push("Invades the ship between Ellinia and Orbis".to_string());
+        let mut sacks: Vec<(&u32, &crate::config::SummonSack)> = config.summon_sacks.iter().collect();
+        sacks.sort_by_key(|(id, _)| **id);
+        for (sack, s) in sacks {
+            let name = config.item_names.get(sack).cloned().unwrap_or_else(|| format!("Item {sack}"));
+            let mut seen = Vec::new();
+            for t in &s.mobs {
+                if !seen.contains(t) {
+                    seen.push(*t);
+                    also.entry(*t).or_default().push(format!("Summoned by {name}"));
+                }
+            }
+        }
+        Whereabouts { maps, also }
+    }
+
+    /// Can a player meet this monster at all?
+    pub fn exists(&self, template: u32) -> bool {
+        self.maps.contains_key(&template) || self.also.contains_key(&template)
+    }
+}
+
 /// `/tables.json`: the shape the page reads - `mobs` (`id`, `name`, `level`, `rows` of
-/// `[item, ppm, min, max, fixed]`), `global`, and `items` (`id -> [name, kind, quest, desc,
-/// [tooltip lines]]`). A mob
+/// `[item, ppm, min, max, fixed]`, `maps` of `[map, name, spawn points]`, `also`), `global`,
+/// and `items` (`id -> [name, kind, quest, desc, [tooltip lines]]`). A monster that appears
+/// nowhere ([`Whereabouts`]) is left out. A mob
 /// with no meso row gets the server's level-scaled default as a `fixed` row: always dropped,
 /// not scaled by the rate (`session/combat.rs`). The First Time Together box is the last
 /// "mob", `kind` set, one line per prize at `1 / LINES`.
@@ -294,13 +356,24 @@ pub fn tables_json(config: &Config, mob_names: &HashMap<u32, String>, descs: &Ha
         .map(|(t, rows)| (config.mob_templates.get(&t).map_or(0, |m| m.level), t, rows))
         .collect();
     mobs.sort_by_key(|(level, t, _)| (*level, *t));
+    let whereabouts = Whereabouts::of(config);
+    mobs.retain(|(_, t, _)| whereabouts.exists(*t));
     let row = |s: &mut String, first: &mut bool, item: u32, ppm: u32, lo: u32, hi: u32, fixed: bool| {
         let _ = write!(s, "{}[{item},{ppm},{lo},{hi},{}]", if *first { "" } else { "," }, u8::from(fixed));
         *first = false;
     };
     for (i, (level, t, rows)) in mobs.iter().enumerate() {
         let name = mob_names.get(t).cloned().unwrap_or_else(|| format!("Mob {t}"));
-        let _ = write!(s, "{}{{\"id\":{t},\"name\":\"{}\",\"level\":{level},\"rows\":[", if i > 0 { "," } else { "" }, esc(&name));
+        let _ = write!(s, "{}{{\"id\":{t},\"name\":\"{}\",\"level\":{level},\"maps\":[", if i > 0 { "," } else { "" }, esc(&name));
+        for (j, (map, n)) in whereabouts.maps.get(t).map(Vec::as_slice).unwrap_or(&[]).iter().enumerate() {
+            let map_name = config.map_names.get(map).cloned().unwrap_or_else(|| format!("Map {map}"));
+            let _ = write!(s, "{}[{map},\"{}\",{n}]", if j > 0 { "," } else { "" }, esc(&map_name));
+        }
+        s.push_str("],\"also\":[");
+        for (j, line) in whereabouts.also.get(t).map(Vec::as_slice).unwrap_or(&[]).iter().enumerate() {
+            let _ = write!(s, "{}\"{}\"", if j > 0 { "," } else { "" }, esc(line));
+        }
+        s.push_str("],\"rows\":[");
         let mut first = true;
         if !config.drops.has_meso_row(*t) {
             if let Some((lo, hi)) = crate::droptables::level_meso_range(*level) {
@@ -362,6 +435,11 @@ mod tests {
              7 | 4000004 | 60 | 1 | 1 | 0 | Squishy \"Liquid\"\n* | 4031065 | 0.5 | 1 | 1 | 0 | Scroll of Secrets\n",
         );
         let mut c = Config { drops, ..Config::default() };
+        // Snail (2) on two maps, three points on one; template 7 on one; template 9 nowhere.
+        let point = |id, t| net::mob::FieldMob::new(id, t, 0, 0, 1, 10);
+        c.mobs.insert(100, vec![point(1, 2), point(2, 2), point(3, 2), point(4, 7)]);
+        c.mobs.insert(101, vec![point(1, 2)]);
+        c.map_names.insert(100, "Snail Garden".into());
         c.item_names.insert(4_000_001, "Snail Shell".into());
         c.item_names.insert(4_000_004, "Squishy \"Liquid\"".into());
         c.mob_templates.insert(7, crate::config::MobTemplate { level: 6, ..Default::default() });
@@ -377,8 +455,11 @@ mod tests {
         let mut descs = HashMap::new();
         descs.insert(4_000_001, "A shell from a snail.\\nAn etc item.".to_string());
         let j = tables_json(&config(), &names, &descs);
-        assert!(j.contains("{\"id\":2,\"name\":\"Snail\",\"level\":0,\"rows\":[[4000001,600000,1,1,0],[0,400000,4,6,0]]}"), "{j}");
-        assert!(j.contains("\"id\":7,\"name\":\"Mob 7\",\"level\":6,\"rows\":[[0,1000000,10,13,1],"), "level 6: 10-13 mesos, fixed: {j}");
+        assert!(
+            j.contains("{\"id\":2,\"name\":\"Snail\",\"level\":0,\"maps\":[[100,\"Snail Garden\",3],[101,\"Map 101\",1]],\"also\":[],\"rows\":[[4000001,600000,1,1,0],[0,400000,4,6,0]]}"),
+            "most spawn points first: {j}"
+        );
+        assert!(j.contains("\"id\":7,\"name\":\"Mob 7\",\"level\":6,\"maps\":[[100,\"Snail Garden\",1]],\"also\":[],\"rows\":[[0,1000000,10,13,1],"), "level 6: 10-13 mesos, fixed: {j}");
         assert!(j.contains("\"global\":[[4031065,5000,1,1,0]]"));
         assert!(j.contains("\"kind\":\"First Time Together reward\""));
         assert!(j.contains(&format!("[2043701,{},1,1,1]", 1_000_000 / crate::magicbox::LINES as u32)), "the Wand scroll in the box");
@@ -386,6 +467,24 @@ mod tests {
         // The client's description, its escape kept for the page to break the line on.
         assert!(j.contains("\"4000001\":[\"Snail Shell\",\"etc\",0,\"A shell from a snail.\\\\nAn etc item.\",[]]"), "{j}");
         assert!(!j.contains("<"), "no raw angle bracket can close the page's script");
+    }
+
+    /// **A monster no map spawns is left off the page** - unless the server brings it some other
+    /// way: the ship's Crimson Balrog, and anything a summoning sack calls.
+    #[test]
+    fn a_monster_that_appears_nowhere_is_hidden_and_the_ways_in_are_listed() {
+        let mut c = config();
+        c.drops = crate::droptables::DropTables::parse(
+            "2 | 4000001 | 60 | 1 | 1 | 0 | Snail Shell\n9 | 4000001 | 60 | 1 | 1 | 0 | Nowhere\n\
+             700005 | 4000001 | 60 | 1 | 1 | 0 | Balrog\n123 | 4000001 | 60 | 1 | 1 | 0 | Sacked\n",
+        );
+        c.summon_sacks.insert(2_100_009, crate::config::SummonSack { mobs: vec![123, 123] });
+        c.item_names.insert(2_100_009, "Test Sack".into());
+        let j = tables_json(&c, &HashMap::new(), &HashMap::new());
+        assert!(j.contains("\"id\":2,"), "on a map: shown");
+        assert!(!j.contains("\"id\":9,"), "on no map and no other way in: hidden - {j}");
+        assert!(j.contains("\"also\":[\"Invades the ship between Ellinia and Orbis\"]"), "{j}");
+        assert!(j.contains("\"id\":123,\"name\":\"Mob 123\",\"level\":0,\"maps\":[],\"also\":[\"Summoned by Test Sack\"]"), "once, though the sack lists it twice: {j}");
     }
 
     /// **The tooltip lines**: an equip shows its requirement, stats and slots the way the client

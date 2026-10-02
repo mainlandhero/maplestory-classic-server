@@ -458,6 +458,19 @@ of each, and claims no daily pass. After any result, with either scroll left, th
 yes/no (`scroll.again`): Yes opens the `!scroll` menu, No closes silently. Tests in `scrollnpc` and
 `session::scroll`. **Unseen on a screen** - plan step 28.
 
+**2026-10-01: the drop page shows only monsters you can meet, and the maps each one is on.** The owner:
+*"If those monsters do not spawn yet, can we make sure that they are hidden ... can we also list out the maps
+that they are present on, sorted by number of spawns"*.
+* 57 of the 170 templates with a drop table are on no map in this client, which has no Ludibrium maps at all:
+  Ratz, Chronos, the Teddies, Klock, Thanatos and the rest.
+* `dropweb::Whereabouts` (and `tools/drops_page.py`, the same rules) builds, from the loaded spawn lists, each
+  monster's maps with its spawn points there, most first. It adds the ways the server itself brings one: the
+  ship invasion (Crimson Balrog) and the summoning sacks. A monster with neither is left out, which leaves 113.
+* Each card has a **Found on** strip of maps with counts, and map names are searchable ("ant tunnel" lists
+  the 15 monsters there).
+* Also fixed: a wide table used to stretch its card past a narrow screen. Measured at 375 px wide: no
+  sideways scroll.
+
 **2026-10-01: the global drops are the four backported scrolls; Chaos never rolls 0; the drop page has
 item tooltips.**
 * **Global drops.** Scroll of Secrets and Treasure Scroll no longer drop from anything. The global table
