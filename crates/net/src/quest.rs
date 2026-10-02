@@ -109,6 +109,9 @@ pub struct QuestBook {
     /// presence byte 16 (`crate::citizenship::quest_ex_block`). Citizenship is quest 510000's
     /// and the Community Board's postings are 510001..510004's. Empty sends no block at all.
     pub ex: Vec<(u32, String)>,
+    /// Record block #32 (presence 19), the `+0x12D3` map - the same shape as [`Self::ex`].
+    /// The client's system options live here (`crate::clientsettings`). Empty sends no block.
+    pub shared_ex: Vec<(u32, String)>,
 }
 
 /// The most entries either block can carry, because the count is a `u16`.
@@ -150,6 +153,11 @@ impl QuestBook {
         self.started_block().len()
             + self.completed_block().len()
             + if self.ex.is_empty() { 0 } else { crate::citizenship::quest_ex_block(&self.ex).len() }
+            + if self.shared_ex.is_empty() {
+                0
+            } else {
+                crate::clientsettings::shared_quest_ex_block(&self.shared_ex).len()
+            }
     }
 }
 
@@ -883,6 +891,7 @@ mod tests {
             started: vec![StartedQuest { quest_id: 1000, progress: "007".into() }],
             completed: vec![CompletedQuest { quest_id: 1001, completed_at: 42 }],
             ex: Vec::new(),
+            shared_ex: Vec::new(),
         };
         let with = character_record_for_set_field_with_quests(&chr, 0, &equips, &book);
 
@@ -907,6 +916,28 @@ mod tests {
 
         assert_eq!(*with.last().unwrap(), *bare.last().unwrap(), "0x140308b3f still last");
         assert_eq!(with.len(), bare.len() + book.record_len());
+    }
+
+    /// The system options are block #32: presence 19 set, AFTER the final ungated byte (its
+    /// gate `0x140308e79` follows `0x140308b3f`), and nothing else in the record moves.
+    #[test]
+    fn the_shared_ex_records_follow_the_final_byte_behind_presence_19() {
+        let chr = dressed();
+        let equips = equips_of(&chr);
+        let plain = QuestBook::default();
+        let book = QuestBook { shared_ex: vec![(368, "vBG1=30;mBG1=0".into())], ..QuestBook::default() };
+        let without = character_record_for_set_field_with_quests(&chr, 0, &equips, &plain);
+        let with = character_record_for_set_field_with_quests(&chr, 0, &equips, &book);
+        let p = crate::clientsettings::PRESENCE_SHARED_QUEST_EX;
+        assert_eq!(without[p], 0);
+        assert_eq!(with[p], 1);
+        let block = crate::clientsettings::shared_quest_ex_block(&book.shared_ex);
+        assert_eq!(&with[without.len()..], &block[..], "appended after the old last byte");
+        for i in 0..crate::opcode::PRESENCE_ARRAY_LEN {
+            assert_eq!(with[i] != without[i], i == p, "presence[{i}]");
+        }
+        assert_eq!(&with[crate::opcode::PRESENCE_ARRAY_LEN..without.len()], &without[crate::opcode::PRESENCE_ARRAY_LEN..]);
+        assert_eq!(with.len(), without.len() + book.record_len() - plain.record_len());
     }
 
     /// The ex records (citizenship, the board) are block #28: presence 16 set, after the
@@ -1156,6 +1187,7 @@ mod tests {
             started: vec![StartedQuest { quest_id: 1000, progress: String::new() }],
             completed: Vec::new(),
             ex: Vec::new(),
+            shared_ex: Vec::new(),
         };
         let plain = crate::opcode::set_field_with_character_dressed(&chr, 0, 0, 0, &equips);
         let quested = set_field_with_character_dressed_quests(&chr, 0, 0, 0, &equips, &book, &[]);

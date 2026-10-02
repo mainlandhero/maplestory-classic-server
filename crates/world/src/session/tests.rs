@@ -3638,6 +3638,73 @@ fn a_pets_auto_hp_drinks_the_potion_and_answers_the_latch() {
     assert_eq!(s.store.inventory_slot(id, store::InventoryType::Use, 1).unwrap().unwrap().kind.quantity(), 1);
 }
 
+
+/// **A change is kept for the account and comes back in every character's SetField.**
+/// The capture's own HP/MP warning pair (`flHP=7`, `flMP=3`) and a sound volume, sent through
+/// the real dispatcher; then a second character on the same account logs in and its record
+/// carries both blocks, with presence 16 and 19 set.
+#[test]
+fn options_are_saved_per_account_and_sent_back_in_the_record() {
+    let (mut s, store, id) = gm_session();
+    let mut pair = net::clientsettings::CLIENT_OPTIONS_CHANGED.to_le_bytes().to_vec();
+    pair.extend(net::clientsettings::options_changed(1, &[(0x10, 7), (0x11, 3)]));
+    assert!(s.handle(&pair).is_empty(), "nothing is expected back");
+    let mut sound = net::clientsettings::CLIENT_OPTIONS_CHANGED.to_le_bytes().to_vec();
+    sound.extend(net::clientsettings::options_changed(0, &[(0, 30), (1, 1), (0x41, 5)]));
+    s.handle(&sound);
+    let account = s.claimed.as_ref().unwrap().account_id;
+    assert_eq!(
+        store.client_settings(account).unwrap(),
+        vec![(0, 0, 30), (0, 1, 1), (1, 0x10, 7), (1, 0x11, 3)],
+        "COUNT (0x41) is not a key and is dropped"
+    );
+
+    let (b28, b32) = s.option_records();
+    assert_eq!(b28, vec![(101_563, "flHP=7;flMP=3".to_string())]);
+    assert_eq!(b32, vec![(368, "vBG1=30;mBG1=1".to_string())]);
+
+    // A second character on the same account sees them.
+    let other = store
+        .create_character(account, 0, &net::opcode::Character { name: "Second".into(), ..Default::default() })
+        .unwrap()
+        .id;
+    assert_ne!(other, id);
+    store.create_migration(account, other, 0, 0).unwrap();
+    let mut again = Session::new(store.clone(), s.config.clone());
+    again.claim_for_character(other);
+    let out = again.handle(&crate::session::CLIENT_MIGRATION_HELLO.to_le_bytes());
+    let set = out.iter().find(|r| r.opcode == net::opcode::SET_FIELD).expect("the login SetField");
+    assert!(set.what.contains("quest 101563 = flHP=7;flMP=3"), "{}", set.what);
+    let block = net::clientsettings::shared_quest_ex_block(&b32);
+    assert!(set.body.windows(block.len()).any(|w| w == &block[..]), "block #32 is in the record");
+}
+
+#[test]
+fn a_malformed_body_is_not_stored_and_answers_nothing() {
+    let (mut s, store, _id) = gm_session();
+    let mut bad = net::clientsettings::CLIENT_OPTIONS_CHANGED.to_le_bytes().to_vec();
+    bad.extend(&net::clientsettings::options_changed(1, &[(0x10, 7)])[..12]);
+    assert!(s.handle(&bad).is_empty());
+    let account = s.claimed.as_ref().unwrap().account_id;
+    assert!(store.client_settings(account).unwrap().is_empty());
+}
+
+/// `--system-options off` drops block #32 and nothing else: the game options (the HP/MP warning)
+/// still ride in block #28.
+#[test]
+fn system_options_off_drops_only_block_32() {
+    let (mut s, store, id) = gm_session();
+    let account = s.claimed.as_ref().unwrap().account_id;
+    store.save_client_settings(account, 0, &[(0, 30)]).unwrap();
+    store.save_client_settings(account, 1, &[(0x10, 7)]).unwrap();
+    let (on, _) = s.quest_book(id);
+    assert_eq!(on.shared_ex, vec![(368, "vBG1=30".to_string())]);
+    Arc::get_mut(&mut s.config).expect("sole owner").system_options = false;
+    let (off, _) = s.quest_book(id);
+    assert!(off.shared_ex.is_empty(), "block #32 is not sent");
+    assert!(off.ex.contains(&(101_563, "flHP=7".to_string())), "block #28 still is");
+}
+
 /// **A dead character's pet drinks nothing.** The owner, 2026-10-01: *"The server says I was dead,
 /// gave me the revive in town window, but my pet still auto potioned me."* The deployed log has
 /// the `0x0206` in the same millisecond as the `0x007C` that set hp 0, and the server healed the

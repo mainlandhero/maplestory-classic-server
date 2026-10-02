@@ -27,6 +27,7 @@ pub mod buildstamp;
 pub mod carriedbuffs;
 pub mod cash;
 pub mod citizenship;
+pub mod clientsettings;
 pub mod character;
 pub mod claims;
 pub mod codes;

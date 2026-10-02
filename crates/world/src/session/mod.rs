@@ -637,6 +637,7 @@ mod reactor;
 mod mobskill;
 mod multiplayer;
 mod npc;
+mod options;
 mod party;
 mod groupchat;
 mod whisper;
@@ -1255,6 +1256,11 @@ impl Session {
             }
             // A double-click on another player: their Character Info. Both client-side
             // builders set the same latch, so this is answered on every path. session/charinfo.rs.
+            // **`0x02EB` - the client's options changed.** Kept per account and sent back in
+            // the record at every field entry; nothing is expected back. session/options.rs.
+            net::clientsettings::CLIENT_OPTIONS_CHANGED => {
+                return self.on_options_changed(body.get(2..).unwrap_or(&[]));
+            }
             net::charinfo::CLIENT_CHARACTER_INFO_REQUEST => {
                 return self.on_character_info_request(body.get(2..).unwrap_or(&[]));
             }

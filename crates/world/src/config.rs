@@ -55,6 +55,13 @@ pub struct Config {
     /// others, so one process per world serves it. Read-only and unauthenticated.
     pub drops_web: Option<std::net::SocketAddr>,
 
+    /// **Send the account's system options (sound and the rest) in record block #32.**
+    /// `--system-options on|off`, default on. The block's placement is read off the record
+    /// decoder (`net::clientsettings::PRESENCE_SHARED_QUEST_EX`) and had never been on a wire
+    /// when it shipped (2026-10-02); if a login fails to decode, `off` drops it without a
+    /// rebuild. The game options (HP/MP warning, block #28) are not affected.
+    pub system_options: bool,
+
     /// **Which host a Change Channel answer names** - `--advertise`, the same flag and the
     /// same rule as the login server's, because both write a channel address into a packet
     /// the client dials. `channels` above keeps the ports; this decides the host per
@@ -2679,6 +2686,7 @@ impl Default for Config {
             channels: Vec::new(),
             link: None,
             drops_web: None,
+            system_options: true,
             advertise: std::sync::Arc::new(net::advertise::Advertiser::default()),
             map_names: HashMap::new(),
             item_names: HashMap::new(),

@@ -2696,6 +2696,13 @@ impl Session {
         match self.store.quest_book(character_id) {
             Ok(mut book) => {
                 book.ex = ex;
+                // The account's options (session/options.rs): game options into block #28
+                // beside the citizenship, system options into block #32.
+                let (game, system) = self.option_records();
+                book.ex.extend(game);
+                if self.config.system_options {
+                    book.shared_ex = system;
+                }
                 let note = format!(
                     ", quests: {} started / {} completed / ex records [{}]",
                     book.started.len(),

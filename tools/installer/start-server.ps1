@@ -76,6 +76,11 @@ param(
     # Serve a connection that cannot be tied to a launcher sign-in as THIS account instead of
     # refusing it. Off by default - login is enforced. Dev and smoke-test use only.
     [string]$FallbackAccount,
+    # **Stop sending each account's saved sound/system options** (2026-10-02). They travel in a
+    # record block that had never been on a wire when it shipped; if logins fail to decode
+    # after that update, restart with -NoSystemOptions. The HP/MP warning (the pet's
+    # auto-potion threshold) is not affected and keeps working either way.
+    [switch]$NoSystemOptions,
     [switch]$Stop
 )
 
@@ -339,6 +344,7 @@ for ($ch = 0; $ch -lt $Channels; $ch++) {
         # acks are counted once a minute rather than logged per packet (97% of the old file).
         '--log-file', "`"$(Join-Path $root $chLog)`""
     )
+    if ($NoSystemOptions) { $worldArgs += @('--system-options', 'off') }
     $w = Start-Process -FilePath (Join-Path $bin 'maplecw-world.exe') -WorkingDirectory $root `
         -ArgumentList $worldArgs -PassThru -NoNewWindow `
         -RedirectStandardOutput (Join-Path $root "$chLog.out") `

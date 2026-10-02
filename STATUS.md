@@ -458,6 +458,22 @@ of each, and claims no daily pass. After any result, with either scroll left, th
 yes/no (`scroll.again`): Yes opens the `!scroll` menu, No closes silently. Tests in `scrollnpc` and
 `session::scroll`. **Unseen on a screen** - plan step 28.
 
+**2026-10-02: the client's options are kept per account on the server - the HP/MP warning (the pet's
+auto-potion threshold), sound and the rest.** The owner: *"Saving of settings such as audio, HP thresholds, etc
+on server side per account"*. `research/client-options-2026-10-02.md`.
+* The client sends every change as `0x02EB` (`u32 group, u8 count, (u32 key, i32 value)...`) and reads
+  them back at field entry from **quest ex records**: game options in quest 101563 (record block #28),
+  system options in quests 368/369/370/481 (block #32, presence 19). Nothing stored them, and the
+  registry does not hold them (checked), so every login fell back to the defaults.
+* Now `store::clientsettings` keeps them per account, and every SetField carries them
+  (`session/options.rs`, `net::clientsettings`).
+* **Built and tested, never on a wire.**
+  * Block #28 is the proven citizenship path.
+  * Block #32 is new: placed after the record's last ungated byte, from the decoder listing.
+  * Kill switch: `--system-options off` / `start-server.ps1 -NoSystemOptions`. It drops only
+    block #32, and the HP warning keeps working.
+  * Plan step 37.
+
 **2026-10-02: the first-job SP pool keeps growing past level 30 until the whole book can be maxed - a
 deliberate deviation from classic.** The owner, from player complaints: *"Allow continuous accumulation of skill
 points for 1st job beyond level 30 until all skills can be maxed in first job"*, and *"Make sure that SP reset

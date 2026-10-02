@@ -350,6 +350,9 @@ impl Store {
         // Seven days of kills and drops in hour buckets, for the drop-table page (2026-10-01).
         // New tables, so CREATE IF NOT EXISTS is the whole migration. `killstats.rs`.
         crate::killstats::create_tables(&conn)?;
+        // The client's options, per account (2026-10-02). A new table, so CREATE IF NOT
+        // EXISTS is the whole migration. `clientsettings.rs`.
+        crate::clientsettings::create_tables(&conn)?;
         // The migration credential columns. These are ALTERed onto `migrations`, which is
         // NOT a new table, so the call carries its own PRAGMA guard - see that module.
         // Every claim entry point already calls this; doing it here too makes the module
