@@ -2635,6 +2635,26 @@
              works without a map change. Still needs a map change -> the second 0x007C did not
              apply; world-ch0.log shows "skill points now [...]" right after the LEVEL line
 
+    43. TRADE: PUTTING THINGS IN (2026-10-03). Two clients, a trade window open between them.
+        Mesos (0x10/1) and items (0x10/0) are answered now, to BOTH windows. Nothing changes
+        hands yet: the Trade button's packet is not decoded, and (e) is how it gets measured.
+        Offers stay in the bag and the wallet until the trade completes.
+          a. Tester2 puts in 3000 mesos: 3000 shows on TESTER2'S side in both windows -> fixed
+               it shows on the OTHER side in both -> the seat byte is absolute, not relative
+                          (net::trade::SEAT_SELF): say so, it is one constant
+               it shows nowhere -> paste the "MiniroomResult 0x10/1" lines
+          b. the owner puts in 21 eggs: 21 eggs in trade slot 1, on both screens -> fixed
+               the client dies -> the item blob is wrong: paste client-exit.log and the 0x10/0 line
+          c. look at both bags with the window open: are the eggs still in the Use tab, and the
+             mesos still in the wallet? Either answer is fine - say which. Close the window: both
+             must be exactly as before the trade.
+          d. close the window on one side: the OTHER window closes with "Trade cancelled by the
+             other character" -> fixed. It stays open -> paste the "mode 0x0C" line
+          e. press Trade on one side: nothing happens yet. Paste the 0x017E line it sends from
+             world-ch0.log - that body is the next step's measurement.
+          f. put in 1000 mesos, then 2000 more: the window shows 2000 -> the client sends a
+             total (what the server assumes). It meant 3000 -> it sends increments: say so.
+
     42. DISORDER'S DEBUFF (2026-10-02) - the first mob status ever sent (0x03E6). A thief with
         Disorder: hit a mob with it and look ABOVE the mob.
           a. a debuff icon appears over the mob for ~10-30 s (by level) -> fixed
@@ -3120,8 +3140,8 @@
         whose payload runs through a virtual call on whichever miniroom class the room type
         picks. For a trade that call is FUN_141C423D0 and its only packet read is
         FUN_1402ee8d0 - the avatar decoder 0x0224 already uses. research/trade-2026-09-09.md.
-        THE WINDOW OPENS. PUTTING ITEMS IN IT DOES NOT - modes 0x0C and 0x10 are still
-        unhandled, so do not test dragging items or Confirm yet; step (e) is what to look at.
+        DONE 2026-10-03: both windows opened and both players put things in them. Putting
+        things in is step 43 now; (b)..(e) below are kept only for a regression.
           a. Tester2 invites the owner, the owner clicks Accept:
                BOTH trade windows open, each showing the OTHER player's avatar and name in
                           the far seat and itself in the near one -> DONE
@@ -6425,6 +6445,19 @@ function Show-TestPlan {
         Write-Host '  38. SP ON LEVEL-UP (2026-10-02): skill window open, level up - SP rises at once,' -ForegroundColor White
         Write-Host '       + works with no map change / channel change' -ForegroundColor Cyan
         Write-Host ''
+        Write-Host '  43. TRADE: PUTTING THINGS IN (2026-10-03): mesos and items now reach BOTH windows.' -ForegroundColor White
+        Write-Host '       Nothing changes hands yet (the Trade button is not decoded).' -ForegroundColor Cyan
+        Write-Host '       a. Tester2 puts 3000 mesos: shows on TESTER2 side in both windows -> fixed' -ForegroundColor Green
+        Write-Host '          on the OTHER side in both -> seat byte is absolute: say so' -ForegroundColor Yellow
+        Write-Host '       b. the owner puts 21 eggs: 21 in trade slot 1 on both screens -> fixed' -ForegroundColor Green
+        Write-Host '          client dies -> paste client-exit.log + the 0x10/0 line' -ForegroundColor Yellow
+        Write-Host '       c. window open: eggs still in the bag, mesos in the wallet? Say which.' -ForegroundColor Cyan
+        Write-Host '          After closing, both bags must be exactly as before.' -ForegroundColor Cyan
+        Write-Host '       d. close one window: the OTHER closes, "Trade cancelled by the other' -ForegroundColor Green
+        Write-Host '          character" -> fixed. Stays open -> paste the mode 0x0C line' -ForegroundColor Yellow
+        Write-Host '       e. press Trade: nothing yet. Paste the 0x017E line it sends.' -ForegroundColor Cyan
+        Write-Host '       f. 1000 mesos then 2000: shows 2000 -> totals (as assumed); 3000 -> increments' -ForegroundColor Cyan
+        Write-Host ''
         Write-Host '  42. DISORDER DEBUFF (2026-10-02, FIRST 0x03E6 EVER): hit a mob with Disorder,' -ForegroundColor White
         Write-Host '       look ABOVE it: debuff icon for 10-30 s -> fixed' -ForegroundColor Cyan
         Write-Host '       no icon -> wrong status index; client dies -> wrong layout: paste' -ForegroundColor Yellow
@@ -6666,15 +6699,14 @@ function Show-TestPlan {
         Write-Host ''
         Write-Host '  13. THE TRADE WINDOW (2026-09-22): the invite worked; the packet that OPENS' -ForegroundColor White
         Write-Host '     the window (0x0575 mode 4) did not exist. Its per-member payload is the'
-        Write-Host '     SAME avatar block 0x0224 carries. The window opens; putting items IN it'
-        Write-Host '     does not (modes 0x0C/0x10 unhandled) - do not test Confirm yet.'
+        Write-Host '     SAME avatar block 0x0224 carries. DONE 2026-10-03: both windows opened.'
+        Write-Host '     Putting things in is step 43 now.'
         Write-Host '       a. Tester2 invites, the owner accepts: BOTH windows open, each showing the' -ForegroundColor Green
         Write-Host '          other player in the far seat -> DONE. One side only -> say which.' -ForegroundColor Green
         Write-Host '       b. IF THE CLIENT DIES ON ACCEPT: paste client-exit.log + the CLIENT' -ForegroundColor Yellow
         Write-Host '          FAULT line. The last virtual call is the one [D] in this packet.' -ForegroundColor Yellow
         Write-Host '       c. blank/naked seat -> the look block; names swapped -> mySlot inverted' -ForegroundColor Yellow
         Write-Host '       d. TWO windows on one screen -> the creator should get mode 0xB instead' -ForegroundColor Yellow
-        Write-Host '       e. dragging an item or Confirm does nothing yet - that is expected' -ForegroundColor DarkGray
         Write-Host ''
         Write-Host '  12. FRIENDS - THE BUDDY LIST DRAWS, THE LOOP IS GONE (2026-09-22, 3rd pass)' -ForegroundColor White
         Write-Host '     Confirmed on screen: popup, Yes/No, and the Buddy tab listing the owner under'

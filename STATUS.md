@@ -541,6 +541,22 @@ which the launcher delivers once the server is repackaged. And the collaboration
 each style in its **default** colour (`ab39b6a`, `crate::cosmetics`): Fern Hair -> Violet 42576,
 Übel Hair -> Green 42604, Übel Face -> Violet 22639. Plan TP 8/9.
 
+**2026-10-03: trade - mesos and items go INTO the window; leaving closes the partner's. Built,
+never on a screen.** The owner's run put in 3000 mesos on one side and 21 eggs on the other, and neither
+was answered. Both are `0x017E` mode `0x10`: sub 1 is a u64 amount, sub 0 is tab, bag slot,
+quantity and trade slot. The client's inbound reader for mode `0x10` is `FUN_14214A9C0`; it
+reads a **relative** seat [D] (0 is the recipient), and the client never draws its own offer.
+So `session/trade.rs` echoes each put to the putter (seat 0) and the partner (seat 1); an item
+goes as a whole `GW_ItemSlot`. **Offers are references**: the item stays in the bag and the
+mesos in the wallet until the trade completes, so a crash or cancel loses nothing. A put is
+checked against the bag (quantity counting earlier offers from the same slot, the
+`trade_blocked` list, no Cash tab, stars whole). Mode `0x0C` (close) and a dropped connection
+end the room. The partner's window closes with "Trade cancelled by the other character",
+which is inbound mode `0x0C` carrying the partner's OWN slot. Trade rooms moved from a process
+static onto `Fields`, one table per channel. **Not built: the Trade button.** Its packet has
+never been captured and its sender is not found, so nothing changes hands yet; it is logged.
+`research/trade-2026-09-09.md` section 5, plan step 43.
+
 **2026-10-03: opened Companion's Magic Boxes feed the drops page.** The owner: *"Companion's
 Magic Box when opened do not feed into the drops data page"*. Only kills were counted. Now
 `session/firsttime.rs::open_magic_box` calls `killstats::note_box_opened` with what was actually

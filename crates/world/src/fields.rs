@@ -395,6 +395,8 @@ pub struct Fields {
     /// id: `(status index, value, expires at clock ms)`. `crate::session::mobdebuff`. The
     /// client keeps its own copy from `0x03E6`; this one is for the server's own arithmetic.
     mob_debuffs: Mutex<HashMap<(FieldKey, u32), Vec<(u32, i32, u64)>>>,
+    /// This channel's open trade rooms, and what each side has put in. `session/trade.rs`.
+    trades: Mutex<crate::session::trade::Rooms>,
 }
 
 impl Default for Fields {
@@ -415,7 +417,13 @@ impl Fields {
             voyages: Mutex::new(crate::boat::Voyages::default()),
             weather: Mutex::new(HashMap::new()),
             mob_debuffs: Mutex::new(HashMap::new()),
+            trades: Mutex::new(Default::default()),
         }
+    }
+
+    /// This channel's trade rooms. See the field.
+    pub(crate) fn trades(&self) -> std::sync::MutexGuard<'_, crate::session::trade::Rooms> {
+        self.trades.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Statuses on live mobs. See the field.

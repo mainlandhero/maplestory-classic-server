@@ -1,0 +1,17 @@
+15:44:45.845 <- [Wisp#215] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 9 byte body 000000000100000000
+15:44:45.845    trade: character 215 opened a miniroom, roomType 1 (trade is 1) and took slot 0 of room 215. Nothing to send until somebody accepts.
+15:44:45.845    0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch) is not answered yet - see crates/world/src/session/
+15:44:45.845 <- [Wisp#215] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 8 byte body 05000000d6000000
+15:44:45.846    trade: character 215 invited character 214 - invite delivered
+15:44:45.846    0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch) is not answered yet - see crates/world/src/session/
+15:44:45.944 -> [Tester2#214] 0x0575 UNKNOWN MiniroomResult mode 5: trade invite from Wisp (215) to character 214, 26 bytes, type=1. Nothing authenticates - the target is not checked for being on this map or for wanting the invite.
+15:44:48.565 <- [Tester2#214] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 10 byte body 03000000d70000000000
+15:44:48.565    trade: character 214 ACCEPTED ticket 215 and took slot 1; mode 4 sent to both sides (["Wisp", "Tester2"]).
+15:44:48.566 -> [Tester2#214] 0x0575 UNKNOWN MiniroomResult mode 4 to character 214 (slot 1): the trade window, 2 seat(s) - ["Wisp", "Tester2"]
+15:44:48.579 -> [Wisp#215] 0x0575 UNKNOWN MiniroomResult mode 4 to character 215 (slot 0): the trade window, 2 seat(s) - ["Wisp", "Tester2"]
+15:45:01.028 <- [Tester2#214] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 16 byte body 1000000001000000b80b000000000000
+15:45:01.028    trade: character 214 sent miniroom mode 16, which is not handled. research/trade-2026-09-09.md section 1.1 tabulates all 24.
+15:45:01.028    0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch) is not answered yet - see crates/world/src/session/
+15:45:17.010 <- [Wisp#215] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 14 byte body 1000000000000000020400150001
+15:45:17.010    trade: character 215 sent miniroom mode 16, which is not handled. research/trade-2026-09-09.md section 1.1 tabulates all 24.
+15:45:17.011    0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch) is not answered yet - see crates/world/src/session/

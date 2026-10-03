@@ -571,6 +571,9 @@ impl Drop for Session {
         self.leave_party_quest_on_disconnect();
         // And off any ship to Orbis. session/boat.rs.
         self.leave_ship_on_disconnect();
+        // Out of any trade window, so the partner's closes too. A channel change included:
+        // a trade room belongs to the channel. session/trade.rs.
+        self.leave_trade_on_disconnect();
         // The hub's directory: this character no longer plays on this channel. Before
         // `part`, which is the local equivalent. `session/worldlink.rs`.
         self.announce_offline_to_link();
@@ -666,7 +669,7 @@ mod scroll;
 mod summonsack;
 mod shop;
 mod storage;
-mod trade;
+pub(crate) mod trade;
 mod skills;
 #[cfg(test)]
 mod tests;

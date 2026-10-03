@@ -63,7 +63,24 @@ pub enum Request {
     /// Mode 6: decline. The client sends `reason` 4 normally, and `0xB` when it already has
     /// a miniroom open [L].
     Decline { ticket: u32, reason: u32 },
-    /// One of the other 20 modes. Carried rather than dropped so a handler can log which.
+    /// Mode `0x10` sub 0: put `quantity` of the item in bag slot `bag_slot` of tab `inv_type`
+    /// (the wire's tab number, 1 = Equip .. 5 = Cash) into trade slot `trade_slot` (1..=9).
+    /// Captured 2026-10-03, 21 eggs from Use slot 4 into trade slot 1:
+    /// `10000000 00000000 02 0400 1500 01` [L].
+    PutItem { inv_type: u8, bag_slot: i16, quantity: u16, trade_slot: u8 },
+    /// Mode `0x10` sub 1: offer `amount` mesos. Captured the same day, 3000 mesos:
+    /// `10000000 01000000 b80b000000000000` - a **u64** [L]. Whether it is the new total or an
+    /// increment is not read off the client; it is taken as the total, which is what the room
+    /// echo stores (`mesos[seat] = amount`, `FUN_14214A9C0`) **[I]**.
+    PutMesos { amount: u64 },
+    /// Mode `0x10` with any other sub-action - the Trade button among them, whose sender has
+    /// not been found. Carried so the log names it.
+    TradeOther { sub: u32 },
+    /// Mode `0x0C`, body nothing but the mode: the trade window was closed by its own player
+    /// (`FUN_142147160`, the trade dialog's `vt+0x138`, sends it on close result 2, then closes
+    /// its own window) [L].
+    Leave,
+    /// One of the other modes. Carried rather than dropped so a handler can log which.
     Other { mode: u32 },
 }
 
@@ -79,6 +96,17 @@ pub fn parse_request(body: &[u8]) -> Option<Request> {
             let ticket = c.u32().ok()?;
             Request::Decline { ticket, reason: c.u32().ok()? }
         }
+        ROOM_LEAVE => Request::Leave,
+        TRADE_ACTION => match c.u32().ok()? {
+            TRADE_PUT_ITEM => Request::PutItem {
+                inv_type: c.u8().ok()?,
+                bag_slot: c.i16().ok()?,
+                quantity: c.u16().ok()?,
+                trade_slot: c.u8().ok()?,
+            },
+            TRADE_PUT_MESOS => Request::PutMesos { amount: c.u64().ok()? },
+            sub => Request::TradeOther { sub },
+        },
         other => Request::Other { mode: other },
     })
 }
@@ -244,9 +272,144 @@ pub fn room_open_len(members: &[RoomMember]) -> usize {
     18 + members.iter().map(|m| 1 + m.look.len() + 4 + 2 + m.name.len() + 2).sum::<usize>() + 1
 }
 
+// ---------------------------------------------------------------------------------------
+// Mode 0x10 - what goes INTO the trade window, and mode 0x0C - leaving it
+// ---------------------------------------------------------------------------------------
+
+/// Mode `0x10`, both directions: the trade room's own actions, a `u32` sub-action first.
+///
+/// Inbound it is not in the miniroom handler's `3..=0xD` table, so it takes the default arm
+/// (`141c3d791`), which hands `(mode, packet)` to the open dialog's `vt+0x178`. For the trade
+/// dialog (vtable `0x143431CC8`, the same one `research/trade-2026-09-09.md` resolved) that is
+/// `FUN_14214A9C0`, read in full [L]:
+///
+/// ```text
+/// if mode != 0x10: return          ; nothing read
+/// raw 4 -> sub
+///   sub 0 -> FUN_14214AE50   u8 seat, u8 tradeSlot (1-based, 9 of them), GW_ItemSlot
+///                            (FUN_140303530: u8 type then the type's body - the same
+///                            decoder the bag and storage use) -> items[seat][tradeSlot-1]
+///   sub 1 ->                 u8 seat, u64 mesos             -> mesos[seat] = mesos
+///   sub 2 -> FUN_14214B090   reads nothing: SENDS 0x017E 0x10/5 with the CRC of every
+///                            item in items[1], and sets room+0x504
+///   sub 6 -> FUN_14214B3B0   reads nothing
+/// ```
+pub const TRADE_ACTION: u32 = 0x10;
+/// Sub-action 0: an item.
+pub const TRADE_PUT_ITEM: u32 = 0;
+/// Sub-action 1: mesos.
+pub const TRADE_PUT_MESOS: u32 = 1;
+/// The trade grid: the client's own loop bound over `items[seat]` (`cmp r14d, 9`) [L].
+pub const TRADE_SLOTS: u8 = 9;
+
+/// **The seat byte is RELATIVE: 0 is the player this copy goes to, 1 is their partner.** [D]
+///
+/// The two offers live in fixed arrays - `items` at `room+0x508`, mesos at `room+0x518` -
+/// indexed by the packet's byte alone; nothing on either path reads `room+0x2f8` (`mySlot`),
+/// and the only writers of `room+0x518` are the two inbound readers. The draw routine
+/// `FUN_142148A40` draws `mesos[0]` then `mesos[1]` at fixed places, and the meso check in
+/// `FUN_14214AAA0` takes `mesos[1] - mesos[0]` as the net gain - partner's minus mine.
+/// Against the member list, which is **absolute** (`room_open`'s `slot`, `mySlot` saying
+/// which is you). The reference server (a different version, a candidate only) sends 0 to
+/// the putter and 1 to the partner, which agrees. Plan step 43 settles it on screen.
+pub const SEAT_SELF: u8 = 0;
+/// See [`SEAT_SELF`].
+pub const SEAT_PARTNER: u8 = 1;
+
+/// `0x0575` mode `0x10` sub 0: `item` (a whole `GW_ItemSlot`, type byte first - what
+/// `Session::item_blob` makes) is in trade slot `trade_slot` of `seat`'s side.
+///
+/// **Nothing on the client writes its own offer** - the arrays are only filled from here - so
+/// the player who put the item needs this echo as much as the partner does.
+pub fn put_item(seat: u8, trade_slot: u8, item: &[u8]) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(TRADE_ACTION);
+    w.u32(TRADE_PUT_ITEM);
+    w.u8(seat);
+    w.u8(trade_slot);
+    w.bytes(item);
+    w.into_vec()
+}
+
+/// `0x0575` mode `0x10` sub 1: `seat`'s side now offers `mesos`. **17 bytes** [L].
+pub fn put_mesos(seat: u8, mesos: u64) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(TRADE_ACTION);
+    w.u32(TRADE_PUT_MESOS);
+    w.u8(seat);
+    w.u64(mesos);
+    w.into_vec()
+}
+
+/// Mode `0x0C`, both directions: somebody left the room.
+///
+/// Inbound it is the table's `0xC` arm, the dialog's `vt+0x168` = `FUN_141C3EF70` [L]:
+/// `u8 slot` (the **absolute** member slot, `room_open`'s), `raw 4 reason`, then the member is
+/// cleared and `vt+0x190` = `FUN_14214AAA0` runs. That compares `slot` with the room's own
+/// `mySlot` (`FUN_141C3F8B0` is `mov eax,[rcx+0x2f8]`): **only when they match does the window
+/// close**, with the message `reason` picks. A slot that is not the recipient's just redraws.
+/// So the window that should close is told its OWN slot.
+pub const ROOM_LEAVE: u32 = 0x0C;
+
+/// Leave reasons, `FUN_14214AAA0`'s table at `0x14214AE08` (`reason - 1`, 15 entries), the
+/// strings decrypted with `tools/dump_stringids.py` [L]. 2 and 4..=7 close with no message.
+/// `0x01CD` "Trade cancelled."
+pub const LEAVE_CANCELLED: u32 = 1;
+/// `0x01CC` "Trade cancelled. by the other character."
+pub const LEAVE_CANCELLED_BY_PARTNER: u32 = 3;
+/// `0x01CE` "Trade successful. Please check the results.", or `0x01CF` with the mesos received
+/// when the client's own meso stat rose since the window opened - so a completion must send
+/// the new balance first.
+pub const LEAVE_TRADE_DONE: u32 = 9;
+/// `0x01D6` "...the other person's on a different map."
+pub const LEAVE_DIFFERENT_MAP: u32 = 11;
+/// `0x01DA` "There was a problem trading the item. Please try again."
+pub const LEAVE_PROBLEM: u32 = 12;
+/// `0x01D0` "Trade unsuccessful."
+pub const LEAVE_UNSUCCESSFUL: u32 = 13;
+
+/// `0x0575` mode `0x0C`: member `slot` left, for `reason`. **9 bytes.**
+pub fn room_leave(slot: u8, reason: u32) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(ROOM_LEAVE);
+    w.u8(slot);
+    w.u32(reason);
+    w.into_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The two puts captured 2026-10-03, byte for byte.
+    #[test]
+    fn the_captured_puts_decode() {
+        let eggs = [0x10u8, 0, 0, 0, 0, 0, 0, 0, 0x02, 0x04, 0x00, 0x15, 0x00, 0x01];
+        assert_eq!(
+            parse_request(&eggs),
+            Some(Request::PutItem { inv_type: 2, bag_slot: 4, quantity: 21, trade_slot: 1 })
+        );
+        let mesos = [0x10u8, 0, 0, 0, 1, 0, 0, 0, 0xb8, 0x0b, 0, 0, 0, 0, 0, 0];
+        assert_eq!(parse_request(&mesos), Some(Request::PutMesos { amount: 3000 }));
+        assert_eq!(parse_request(&[0x0c, 0, 0, 0]), Some(Request::Leave));
+        assert_eq!(parse_request(&[0x10, 0, 0, 0, 2, 0, 0, 0]), Some(Request::TradeOther { sub: 2 }));
+        assert_eq!(parse_request(&eggs[..13]), None, "a put one byte short does not decode");
+    }
+
+    /// The field order each inbound reader takes, and the lengths.
+    #[test]
+    fn the_inbound_trade_bodies_are_laid_out_as_read() {
+        let m = put_mesos(SEAT_PARTNER, 3000);
+        assert_eq!(m.len(), 17);
+        assert_eq!(&m[0..8], &[0x10, 0, 0, 0, 1, 0, 0, 0]);
+        assert_eq!(m[8], 1, "seat");
+        assert_eq!(u64::from_le_bytes(m[9..17].try_into().unwrap()), 3000);
+
+        let i = put_item(SEAT_SELF, 1, &[2, 0xAA, 0xBB]);
+        assert_eq!(i, vec![0x10, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 0xAA, 0xBB]);
+
+        assert_eq!(room_leave(1, LEAVE_CANCELLED_BY_PARTNER), vec![0x0c, 0, 0, 0, 1, 3, 0, 0, 0]);
+    }
 
     /// The two captured bodies, byte for byte, 8 ms apart in `world.log`.
     #[test]
