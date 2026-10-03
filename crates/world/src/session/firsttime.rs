@@ -623,12 +623,15 @@ impl Session {
         }
     }
 
-    /// **Open a Companion's Magic Box.** One line of `crate::magicbox`'s table, equal odds.
+    /// **Open a Companion's Magic Box.** One prize from each of `crate::magicbox::SLOTS` -
+    /// an equip, a use item, a scroll and an etc item - each slot its own roll, equal odds.
     ///
-    /// The prize goes in **first** and the box comes out only if it did: a full tab refuses
-    /// the prize, and then the player keeps the box and is told why - the same order the
-    /// Leaf coupons use, so a refusal never costs anything. The slot must hold the box the
-    /// packet names, or nothing happens.
+    /// The bag is checked for **all four** before anything moves, the way a quest reward is
+    /// (`crate::questroom::shortfall`): a full tab refuses the whole box, the player keeps it
+    /// and is told which tab to clear. Half a box is not an outcome. The box only frees its
+    /// slot in that check when it is the last one there, so the check can only be stricter
+    /// than the bag, never looser. The slot must hold the box the packet names, or nothing
+    /// happens.
     pub(super) fn open_magic_box(&mut self, slot: u16) -> Vec<Reply> {
         let op = net::cashitem::CLIENT_USE_CASH_ITEM;
         let Some(chr) = self.claimed_character() else { return crate::mesodrop::unlock_unhandled_latching_request(op) };
@@ -640,26 +643,57 @@ impl Session {
             .into_iter()
             .flatten()
             .find(|r| r.slot == slot)
-            .map(|r| r.item.item_id);
-        if holding != Some(crate::magicbox::BOX) {
+            .map(|r| (r.item.item_id, r.item.kind.quantity()));
+        if holding.map(|h| h.0) != Some(crate::magicbox::BOX) {
             crate::server::log(&format!(
                 "   magic box: character {} asked to open Use slot {slot}, which holds {holding:?}; nothing opened",
                 chr.id
             ));
             return self.cash_item_notice_for(op, "That box is not where the client says it is. Nothing was used up.".to_string());
         }
-        let roll = self.rng.next();
-        let (item, qty) = crate::magicbox::roll(roll);
-        let (line, mut out) = match self.give_item(item, qty, "Companion's Magic Box") {
-            Ok(given) => given,
-            Err(why) => {
-                crate::server::log(&format!("   magic box: character {} rolled {qty} x {item} and could not take it: {why}; the box is kept", chr.id));
-                return self.cash_item_notice_for(
-                    op,
-                    "There is no room for what is inside. Make room in your inventory and open it again - the box was kept.".to_string(),
-                );
-            }
+        let prizes: Vec<crate::magicbox::Prize> = crate::magicbox::SLOTS.iter().map(|s| crate::magicbox::roll(s, self.rng.next())).collect();
+        let gives: Vec<(u32, u16, store::InventoryType)> = prizes
+            .iter()
+            .filter_map(|&(id, q)| self.config.tab_for(id).or_else(|| store::InventoryType::for_item(id)).map(|t| (id, q, t)))
+            .collect();
+        let takes: Vec<(u32, u16, store::InventoryType)> =
+            if holding.map(|h| h.1) == Some(1) { vec![(crate::magicbox::BOX, 1, inv)] } else { Vec::new() };
+        let short = match self.store.bag(chr.id) {
+            Ok(bag) => crate::questroom::shortfall(&bag, &gives, &takes, |id| self.config.shops.max_stack(id)),
+            Err(_) => Vec::new(),
         };
+        if !short.is_empty() {
+            let need = short
+                .iter()
+                .map(|s| format!("{} {} in your {} tab", s.slots, if s.slots == 1 { "space" } else { "spaces" }, net::bag::BAG_TAB_NAMES[s.tab.index()]))
+                .collect::<Vec<_>>()
+                .join(" and ");
+            crate::server::log(&format!("   magic box: character {} rolled {prizes:?} and has no room: {short:?}; the box is kept", chr.id));
+            return self.cash_item_notice_for(
+                op,
+                format!("There is no room for what is inside. Make {need}, then open it again - the box was kept."),
+            );
+        }
+        let mut out = Vec::new();
+        let mut gained = Vec::new();
+        let mut lines = Vec::new();
+        for (slot, &(item, qty)) in crate::magicbox::SLOTS.iter().zip(&prizes) {
+            match self.give_item(item, qty, "Companion's Magic Box") {
+                Ok((line, replies)) => {
+                    out.extend(replies);
+                    gained.push((slot.name, (item, qty)));
+                    lines.push(line);
+                }
+                Err(why) => {
+                    crate::server::log(&format!("   magic box: character {} rolled {qty} x {item} and could not take it: {why}", chr.id));
+                    lines.push(format!("{qty} x {item} NOT given: {why}"));
+                }
+            }
+        }
+        if gained.is_empty() {
+            crate::server::log(&format!("   magic box: character {} got nothing from {prizes:?}; the box is kept", chr.id));
+            return self.cash_item_notice_for(op, "Nothing inside could be given to you - the box was kept.".to_string());
+        }
         let _ = self.store.remove_item(chr.id, inv, slot, Some(1));
         let left = self
             .store
@@ -671,13 +705,36 @@ impl Session {
             .map(|r| r.item.kind.quantity())
             .unwrap_or(0);
         out.extend(self.stack_change_replies(inv, slot, left));
-        crate::server::log(&format!("   magic box: character {} opened a box from Use slot {slot} - {line}", chr.id));
+        crate::server::log(&format!("   magic box: character {} opened a box from Use slot {slot} - {}", chr.id, lines.join("; ")));
         // The owner, 2026-09-24: *"the chat should reflect that they have lost the box but gained
-        // something else in two different chat lines."* The box first, then the prize - and
-        // the request is still answered, so the use latch comes off.
+        // something else in two different chat lines."* The box first, then each prize on its
+        // own line - and the request is still answered, so the use latch comes off.
         out.extend(crate::mesodrop::unlock_unhandled_latching_request(op));
         out.push(self.item_chat_line(crate::magicbox::BOX, -1));
-        out.push(self.item_chat_line(item, i64::from(qty)));
+        for &(_, (item, qty)) in &gained {
+            out.push(self.item_chat_line(item, i64::from(qty)));
+        }
+        // The owner, 2026-10-03: Lakelis says what each slot gave, in an NPC box. Parked under
+        // `questroom::REFUSAL_PATH` - the path whose OK is answered by closing silently, which is
+        // exactly what this box wants. **Never a second box over one already open**: two
+        // `0x055B`s at once is what dropped a client on 2026-10-02 (`session/npc.rs`), so with
+        // a conversation open the chat lines above are the whole report.
+        if self.conversation.is_none() {
+            let text = crate::magicbox::lakelis_text(&gained);
+            self.conversation = Some(Conversation {
+                npc_template: firsttime::LAKELIS,
+                quest_id: None,
+                path: crate::questroom::REFUSAL_PATH.to_string(),
+                sent: 0,
+                awaiting_yes_no: false,
+                sent_with_next: false,
+            });
+            out.push(Reply {
+                opcode: net::script::SCRIPT_MESSAGE,
+                body: net::script::npc_say(firsttime::LAKELIS, &text, false, false),
+                what: format!("ScriptMessage Say from NPC template {} (Lakelis): what the magic box held", firsttime::LAKELIS),
+            });
+        }
         out
     }
 

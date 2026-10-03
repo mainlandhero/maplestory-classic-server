@@ -174,7 +174,7 @@ body { margin: 0; }
   <section class="global" id="global"></section>
 
   <footer>
-    <p>The <b>Companion's Magic Box</b> from First Time Together is listed with the monsters: its "1 in N" counts boxes, not kills.</p>
+    <p>The <b>Companion's Magic Box</b> from First Time Together is listed with the monsters. Every box gives one equip, one use item, one scroll and one etc item; its "1 in N" is the chance of that prize within its slot, counted in boxes, not kills.</p>
     <p>Only monsters you can meet are listed. <b>Found on</b> names every map that spawns the monster, with how many spawn points it has there, most first. A monster that only appears another way, such as the ship invasion or a summoning sack, says so.</p>
     <p>"1 in N" is the average number of kills per drop, rounded. Expected drops per kill add up the chances of every equipment or scroll row. Rows marked <b>quest</b> drop only for a player who has that quest in progress. Mesos marked <b>by level</b> are the server's default for a monster with no meso row: always dropped, and not affected by the drop rate.</p>
     <p id="livenote" hidden><b>Seen</b> counts what actually dropped on this server over the last 7 days, with the share of kills it dropped from. The counts update at most every 30 minutes, and anything older than 7 days is deleted.</p>
@@ -371,8 +371,9 @@ function renderMobs() {
     const nameHit = state.q.length > 0 && allHit(state.q, mobWords(m));
     const anyRow = state.q.length > 0 && m.rows.some((r) => rowMatches(m, r));
     if (state.q.length && !nameHit && !anyRow) continue;
+    // The box keeps the server's order, which is slot by slot; a monster's best drops come first.
     const rows = m.rows.filter((r) => state.cats.has(itemOf(r[0])[1]))
-      .sort((a, b) => effective(b[1], !b[4]) - effective(a[1], !a[4]) || a[0] - b[0]);
+      .sort((a, b) => m.kind ? 0 : effective(b[1], !b[4]) - effective(a[1], !a[4]) || a[0] - b[0]);
     if (!rows.length) continue;
     shown++; rowsShown += rows.length;
     const eq = expected(m.rows, "equip"), sc = expected(m.rows, "scroll");
@@ -383,13 +384,21 @@ function renderMobs() {
     parts.push(`<details class="mob"${anyRow && !nameHit ? " open" : ""}><summary>` +
       (m.kind ? `<span class="lv pq">PQ</span><span class="mname">${esc(m.name)}<small>${esc(m.kind)}</small></span>`
               : `<span class="lv">Lv ${m.level || "?"}</span><span class="mname">${esc(m.name)}<small>#${m.id}</small></span>`) +
-      `<span class="odds">${live}${mapsTag}<span>equips <b class="c-equip">${perKill(eq)}</b></span><span>scrolls <b class="c-scroll">${perKill(sc)}</b></span><span>${m.rows.length} ${m.kind ? "prizes" : "drops"}</span></span>` +
-      `</summary>` + whereHtml(m) + (m.kind ? `<p class="boxnote">Every member gets one box when the last stage clears. Opening it gives exactly one of these ${m.rows.length} prizes, each equally likely. The drop rate does not change it.</p>` : "") +
+      (m.slots ? `<span class="odds">${m.slots.map(([k]) => `<span>1 <b class="c-${k}">${k}</b></span>`).join("")}<span>per box, from ${m.rows.length} prizes</span></span>`
+               : `<span class="odds">${live}${mapsTag}<span>equips <b class="c-equip">${perKill(eq)}</b></span><span>scrolls <b class="c-scroll">${perKill(sc)}</b></span><span>${m.rows.length} ${m.kind ? "prizes" : "drops"}</span></span>`) +
+      `</summary>` + whereHtml(m) + (m.slots ? boxNote(m) : "") +
       `<div class="tbl"><table>${head()}<tbody>${rows.map((r) => rowHtml(m, r, true, !nameHit && rowMatches(m, r), kills)).join("")}</tbody></table></div></details>`);
   }
   $("mobs").innerHTML = parts.length ? parts.join("") : '<div class="empty panel">No monster or drop matches that search.</div>';
   $("status").innerHTML = `<b>${shown}</b> sources, <b>${num(rowsShown)}</b> drops shown at <b>${state.rate}x</b>` +
     (state.q.length ? ` for "${esc(state.q.join(" "))}"` : "") + ". Open a monster to see its table.";
+}
+
+// The box gives one prize from every slot, so it says so and gives each slot's odds.
+function boxNote(m) {
+  const per = m.slots.map(([k, n]) => `${k === "use" || k === "etc" ? "one " + k + " item" : "one " + k} (each 1 in ${n})`);
+  return `<p class="boxnote">Every member gets one box when the last stage clears. Opening it always gives <b>four</b> things, one from each slot: ` +
+    `${per.slice(0, -1).join(", ")} and ${per[per.length - 1]}. Within a slot every prize is equally likely. The drop rate does not change it.</p>`;
 }
 
 // "Found on": every map whose spawn list places it, most spawn points first (the server sorts
