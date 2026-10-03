@@ -52,7 +52,7 @@ pub const INVITE_TRADE: u32 = 1;
 pub const INVITE_CASH_TRADE: u32 = 2;
 
 /// What a client asked for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
     /// Mode 0: open a room. `room_type` 1 is a trade.
     Create { room_type: u32 },
@@ -76,6 +76,10 @@ pub enum Request {
     /// Mode `0x10` with any other sub-action - the Trade button among them, whose sender has
     /// not been found. Carried so the log names it.
     TradeOther { sub: u32 },
+    /// Mode 8: a line typed in the trade window's chat. `u32` (a client tick - it rose
+    /// between the two captured lines), then the text. Captured 2026-10-03:
+    /// `08000000 0a0c4704 0500 68656c6c6f` = "hello" [L].
+    Chat { text: String },
     /// Mode `0x0C`, body nothing but the mode: the trade window was closed by its own player
     /// (`FUN_142147160`, the trade dialog's `vt+0x138`, sends it on close result 2, then closes
     /// its own window) [L].
@@ -97,6 +101,10 @@ pub fn parse_request(body: &[u8]) -> Option<Request> {
             Request::Decline { ticket, reason: c.u32().ok()? }
         }
         ROOM_LEAVE => Request::Leave,
+        ROOM_CHAT => {
+            let _tick = c.u32().ok()?;
+            Request::Chat { text: c.str().ok()? }
+        }
         TRADE_ACTION => match c.u32().ok()? {
             TRADE_PUT_ITEM => Request::PutItem {
                 inv_type: c.u8().ok()?,
@@ -273,6 +281,47 @@ pub fn room_open_len(members: &[RoomMember]) -> usize {
 }
 
 // ---------------------------------------------------------------------------------------
+// 0x0575 mode 6 - how the invite went, in the inviter's chat
+// ---------------------------------------------------------------------------------------
+
+/// Mode 6: **the invite's result, for the inviter.** `FUN_141C3E360`, reached straight from
+/// the mode table (`141c3d44f jmp`) with no check on an open dialog - which matters, because
+/// the inviter has no window yet. [L]
+///
+/// ```text
+/// raw 4 result       0 -> nothing at all
+/// switch result-1 (15 entries, table 0x141C3E79C), each a string id, then
+/// FUN_1415eca30(text, 0xB): a chat line in category 11, the client's own red-pink
+///   1   0x197  "Unable to find the character."              no further read
+///   2   0x1C8  "'%s' is doing something else right now."   str name
+///   3   0x1C9  "'%s' has denied the invitation."           str name (and closes an open
+///                                                            miniroom dialog, vt+0x138)
+///   4   0x1CA  "'%s' is currently not accepting any invitation."   str name
+///   15  0x1CB  "'%s' is a character that cannot trade cash items." str name
+///   5..12, 14  the Rock-Paper-Scissors challenge strings; 13 nothing
+/// ```
+pub const INVITE_RESULT: u32 = 6;
+/// "Unable to find the character." - reads no name.
+pub const INVITE_NOT_FOUND: u32 = 1;
+/// "'%s' is doing something else right now."
+pub const INVITE_BUSY: u32 = 2;
+/// "'%s' has denied the invitation."
+pub const INVITE_DENIED: u32 = 3;
+
+/// `0x0575` mode 6. `name` goes on the wire for every result but
+/// [`INVITE_NOT_FOUND`], which reads none - a name there would be bytes the client never
+/// reads, harmless, but not what it expects.
+pub fn invite_result(result: u32, name: &str) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(INVITE_RESULT);
+    w.u32(result);
+    if result != INVITE_NOT_FOUND {
+        w.str(name);
+    }
+    w.into_vec()
+}
+
+// ---------------------------------------------------------------------------------------
 // Mode 0x10 - what goes INTO the trade window, and mode 0x0C - leaving it
 // ---------------------------------------------------------------------------------------
 
@@ -341,6 +390,47 @@ pub fn put_mesos(seat: u8, mesos: u64) -> Vec<u8> {
     w.into_vec()
 }
 
+/// Mode 8, both directions: the room's chat.
+///
+/// Inbound it is the table's `8` arm (`141c3d5bc`), which hands the packet to the dialog's
+/// `vt+0x198` = `FUN_141C3F300` [L]:
+///
+/// ```text
+/// raw 4 sub
+///   sub 1   u8 kind, str name -> FUN_141C414F0: a room notice ("[%s] has entered.",
+///           "[%s] has left." ...), not chat
+///   sub 0   u8 slot      the speaker's ABSOLUTE member slot; for a trade (room+0x304 == 1)
+///                        compared with mySlot to pick the colour (mine 0, theirs 2)
+///           str name
+///           str text
+///           u32          (the reference names it the partner's id)
+///           u32          (the speaker's id)
+///           chat info    FUN_1408D6760 - the block `megaphone::chat_info` writes, proven by
+///                        party chat and the megaphones
+/// ```
+///
+/// The client draws nothing when its player types: the line comes back from the server, to
+/// both windows. The reference server (a different version) sends this same shape.
+pub const ROOM_CHAT: u32 = 8;
+/// Sub-action 0 of [`ROOM_CHAT`]: a player's line.
+pub const ROOM_CHAT_LINE: u32 = 0;
+
+/// `0x0575` mode 8 sub 0: `who`, sitting in member `slot`, said `text`. `partner` is the
+/// other player in the room.
+pub fn chat(slot: u8, who: &crate::megaphone::Speaker, partner: u32, text: &str) -> Vec<u8> {
+    let text = crate::notice::ascii_fold(text);
+    let mut w = PacketWriter::new();
+    w.u32(ROOM_CHAT);
+    w.u32(ROOM_CHAT_LINE);
+    w.u8(slot);
+    w.str(who.name);
+    w.str(&text);
+    w.u32(partner);
+    w.u32(who.character_id);
+    crate::megaphone::chat_info(&mut w, who, &text);
+    w.into_vec()
+}
+
 /// Mode `0x0C`, both directions: somebody left the room.
 ///
 /// Inbound it is the table's `0xC` arm, the dialog's `vt+0x168` = `FUN_141C3EF70` [L]:
@@ -381,6 +471,13 @@ pub fn room_leave(slot: u8, reason: u32) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    /// Mode 6: result then the name, except "not found", which reads no name.
+    #[test]
+    fn the_invite_result_carries_a_name_except_not_found() {
+        assert_eq!(invite_result(INVITE_BUSY, "Wisp"), vec![6, 0, 0, 0, 2, 0, 0, 0, 4, 0, b'W', b'i', b's', b'p']);
+        assert_eq!(invite_result(INVITE_NOT_FOUND, "Wisp"), vec![6, 0, 0, 0, 1, 0, 0, 0]);
+    }
+
     /// The two puts captured 2026-10-03, byte for byte.
     #[test]
     fn the_captured_puts_decode() {
@@ -392,6 +489,8 @@ mod tests {
         let mesos = [0x10u8, 0, 0, 0, 1, 0, 0, 0, 0xb8, 0x0b, 0, 0, 0, 0, 0, 0];
         assert_eq!(parse_request(&mesos), Some(Request::PutMesos { amount: 3000 }));
         assert_eq!(parse_request(&[0x0c, 0, 0, 0]), Some(Request::Leave));
+        let hello = [8u8, 0, 0, 0, 0x0a, 0x0c, 0x47, 0x04, 5, 0, b'h', b'e', b'l', b'l', b'o'];
+        assert_eq!(parse_request(&hello), Some(Request::Chat { text: "hello".into() }));
         assert_eq!(parse_request(&[0x10, 0, 0, 0, 2, 0, 0, 0]), Some(Request::TradeOther { sub: 2 }));
         assert_eq!(parse_request(&eggs[..13]), None, "a put one byte short does not decode");
     }

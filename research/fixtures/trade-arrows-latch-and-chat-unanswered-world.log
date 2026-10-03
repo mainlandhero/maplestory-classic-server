@@ -1,0 +1,21 @@
+16:12:17.839 <- [Wisp#215] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 9 byte body 000000000100000000
+16:12:17.839    trade: character 215 opened a miniroom, roomType 1 (trade is 1) and took slot 0 of room 215. Nothing to send until somebody accepts.
+16:12:17.839    0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch) is not answered yet - see crates/world/src/session/
+16:12:17.839 <- [Wisp#215] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 8 byte body 05000000d6000000
+16:12:17.839    trade: character 215 invited character 214 - invite delivered
+16:12:17.840    0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch) is not answered yet - see crates/world/src/session/
+16:12:17.890 -> [Tester2#214] 0x0575 UNKNOWN MiniroomResult mode 5: trade invite from Wisp (215) to character 214, 26 bytes, type=1. Nothing authenticates - the target is not checked for being on this map or for wanting the invite.
+16:12:20.839 <- [Tester2#214] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 10 byte body 03000000d70000000000
+16:12:20.839    trade: character 214 ACCEPTED ticket 215 and took slot 1; mode 4 sent to both sides (["Wisp", "Tester2"]).
+16:12:20.839 -> [Tester2#214] 0x0575 UNKNOWN MiniroomResult mode 4 to character 214 (slot 1): the trade window, 2 seat(s) - ["Wisp", "Tester2"]
+16:12:20.877 -> [Wisp#215] 0x0575 UNKNOWN MiniroomResult mode 4 to character 215 (slot 0): the trade window, 2 seat(s) - ["Wisp", "Tester2"]
+16:14:03.927 <- [Wisp#215] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 14 byte body 1000000000000000021200e80301
+16:14:03.928    trade: character 215 put 1000 x 2060000 from Use slot 18 in trade slot 1; it stays in the bag until the trade completes. Partner 214 was told.
+16:14:03.928 -> [Wisp#215] 0x0575 UNKNOWN MiniroomResult 0x10/0 to character 215: own 1000 x 2060000 drawn in trade slot 1 (seat 0)
+16:14:03.929 -> [Tester2#214] 0x0575 UNKNOWN MiniroomResult 0x10/0 to character 214: their partner put 1000 x 2060000 in trade slot 1 (seat 1)
+16:19:14.809 <- [Wisp#215] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 15 byte body 080000000a0c4704050068656c6c6f
+16:19:14.809    trade: character 215 sent miniroom mode 8, which is not handled. research/trade-2026-09-09.md section 1.1 tabulates all 24.
+16:19:14.809    0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch) is not answered yet - see crates/world/src/session/
+16:19:18.854 <- [Wisp#215] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 29 byte body 08000000361c47041300796f2063616e20796f75207365652074686973
+16:19:18.854    trade: character 215 sent miniroom mode 8, which is not handled. research/trade-2026-09-09.md section 1.1 tabulates all 24.
+16:19:18.855    0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch) is not answered yet - see crates/world/src/session/

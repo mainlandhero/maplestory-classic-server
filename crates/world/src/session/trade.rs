@@ -46,35 +46,6 @@ pub(crate) struct Seat {
     name: String,
     look: Vec<u8>,
     map_id: crate::fields::FieldKey,
-    /// What this side has put in so far.
-    offer: Offer,
-}
-
-/// **What one side offers - by reference, never moved.** The owner, 2026-10-03: *"On tester I
-/// tried putting in 3000 mesos, on [the other] I tried putting in 21 eggs."*
-///
-/// An offered item stays in its owner's bag; this remembers which slot and how many. Nothing
-/// leaves a bag until the trade completes, in one step, so a crash, a dropped socket or a
-/// cancel with things on the table loses nothing and has nothing to give back. The price is
-/// that the bag can change under an offer - the completion has to check every line again.
-#[derive(Debug, Clone, Default)]
-struct Offer {
-    items: Vec<Offered>,
-    mesos: u64,
-}
-
-/// One line of an [`Offer`].
-#[derive(Debug, Clone, Copy)]
-struct Offered {
-    /// 1..=9, the client's grid.
-    trade_slot: u8,
-    inv: store::InventoryType,
-    bag_slot: u16,
-    /// What the slot held when it was offered. **Unread until the completion is built** - it
-    /// is what that step checks the slot against, since the bag can change under an offer.
-    #[allow(dead_code)]
-    item_id: u32,
-    quantity: u16,
 }
 
 /// Every trade room open on one channel, keyed by the ticket - the inviter's character id.
@@ -140,7 +111,6 @@ impl Session {
                     name: chr.name.clone(),
                     look: net::opcode::avatar_look(&chr),
                     map_id: self.field_of(&chr),
-                    offer: Offer::default(),
                 };
                 self.with_rooms(|rooms| {
                     rooms.retain(|(ticket, _)| *ticket != chr.id);
@@ -154,50 +124,33 @@ impl Session {
                 ));
             }
             net::trade::Request::Invite { target } => {
-                // **The ticket is the inviter's character id.** The client echoes it back in
-                // the accept or decline, so it has to identify the pairing, and the inviter's
-                // id does that with nothing to store. It is opaque to the client.
-                let ticket = chr.id;
-                let body = net::trade::invite(
-                    net::trade::INVITE_TRADE,
-                    chr.id,
-                    &chr.name,
-                    ticket,
-                );
-                debug_assert_eq!(body.len(), net::trade::invite_len(&chr.name));
-                let sent = self.bus().publish_to_character(
+                // **The target's own session decides** whether the popup goes up or the
+                // inviter is told they are busy - only it knows whether it has a shop, a
+                // conversation or storage open. `receive_trade_invite`. The ticket is the
+                // inviter's character id: the client echoes it back in the accept or
+                // decline, and it identifies the room with nothing to store.
+                let field = self.field_of(&chr);
+                let sent = self.bus().publish_event_to_character(
                     target,
-                    self.field_of(&chr),
-                    Reply {
-                        opcode: net::trade::MINIROOM_RESULT,
-                        body,
-                        what: format!(
-                            "MiniroomResult mode 5: trade invite from {} ({}) to character \
-                             {target}, {} bytes, type=1. Nothing authenticates - the target is \
-                             not checked for being on this map or for wanting the invite.",
-                            chr.name,
-                            chr.id,
-                            net::trade::invite_len(&chr.name)
-                        ),
-                    },
+                    crate::broadcast::Event::TradeInvite { from: chr.id, name: chr.name.clone(), ticket: chr.id, field },
                 );
-                // **Say when it went nowhere.** A trade invite to somebody who is not on this
-                // channel is the exact case that reads on screen as "the popup is broken",
-                // and it is the same failure whether the packet was wrong or the recipient was
-                // absent. The log has to separate them.
                 crate::server::log(&format!(
                     "   trade: character {} invited character {target} - {}",
                     chr.id,
                     if sent {
-                        "invite delivered".to_string()
+                        "handed to their session, which answers for itself".to_string()
                     } else {
-                        format!(
-                            "NOT DELIVERED: character {target} has no live session on map {}. \
-                             The popup will not appear and that is not a packet fault.",
-                            chr.map_id
-                        )
+                        format!("NOT DELIVERED: character {target} is not on this channel. Told \"Unable to find the character.\"")
                     }
                 ));
+                if !sent {
+                    self.with_rooms(|rooms| rooms.retain(|(t, _)| *t != chr.id));
+                    return vec![Reply {
+                        opcode: net::trade::MINIROOM_RESULT,
+                        body: net::trade::invite_result(net::trade::INVITE_NOT_FOUND, ""),
+                        what: format!("MiniroomResult mode 6 result 1 to character {}: \"Unable to find the character.\" (target {target})", chr.id),
+                    }];
+                }
             }
             // Both are answered with NOTHING on purpose - see the module docs. `0x017E` does
             // not latch, so this does not freeze anything; it just does not open a window.
@@ -220,7 +173,8 @@ impl Session {
                 return self.trade_put_item(&chr, inv_type, bag_slot, quantity, trade_slot)
             }
             net::trade::Request::PutMesos { amount } => return self.trade_put_mesos(&chr, amount),
-            net::trade::Request::Leave => self.trade_leave(&chr, "closed the trade window"),
+            net::trade::Request::Leave => return self.trade_leave(&chr, "closed the trade window"),
+            net::trade::Request::Chat { text } => return self.trade_chat(&chr, &text),
             // **The Trade button is in here.** Its sender has not been found in the client, so
             // the log names the sub-action and the body (the line above this one) for the run
             // that presses it. Nothing moves until it is decoded.
@@ -252,7 +206,6 @@ impl Session {
             name: chr.name.clone(),
             look: net::opcode::avatar_look(chr),
             map_id: self.field_of(&chr),
-            offer: Offer::default(),
         };
         let room = self.with_rooms(|rooms| {
             let slot = rooms.iter().position(|(t, _)| *t == ticket)?;
@@ -325,7 +278,7 @@ impl Session {
 }
 
 // ---------------------------------------------------------------------------------------
-// Putting things in, and leaving
+// Putting things in, chatting, and leaving
 // ---------------------------------------------------------------------------------------
 
 impl Session {
@@ -335,26 +288,45 @@ impl Session {
         self.bus().publish_to_character_anywhere(character, Reply { opcode: net::trade::MINIROOM_RESULT, body, what })
     }
 
-    /// A trade refusal: said in chat, so it is on screen, and logged. Nothing is put in.
-    fn trade_refused(&self, chr: &net::opcode::Character, why: &str) -> Vec<Reply> {
-        crate::server::log(&format!("   trade: character {} - {why}. Nothing was put in.", chr.id));
-        self.notice(format!("{why}."))
+    /// The room `chr` sits in, as `(their seat, the partner's character id)`, when the window is
+    /// open - both seats taken.
+    fn trade_partner_of(&self, chr: u32) -> Option<(usize, u32)> {
+        self.with_rooms(|rooms| {
+            let (room, seat) = rooms.seat_of(chr)?;
+            Some((seat, rooms[room].1[1 - seat].as_ref()?.character_id))
+        })
     }
 
-    /// **Mode `0x10` sub 0: an item into the trade grid.**
+    /// A put refused: said in chat so it is on screen, logged, and **answered with an empty
+    /// `0x007C`**. A drag into the trade window sets the client's exclusive-request latch and
+    /// waits for the inventory update that takes the item out; a refusal that sends nothing
+    /// leaves that latch set and every later drag dead - the owner's run of 2026-10-03, after
+    /// one stack of arrows. Byte 0 of any `0x007C` clears it (`Session::use_refused` does the
+    /// same).
+    fn trade_refused(&self, chr: &net::opcode::Character, why: &str) -> Vec<Reply> {
+        crate::server::log(&format!("   trade: character {} - {why}. Nothing was put in.", chr.id));
+        let mut out = self.notice(format!("{why}."));
+        out.push(Reply {
+            opcode: net::stats::STAT_CHANGED,
+            body: net::stats::StatChange::default().build(),
+            what: format!("StatChanged: EMPTY - a trade put refused ({why}); sent because byte 0 clears the client's request latch"),
+        });
+        out
+    }
+
+    /// **Mode `0x10` sub 0: an item into the trade grid - out of the bag.**
     ///
-    /// Checked against the bag as it is now: the slot holds something, it may be traded
-    /// (`store::ItemRules::trade_blocked`, the same list storage refuses), and the quantity is
-    /// there - counting what this side already offered from the same slot, so one stack cannot
-    /// be offered twice. Not the Cash tab: a cash item goes through the cash trade, which is
-    /// another opcode (`0x02F8`). A throwing star or bullet goes whole, as it is recharged
-    /// whole.
+    /// The owner, 2026-10-03: *"the item disappears from the player's inventory into the trade
+    /// window until the conclusion of the trade request"*. So the stack (or the part of it
+    /// named) moves into `store::tradeescrow` in one transaction, and the client is sent the
+    /// inventory update that takes it out - **which is also what releases its drag latch**:
+    /// without it the first put was the last. A throwing star or bullet goes whole. Not the
+    /// Cash tab (a cash item is the cash trade's, `0x02F8`), nothing on the `trade_blocked`
+    /// list, and only from a bag slot.
     ///
-    /// Then BOTH windows are told - the putter's too, because the client never draws its own
-    /// offer (`net::trade::put_item`) - with the seat each one reads: 0 for the putter, 1 for the
-    /// partner - the partner FIRST, and if they cannot be reached the trade closes rather than
-    /// leaving the two windows disagreeing ([`Session::trade_partner_unreachable`]). **The item
-    /// stays in the bag** ([`Offer`]); nothing is sent to the inventory.
+    /// Then both windows draw it: the partner FIRST (seat 1), and if they cannot be reached the
+    /// trade closes and the item comes back ([`Session::trade_partner_unreachable`]); then the
+    /// putter (seat 0) - the client never draws its own offer.
     fn trade_put_item(
         &mut self,
         chr: &net::opcode::Character,
@@ -363,16 +335,11 @@ impl Session {
         quantity: u16,
         trade_slot: u8,
     ) -> Vec<Reply> {
-        let Some((partner, already)) = self.with_rooms(|rooms| {
-            let (room, seat) = rooms.seat_of(chr.id)?;
-            let partner = rooms[room].1[1 - seat].as_ref()?.character_id;
-            let mine = rooms[room].1[seat].as_ref()?.offer.items.clone();
-            Some((partner, mine))
-        }) else {
+        let Some((_, partner)) = self.trade_partner_of(chr.id) else {
             return self.trade_refused(chr, "You are not trading with anyone");
         };
-        if !(1..=net::trade::TRADE_SLOTS).contains(&trade_slot) || already.iter().any(|o| o.trade_slot == trade_slot) {
-            return self.trade_refused(chr, &format!("Trade slot {trade_slot} is not free"));
+        if !(1..=net::trade::TRADE_SLOTS).contains(&trade_slot) {
+            return self.trade_refused(chr, &format!("There is no trade slot {trade_slot}"));
         }
         let Ok(inv) = store::InventoryType::from_wire(i16::from(inv_type)) else {
             return self.trade_refused(chr, &format!("There is no inventory tab {inv_type}"));
@@ -383,86 +350,66 @@ impl Session {
         let Ok(bag_slot) = u16::try_from(bag_slot) else {
             return self.trade_refused(chr, "Only items in your inventory can be traded");
         };
-        let Some(held) = self
-            .store
-            .bag_items(chr.id, inv)
-            .ok()
-            .and_then(|items| items.into_iter().find(|r| r.slot == bag_slot))
-            .map(|r| r.item)
-        else {
+        let Some(held) = self.store.inventory_slot(chr.id, inv, bag_slot).ok().flatten() else {
             return self.trade_refused(chr, &format!("Your {inv:?} slot {bag_slot} is empty"));
         };
         if store::ItemRules::trade_blocked(held.item_id) {
             return self.trade_refused(chr, "That item cannot be traded");
         }
         let have = held.kind.quantity();
-        let offered: u16 = already.iter().filter(|o| o.inv == inv && o.bag_slot == bag_slot).map(|o| o.quantity).sum();
-        let quantity = match held.kind {
-            store::ItemKind::Equip(_) => 1,
-            store::ItemKind::Bundle { .. } if net::bag::bundle_has_serial(held.item_id) => have,
-            store::ItemKind::Bundle { .. } => quantity,
-        };
-        let rechargeable = net::bag::bundle_has_serial(held.item_id);
-        if (quantity == 0 && !rechargeable) || u32::from(offered) + u32::from(quantity) > u32::from(have) || (offered > 0 && (held.kind.is_equip() || rechargeable)) {
-            return self.trade_refused(
-                chr,
-                &format!("You have {have} of that and {offered} already in the trade, so {quantity} more cannot go in"),
-            );
-        }
-        let mut shown = held;
-        if let store::ItemKind::Bundle { .. } = shown.kind {
-            shown.kind = store::ItemKind::Bundle { quantity };
-        }
-        let blob = self.item_blob(&shown);
-        let line = Offered { trade_slot, inv, bag_slot, item_id: held.item_id, quantity };
-        let recorded = self.with_rooms(|rooms| {
-            let (room, seat) = rooms.seat_of(chr.id)?;
-            let offer = &mut rooms[room].1[seat].as_mut()?.offer;
-            if offer.items.iter().any(|o| o.trade_slot == trade_slot) {
-                return None;
+        let count = match held.kind {
+            store::ItemKind::Equip(_) => None,
+            store::ItemKind::Bundle { .. } if net::bag::bundle_has_serial(held.item_id) => None,
+            store::ItemKind::Bundle { .. } if quantity == 0 || quantity > have => {
+                return self.trade_refused(chr, &format!("You have {have} of that, so {quantity} cannot go in"));
             }
-            offer.items.push(line);
-            Some(())
-        });
-        if recorded.is_none() {
-            return self.trade_refused(chr, "The trade closed before that went in");
-        }
+            store::ItemKind::Bundle { .. } => Some(quantity).filter(|q| *q < have),
+        };
+        let (taken, left) = match self.store.escrow_trade_item(chr.id, inv, bag_slot, count, trade_slot) {
+            Ok(moved) => moved,
+            Err(store::StoreError::SlotOccupied { .. }) => return self.trade_refused(chr, &format!("Trade slot {trade_slot} is not free")),
+            Err(e) => return self.trade_refused(chr, &format!("That could not be put in ({e})")),
+        };
+        let blob = self.item_blob(&taken);
+        let n = taken.kind.quantity();
         let delivered = self.tell_trade_partner(
             partner,
             net::trade::put_item(net::trade::SEAT_PARTNER, trade_slot, &blob),
-            format!("MiniroomResult 0x10/0 to character {partner}: their partner put {quantity} x {} in trade slot {trade_slot} (seat 1)", held.item_id),
+            format!("MiniroomResult 0x10/0 to character {partner}: their partner put {n} x {} in trade slot {trade_slot} (seat 1)", taken.item_id),
         );
         if !delivered {
-            return self.trade_partner_unreachable(chr, partner);
+            let mut out = self.stack_change_replies(inv, bag_slot, left);
+            out.extend(self.trade_partner_unreachable(chr, partner));
+            return out;
         }
         crate::server::log(&format!(
-            "   trade: character {} put {quantity} x {} from {inv:?} slot {bag_slot} in trade slot {trade_slot}; it stays in the bag until the trade completes. Partner {partner} was told.",
-            chr.id,
-            held.item_id,
+            "   trade: character {} put {n} x {} from {inv:?} slot {bag_slot} ({left} left there) into trade slot {trade_slot} - out of the bag and held until the trade ends. Partner {partner} was told.",
+            chr.id, taken.item_id
         ));
-        vec![Reply {
+        let mut out = self.stack_change_replies(inv, bag_slot, left);
+        out.push(Reply {
             opcode: net::trade::MINIROOM_RESULT,
             body: net::trade::put_item(net::trade::SEAT_SELF, trade_slot, &blob),
-            what: format!("MiniroomResult 0x10/0 to character {}: own {quantity} x {} drawn in trade slot {trade_slot} (seat 0)", chr.id, held.item_id),
-        }]
+            what: format!("MiniroomResult 0x10/0 to character {}: own {n} x {} drawn in trade slot {trade_slot} (seat 0)", chr.id, taken.item_id),
+        });
+        out
     }
 
-    /// **Mode `0x10` sub 1: mesos on the table.** The amount is taken as the side's new total
-    /// (see `net::trade::Request::PutMesos`), and it must be in the wallet now. Like an item,
-    /// it stays there until the trade completes; both windows are told, each with its own seat.
+    /// **Mode `0x10` sub 1: mesos on the table - out of the wallet.** The amount is taken as
+    /// this side's new total (`net::trade::Request::PutMesos`): the difference moves between
+    /// the wallet and `store::tradeescrow` in one transaction, and the new balance goes to the
+    /// client (`0x007C`, which also clears the request latch). The 5% fee is taken from the
+    /// RECEIVER when the trade completes (`store::tradeescrow::mesos_after_fee`), not here.
     fn trade_put_mesos(&mut self, chr: &net::opcode::Character, amount: u64) -> Vec<Reply> {
-        let wallet = self.store.mesos(chr.id).map(u64::from).unwrap_or(0);
-        if amount > wallet {
-            return self.trade_refused(chr, &format!("You have {wallet} mesos, not {amount}"));
-        }
-        let partner = self.with_rooms(|rooms| {
-            let (room, seat) = rooms.seat_of(chr.id)?;
-            let partner = rooms[room].1[1 - seat].as_ref()?.character_id;
-            rooms[room].1[seat].as_mut()?.offer.mesos = amount;
-            Some(partner)
-        });
-        let Some(partner) = partner else {
+        let Some((_, partner)) = self.trade_partner_of(chr.id) else {
             return self.trade_refused(chr, "You are not trading with anyone");
+        };
+        let Ok(total) = u32::try_from(amount) else {
+            return self.trade_refused(chr, &format!("{amount} mesos is more than a wallet holds"));
+        };
+        let wallet = match self.store.escrow_trade_mesos(chr.id, total) {
+            Ok(w) => w,
+            Err(e) => return self.trade_refused(chr, &format!("{total} mesos could not be put in ({e})")),
         };
         let delivered = self.tell_trade_partner(
             partner,
@@ -473,23 +420,89 @@ impl Session {
             return self.trade_partner_unreachable(chr, partner);
         }
         crate::server::log(&format!(
-            "   trade: character {} offers {amount} mesos (has {wallet}); they stay in the wallet until the trade completes. Partner {partner} was told.",
-            chr.id,
+            "   trade: character {} has {total} mesos on the table now; the wallet holds {wallet}. Partner {partner} was told.",
+            chr.id
         ));
-        vec![Reply {
+        let mut out = self.meso_reply(chr.id);
+        out.push(Reply {
             opcode: net::trade::MINIROOM_RESULT,
             body: net::trade::put_mesos(net::trade::SEAT_SELF, amount),
             what: format!("MiniroomResult 0x10/1 to character {}: own offer of {amount} mesos (seat 0)", chr.id),
+        });
+        out
+    }
+
+    /// **Mode 8: a line typed in the trade window's chat.** The owner, 2026-10-03: *"it does
+    /// not work and the other client do not see my messages. I don't even see my own player's
+    /// messages."* The client draws nothing of its own - the line comes back from the server,
+    /// to BOTH windows, as `0x0575` mode 8 sub 0 (`net::trade::chat`), naming the speaker's
+    /// absolute seat, which each window compares with its own to colour the line.
+    fn trade_chat(&mut self, chr: &net::opcode::Character, text: &str) -> Vec<Reply> {
+        let Some((seat, partner)) = self.trade_partner_of(chr.id) else {
+            crate::server::log(&format!("   trade: character {} chatted in a trade window with no room here; nothing sent.", chr.id));
+            return Vec::new();
+        };
+        let (account_id, world) = self.claimed.as_ref().map(|c| (c.account_id, c.world_id)).unwrap_or_default();
+        let who = net::megaphone::Speaker {
+            name: &chr.name,
+            account_id: u32::try_from(account_id).unwrap_or(0),
+            character_id: chr.id,
+            world: u8::try_from(world).unwrap_or(0),
+        };
+        let body = net::trade::chat(seat as u8, &who, partner, text);
+        self.tell_trade_partner(partner, body.clone(), format!("MiniroomResult mode 8: trade chat from {} (slot {seat}): {text:?}", chr.name));
+        crate::server::log(&format!("   trade: character {} said {text:?} in the trade window (slot {seat}); sent to both.", chr.id));
+        vec![Reply {
+            opcode: net::trade::MINIROOM_RESULT,
+            body,
+            what: format!("MiniroomResult mode 8: own trade chat line (slot {seat}): {text:?}"),
         }]
+    }
+
+    /// **Everything this character had on the table, back** - items into the tabs they came
+    /// from, mesos into the wallet - and the packets that show it. Lines that no longer fit
+    /// stay held and come back at the next login (`return_trade_escrow_at_login`).
+    fn trade_give_back(&mut self, character: u32, why: &str) -> Vec<Reply> {
+        let returned = match self.store.return_trade_escrow(character, &|id| self.config.shops.max_stack(id)) {
+            Ok(r) => r,
+            Err(e) => {
+                crate::server::log(&format!("   trade: could not give character {character} their offer back ({e}); it stays held for the next login."));
+                return Vec::new();
+            }
+        };
+        let mut out = Vec::new();
+        for (inv, changed) in &returned.placed {
+            out.extend(self.inventory_added_replies(*inv, changed, "back from the trade window"));
+        }
+        if returned.mesos > 0 {
+            out.extend(self.meso_reply(character));
+        }
+        if !returned.placed.is_empty() || returned.mesos > 0 || returned.kept > 0 {
+            crate::server::log(&format!(
+                "   trade: character {character} {why}: {} line(s) and {} mesos given back{}.",
+                returned.placed.len(),
+                returned.mesos,
+                if returned.kept > 0 { format!(", {} line(s) did NOT fit and stay held until the next login", returned.kept) } else { String::new() }
+            ));
+        }
+        out
+    }
+
+    /// From the login, after the claim: anything a crash left on a trade table goes back into
+    /// the bag before the record that draws it is built.
+    pub(super) fn return_trade_escrow_at_login(&mut self) {
+        if let Some(chr) = self.claimed_character() {
+            let _ = self.trade_give_back(chr.id, "logged in with an offer still held from a trade that never ended");
+        }
     }
 
     /// **An offer the partner could not be told about ends the trade.** The owner, 2026-10-03:
     /// *"When the player makes an offer, make sure that the counterparty of the trade window
-    /// also gets updated of that offer."* Every offer is mirrored to the partner before the
-    /// putter's own window draws it; when the partner has no mailbox on this channel any more
-    /// (they left between the two packets), the two windows would disagree about what is on the
-    /// table. So the room closes instead, and the putter's window with it ("Trade cancelled.",
-    /// `0x0575` mode `0x0C` at the putter's own slot). Nothing was moved, so nothing is lost.
+    /// also gets updated of that offer."* Every offer goes to the partner before the putter's
+    /// own window draws it; a partner with no mailbox on this channel (gone between two
+    /// packets) would leave the two windows disagreeing. So the room closes, the putter's
+    /// offer comes back, and the putter's window closes with "Trade cancelled." (mode `0x0C`
+    /// at their own slot). The partner's offer, if any, is theirs to get back at login.
     fn trade_partner_unreachable(&mut self, chr: &net::opcode::Character, partner: u32) -> Vec<Reply> {
         let seat = self.with_rooms(|rooms| {
             let (room, seat) = rooms.seat_of(chr.id)?;
@@ -497,24 +510,26 @@ impl Session {
             Some(seat)
         });
         crate::server::log(&format!(
-            "   trade: character {}'s offer could NOT reach partner {partner} (no mailbox on this channel), so the windows would disagree - the room is closed and nothing moved.",
+            "   trade: character {}'s offer could NOT reach partner {partner} (no mailbox on this channel) - the room is closed and the offer given back.",
             chr.id
         ));
-        let Some(seat) = seat else { return Vec::new() };
-        vec![Reply {
-            opcode: net::trade::MINIROOM_RESULT,
-            body: net::trade::room_leave(seat as u8, net::trade::LEAVE_CANCELLED),
-            what: format!("MiniroomResult mode 0x0C to character {} (slot {seat}): own trade window closes, reason {} - the partner could not be told", chr.id, net::trade::LEAVE_CANCELLED),
-        }]
+        let mut out = self.trade_give_back(chr.id, "lost their trade partner");
+        if let Some(seat) = seat {
+            out.push(Reply {
+                opcode: net::trade::MINIROOM_RESULT,
+                body: net::trade::room_leave(seat as u8, net::trade::LEAVE_CANCELLED),
+                what: format!("MiniroomResult mode 0x0C to character {} (slot {seat}): own trade window closes, reason {} - the partner could not be told", chr.id, net::trade::LEAVE_CANCELLED),
+            });
+        }
+        out
     }
 
     /// **The room closes because `chr` left it** - the window's own close (mode `0x0C`), a
-    /// dropped connection or a channel change. The partner's window is closed with "Trade
-    /// cancelled by the other character" (`0x0575` mode `0x0C` carrying the partner's OWN
-    /// slot, which is the only slot that closes a window). The leaver's client closed its own
-    /// window before it sent anything, so it is told nothing. Nothing was moved, so nothing is
-    /// given back: both offers were references into bags that never changed.
-    fn trade_leave(&mut self, chr: &net::opcode::Character, why: &str) {
+    /// dropped connection or a channel change. Their own offer comes back now (the returned
+    /// replies; the leaver's client closed its window itself before it sent anything). The
+    /// partner is sent [`crate::broadcast::Event::TradeEnded`]: their own session gives their
+    /// offer back and closes their window with "Trade cancelled by the other character".
+    fn trade_leave(&mut self, chr: &net::opcode::Character, why: &str) -> Vec<Reply> {
         let left = self.with_rooms(|rooms| {
             let (room, seat) = rooms.seat_of(chr.id)?;
             let (ticket, seats) = rooms.remove(room);
@@ -522,36 +537,137 @@ impl Session {
         });
         let Some((ticket, seat, partner)) = left else {
             crate::server::log(&format!("   trade: character {} {why}, but was in no trade room here.", chr.id));
-            return;
+            return self.trade_give_back(chr.id, why);
         };
         let told = partner.as_ref().map(|p| {
-            let partner_slot = (1 - seat) as u8;
-            self.tell_trade_partner(
+            self.bus().publish_event_to_character(
                 p.character_id,
-                net::trade::room_leave(partner_slot, net::trade::LEAVE_CANCELLED_BY_PARTNER),
-                format!(
-                    "MiniroomResult mode 0x0C to character {} (slot {partner_slot}): their trade window closes, reason {} - cancelled by the other character",
-                    p.character_id,
-                    net::trade::LEAVE_CANCELLED_BY_PARTNER
-                ),
+                crate::broadcast::Event::TradeEnded { slot: (1 - seat) as u8, reason: net::trade::LEAVE_CANCELLED_BY_PARTNER },
             )
         });
         crate::server::log(&format!(
-            "   trade: character {} {why}; room {ticket} closed, nothing moved. {}",
+            "   trade: character {} {why}; room {ticket} closed. {}",
             chr.id,
             match (partner, told) {
                 (Some(p), Some(true)) => format!("Partner {} ({}) told: cancelled by the other character.", p.character_id, p.name),
-                (Some(p), _) => format!("Partner {} is not on this channel and was not told.", p.character_id),
+                (Some(p), _) => format!("Partner {} is not on this channel; their offer comes back at their next login.", p.character_id),
                 (None, _) => "Nobody had accepted yet.".to_string(),
             }
         ));
+        self.trade_give_back(chr.id, why)
+    }
+
+    /// The partner left ([`crate::broadcast::Event::TradeEnded`]): this side's offer comes back,
+    /// and its window closes at `slot` - its own - with the message `reason` picks.
+    pub(super) fn receive_trade_ended(&mut self, slot: u8, reason: u32) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let mut out = self.trade_give_back(chr.id, "had the trade cancelled by the other character");
+        out.push(Reply {
+            opcode: net::trade::MINIROOM_RESULT,
+            body: net::trade::room_leave(slot, reason),
+            what: format!("MiniroomResult mode 0x0C to character {} (slot {slot}): their trade window closes, reason {reason}", chr.id),
+        });
+        out
+    }
+
+    /// **What this player is doing that a trade request cannot interrupt**, or `None` when they
+    /// are free. The owner, 2026-10-03: a player *"in a state where they cannot accept a trade
+    /// request (such as in NPC shop, in dialogue, or in storage)"*. Plus the Cash Shop, and a
+    /// trade window already open - the client itself declines with `0xB` in that case.
+    fn busy_for_trade(&self) -> Option<&'static str> {
+        if self.open_shop.is_some() {
+            return Some("in an NPC shop");
+        }
+        if self.open_storage.is_some() {
+            return Some("in storage");
+        }
+        if self.conversation.is_some() {
+            return Some("in an NPC conversation");
+        }
+        if self.in_cash_shop {
+            return Some("in the Cash Shop");
+        }
+        let me = self.claimed_character()?.id;
+        let trading = {
+            let rooms = self.fields.trades();
+            rooms.seat_of(me).is_some_and(|(room, _)| rooms[room].1.iter().all(Option::is_some))
+        };
+        trading.then_some("in another trade")
+    }
+
+    /// **A trade request reached this player** ([`crate::broadcast::Event::TradeInvite`]).
+    ///
+    /// The owner, 2026-10-03: *"When a player sends a trade request, normally there should be a red
+    /// message in chat box saying that trade request has been sent, or that the player is busy
+    /// taking care of other things."* So exactly one of two things happens, and the inviter is
+    /// told which, in red (chat category 11, the one the client's own invite results use):
+    ///
+    /// * **busy** - no popup here; the inviter gets the client's own `0x0575` mode 6 result 2,
+    ///   *"'<name>' is doing something else right now."*, and the room is dropped so a stale
+    ///   accept cannot open it;
+    /// * **free** - the popup (mode 5) here, and the inviter gets *"You have sent a trade
+    ///   request to '<name>'."* The client has no string of its own for that line, so the
+    ///   server words it, in the client's quoting style.
+    ///
+    /// A player on another map is "Unable to find the character.", mode 6 result 1: the
+    /// popup was always same-map only.
+    pub(super) fn receive_trade_invite(&mut self, from: u32, inviter: &str, ticket: u32, field: crate::fields::FieldKey) -> Vec<Reply> {
+        let Some(me) = self.claimed_character() else { return Vec::new() };
+        let tell_inviter = |s: &Session, body: Vec<u8>, what: String| {
+            s.bus().publish_to_character_anywhere(from, Reply { opcode: net::trade::MINIROOM_RESULT, body, what })
+        };
+        let drop_room = |s: &Session| s.with_rooms(|rooms| rooms.retain(|(t, _)| *t != ticket));
+        if self.field_of(&me) != field {
+            drop_room(self);
+            tell_inviter(
+                self,
+                net::trade::invite_result(net::trade::INVITE_NOT_FOUND, ""),
+                format!("MiniroomResult mode 6 result 1 to character {from}: \"Unable to find the character.\" - {} is on another map", me.name),
+            );
+            crate::server::log(&format!("   trade: invite from {from} to {} - on another map; inviter told the character was not found.", me.id));
+            return Vec::new();
+        }
+        if let Some(why) = self.busy_for_trade() {
+            drop_room(self);
+            tell_inviter(
+                self,
+                net::trade::invite_result(net::trade::INVITE_BUSY, &me.name),
+                format!("MiniroomResult mode 6 result 2 to character {from}: \"'{}' is doing something else right now.\" ({why})", me.name),
+            );
+            crate::server::log(&format!(
+                "   trade: invite from {from} ({inviter}) to {} - BUSY, {why}: no popup, the inviter is told \"'{}' is doing something else right now.\"",
+                me.id, me.name
+            ));
+            return Vec::new();
+        }
+        let text = format!("You have sent a trade request to '{}'.", me.name);
+        self.bus().publish_to_character_anywhere(
+            from,
+            Reply {
+                opcode: net::message::MESSAGE,
+                body: net::message::chat_line_system(&text),
+                what: format!("Message chat line (system, category 11): {text:?} - the trade invite reached its target"),
+            },
+        );
+        crate::server::log(&format!("   trade: invite from {from} ({inviter}) to {} - popup shown, the inviter told it was sent.", me.id));
+        let body = net::trade::invite(net::trade::INVITE_TRADE, from, inviter, ticket);
+        debug_assert_eq!(body.len(), net::trade::invite_len(inviter));
+        vec![Reply {
+            opcode: net::trade::MINIROOM_RESULT,
+            what: format!(
+                "MiniroomResult mode 5: trade invite from {inviter} ({from}) to character {}, {} bytes, type=1. Nothing authenticates.",
+                me.id,
+                body.len()
+            ),
+            body,
+        }]
     }
 
     /// From `Drop`: a trade does not outlive its player's connection.
     pub(super) fn leave_trade_on_disconnect(&mut self) {
         if let Some(chr) = self.claimed_character() {
             if self.fields.trades().seat_of(chr.id).is_some() {
-                self.trade_leave(&chr, "left the channel");
+                let _ = self.trade_leave(&chr, "left the channel");
             }
         }
     }
@@ -625,32 +741,47 @@ mod tests {
         b
     }
 
-    /// **The owner's run, 2026-10-03**: one side puts 3000 mesos in, the other 21 eggs. Each
-    /// window is told about both, the putter as seat 0 and the partner as seat 1, the eggs as
-    /// a whole item blob of 21 - and **nothing leaves either bag or wallet**.
+    fn mesos_body(n: u64) -> Vec<u8> {
+        let mut b = u32s(&[net::trade::TRADE_ACTION, net::trade::TRADE_PUT_MESOS]);
+        b.extend_from_slice(&n.to_le_bytes());
+        b
+    }
+
+    fn has(out: &[Reply], opcode: u16) -> bool {
+        out.iter().any(|r| r.opcode == opcode)
+    }
+
+    /// **The owner's runs, 2026-10-03**: mesos on one side, a part-stack on the other. Each put
+    /// LEAVES the bag or wallet (the vanilla behaviour the owner described), the putter is sent
+    /// the update that shows it - which is also what releases the client's drag latch, so a
+    /// second put works - and both windows draw it, the putter as seat 0 and the partner as
+    /// seat 1.
     #[test]
-    fn mesos_and_eggs_go_in_and_both_windows_are_told() {
+    fn a_put_leaves_the_bag_and_both_windows_draw_it() {
         let (store, config, fields) = channel();
         let (mut host, host_id, mut guest, guest_id) = trading(&store, &config, &fields);
         store.set_mesos(host_id, 5000).unwrap();
-        let egg = 4_031_013; // any Use-tab bundle will do; this is about the wire
-        let egg = if store::InventoryType::for_item(egg) == Some(store::InventoryType::Use) { egg } else { 2_000_000 };
-        store.add_item(guest_id, store::InventoryType::Use, &store::Item::bundle(egg, 30), 100).unwrap();
-        let egg_slot = store.bag_items(guest_id, store::InventoryType::Use).unwrap()[0].slot;
+        store.add_item(guest_id, store::InventoryType::Use, &store::Item::bundle(2_060_000, 1000), 1000).unwrap();
+        let arrows = store.bag_items(guest_id, store::InventoryType::Use).unwrap()[0].slot;
 
         // Tester2: 3000 mesos, the captured body.
         let mine = host.handle(&miniroom(&[0x10, 0, 0, 0, 1, 0, 0, 0, 0xb8, 0x0b, 0, 0, 0, 0, 0, 0]));
         assert_eq!(results(&mine), vec![net::trade::put_mesos(net::trade::SEAT_SELF, 3000)], "the putter's own window");
+        assert!(has(&mine, net::stats::STAT_CHANGED), "the new balance, which also clears the latch");
+        assert_eq!(store.mesos(host_id).unwrap(), 2000, "out of the wallet");
         assert_eq!(results(&guest.collect_mail()), vec![net::trade::put_mesos(net::trade::SEAT_PARTNER, 3000)], "the partner's");
-        assert_eq!(store.mesos(host_id).unwrap(), 5000, "still in the wallet");
 
-        // Wisp: 21 eggs into trade slot 1.
-        let mine = guest.handle(&miniroom(&eggs_body(1, egg_slot, 21)));
-        let blob = guest.item_blob(&store::Item::bundle(egg, 21));
+        // The other side: 400 of 1000 arrows, then the other 600 - the second put works.
+        let mine = guest.handle(&miniroom(&eggs_body(1, arrows, 400)));
+        let blob = guest.item_blob(&store::Item::bundle(2_060_000, 400));
         assert_eq!(results(&mine), vec![net::trade::put_item(net::trade::SEAT_SELF, 1, &blob)]);
+        assert!(has(&mine, net::inventory::INVENTORY_OPERATION), "the bag is told: 600 left");
+        assert_eq!(store.bag_items(guest_id, store::InventoryType::Use).unwrap()[0].item.kind.quantity(), 600);
         assert_eq!(results(&host.collect_mail()), vec![net::trade::put_item(net::trade::SEAT_PARTNER, 1, &blob)]);
-        assert_eq!(store.bag_items(guest_id, store::InventoryType::Use).unwrap()[0].item.kind.quantity(), 30, "still in the bag");
-        assert!(mine.iter().all(|r| r.opcode != net::inventory::INVENTORY_OPERATION), "and the bag is not told otherwise");
+        let mine = guest.handle(&miniroom(&eggs_body(2, arrows, 600)));
+        assert_eq!(results(&mine).len(), 1, "a second put goes in");
+        assert!(store.bag_items(guest_id, store::InventoryType::Use).unwrap().is_empty(), "the slot is empty now");
+        assert_eq!(store.trade_escrow(guest_id).unwrap().0.len(), 2);
     }
 
     /// **The counterparty sees every offer** (the owner, 2026-10-03), as the exact mirror of
@@ -666,11 +797,6 @@ mod tests {
         store.add_item(guest_id, store::InventoryType::Use, &store::Item::bundle(2_000_001, 30), 100).unwrap();
         let host_slot = store.bag_items(host_id, store::InventoryType::Use).unwrap()[0].slot;
         let guest_slot = store.bag_items(guest_id, store::InventoryType::Use).unwrap()[0].slot;
-        let mesos = |n: u64| {
-            let mut b = u32s(&[net::trade::TRADE_ACTION, net::trade::TRADE_PUT_MESOS]);
-            b.extend_from_slice(&n.to_le_bytes());
-            b
-        };
         // Flip the seat byte (offset 8 in both put bodies): what the putter draws as its own
         // (0) the partner must draw as the other side (1), and nothing else may differ.
         let mirrored = |own: &[Vec<u8>]| -> Vec<Vec<u8>> {
@@ -689,11 +815,11 @@ mod tests {
         // `collect_mail` is what the 100 ms tick would deliver.
         let mut to_host = Vec::new();
         let mut to_guest = Vec::new();
-        to_host.extend(results(&host.handle(&miniroom(&mesos(3000)))));
+        to_host.extend(results(&host.handle(&miniroom(&mesos_body(3000)))));
         to_guest.extend(results(&guest.handle(&miniroom(&eggs_body(1, guest_slot, 21)))));
         to_host.extend(results(&host.handle(&miniroom(&eggs_body(1, host_slot, 5)))));
-        to_host.extend(results(&host.handle(&miniroom(&mesos(2000)))));
-        to_guest.extend(results(&guest.handle(&miniroom(&mesos(700)))));
+        to_host.extend(results(&host.handle(&miniroom(&mesos_body(2000)))));
+        to_guest.extend(results(&guest.handle(&miniroom(&mesos_body(700)))));
         to_host.extend(results(&host.collect_mail()));
         to_guest.extend(results(&guest.collect_mail()));
 
@@ -705,85 +831,152 @@ mod tests {
         assert_eq!((host_own.len(), guest_own.len()), (3, 2), "every put drew in the putter's own window");
         assert_eq!(guest_heard, mirrored(&host_own), "the guest saw each of the host's offers, in order");
         assert_eq!(host_heard, mirrored(&guest_own), "and the host each of the guest's");
+        assert_eq!(store.mesos(host_id).unwrap(), 8000, "a lower total gave 1000 back");
     }
 
     /// A partner who cannot be told (no mailbox on this channel, between two packets) ends the
-    /// trade: the putter's window closes with "Trade cancelled.", nothing is drawn as offered,
-    /// and the room is gone - the two windows never disagree.
+    /// trade: the putter's window closes with "Trade cancelled.", their offer comes back, and
+    /// the room is gone - the two windows never disagree.
     #[test]
     fn an_offer_the_partner_cannot_hear_closes_the_trade() {
         let (store, config, fields) = channel();
         let (mut host, host_id, guest, _) = trading(&store, &config, &fields);
         store.set_mesos(host_id, 10_000).unwrap();
         fields.bus().part(guest.subscriber); // gone from the bus, room still open
-        let mut b = u32s(&[net::trade::TRADE_ACTION, net::trade::TRADE_PUT_MESOS]);
-        b.extend_from_slice(&3000u64.to_le_bytes());
-        let out = results(&host.handle(&miniroom(&b)));
-        assert_eq!(out, vec![net::trade::room_leave(0, net::trade::LEAVE_CANCELLED)], "own window closes, no offer drawn");
+        let out = host.handle(&miniroom(&mesos_body(3000)));
+        assert_eq!(results(&out), vec![net::trade::room_leave(0, net::trade::LEAVE_CANCELLED)], "own window closes, no offer drawn");
         assert!(fields.trades().is_empty(), "the room is gone");
-        assert_eq!(store.mesos(host_id).unwrap(), 10_000, "nothing moved");
+        assert_eq!(store.mesos(host_id).unwrap(), 10_000, "the mesos came back");
+        assert_eq!(store.trade_escrow(host_id).unwrap(), (Vec::new(), 0));
     }
 
-    /// Refusals put nothing in and tell nobody but the player: more mesos than the wallet, a
-    /// slot already used, the same stack twice past what it holds, an empty slot, the Cash tab.
+    /// Refusals put nothing in, tell nobody but the player - and EVERY one still answers with
+    /// a `0x007C`, or the client's drag latch stays set and the window goes dead.
     #[test]
-    fn a_put_that_cannot_be_covered_is_refused() {
+    fn a_put_that_cannot_be_covered_is_refused_and_still_answered() {
         let (store, config, fields) = channel();
         let (mut host, host_id, mut guest, _) = trading(&store, &config, &fields);
         store.set_mesos(host_id, 100).unwrap();
         store.add_item(host_id, store::InventoryType::Use, &store::Item::bundle(2_000_000, 30), 100).unwrap();
         let slot = store.bag_items(host_id, store::InventoryType::Use).unwrap()[0].slot;
-
-        let mesos = |n: u64| {
-            let mut b = u32s(&[net::trade::TRADE_ACTION, net::trade::TRADE_PUT_MESOS]);
-            b.extend_from_slice(&n.to_le_bytes());
-            b
+        let mut refused = |body: Vec<u8>, why: &str| {
+            let out = host.handle(&miniroom(&body));
+            assert!(results(&out).is_empty(), "{why}: nothing drawn");
+            assert!(has(&out, net::stats::STAT_CHANGED), "{why}: the latch is released");
         };
-        assert!(results(&host.handle(&miniroom(&mesos(101)))).is_empty(), "more than the wallet");
-        assert!(!results(&host.handle(&miniroom(&eggs_body(1, slot, 20)))).is_empty(), "20 of 30 go in");
-        assert!(results(&host.handle(&miniroom(&eggs_body(1, slot, 1)))).is_empty(), "trade slot 1 is taken");
-        assert!(results(&host.handle(&miniroom(&eggs_body(2, slot, 11)))).is_empty(), "20 + 11 is more than 30");
-        assert!(!results(&host.handle(&miniroom(&eggs_body(2, slot, 10)))).is_empty(), "20 + 10 is exactly 30");
-        assert!(results(&host.handle(&miniroom(&eggs_body(3, slot + 1, 1)))).is_empty(), "an empty slot");
-        assert!(results(&host.handle(&miniroom(&eggs_body(10, slot, 1)))).is_empty(), "there is no trade slot 10");
+        refused(mesos_body(101), "more than the wallet");
+        refused(eggs_body(10, slot, 1), "there is no trade slot 10");
+        refused(eggs_body(3, slot + 1, 1), "an empty slot");
+        refused(eggs_body(3, slot, 31), "more than the stack");
         let mut cash = eggs_body(3, slot, 1);
         cash[8] = 5;
-        assert!(results(&host.handle(&miniroom(&cash))).is_empty(), "the Cash tab");
-        let told = results(&guest.collect_mail());
-        assert_eq!(told.len(), 2, "the partner heard about the two that went in and nothing else: {told:?}");
+        refused(cash, "the Cash tab");
+        assert!(!results(&host.handle(&miniroom(&eggs_body(1, slot, 20)))).is_empty(), "20 of 30 go in");
+        let out = host.handle(&miniroom(&eggs_body(1, slot, 1)));
+        assert!(results(&out).is_empty() && has(&out, net::stats::STAT_CHANGED), "trade slot 1 is taken");
+        assert_eq!(store.bag_items(host_id, store::InventoryType::Use).unwrap()[0].item.kind.quantity(), 10);
+        assert_eq!(results(&guest.collect_mail()).len(), 1, "the partner heard about the one that went in");
     }
 
-    /// Closing the window ends the room: the partner's window is closed with "cancelled by the
-    /// other character" at THEIR slot, nothing moved, and a put afterwards finds no trade.
-    /// Dropping the connection does the same.
+    /// Closing the window ends the room: BOTH offers come back to their owners, the partner's
+    /// window is closed with "cancelled by the other character" at THEIR slot, and a put
+    /// afterwards finds no trade. Dropping the connection does the same.
     #[test]
-    fn leaving_closes_the_partners_window_and_moves_nothing() {
+    fn leaving_gives_both_offers_back_and_closes_the_partners_window() {
         let (store, config, fields) = channel();
-        let (mut host, host_id, mut guest, _) = trading(&store, &config, &fields);
+        let (mut host, host_id, mut guest, guest_id) = trading(&store, &config, &fields);
         store.set_mesos(host_id, 5000).unwrap();
-        let mut b = u32s(&[net::trade::TRADE_ACTION, net::trade::TRADE_PUT_MESOS]);
-        b.extend_from_slice(&3000u64.to_le_bytes());
-        host.handle(&miniroom(&b));
+        store.add_item(guest_id, store::InventoryType::Use, &store::Item::bundle(2_060_000, 1000), 1000).unwrap();
+        let arrows = store.bag_items(guest_id, store::InventoryType::Use).unwrap()[0].slot;
+        host.handle(&miniroom(&mesos_body(3000)));
+        guest.handle(&miniroom(&eggs_body(1, arrows, 1000)));
+        host.collect_mail();
         guest.collect_mail();
 
-        assert!(results(&host.handle(&miniroom(&u32s(&[net::trade::ROOM_LEAVE])))).is_empty(), "the leaver closed its own");
-        assert_eq!(
-            results(&guest.collect_mail()),
-            vec![net::trade::room_leave(1, net::trade::LEAVE_CANCELLED_BY_PARTNER)],
-            "the guest sits in slot 1"
-        );
+        let mine = host.handle(&miniroom(&u32s(&[net::trade::ROOM_LEAVE])));
+        assert!(results(&mine).is_empty(), "the leaver closed its own window");
+        assert!(has(&mine, net::stats::STAT_CHANGED), "and is shown the mesos back");
         assert_eq!(store.mesos(host_id).unwrap(), 5000);
-        assert!(results(&host.handle(&miniroom(&b))).is_empty(), "no trade any more");
+        let theirs = guest.collect_mail();
+        assert_eq!(results(&theirs), vec![net::trade::room_leave(1, net::trade::LEAVE_CANCELLED_BY_PARTNER)], "the guest sits in slot 1");
+        assert!(has(&theirs, net::inventory::INVENTORY_OPERATION), "the arrows are drawn back");
+        // All 1000 back. (This test's config has no item data, so the stack size is the
+        // default and they land as several stacks; a real server uses the arrows' own.)
+        let back: u32 = store.bag_items(guest_id, store::InventoryType::Use).unwrap().iter().map(|r| u32::from(r.item.kind.quantity())).sum();
+        assert_eq!(back, 1000);
+        let out = host.handle(&miniroom(&mesos_body(1)));
+        assert!(results(&out).is_empty(), "no trade any more");
 
-        // A new trade, and this time the guest's connection drops.
+        // A new trade, and this time the guest's connection drops with an offer on the table.
         let (store, config, fields) = channel();
-        let (mut host, _, guest, _) = trading(&store, &config, &fields);
+        let (mut host, _, mut guest, guest_id) = trading(&store, &config, &fields);
+        store.set_mesos(guest_id, 900).unwrap();
+        guest.handle(&miniroom(&mesos_body(900)));
+        host.collect_mail();
         drop(guest);
-        assert_eq!(
-            results(&host.collect_mail()),
-            vec![net::trade::room_leave(0, net::trade::LEAVE_CANCELLED_BY_PARTNER)],
-            "the host sits in slot 0"
-        );
+        assert_eq!(results(&host.collect_mail()), vec![net::trade::room_leave(0, net::trade::LEAVE_CANCELLED_BY_PARTNER)], "the host sits in slot 0");
         assert!(fields.trades().0.is_empty(), "and the room is gone");
+        assert_eq!(store.mesos(guest_id).unwrap(), 900, "the leaver's mesos are back in the database");
+    }
+
+    /// What a crash left on a trade table is back in the bag at the next login, before the
+    /// record that draws the bag is built.
+    #[test]
+    fn a_crash_leftover_comes_back_at_login() {
+        let (store, config, fields) = channel();
+        let (s, id) = join(&store, &config, &fields, "Wisp");
+        let account = s.claimed.as_ref().unwrap().account_id;
+        drop(s);
+        store.add_item(id, store::InventoryType::Use, &store::Item::bundle(2_000_000, 7), 100).unwrap();
+        let slot = store.bag_items(id, store::InventoryType::Use).unwrap()[0].slot;
+        store.escrow_trade_item(id, store::InventoryType::Use, slot, None, 1).unwrap();
+        assert!(store.bag_items(id, store::InventoryType::Use).unwrap().is_empty());
+        store.create_migration(account, id, 0, 0).unwrap();
+        let mut again = Session::joining(store.clone(), config.clone(), fields.clone());
+        again.claim_for_character(id);
+        assert_eq!(store.bag_items(id, store::InventoryType::Use).unwrap()[0].item, store::Item::bundle(2_000_000, 7));
+        assert_eq!(store.trade_escrow(id).unwrap(), (Vec::new(), 0));
+    }
+
+    /// **The invite says how it went, in red, to the inviter** (the owner, 2026-10-03): a free
+    /// target gets the popup and the inviter "You have sent a trade request to 'Wisp'."; a
+    /// target in a shop, storage, a conversation or another trade gets nothing and the inviter
+    /// the client's own "'Wisp' is doing something else right now."
+    #[test]
+    fn the_inviter_is_told_sent_or_busy() {
+        let (store, config, fields) = channel();
+        let (mut host, _host_id) = join(&store, &config, &fields, "Tester2");
+        let (mut guest, guest_id) = join(&store, &config, &fields, "Wisp");
+        host.handle(&miniroom(&u32s(&[0, net::trade::ROOM_TYPE_TRADE])));
+        host.handle(&miniroom(&u32s(&[5, guest_id])));
+        let popup = results(&guest.collect_mail());
+        assert_eq!(popup.len(), 1, "the popup");
+        assert_eq!(&popup[0][0..4], &[5, 0, 0, 0]);
+        let told = host.collect_mail();
+        let sent = told.iter().find(|r| r.opcode == net::message::MESSAGE).expect("a chat line");
+        assert_eq!(sent.body, net::message::chat_line_system("You have sent a trade request to 'Wisp'."));
+
+        // Busy: Wisp has an NPC shop open.
+        guest.open_shop = Some((1012000, Vec::new()));
+        host.handle(&miniroom(&u32s(&[0, net::trade::ROOM_TYPE_TRADE])));
+        host.handle(&miniroom(&u32s(&[5, guest_id])));
+        assert!(results(&guest.collect_mail()).is_empty(), "no popup over the shop");
+        assert_eq!(results(&host.collect_mail()), vec![net::trade::invite_result(net::trade::INVITE_BUSY, "Wisp")]);
+        assert!(fields.trades().is_empty(), "the room was dropped");
+    }
+
+    /// **Trade chat** (the owner, 2026-10-03: *"the other client do not see my messages. I don't
+    /// even see my own player's messages"*): a line goes back to BOTH windows, naming the
+    /// speaker's own seat.
+    #[test]
+    fn a_chat_line_reaches_both_windows() {
+        let (store, config, fields) = channel();
+        let (mut host, host_id, mut guest, guest_id) = trading(&store, &config, &fields);
+        let hello = [8u8, 0, 0, 0, 0x0a, 0x0c, 0x47, 0x04, 5, 0, b'h', b'e', b'l', b'l', b'o'];
+        let mine = results(&host.handle(&miniroom(&hello)));
+        let who = net::megaphone::Speaker { name: "Tester2", account_id: u32::try_from(host.claimed.as_ref().unwrap().account_id).unwrap(), character_id: host_id, world: 0 };
+        let want = net::trade::chat(0, &who, guest_id, "hello");
+        assert_eq!(mine, vec![want.clone()], "the speaker sees their own line");
+        assert_eq!(results(&guest.collect_mail()), vec![want], "and so does the partner, with the speaker's seat");
     }
 }

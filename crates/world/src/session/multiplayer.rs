@@ -129,6 +129,12 @@ impl Session {
                 crate::broadcast::Event::PartyQuestReward { item, why } => {
                     out.extend(self.receive_party_quest_reward(item, &why));
                 }
+                crate::broadcast::Event::TradeEnded { slot, reason } => {
+                    out.extend(self.receive_trade_ended(slot, reason));
+                }
+                crate::broadcast::Event::TradeInvite { from, name, ticket, field } => {
+                    out.extend(self.receive_trade_invite(from, &name, ticket, field));
+                }
                 crate::broadcast::Event::PartyQuestExp { percent, why } => {
                     out.extend(self.receive_party_quest_exp(percent, &why));
                 }

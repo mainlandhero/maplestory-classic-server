@@ -101,7 +101,9 @@ pub fn line(name: &str, text: &str) -> String {
     format!("{name} : {text}")
 }
 
-fn chat_info(w: &mut PacketWriter, who: &Speaker, line: &str) {
+/// The chat-info block (`FUN_1408d6760` -> `FUN_1408dcb80`), every read unconditional. Also
+/// the tail of a trade window's chat line (`crate::trade::chat`).
+pub fn chat_info(w: &mut PacketWriter, who: &Speaker, line: &str) {
     w.str(who.name);
     w.str(line);
     w.u32(who.account_id);

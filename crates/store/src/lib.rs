@@ -67,6 +67,7 @@ pub mod session;
 pub mod skills;
 pub mod skillpoints;
 pub mod storage;
+pub mod tradeescrow;
 
 pub use abilityspend::ApSpend;
 pub use buildstamp::{stamp as build_stamp, BuildStamp};

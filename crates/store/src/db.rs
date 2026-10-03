@@ -276,6 +276,8 @@ impl Store {
         // NOT a new table; see the note there.
         crate::inventory::create_tables(&conn)?;
         crate::storage::create_tables(&conn)?;
+        // Items and mesos on a trade table, out of the bag until the trade ends. store::tradeescrow.
+        crate::tradeescrow::create_tables(&conn)?;
         crate::cash::create_tables(&conn)?;
         // After the three tables that carry item ids exist: rewrite ids the client no longer
         // knows into the ones it does. Idempotent, every open - the live server runs a

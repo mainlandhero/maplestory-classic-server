@@ -224,6 +224,20 @@ pub enum Event {
     /// only the member's own session holds their bag and their client.
     PartyQuestReward { item: u32, why: String },
 
+    /// **A trade request for this character** from `from` (`name`), whose room is `ticket`.
+    /// Crosses as a fact because only the invited player's own session knows whether they are
+    /// free - in an NPC conversation, a shop, storage, the Cash Shop or another trade window
+    /// they are not - and so whether the popup goes up or the inviter is told they are busy.
+    /// `field` is where the inviter stands: a trade is between two players on one map.
+    /// `session/trade.rs` `receive_trade_invite`.
+    TradeInvite { from: u32, name: String, ticket: u32, field: crate::fields::FieldKey },
+
+    /// **This character's trade ended without them** - the partner closed the window or
+    /// left. Their own session gives back their offer (only it can draw their bag) and closes
+    /// their window at `slot`, their own member slot, with the message `reason` picks
+    /// (`net::trade::LEAVE_*`).
+    TradeEnded { slot: u8, reason: u32 },
+
     /// **A stage-clear EXP award**, as a percent of the recipient's OWN next level - which is
     /// why it crosses as a percent and not as an amount: only their session knows their
     /// level. `crate::firsttime::stage_exp_percent`.
@@ -1231,6 +1245,8 @@ mod tests {
                 Event::PartyQuestReward { item, .. } => panic!("not an EXP share: a reward of {item}"),
                 Event::PartyQuestExp { percent, .. } => panic!("not an EXP share: a stage clear's {percent}%"),
             Event::FriendRequest => panic!("not an EXP share: a friend request"),
+                Event::TradeInvite { from, .. } => panic!("not an EXP share: a trade invite from {from}"),
+                Event::TradeEnded { reason, .. } => panic!("not an EXP share: a trade ended, reason {reason}"),
             })
             .collect()
     }

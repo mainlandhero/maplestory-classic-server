@@ -571,16 +571,38 @@ which the launcher delivers once the server is repackaged. And the collaboration
 each style in its **default** colour (`ab39b6a`, `crate::cosmetics`): Fern Hair -> Violet 42576,
 Übel Hair -> Green 42604, Übel Face -> Violet 22639. Plan TP 8/9.
 
+**2026-10-03: trade, second pass - puts LEAVE the bag, cancels give them back, chat, the invite's
+red line, and the 5% fee (built, waiting on the Trade button).** Never on a screen beyond
+what is said here. Measured in the owner's run: an offer draws on the putter's OWN side of their
+window (the seat byte is relative, as derived), and after one stack of arrows the client
+let nothing else be dragged - a put waits for an inventory update (`bExclRequestSent`)
+that never came. The owner: *"the item disappears from the player's inventory into the trade
+window until the conclusion of the trade request"*. So a put now MOVES the item into
+`store::tradeescrow` (a table, so a crash cannot delete it; anything left there comes back
+at the owner's next login, `return_trade_escrow_at_login`) and sends the bag update; mesos
+move the same way and the new balance is sent. Every refused put still answers with an
+empty `0x007C` so the latch never sticks. A close, a disconnect or an unreachable partner
+gives both offers back - the partner's through `Event::TradeEnded`, which their own
+session handles. **The invite now answers the inviter**, in red: the target's own session
+decides (`Event::TradeInvite`); a free target gets the popup and the inviter *"You have sent a
+trade request to '<name>'."* (server wording; the client has no string for it), a target in
+an NPC shop, storage, a conversation, the Cash Shop or another trade gets nothing and the
+inviter the client's own `0x0575` mode 6 result 2, *"'<name>' is doing something else right
+now."* **Trade chat** (mode 8) is relayed to both windows as mode 8 sub 0 with the chat-info
+block party chat already proved. **The 5% fee** (the window's own notice) is
+`store::tradeescrow::mesos_after_fee`, taken from the receiver, inside `complete_trade`, which
+swaps both escrows in one transaction - **NOT WIRED**: the Trade button's packet has never been
+captured. `research/trade-2026-09-09.md` section 5, plan step 43.
+
 **2026-10-03: trade - mesos and items go INTO the window; leaving closes the partner's. Built,
 never on a screen.** The owner's run put in 3000 mesos on one side and 21 eggs on the other, and neither
 was answered. Both are `0x017E` mode `0x10`: sub 1 is a u64 amount, sub 0 is tab, bag slot,
 quantity and trade slot. The client's inbound reader for mode `0x10` is `FUN_14214A9C0`; it
 reads a **relative** seat [D] (0 is the recipient), and the client never draws its own offer.
 So `session/trade.rs` echoes each put to the putter (seat 0) and the partner (seat 1); an item
-goes as a whole `GW_ItemSlot`. **Offers are references**: the item stays in the bag and the
-mesos in the wallet until the trade completes, so a crash or cancel loses nothing. A put is
-checked against the bag (quantity counting earlier offers from the same slot, the
-`trade_blocked` list, no Cash tab, stars whole). Mode `0x0C` (close) and a dropped connection
+goes as a whole `GW_ItemSlot`. (Offers were references into the bag here; the second pass
+above replaced that with escrow.) A put is checked against the bag (the `trade_blocked` list,
+no Cash tab, stars whole). Mode `0x0C` (close) and a dropped connection
 end the room. The partner's window closes with "Trade cancelled by the other character",
 which is inbound mode `0x0C` carrying the partner's OWN slot. Trade rooms moved from a process
 static onto `Fields`, one table per channel. **The partner is told FIRST, every time** (the

@@ -2652,25 +2652,26 @@
           e. open the box and pick the look you already wear: the CLIENT warns and nothing is
              spent
 
-    43. TRADE: PUTTING THINGS IN (2026-10-03). Two clients, a trade window open between them.
-        Mesos (0x10/1) and items (0x10/0) are answered now, to BOTH windows. Nothing changes
-        hands yet: the Trade button's packet is not decoded, and (e) is how it gets measured.
-        Offers stay in the bag and the wallet until the trade completes.
-          a. Tester2 puts in 3000 mesos: 3000 shows on TESTER2'S side in both windows -> fixed
-               it shows on the OTHER side in both -> the seat byte is absolute, not relative
-                          (net::trade::SEAT_SELF): say so, it is one constant
-               it shows nowhere -> paste the "MiniroomResult 0x10/1" lines
-          b. the owner puts in 21 eggs: 21 eggs in trade slot 1, on both screens -> fixed
-               the client dies -> the item blob is wrong: paste client-exit.log and the 0x10/0 line
-          c. look at both bags with the window open: are the eggs still in the Use tab, and the
-             mesos still in the wallet? Either answer is fine - say which. Close the window: both
-             must be exactly as before the trade.
-          d. close the window on one side: the OTHER window closes with "Trade cancelled by the
-             other character" -> fixed. It stays open -> paste the "mode 0x0C" line
-          e. press Trade on one side: nothing happens yet. Paste the 0x017E line it sends from
-             world-ch0.log - that body is the next step's measurement.
-          f. put in 1000 mesos, then 2000 more: the window shows 2000 -> the client sends a
-             total (what the server assumes). It meant 3000 -> it sends increments: say so.
+    43. TRADE, SECOND PASS (2026-10-03). Two clients on one map. Vanilla now: what you put in
+        LEAVES your bag or wallet, and comes back if the trade is cancelled. The Trade button is
+        still not handled (its packet has never been captured), so nothing changes hands.
+        Already seen on screen: your own offer draws on YOUR side of your window.
+          a. Tester2 invites the owner: Tester2's chat shows a red "You have sent a trade request
+             to '<name>'." -> fixed. Now have the owner open an NPC shop (or storage, or talk
+             to an NPC) and invite again: no popup for the owner, and Tester2 sees "'<name>' is
+             doing something else right now." -> fixed. Paste the "mode 6" line if not.
+          b. drag a stack into the trade window: it LEAVES your bag and shows on your side of
+             both windows. Drag a SECOND item: it goes in too -> fixed (before, the first put
+             was the last - the client waited for an inventory update that never came)
+          c. put in 3000 mesos: your wallet drops by 3000 at once -> fixed. Then put in 1000:
+             the window shows 1000 and your wallet is 3000 + 2000 back -> the client sends a
+             TOTAL (what the server assumes). If it meant "1000 more", say so.
+          d. type in the trade chat: the line shows in BOTH windows, yours and theirs in two
+             colours -> fixed. Nothing in one or both -> paste the "mode 8" lines
+          e. close the window with things on both sides: the other closes with "Trade cancelled
+             by the other character", and BOTH players get their items and mesos back -> fixed
+          f. press Trade: nothing happens yet. Paste the 0x017E line it sends. The 5% meso fee
+             is built (the receiver gets 95%, rounded down) and waits on that packet.
 
     42. DISORDER'S DEBUFF (2026-10-02) - the first mob status ever sent (0x03E6). A thief with
         Disorder: hit a mob with it and look ABOVE the mob.
@@ -6474,18 +6475,18 @@ function Show-TestPlan {
         Write-Host '       blank head / client dies on the HAIR bit -> paste client-exit.log' -ForegroundColor Yellow
         Write-Host '       Dr. Feeble, "blend two eye colours": the same for the eyes' -ForegroundColor Cyan
         Write-Host ''
-        Write-Host '  43. TRADE: PUTTING THINGS IN (2026-10-03): mesos and items now reach BOTH windows.' -ForegroundColor White
-        Write-Host '       Nothing changes hands yet (the Trade button is not decoded).' -ForegroundColor Cyan
-        Write-Host '       a. Tester2 puts 3000 mesos: shows on TESTER2 side in both windows -> fixed' -ForegroundColor Green
-        Write-Host '          on the OTHER side in both -> seat byte is absolute: say so' -ForegroundColor Yellow
-        Write-Host '       b. the owner puts 21 eggs: 21 in trade slot 1 on both screens -> fixed' -ForegroundColor Green
-        Write-Host '          client dies -> paste client-exit.log + the 0x10/0 line' -ForegroundColor Yellow
-        Write-Host '       c. window open: eggs still in the bag, mesos in the wallet? Say which.' -ForegroundColor Cyan
-        Write-Host '          After closing, both bags must be exactly as before.' -ForegroundColor Cyan
-        Write-Host '       d. close one window: the OTHER closes, "Trade cancelled by the other' -ForegroundColor Green
-        Write-Host '          character" -> fixed. Stays open -> paste the mode 0x0C line' -ForegroundColor Yellow
-        Write-Host '       e. press Trade: nothing yet. Paste the 0x017E line it sends.' -ForegroundColor Cyan
-        Write-Host '       f. 1000 mesos then 2000: shows 2000 -> totals (as assumed); 3000 -> increments' -ForegroundColor Cyan
+        Write-Host '  43. TRADE, 2ND PASS (2026-10-03): puts LEAVE the bag/wallet, cancel gives them back.' -ForegroundColor White
+        Write-Host '       Trade button still not handled - nothing changes hands yet.' -ForegroundColor Cyan
+        Write-Host '       a. invite: red "You have sent a trade request to ..." -> fixed. Target in an' -ForegroundColor Green
+        Write-Host '          NPC shop/storage/dialogue: no popup, "... is doing something else" -> fixed' -ForegroundColor Green
+        Write-Host '       b. drag a stack in: it leaves the bag; drag a SECOND item: it goes in -> fixed' -ForegroundColor Green
+        Write-Host '       c. 3000 mesos: wallet drops at once -> fixed. Then 1000: window shows 1000' -ForegroundColor Green
+        Write-Host '          (a total, as assumed); if it meant 1000 more, say so' -ForegroundColor Cyan
+        Write-Host '       d. trade chat: your line in BOTH windows, two colours -> fixed' -ForegroundColor Green
+        Write-Host '          missing -> paste the mode 8 lines' -ForegroundColor Yellow
+        Write-Host '       e. close with things on both sides: other window closes "cancelled by the' -ForegroundColor Green
+        Write-Host '          other character", BOTH get items + mesos back -> fixed' -ForegroundColor Green
+        Write-Host '       f. press Trade: nothing yet - paste the 0x017E line (5% fee is built)' -ForegroundColor Cyan
         Write-Host ''
         Write-Host '  42. DISORDER DEBUFF (2026-10-02, FIRST 0x03E6 EVER): hit a mob with Disorder,' -ForegroundColor White
         Write-Host '       look ABOVE it: debuff icon for 10-30 s -> fixed' -ForegroundColor Cyan

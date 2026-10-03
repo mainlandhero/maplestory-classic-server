@@ -1655,6 +1655,9 @@ impl Session {
         // settled and before the login SetField is built, so that record's Cash item already
         // says `active = 1` and the first field entry re-summons it. session/pet.rs.
         self.restore_active_pet();
+        // **A trade a crash interrupted gives its offer back** - into the bag, before the
+        // login record that draws the bag is built. session/trade.rs.
+        self.return_trade_escrow_at_login();
         // **A crafting quest finished before this server read `Act.1.skill` still counts.**
         // Here for the same reason the pet is: after the claim, before the login `SetField`,
         // so the record that builds the Crafting Journal's tabs already carries the skill.
