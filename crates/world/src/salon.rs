@@ -38,7 +38,16 @@
 //! | Signature Face Coupon | 5152200 | surgery owner | the player picks from the REG face list |
 //! | Mystery Face Coupon | 5152000 | surgery owner | a random face from the VIP face list |
 //! | Signature Skin Color Coupon | 5153000 | surgery assistant | the player picks one of the seven skins |
-//! | *Mystery skin* | - | surgery assistant | **no such item in this client** (`beauty.txt [coupons]` has ten, and 5153000 is the only skin one), so the assistant's menu has one line |
+//! | *Mystery skin* | - | surgery assistant | **no such item in this client** (`beauty.txt [coupons]` has ten, and 5153000 is the only skin one) |
+//! | Signature Eye Color Coupon | 5152100 | surgery assistant | the player picks one of their face's eye colours |
+//!
+//! **Eye colour, 2026-10-02.** The owner: *"the collaboration hairs and eyes are not able to change
+//! colors using our existing salon and plastic surgery methods, but we do have those files"*. No
+//! desk changed eye colour at all - the owner kept it and the assistant did skins - while the Cash
+//! Shop sold 5152100 (`research/beauty-2026-09-09.md`). The surgery assistant takes it now, beside
+//! the skin coupon, the way a salon's assistant does hair colours: the player's own face in every
+//! eye colour the client has art for - all nine for the collaboration faces `22035..22042`, whose
+//! `22135..22842` are in `Character/Face` - from `Config::face_exists`, not from a list.
 //!
 //! The hair lists are the COT rotation the owner supplied, per salon and per gender; every base
 //! id is in this client's own hair data with all eight colours (`gm-handbook/beauty.txt`; a
@@ -98,11 +107,16 @@ pub const MYSTERY_COLOR_COUPON: u32 = 5_151_000;
 pub const SIGNATURE_FACE_COUPON: u32 = 5_152_200;
 pub const MYSTERY_FACE_COUPON: u32 = 5_152_000;
 pub const SIGNATURE_SKIN_COUPON: u32 = 5_153_000;
+/// Signature Eye Color Coupon - the surgery assistant's second line. There is no Mystery one
+/// on sale (5152300, Custom Colorblend, has no Commodity row).
+pub const SIGNATURE_EYE_COLOR_COUPON: u32 = 5_152_100;
 
 /// The conversation path of an owner's or assistant's coupon menu.
 pub const MENU_PATH: &str = "salon.menu";
 /// The conversation path of the pick-a-look box, whatever it shows.
 pub const CHOICE_PATH: &str = "salon.choice";
+/// The pick-a-look box for eye colours, which the assistant's desk (skins) cannot name back.
+pub const EYE_CHOICE_PATH: &str = "salon.choice.eyes";
 
 /// The eight hair colours, by the id's last digit.
 pub const COLOURS: [&str; 8] = ["Black", "Red", "Orange", "Blonde", "Green", "Blue", "Purple", "Brown"];
@@ -161,6 +175,8 @@ pub enum Desk {
     Faces,
     /// A surgery assistant: skin tones.
     Skins,
+    /// A surgery assistant's second line: eye colours (see the module docs).
+    EyeColours,
 }
 
 /// Which of a desk's coupons.
@@ -269,6 +285,8 @@ impl Desk {
             (Desk::Faces, Tier::Mystery) => Some(MYSTERY_FACE_COUPON),
             (Desk::Skins, Tier::Signature) => Some(SIGNATURE_SKIN_COUPON),
             (Desk::Skins, Tier::Mystery) => None,
+            (Desk::EyeColours, Tier::Signature) => Some(SIGNATURE_EYE_COLOR_COUPON),
+            (Desk::EyeColours, Tier::Mystery) => None,
         }
     }
 
@@ -283,6 +301,7 @@ impl Desk {
             (Desk::Faces, Tier::Mystery) => "a surprise VIP face - I choose, you wear it",
             (Desk::Skins, Tier::Signature) => "pick a skin tone",
             (Desk::Skins, Tier::Mystery) => "a surprise skin tone",
+            (Desk::EyeColours, _) => "pick an eye colour",
         }
     }
 
@@ -293,6 +312,16 @@ impl Desk {
             Desk::Colours => "a new colour",
             Desk::Faces => "a new face",
             Desk::Skins => "a new skin tone",
+            Desk::EyeColours => "a new eye colour",
+        }
+    }
+
+    /// The desk whose Signature coupon this NPC also takes, on a third menu line: the surgery
+    /// assistant's eye colours beside its skins.
+    pub fn second(self) -> Option<Desk> {
+        match self {
+            Desk::Skins => Some(Desk::EyeColours),
+            _ => None,
         }
     }
 }
@@ -311,22 +340,30 @@ pub fn desk_for(npc_template: u32, map_id: u32) -> Option<(Shop, Desk)> {
 /// simply not in the text, and an answer naming it is refused.
 pub const MENU_SIGNATURE: u32 = 0;
 pub const MENU_MYSTERY: u32 = 1;
+/// The [`Desk::second`] desk's Signature line.
+pub const MENU_SECOND: u32 = 2;
 
 /// The coupon menu for a desk: one line per coupon the player holds, in the client's own
 /// `#d#L%d# %s#l#k` line format with the item's icon and name. `None` when they hold neither.
-pub fn menu_text(desk: Desk, has_signature: bool, has_mystery: bool) -> Option<String> {
-    if !has_signature && !has_mystery {
+pub fn menu_text(desk: Desk, has_signature: bool, has_mystery: bool, has_second: bool) -> Option<String> {
+    let second = desk.second().filter(|_| has_second);
+    if !has_signature && !has_mystery && second.is_none() {
         return None;
     }
     let mut lines = vec![match desk {
         Desk::Styles | Desk::Faces => "Which coupon would you like to use today?",
         Desk::Colours => "A new colour, then? Which coupon would you like to use?",
-        Desk::Skins => "A new skin tone, then? Which coupon would you like to use?",
+        Desk::Skins | Desk::EyeColours => "A new skin tone or eye colour, then? Which coupon would you like to use?",
     }
     .to_string()];
     for (tier, held, sel) in [(Tier::Signature, has_signature, MENU_SIGNATURE), (Tier::Mystery, has_mystery, MENU_MYSTERY)] {
         if let (true, Some(c)) = (held, desk.coupon(tier)) {
             lines.push(format!("#d#L{sel}##i{c}# #t{c}# - {}#l#k", desk.menu_line(tier)));
+        }
+    }
+    if let Some(d) = second {
+        if let Some(c) = d.coupon(Tier::Signature) {
+            lines.push(format!("#d#L{MENU_SECOND}##i{c}# #t{c}# - {}#l#k", d.menu_line(Tier::Signature)));
         }
     }
     Some(lines.join("\r\n"))
@@ -351,10 +388,13 @@ pub fn no_coupon_line(desk: Desk) -> String {
     if let Some(mys) = desk.coupon(Tier::Mystery) {
         lines.push(format!("#i{mys}# #b#t{mys}##k - a surprise"));
     }
+    if let Some(eye) = desk.second().and_then(|d| d.coupon(Tier::Signature)) {
+        lines.push(format!("#i{eye}# #b#t{eye}##k - a new eye colour, you choose"));
+    }
     lines.push(String::new());
-    lines.push(match desk.coupon(Tier::Mystery) {
-        Some(_) => "You can buy either in the #bCash Shop#k.".to_string(),
-        None => "You can buy it in the #bCash Shop#k.".to_string(),
+    lines.push(match (desk.coupon(Tier::Mystery), desk.second()) {
+        (None, None) => "You can buy it in the #bCash Shop#k.".to_string(),
+        _ => "You can buy either in the #bCash Shop#k.".to_string(),
     });
     lines.join("\r\n")
 }
@@ -366,6 +406,7 @@ pub fn choice_prompt(desk: Desk) -> &'static str {
         Desk::Colours => "Pick a colour. Your style stays as it is. Which one will it be?",
         Desk::Faces => "Pick any of these faces. Your eye colour stays as it is. Which one will it be?",
         Desk::Skins => "Pick a skin tone. Which one will it be?",
+        Desk::EyeColours => "Pick an eye colour. Your face stays as it is. Which one will it be?",
     }
 }
 
@@ -404,6 +445,16 @@ pub fn base_of(hair: u32) -> u32 {
 pub fn colour_variants(current_hair: u32, config: &Config) -> Vec<u32> {
     let base = base_of(current_hair);
     (0..COLOURS.len() as u32).map(|c| base + c).filter(|id| config.hair_exists(*id)).collect()
+}
+
+/// The eye colours of the player's current face that this client draws, colour 0..8 in
+/// order - the surgery assistant's pick box for the Signature Eye Color Coupon. A face id is
+/// `style + 100 * eye`, so the style is the id with its hundreds digit cleared. Empty when the
+/// face table does not know the style, so a bare table refuses rather than offers ids that do
+/// not draw.
+pub fn eye_colour_variants(current_face: u32, config: &Config) -> Vec<u32> {
+    let style = current_face - (current_face / 100 % 10) * 100;
+    (0..9).map(|c| style + c * 100).filter(|id| config.face_exists(*id)).collect()
 }
 
 /// The skin numbers the surgery assistant's pick box shows - `SKINS` in order. The client
@@ -574,15 +625,21 @@ mod tests {
     /// desk's no-coupon line names its one coupon.
     #[test]
     fn the_menu_lists_what_is_held_and_an_answer_is_read_back_against_it() {
-        assert_eq!(menu_text(Desk::Styles, false, false), None);
-        let both = menu_text(Desk::Styles, true, true).unwrap();
+        assert_eq!(menu_text(Desk::Styles, false, false, false), None);
+        assert_eq!(menu_text(Desk::Styles, false, false, true), None, "only the surgery assistant has a second line");
+        let both = menu_text(Desk::Styles, true, true, false).unwrap();
         assert!(both.contains("#L0##i5150100# #t5150100#") && both.contains("#L1##i5150000# #t5150000#"), "{both}");
-        let only_mystery = menu_text(Desk::Colours, false, true).unwrap();
+        let only_mystery = menu_text(Desk::Colours, false, true, false).unwrap();
         assert!(only_mystery.contains("#L1##i5151000#") && !only_mystery.contains("#L0#"), "{only_mystery}");
-        let faces = menu_text(Desk::Faces, true, true).unwrap();
+        let faces = menu_text(Desk::Faces, true, true, false).unwrap();
         assert!(faces.contains("#L0##i5152200#") && faces.contains("#L1##i5152000#"), "{faces}");
-        let skins = menu_text(Desk::Skins, true, true).unwrap();
+        let skins = menu_text(Desk::Skins, true, true, false).unwrap();
         assert!(skins.contains("#L0##i5153000#") && !skins.contains("#L1#"), "no mystery skin line: {skins}");
+        assert!(!skins.contains("#L2#"), "no eye line without the eye coupon: {skins}");
+        let both = menu_text(Desk::Skins, true, false, true).unwrap();
+        assert!(both.contains("#L0##i5153000#") && both.contains("#L2##i5152100# #t5152100#"), "{both}");
+        let eyes_only = menu_text(Desk::Skins, false, false, true).unwrap();
+        assert!(eyes_only.contains("#L2##i5152100#") && !eyes_only.contains("#L0#"), "{eyes_only}");
         assert_eq!(tier_of_selection(0, true, true), Some(Tier::Signature));
         assert_eq!(tier_of_selection(1, true, true), Some(Tier::Mystery));
         assert_eq!(tier_of_selection(0, false, true), None, "the Signature line was not offered");
@@ -590,7 +647,29 @@ mod tests {
         let line = no_coupon_line(Desk::Colours);
         assert!(line.contains("#i5151100#") && line.contains("#i5151000#") && line.contains("Cash Shop"), "{line}");
         let line = no_coupon_line(Desk::Skins);
-        assert!(line.contains("#i5153000#") && !line.contains("#i5153100#") && line.contains("buy it in"), "{line}");
+        assert!(line.contains("#i5153000#") && line.contains("#i5152100#") && !line.contains("#i5153100#"), "{line}");
+        assert!(line.contains("buy either in"), "two coupons now: {line}");
+        assert_eq!(Desk::EyeColours.coupon(Tier::Signature), Some(5_152_100));
+        assert_eq!(Desk::EyeColours.coupon(Tier::Mystery), None);
+    }
+
+    /// **Every eye colour the client draws, for any face** - the collaboration faces included,
+    /// which is what the owner reported missing (2026-10-02). A face is `style + 100 * eye`; the
+    /// player's current eye colour does not change the list; an unknown style offers nothing.
+    #[test]
+    fn eye_colours_are_the_hundreds_digit_and_only_the_ones_that_draw() {
+        let mut face_ids = std::collections::HashSet::new();
+        for c in 0..9 {
+            face_ids.insert(22_035 + c * 100); // Frieren Face, all nine
+        }
+        face_ids.insert(20_000); // a classic face with only colours 0 and 3 known
+        face_ids.insert(20_300);
+        let config = Config { face_ids, ..Config::default() };
+        let all: Vec<u32> = (0..9).map(|c| 22_035 + c * 100).collect();
+        assert_eq!(eye_colour_variants(22_035, &config), all);
+        assert_eq!(eye_colour_variants(22_535, &config), all, "the current eye colour is not the style");
+        assert_eq!(eye_colour_variants(20_300, &config), vec![20_000, 20_300], "only the ones with art");
+        assert!(eye_colour_variants(21_999, &config).is_empty());
     }
 
     #[test]
