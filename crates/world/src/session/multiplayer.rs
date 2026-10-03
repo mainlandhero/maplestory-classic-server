@@ -2409,6 +2409,8 @@ level, 200, 1, 0, 15, 50, 15, 7 7 7
             let (item, qty) = *mine[0];
             let line = slot.prizes.iter().find(|p| p.0 == item).unwrap();
             assert_eq!(qty, u32::from(line.1), "{item} in the table's quantity");
+            // And the drop-table page's seven days heard about it (the owner, 2026-10-03).
+            assert!(crate::killstats::pending_drops(crate::magicbox::BOX, item) >= 1, "{item} counted for the page");
             got.push((item, qty));
         }
         // The owner, 2026-09-24: the box lost and each prize gained, as grey chat-log lines in

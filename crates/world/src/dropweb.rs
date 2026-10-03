@@ -139,7 +139,10 @@ fn live_json_cached(cache: &Mutex<Option<(Instant, String)>>, store: &store::Sto
 /// The server's drop rate and the seven days, as of `now`.
 pub fn live_json(store: &store::Store, now: i64) -> String {
     let rate = store.rates().map(|r| r.get(store::rates::RateKind::Drop)).unwrap_or(store::rates::Rate::NORMAL);
-    let stats = store.kill_stats(now).unwrap_or_default();
+    // Opened Companion's Magic Boxes are counted beside the kills (`killstats::note_box_opened`),
+    // under the page's own name for the box, `"box"`, and are not kills or killers in the totals.
+    let stats = store.kill_stats_apart(now, Some(crate::magicbox::BOX)).unwrap_or_default();
+    let key = |t: u32| if t == crate::magicbox::BOX { "box".to_string() } else { t.to_string() };
     let mut s = String::with_capacity(64 * 1024);
     let _ = write!(
         s,
@@ -152,7 +155,7 @@ pub fn live_json(store: &store::Store, now: i64) -> String {
     let mut mobs: Vec<_> = stats.mobs.iter().collect();
     mobs.sort();
     for (i, (t, (k, p))) in mobs.iter().enumerate() {
-        let _ = write!(s, "{}\"{t}\":[{k},{p}]", if i > 0 { "," } else { "" });
+        let _ = write!(s, "{}\"{}\":[{k},{p}]", if i > 0 { "," } else { "" }, key(**t));
     }
     s.push_str("},\"drops\":{");
     let mut by_mob: HashMap<u32, Vec<(u32, u64, u64)>> = HashMap::new();
@@ -164,7 +167,7 @@ pub fn live_json(store: &store::Store, now: i64) -> String {
     for (i, t) in keys.iter().enumerate() {
         let mut rows = by_mob[t].clone();
         rows.sort();
-        let _ = write!(s, "{}\"{t}\":{{", if i > 0 { "," } else { "" });
+        let _ = write!(s, "{}\"{}\":{{", if i > 0 { "," } else { "" }, key(*t));
         for (j, (item, d, q)) in rows.iter().enumerate() {
             let _ = write!(s, "{}\"{item}\":[{d},{q}]", if j > 0 { "," } else { "" });
         }
@@ -591,6 +594,23 @@ mod tests {
         store.record_scroll_use(60, true, false).unwrap();
         store.record_scroll_use(10, false, true).unwrap();
         assert!(live_json(&store, now).ends_with("\"scrolls\":[[10,1,0,1],[60,1,1,0]]}"));
+    }
+
+    /// **An opened Companion's Magic Box feeds the page** (the owner, 2026-10-03): its row is
+    /// `"box"`, the id the tables give it, and it is not a kill or a killer in the totals.
+    #[test]
+    fn opened_boxes_are_the_box_row_and_not_kills() {
+        let store = store::Store::open_in_memory().unwrap();
+        let now = 1_800_000_000;
+        let mut b = store::killstats::KillBatch::default();
+        b.note(now, 2, 200, &[]);
+        b.note(now, crate::magicbox::BOX, 201, &[(2_020_011, 50), (2_043_701, 1)]);
+        store.flush_kill_stats(&b).unwrap();
+        let j = live_json(&store, now);
+        assert!(j.contains("\"players\":1,\"kills\":1,"), "{j}");
+        assert!(j.contains("\"box\":[1,1]"), "{j}");
+        assert!(j.contains("\"box\":{\"2020011\":[1,50],\"2043701\":[1,1]}"), "{j}");
+        assert!(!j.contains(&format!("\"{}\"", crate::magicbox::BOX)), "never under its item id: {j}");
     }
 
     /// **The cache is the owner's "at worst 30 or 60 minutes out of date"**: kills written after

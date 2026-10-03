@@ -706,6 +706,8 @@ impl Session {
             .unwrap_or(0);
         out.extend(self.stack_change_replies(inv, slot, left));
         crate::server::log(&format!("   magic box: character {} opened a box from Use slot {slot} - {}", chr.id, lines.join("; ")));
+        // The drop-table page's seven days count boxes too: what was actually given, not rolled.
+        crate::killstats::note_box_opened(chr.id, &gained.iter().map(|&(_, p)| p).collect::<Vec<_>>());
         // The owner, 2026-09-24: *"the chat should reflect that they have lost the box but gained
         // something else in two different chat lines."* The box first, then each prize on its
         // own line - and the request is still answered, so the use latch comes off.

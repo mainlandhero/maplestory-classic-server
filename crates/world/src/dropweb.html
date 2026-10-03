@@ -182,7 +182,7 @@ body { margin: 0; }
     <p>The <b>Companion's Magic Box</b> from First Time Together is listed with the monsters. Every box gives one equip, one use item, one scroll and one etc item; its "1 in N" is the chance of that prize within its slot, counted in boxes, not kills.</p>
     <p>Only monsters you can meet are listed. <b>Found on</b> names every map that spawns the monster, with how many spawn points it has there, most first. A monster that only appears another way, such as the ship invasion or a summoning sack, says so.</p>
     <p>"1 in N" is the average number of kills per drop, rounded. Expected drops per kill add up the chances of every equipment or scroll row. Rows marked <b>quest</b> drop only for a player who has that quest in progress. Mesos marked <b>by level</b> are the server's default for a monster with no meso row: always dropped, and not affected by the drop rate. Rows marked <b>instanced</b> give every party member their own copy, which only they can see and pick up.</p>
-    <p id="livenote" hidden><b>Seen</b> counts what actually dropped on this server over the last 7 days, with the share of kills it dropped from. The counts update at most every 30 minutes, and anything older than 7 days is deleted.</p>
+    <p id="livenote" hidden><b>Seen</b> counts what actually dropped on this server over the last 7 days, with the share of kills it dropped from (for the Companion's Magic Box, the share of boxes opened). The counts update at most every 30 minutes, and anything older than 7 days is deleted.</p>
     <p>Search matches every word you type, in any order, against monster and item names, and allows one typo per word of four letters or more.</p>
     <p>No source has Nexon's official per-monster rates. The v83 numbers come from Cosmic, the maintained OdinMS/HeavenMS server, and are the closest classic calibration there is.</p>
   </footer>
@@ -327,7 +327,8 @@ function seenOf(m, item) { const d = LIVE && LIVE.drops[m.id]; return d && d[ite
 function seenEverywhere(item) {
   let n = 0;
   if (!LIVE) return 0;
-  for (const t in LIVE.drops) if (LIVE.drops[t][item]) n += LIVE.drops[t][item][0];
+  // Kills only: a box's prizes are not drops from a monster, and the share is of kills.
+  for (const t in LIVE.drops) if (t !== "box" && LIVE.drops[t][item]) n += LIVE.drops[t][item][0];
   return n;
 }
 function seenCell(seen, kills) {
@@ -366,7 +367,7 @@ function rowHtml(m, r, scaled, highlight, kills) {
   const tags = (quest ? '<span class="tag q" title="Drops only while the quest is in progress">quest</span>' : "") +
     (fixed && item === 0 ? '<span class="tag fixed" title="Server default for a monster with no meso row">by level</span>' : "") +
     (r[5] ? INST_TAG : "");
-  const seen = m === null ? seenCell(seenEverywhere(item), LIVE && LIVE.kills) : (m.kind ? (LIVE ? '<td class="num seen">-</td>' : "") : seenCell(seenOf(m, item), kills));
+  const seen = m === null ? seenCell(seenEverywhere(item), LIVE && LIVE.kills) : seenCell(seenOf(m, item), kills);
   return `<tr class="${highlight ? "hit" : ""}"><td>${anchor(item, name)}${tags}</td><td><span class="cat c-${cat}">${cat}</span></td>` +
     `<td class="num">${qty(item, lo, hi)}</td><td class="num">${pct(ppm)}</td>` +
     `<td class="num eff ${capped ? "capped" : ""}">${pct(eff)}</td><td class="num">${oneIn(eff)}</td>${seen}</tr>`;
@@ -395,13 +396,14 @@ function renderMobs() {
     shown++; rowsShown += rows.length;
     const eq = expected(m.rows, "equip"), sc = expected(m.rows, "scroll");
     const kills = mobKills(m);
-    const live = LIVE && !m.kind ? `<span>${num(kills)} kills &middot; ${num(mobPlayers(m))} players</span>` : "";
+    // For the box a "kill" is one box opened (`killstats::note_box_opened`).
+    const live = LIVE ? `<span>${num(kills)} ${m.kind ? "opened" : "kills"} &middot; ${num(mobPlayers(m))} players</span>` : "";
     const nMaps = (m.maps || []).length;
     const mapsTag = m.kind ? "" : `<span>${nMaps ? nMaps + (nMaps === 1 ? " map" : " maps") : "no map"}</span>`;
     parts.push(`<details class="mob"${anyRow && !nameHit ? " open" : ""}><summary>` +
       (m.kind ? `<span class="lv pq">PQ</span><span class="mname">${esc(m.name)}<small>${esc(m.kind)}</small></span>`
               : `<span class="lv">Lv ${m.level || "?"}</span><span class="mname">${esc(m.name)}<small>#${m.id}</small></span>`) +
-      (m.slots ? `<span class="odds">${m.slots.map(([k]) => `<span>1 <b class="c-${k}">${k}</b></span>`).join("")}<span>per box, from ${m.rows.length} prizes</span></span>`
+      (m.slots ? `<span class="odds">${live}${m.slots.map(([k]) => `<span>1 <b class="c-${k}">${k}</b></span>`).join("")}<span>per box, from ${m.rows.length} prizes</span></span>`
                : `<span class="odds">${live}${mapsTag}<span>equips <b class="c-equip">${perKill(eq)}</b></span><span>scrolls <b class="c-scroll">${perKill(sc)}</b></span><span>${m.rows.length} ${m.kind ? "prizes" : "drops"}</span></span>`) +
       `</summary>` + whereHtml(m) + (m.slots ? boxNote(m) : "") +
       `<div class="tbl"><table>${head()}<tbody>${rows.map((r) => rowHtml(m, r, true, !nameHit && rowMatches(m, r), kills)).join("")}</tbody></table></div></details>`);
@@ -442,7 +444,7 @@ function renderItems() {
   const LIMIT = 600;
   const body = flat.slice(0, LIMIT).map(({ m, r, name, eff }) => {
     const [, cat, quest] = itemOf(r[0]);
-    const seen = m.kind ? (LIVE ? '<td class="num seen">-</td>' : "") : seenCell(seenOf(m, r[0]), mobKills(m));
+    const seen = seenCell(seenOf(m, r[0]), mobKills(m));
     return `<tr><td>${anchor(r[0], name)}${quest ? '<span class="tag q">quest</span>' : ""}${r[4] && r[0] === 0 ? '<span class="tag fixed">by level</span>' : ""}${r[5] ? INST_TAG : ""}</td>` +
       `<td><span class="cat c-${cat}">${cat}</span></td><td>${esc(m.name)} <span class="status">${m.kind ? esc(m.kind) : "Lv " + (m.level || "?")}</span></td>` +
       `<td class="num">${qty(r[0], r[2], r[3])}</td><td class="num">${pct(r[1])}</td><td class="num eff">${pct(eff)}</td><td class="num">${oneIn(eff)}</td>${seen}</tr>`;

@@ -154,14 +154,24 @@ impl Store {
 
     /// The last seven days before `now_unix`, summed.
     pub fn kill_stats(&self, now_unix: i64) -> Result<KillStats> {
+        self.kill_stats_apart(now_unix, None)
+    }
+
+    /// [`Store::kill_stats`], with `apart` - a source counted in the same tables that is not a
+    /// monster, such as an opened reward box - left out of the two totals, `kills` and
+    /// `players`. Its own row in `mobs` and `drops` is still there.
+    pub fn kill_stats_apart(&self, now_unix: i64, apart: Option<u32>) -> Result<KillStats> {
         let since = window_start(now_unix);
+        let apart = apart.map_or(-1, i64::from);
         let conn = self.conn();
         let mut out = KillStats::default();
         let mut stmt = conn.prepare("SELECT template, SUM(kills) FROM kill_hours WHERE hour >= ?1 GROUP BY template")?;
         for row in stmt.query_map(params![since], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))? {
             let (t, k) = row?;
             out.mobs.entry(t as u32).or_default().0 = k as u64;
-            out.kills += k as u64;
+            if t != apart {
+                out.kills += k as u64;
+            }
         }
         let mut stmt = conn.prepare(
             "SELECT template, COUNT(DISTINCT character) FROM kill_players WHERE hour >= ?1 GROUP BY template",
@@ -171,8 +181,8 @@ impl Store {
             out.mobs.entry(t as u32).or_default().1 = p as u64;
         }
         out.players = conn.query_row(
-            "SELECT COUNT(DISTINCT character) FROM kill_players WHERE hour >= ?1",
-            params![since],
+            "SELECT COUNT(DISTINCT character) FROM kill_players WHERE hour >= ?1 AND template != ?2",
+            params![since, apart],
             |r| r.get::<_, i64>(0),
         )? as u64;
         let mut stmt = conn.prepare(
@@ -226,6 +236,23 @@ mod tests {
         assert_eq!(store.purge_kill_stats(now).unwrap(), 3, "its kill, killer and drop rows");
         assert_eq!(store.kill_stats(now).unwrap(), s, "the purge removed only what was already outside");
         assert_eq!(store.kill_stats(now + 7 * DAY).unwrap().kills, 0, "a week later, nothing");
+    }
+
+    /// A source set apart (an opened box) keeps its own row but is not a kill or a killer.
+    #[test]
+    fn a_source_set_apart_is_out_of_the_totals_only() {
+        let store = Store::open_in_memory().unwrap();
+        let now = 1_800_000_000;
+        let mut b = KillBatch::default();
+        b.note(now, 2, 200, &[]);
+        b.note(now, 2_430_000, 200, &[(1_002_007, 1)]);
+        b.note(now, 2_430_000, 201, &[(2_000_000, 50)]);
+        store.flush_kill_stats(&b).unwrap();
+        let s = store.kill_stats_apart(now, Some(2_430_000)).unwrap();
+        assert_eq!((s.kills, s.players), (1, 1), "201 only opened a box");
+        assert_eq!(s.mobs[&2_430_000], (2, 2), "the box's own row is whole");
+        assert_eq!(s.drops[&(2_430_000, 2_000_000)], (1, 50));
+        assert_eq!(store.kill_stats(now).unwrap().kills, 3, "without it, everything counts");
     }
 
     #[test]
