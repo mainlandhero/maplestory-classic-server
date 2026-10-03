@@ -2197,21 +2197,6 @@ impl Session {
                 }
                 None
             }
-            crate::dailyperks::Perk::ResetApSp => {
-                // The same three sources `gm_reset_ap` and `gm_reset_sp` draw from. If all
-                // three are empty the command is a no-op, and a no-op must not eat a day.
-                let floor = super::gm::AP_RESET_FLOOR;
-                let stat_refund = chr.strength.saturating_sub(floor)
-                    + chr.dexterity.saturating_sub(floor)
-                    + chr.intelligence.saturating_sub(floor)
-                    + chr.luck.saturating_sub(floor);
-                let hpmp = self.store.ap_spend(chr.id).unwrap_or_default().total();
-                let skills = self.store.skills(chr.id).map(|s| s.len()).unwrap_or(0);
-                if stat_refund == 0 && hpmp == 0 && skills == 0 {
-                    return Some(crate::dailyperks::nothing_to_reset());
-                }
-                None
-            }
         }
     }
 
@@ -2316,48 +2301,6 @@ impl Session {
                 Ok(out)
             }
 
-            // ---- reset AP & SP -------------------------------------------------------
-            //
-            // **The two GM commands, called rather than re-implemented.** They are the
-            // definition of what a reset is on this server - the stat floor, the HP/MP ledger,
-            // the `max_hp` arithmetic that uses the same constant that granted it, the
-            // `SkillChange::Forget` encoding and the SP pool packet - and a second copy here
-            // would drift from them one correction at a time. Neither checks GM status; the
-            // permission check lives in the chat dispatcher, not in these.
-            //
-            // Conserving points is therefore theirs and not this feature's: `!resetap` refunds
-            // `(stats - floor) + ap_spent_hp + ap_spent_mp` and `!resetsp` returns the pool by
-            // erasing the skills that charged it. Nothing here adds or removes a point.
-            crate::dailyperks::Perk::ResetApSp => {
-                let ap_before = chr.ap;
-                let skills_before = self.store.skills(chr.id).map(|s| s.len()).unwrap_or(0);
-                let mut out = self.gm_reset_ap();
-                out.extend(self.gm_reset_sp());
-                let after = self
-                    .claimed_character()
-                    .ok_or_else(|| "your record could not be read back".to_string())?;
-                let skills_after = self.store.skills(chr.id).map(|s| s.len()).unwrap_or(0);
-                let refunded = after.ap.saturating_sub(ap_before);
-                let forgotten = skills_before.saturating_sub(skills_after);
-                // **Both effects are checked, not one.** `gm_reset_ap` reports a failed save as
-                // a chat line and carries on, so "the notice went out" says nothing about
-                // whether the points moved. The refusal is only for the case where NEITHER
-                // moved - `daily_perk_refusal` has already ruled out the legitimate no-op, so
-                // nothing moving here means something failed.
-                if refunded == 0 && forgotten == 0 {
-                    return Err("nothing came back - neither your points nor your skills moved"
-                        .to_string());
-                }
-                out.extend(self.admin_says(
-                    template,
-                    &crate::dailyperks::granted(&crate::dailyperks::reset_line(refunded, forgotten)),
-                    &format!(
-                        "daily perk ResetApSp PAID: character {} ap {ap_before} -> {} (+{refunded}), {forgotten} of {skills_before} skill(s) forgotten",
-                        chr.id, after.ap
-                    ),
-                ));
-                Ok(out)
-            }
             // ---- Return to Henesys --------------------------------------------------
             //
             // The grant IS the SetField. `go_to_map` does everything a portal walk does -

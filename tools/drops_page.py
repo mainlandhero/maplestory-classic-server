@@ -75,6 +75,14 @@ BACKPORTED_RULES = {
                    "Innocence included. Does not use an upgrade slot."),
 }
 
+#: Drops the server makes in code, not from data/drops.txt: (mob, item), one per party member and
+#: only theirs to see and take. A copy of `INSTANCED` in crates/world/src/dropweb.rs - keep them
+#: together. The page tags these rows "instanced" (a sixth row field, 1).
+INSTANCED = [(800003, 1072128)]  # King Slime -> Squishy Shoes (session/firsttime.rs)
+
+#: Names players use that the client does not; the search matches them. dropweb.rs `ALIASES`.
+ALIASES = {1072128: "Slime Shoes"}
+
 #: gm-handbook/equips.txt columns -> the client's tooltip labels, in the order the client draws them.
 EQUIP_LINES = [("incSTR", "STR"), ("incDEX", "DEX"), ("incINT", "INT"), ("incLUK", "LUK"), ("incMHP", "MaxHP"),
                ("incMMP", "MaxMP"), ("incWAT", "Weapon Attack"), ("incMAD", "Magic Attack"), ("incPDD", "Weapon Def."),
@@ -206,6 +214,10 @@ def main():
             rng = level_meso_range(level)
             if rng:
                 rows = [[0, 1_000_000, rng[0], rng[1], 1]] + rows  # 5th field: not scaled by the rate
+        for mob, item in INSTANCED:
+            if mob == tid:
+                rows = rows + [[item, 1_000_000, 1, 1, 1, 1]]  # 6th field: instanced
+                items.setdefault(item, [item_names.get(item, f"Item {item}"), category(item), 1 if item in quest_items else 0])
         out_mobs.append({"id": tid, "name": mob_names.get(tid, f"Mob {tid}"), "level": level,
                          "maps": maps_of.get(tid, []), "also": also_of.get(tid, []), "rows": rows})
 
@@ -223,7 +235,8 @@ def main():
     for item, entry in items.items():
         entry[3:] = [descs.get(item, ""), lines.get(item, [])]
 
-    data = {"mobs": out_mobs, "global": glob, "items": {str(k): v for k, v in items.items()}}
+    data = {"mobs": out_mobs, "global": glob, "aliases": {str(k): v for k, v in ALIASES.items()},
+            "items": {str(k): v for k, v in items.items()}}
     blob = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
     page = open(os.path.join("crates", "world", "src", "dropweb.html"), encoding="utf-8").read()
     page = page.replace("/*__DATA__*/null", blob)

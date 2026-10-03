@@ -101,7 +101,53 @@ impl LogSink {
 pub fn install_log_file(path: &std::path::Path) -> std::io::Result<()> {
     let sink = LogSink::open(path)?;
     let _ = LOG_SINK.set(std::sync::Mutex::new(sink));
+    let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
+    let _ = LOG_DIR.set(dir.to_path_buf());
     Ok(())
+}
+
+/// Where the channel's log is, for files that belong beside it (`crate::damageguard`'s
+/// suspects log).
+static LOG_DIR: OnceLock<std::path::PathBuf> = OnceLock::new();
+
+/// See [`LOG_DIR`]. `None` when no log file was installed (tests, a bare `cargo run`).
+pub fn log_dir() -> Option<std::path::PathBuf> {
+    LOG_DIR.get().cloned()
+}
+
+/// **Append one dated line to `file`, beside the channel's log** - the shared writer for every
+/// suspects file (`damage-suspects.log`, and any later one). A failed write is reported in the
+/// channel log and otherwise ignored: a side file must never be the thing that stops a packet
+/// being answered. **Only once a log file is installed** - a test or a bare `cargo run` has no
+/// log directory, and a file appearing in the source tree would be worse than none.
+pub fn record_beside_log(file: &str, line: &str) {
+    if let Some(dir) = log_dir() {
+        record_in(&dir, file, line);
+    }
+}
+
+/// [`record_beside_log`] into a named directory.
+pub fn record_in(dir: &std::path::Path, file: &str, line: &str) {
+    use std::io::Write as _;
+    let path = dir.join(file);
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let stamped = format!("{} {line}\n", utc_stamp(now.as_secs()));
+    let written = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut f| f.write_all(stamped.as_bytes()));
+    if let Err(e) = written {
+        log(&format!("   could not write {}: {e}", path.display()));
+    }
+}
+
+/// `YYYY-MM-DD HH:MM:SS UTC` for a Unix time in seconds - a date as well as a time, for a log
+/// that is read across days.
+pub fn utc_stamp(secs: u64) -> String {
+    let day = i64::try_from(secs / 86_400).unwrap_or(0);
+    let (h, m, s) = ((secs / 3600) % 24, (secs / 60) % 60, secs % 60);
+    format!("{} {h:02}:{m:02}:{s:02} UTC", store::utc_date(day))
 }
 
 /// One raw line, untimestamped, to the log file if one is installed and to stdout if not.

@@ -391,6 +391,10 @@ pub struct Fields {
     /// runs at a time per map, and someone arriving mid-effect gets the rest of it.
     /// `session/weather.rs`.
     weather: Mutex<HashMap<FieldKey, (u32, String, i64)>>,
+    /// **Statuses on live mobs** - Disorder's attack and defence cut, keyed by map and object
+    /// id: `(status index, value, expires at clock ms)`. `crate::session::mobdebuff`. The
+    /// client keeps its own copy from `0x03E6`; this one is for the server's own arithmetic.
+    mob_debuffs: Mutex<HashMap<(FieldKey, u32), Vec<(u32, i32, u64)>>>,
 }
 
 impl Default for Fields {
@@ -410,7 +414,13 @@ impl Fields {
             runs: Mutex::new(crate::firsttime::Runs::default()),
             voyages: Mutex::new(crate::boat::Voyages::default()),
             weather: Mutex::new(HashMap::new()),
+            mob_debuffs: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Statuses on live mobs. See the field.
+    pub fn mob_debuffs(&self) -> std::sync::MutexGuard<'_, HashMap<(FieldKey, u32), Vec<(u32, i32, u64)>>> {
+        self.mob_debuffs.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// This channel's message bus. See [`crate::broadcast`].

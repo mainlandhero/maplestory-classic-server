@@ -58,6 +58,7 @@ pub mod messenger;
 pub mod mob;
 pub mod mobdamage;
 pub mod mobmove;
+pub mod mobstat;
 pub mod names;
 pub mod notice;
 pub mod overall;

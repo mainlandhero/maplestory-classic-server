@@ -1229,16 +1229,106 @@ fn a_recharge_the_player_cannot_afford_is_refused_and_moves_nothing() {
     assert_eq!(store.mesos(id).unwrap(), 5);
 }
 
-/// Every refusal path is a `0x055E`, because the window latched on send: a potion, a star this
-/// counter does not stock (Wolbi, when Lucy lists only Subi), a stack already full, and an
-/// empty slot. **None of them moves an item or a meso.**
+/// **Buying stars hands over a full set.** The owner, 2026-10-02: *"on purchase, the player should
+/// receive a full stack of that star consumable instead of just a singular 1."* Lucy's Subi row
+/// goes out with a per-purchase cap of 1 (the client's yes/no, no quantity box), and one
+/// purchase - even one naming 3 - is one set of slotMax 500 at the row's 500 mesos, landing in
+/// a fresh slot because slot 1 is already full.
+#[test]
+fn buying_stars_hands_over_a_full_set_at_the_rows_price() {
+    let (mut s, store, id) = recharge_session(500, 2_000);
+    s.open_shop_for(21, id).unwrap();
+    let (_, rows) = s.open_shop.clone().unwrap();
+    let subi = rows.iter().position(|r| r.item_id == 2_070_000).expect("Lucy stocks Subi") as u16;
+    assert_eq!(rows[usize::from(subi)].max_per_purchase, 1, "a yes/no, not a quantity box");
+    assert!(rows.iter().filter(|r| r.item_id == 2_000_000).all(|r| r.max_per_purchase > 1), "a potion keeps its box");
+
+    let out = s.handle(&classic_buy(subi, 2_070_000, 3));
+    assert_eq!(out[0].body[0], net::classicshop::RESULT_SUCCESS, "{}", out[0].what);
+    assert!(out[0].what.contains("SET of 500"), "{}", out[0].what);
+    assert_eq!(use_slot(&store, id, 1), 500, "the full stack is untouched");
+    assert_eq!(use_slot(&store, id, 2), 500, "a whole set, not 1 and not 3");
+    assert_eq!(store.mesos(id).unwrap(), 1_500, "one set at the row's price, not three");
+}
+
+/// `recharge_session` with **Wolbi** (unitPrice 0.4, slotMax 500) in the item table but not on
+/// Lucy's shelf, and `wolbi` of them in Use slot 2 - the dropped stack from the owner's
+/// screenshot, 2026-10-02.
+fn dropped_wolbi_session(wolbi: u16, mesos: u32) -> (Session, Arc<Store>, u32) {
+    let subi = crate::shops::ShopItem {
+        item_id: 2_070_000,
+        name: "Subi Throwing Stars".to_string(),
+        buy_price: 500,
+        sell_price: 250,
+        min_grade: None,
+        quest_item: false,
+        trade_blocked: false,
+    };
+    let (s, store, id) = shop_session_with(
+        vec![subi],
+        vec![
+            (2_070_000, crate::shops::ItemData { price: 250, slot_max: 500, unit_price_milli: 300, ..Default::default() }),
+            (2_070_001, crate::shops::ItemData { price: 500, slot_max: 500, unit_price_milli: 400, ..Default::default() }),
+        ],
+    );
+    store.add_item(id, store::InventoryType::Use, &store::Item::bundle(2_000_000, 1), 200).unwrap(); // slot 1
+    store.add_item(id, store::InventoryType::Use, &store::Item::bundle(2_070_001, wolbi), 500).unwrap(); // slot 2
+    store.set_mesos(id, mesos).unwrap();
+    (s, store, id)
+}
+
+/// **A general store recharges a star it does not sell.** The owner, 2026-10-02: *"All stars
+/// should be rechargeable at any general store"*, after 2 dropped Wolbi could not be topped up
+/// at a Grocer that stocks only Subi. Wolbi goes out as a recharge-only row - price 0, so the
+/// client files it in the Recharge list and no Buy tab - AFTER every stocked row, and the
+/// recharge tops it up at Wolbi's own 0.4.
+#[test]
+fn a_general_store_recharges_a_dropped_star_it_does_not_stock() {
+    let (mut s, store, id) = dropped_wolbi_session(2, 1_000);
+    let out = s.open_shop_for(21, id).expect("Lucy keeps a shop");
+    let (_, rows) = s.open_shop.clone().unwrap();
+    let ids: Vec<u32> = rows.iter().map(|r| r.item_id).collect();
+    assert_eq!(ids, vec![2_000_000, 4_031_507, 2_070_000, 2_070_001], "stocked rows first, the extra star last");
+    let wolbi = rows[3];
+    assert_eq!(wolbi.price, 0, "recharge-only: price 0 keeps it out of every Buy tab");
+    assert_eq!(wolbi.unit_price(), Some(0.4));
+    assert_eq!(rows[2].price, 500, "Subi is still sold at its shelf price");
+    assert!(out[0].what.contains("3 buy,"), "{}", out[0].what);
+    assert!(out[0].what.contains("2 rechargeable with a unit price, 1 of them recharge-only"), "{}", out[0].what);
+    let walked: usize = net::classicshop::CLASSIC_HEAD_LEN + rows.iter().map(|r| r.wire_len()).sum::<usize>();
+    assert_eq!(walked, out[0].body.len(), "every row on the wire at its own width");
+
+    // 2 of 500: 498 x 0.4 = 199.2 mesos, rounded up to 200.
+    let out = s.handle(&classic_recharge(2));
+    assert_eq!(out[0].body[0], net::classicshop::RESULT_SUCCESS, "{}", out[0].what);
+    assert_eq!(use_slot(&store, id, 2), 500, "the dropped stack is full");
+    assert_eq!(store.mesos(id).unwrap(), 800);
+}
+
+/// **A recharge-only row cannot be bought** - the client never offers it, so a buy naming its
+/// index is a forged body, and answering it would hand out free stars.
+#[test]
+fn buying_a_recharge_only_row_is_refused_and_moves_nothing() {
+    let (mut s, store, id) = dropped_wolbi_session(2, 1_000);
+    s.open_shop_for(21, id).unwrap();
+    let out = s.handle(&classic_buy(3, 2_070_001, 500));
+    assert_eq!(out.len(), 1, "one refusal, nothing else - {out:?}");
+    assert_eq!(out[0].body, vec![net::classicshop::RESULT_NOT_ENOUGH_MESOS], "{}", out[0].what);
+    assert_eq!(use_slot(&store, id, 2), 2);
+    assert_eq!(use_slot(&store, id, 3), 0, "no new stack either");
+    assert_eq!(store.mesos(id).unwrap(), 1_000);
+}
+
+/// Every refusal path is a `0x055E`, because the window latched on send: a potion, a star with
+/// no unit price in the item table (Wolbi is absent from this fixture's, so no row lists it), a
+/// stack already full, and an empty slot. **None of them moves an item or a meso.**
 #[test]
 fn recharging_anything_but_a_stocked_star_with_room_is_refused_with_a_result() {
     let (mut s, store, id) = recharge_session(500, 1_000);
     store.add_item(id, store::InventoryType::Use, &store::Item::bundle(2_000_000, 3), 200).unwrap(); // slot 2
     store.add_item(id, store::InventoryType::Use, &store::Item::bundle(2_070_001, 10), 500).unwrap(); // slot 3
     s.open_shop_for(21, id).unwrap();
-    for (slot, why) in [(1u16, "a full stack"), (2, "a potion"), (3, "a star this counter does not list"), (7, "an empty slot")] {
+    for (slot, why) in [(1u16, "a full stack"), (2, "a potion"), (3, "a star no row lists"), (7, "an empty slot")] {
         let out = s.handle(&classic_recharge(slot));
         assert_eq!(out.len(), 1, "{why}: one refusal, nothing else - {out:?}");
         assert_eq!(out[0].opcode, net::classicshop::CLASSIC_SHOP_RESULT, "{why}");
@@ -2006,6 +2096,177 @@ fn swing_packet(opcode: u16, skill: u32) -> Vec<u8> {
     body
 }
 
+// ---------------------------------------------------------------------------------------
+// The damage guard (crate::damageguard), on a real character. The owner, 2026-10-02: a hit more
+// than 25% over what the character could deal is CAPPED to that and the attacker logged.
+// ---------------------------------------------------------------------------------------
+
+/// The session's config with the CLIENT's real equipment templates and item data - what the
+/// live server loads from `gm-handbook/`. `None` when the handbook is absent (gitignored).
+fn with_real_items(s: &mut Session) -> Option<()> {
+    let equips = std::path::Path::new("../../gm-handbook/equips.txt");
+    let items = std::path::Path::new("../../gm-handbook/itemdata.txt");
+    if !equips.exists() || !items.exists() {
+        return None;
+    }
+    let mut config = (*s.config).clone();
+    config.equips = Config::load_equips(equips);
+    config.shops.item_data = crate::shops::load_item_data(items);
+    s.config = Arc::new(config);
+    Some(())
+}
+
+/// One target taking `damage` in a single hit, `critical` as the client flags it.
+fn one_hit(damage: u64, critical: bool) -> net::combat::AttackTarget {
+    net::combat::AttackTarget {
+        object_id: 2000,
+        second: 0,
+        hits: vec![net::combat::AttackHit { flag_a: false, flag_b: critical, damage }],
+    }
+}
+
+/// **The positive control: an absurd claim is capped, an honest one is untouched.** A level-1
+/// warrior with a sword swings: the swing is priced (not unchecked), 1 point and the ceiling
+/// itself pass as they are, and a million comes back as exactly the limit - the ceiling plus
+/// 25% - not the million and not zero. A critical hit is allowed more than an ordinary one.
+#[test]
+fn the_damage_guard_caps_an_impossible_hit_and_passes_an_honest_one() {
+    let Some((_store, mut s, _id)) = first_job_with(100, 1_302_000, &[1_001_004, 1_001_005], 0, 0, 1) else { return };
+    if with_real_items(&mut s).is_none() {
+        return;
+    }
+    let pricing = s.price_swing(net::combat::USER_MELEE_ATTACK, &swing_packet(net::combat::USER_MELEE_ATTACK, 0)[2..]);
+    let crate::session::damageguard::Pricing::Physical { attacker, class, .. } = &pricing else {
+        panic!("a sword swing must be priced, got {pricing:?}");
+    };
+    let ceiling = crate::damageguard::physical_ceiling(attacker, *class, 0, false).unwrap();
+    assert!(ceiling > 0, "{pricing:?}");
+    let limit = crate::damageguard::limit(ceiling);
+
+    assert_eq!(s.guarded_damage(&pricing, &one_hit(1, false)), 1, "an honest hit");
+    assert_eq!(s.guarded_damage(&pricing, &one_hit(ceiling, false)), ceiling, "the ceiling itself");
+    assert_eq!(s.guarded_damage(&pricing, &one_hit(limit, false)), limit, "25% over is still allowed");
+    assert_eq!(s.guarded_damage(&pricing, &one_hit(1_000_000, false)), limit, "CAPPED, not dropped");
+    let crit_limit = s.guarded_damage(&pricing, &one_hit(1_000_000, true));
+    assert!(crit_limit > limit, "a critical may reach more: {crit_limit} vs {limit}");
+}
+
+/// **`--damage-guard log` measures and caps nothing.**
+#[test]
+fn the_damage_guard_in_log_mode_applies_the_hit_whole() {
+    let Some((_store, mut s, _id)) = first_job_with(100, 1_302_000, &[1_001_004], 0, 0, 1) else { return };
+    if with_real_items(&mut s).is_none() {
+        return;
+    }
+    Arc::get_mut(&mut s.config).expect("sole owner").damage_guard = crate::damageguard::Mode::Log;
+    let pricing = s.price_swing(net::combat::USER_MELEE_ATTACK, &swing_packet(net::combat::USER_MELEE_ATTACK, 0)[2..]);
+    assert_eq!(s.guarded_damage(&pricing, &one_hit(1_000_000, false)), 1_000_000, "log mode applies it");
+}
+
+/// **Every thief and archer skill is priced** (the owner, 2026-10-02: *"Why can we not create
+/// formulas for thief and archer skills?"*). Lucky Seven and Avenger by the claw formula, Arrow
+/// Bomb by its tooltip's percent, Three Snails at its fixed 15 and Shadow Meso at mesos x 8 -
+/// and a million on each comes back capped, not whole.
+#[test]
+fn the_damage_guard_prices_every_thief_and_archer_skill() {
+    use crate::session::damageguard::Pricing;
+    let priced = |s: &Session, opcode: u16, skill: u32| s.price_swing(opcode, &swing_packet(opcode, skill)[2..]);
+
+    let Some((_store, mut thief, _id)) = rogue_with(CLAW, HWABI, 100) else { return };
+    if with_real_items(&mut thief).is_none() {
+        return;
+    }
+    for skill in [4_001_003u32, 4_111_004] {
+        let p = priced(&thief, net::combat::USER_SHOOT_ATTACK, skill);
+        assert!(matches!(p, Pricing::Physical { .. }), "skill {skill}: {p:?}");
+        assert!(thief.guarded_damage(&p, &one_hit(1_000_000, false)) < 1_000_000, "skill {skill} is capped");
+    }
+    let meso = priced(&thief, net::combat::USER_SHOOT_ATTACK, crate::damageguard::SHADOW_MESO);
+    let Pricing::Fixed { ceiling, .. } = meso else { panic!("Shadow Meso: {meso:?}") };
+    assert_eq!(ceiling, 200 * 8, "level 1: 200 mesos x 8");
+    assert_eq!(thief.guarded_damage(&meso, &one_hit(1_600, false)), 1_600);
+    assert_eq!(thief.guarded_damage(&meso, &one_hit(1_000_000, false)), crate::damageguard::limit(1_600));
+
+    let snails = priced(&thief, net::combat::USER_SHOOT_ATTACK, 1_000);
+    let Pricing::Fixed { ceiling, .. } = snails else { panic!("Three Snails: {snails:?}") };
+    assert_eq!(ceiling, 15, "level 1's fixdamage");
+    assert_eq!(thief.guarded_damage(&snails, &one_hit(15, false)), 15);
+    assert_eq!(thief.guarded_damage(&snails, &one_hit(9_999, false)), crate::damageguard::limit(15));
+
+    let Some((_store, mut archer, _id)) = archer_with(BOW, BOW_ARROWS, 100) else { return };
+    if with_real_items(&mut archer).is_none() {
+        return;
+    }
+    for skill in [3_101_004u32, 3_001_003] {
+        let p = priced(&archer, net::combat::USER_SHOOT_ATTACK, skill);
+        assert!(matches!(p, Pricing::Physical { .. }), "skill {skill}: {p:?}");
+        assert!(archer.guarded_damage(&p, &one_hit(1_000_000, false)) < 1_000_000, "skill {skill} is capped");
+    }
+    let Pricing::Physical { attacker, .. } = priced(&archer, net::combat::USER_SHOOT_ATTACK, 3_101_004) else { unreachable!() };
+    assert_eq!(attacker.skill_damage_percent, 80, "Arrow Bomb level 1: the tooltip's 80%, not the column's 0");
+}
+
+/// **The star's attack is in the ceiling.** The same thief, the same plain throw: holding Hwabi
+/// (attack 29) raises the limit over holding nothing to throw.
+#[test]
+fn the_damage_guard_counts_the_stars_attack() {
+    let Some((store, mut s, id)) = rogue_with(CLAW, HWABI, 100) else { return };
+    if with_real_items(&mut s).is_none() {
+        return;
+    }
+    let throw = swing_packet(net::combat::USER_SHOOT_ATTACK, 0);
+    let ceiling = |s: &Session| match s.price_swing(net::combat::USER_SHOOT_ATTACK, &throw[2..]) {
+        crate::session::damageguard::Pricing::Physical { attacker, class, .. } => {
+            crate::damageguard::physical_ceiling(&attacker, class, 0, false).unwrap()
+        }
+        other => panic!("{other:?}"),
+    };
+    let with_hwabi = ceiling(&s);
+    store.set_inventory_slot(id, store::InventoryType::Use, 1, &store::Item::bundle(HWABI, 0)).unwrap();
+    let empty = ceiling(&s);
+    assert!(with_hwabi > empty, "Hwabi's 29 attack must raise the ceiling: {with_hwabi} vs {empty}");
+}
+
+/// **A weapon whose numbers are unknown is never priced** - the failure found writing these
+/// tests: with no templates loaded the sword read 0 attack and a million was capped to 2.
+/// Without `gm-handbook/equips.txt` the swing is unchecked and applied whole.
+#[test]
+fn the_damage_guard_does_not_price_a_weapon_with_no_known_attack() {
+    let Some((_store, s, _id)) = first_job_with(100, 1_302_000, &[1_001_004], 0, 0, 1) else { return };
+    let pricing = s.price_swing(net::combat::USER_MELEE_ATTACK, &swing_packet(net::combat::USER_MELEE_ATTACK, 0)[2..]);
+    assert!(matches!(pricing, crate::session::damageguard::Pricing::Unchecked(_)), "{pricing:?}");
+    assert_eq!(s.guarded_damage(&pricing, &one_hit(1_000_000, false)), 1_000_000);
+}
+
+/// **Disorder puts a status on the mob it damaged** (the owner, 2026-10-02: *"Still no debuff status
+/// shown on mobs hit by disorder."*). Level 1 from the client's own table: attack -5, weapon
+/// defence -1, 10 s. The attacker gets exactly `net::mobstat`'s bytes for that mob; the server
+/// remembers the attack cut for its touch-damage fallback, a second cast refreshes rather than
+/// stacks, and after 10 s the cut is gone. A skill that is not a debuff sends nothing.
+#[test]
+fn disorder_puts_its_attack_and_defence_cut_on_the_mob_it_hit() {
+    let Some((_store, mut s, _id)) = rogue_with(CLAW, HWABI, 10) else { return };
+    let map = crate::fields::FieldKey::world(1);
+    let out = s.debuff_mobs(map, crate::session::mobdebuff::DISORDER, 1, &[2042]);
+    assert_eq!(out.len(), 1, "{out:?}");
+    assert_eq!(out[0].opcode, net::mobstat::MOB_STAT_SET);
+    let status = |index, value| net::mobstat::MobStatus { index, value, reason: 4_001_000, duration_ms: 10_000 };
+    assert_eq!(
+        out[0].body,
+        net::mobstat::mob_stat_set(2042, &[status(net::mobstat::PAD, -5), status(net::mobstat::PDR, -1)])
+    );
+    assert_eq!(s.mob_attack_cut(map, 2042), 5);
+    assert_eq!(s.mob_attack_cut(map, 2043), 0, "only the mob that was hit");
+
+    s.debuff_mobs(map, crate::session::mobdebuff::DISORDER, 1, &[2042]);
+    assert_eq!(s.mob_attack_cut(map, 2042), 5, "refreshed, not stacked to 10");
+
+    s.clock_ms += 10_001;
+    assert_eq!(s.mob_attack_cut(map, 2042), 0, "expired after 10 s");
+    assert!(s.debuff_mobs(map, 4_001_003, 1, &[2042]).is_empty(), "Lucky Seven debuffs nothing");
+    assert!(s.debuff_mobs(map, crate::session::mobdebuff::DISORDER, 1, &[]).is_empty(), "a miss debuffs nothing");
+}
+
 /// How many arrows sit in Use slot 1, or 0 when the slot is empty.
 fn arrows_in_slot_1(store: &Arc<Store>, id: u32) -> u16 {
     store
@@ -2133,18 +2394,50 @@ fn double_stab_with_a_dagger_takes_no_star_and_a_claw_never_touches_arrows() {
     assert_eq!(arrows_in_slot_1(&store, id), 50);
 }
 
-/// The whole `207xxxx` family counts - Hwabi as much as Subi - and the last star empties the
-/// slot with a REMOVE rather than a count of zero.
+/// The whole `207xxxx` family counts - Hwabi as much as Subi - and **the last star leaves an
+/// EMPTY STACK, not an empty slot.** The owner, 2026-10-02: *"When stars reach 0, it should remain
+/// in the player's inventory because they should be able to recharge them at any general
+/// store."* Until then this test asserted a REMOVE. Now the row is still in Use slot 1 at 0,
+/// the client is told quantity 0 (no REMOVE), and the next throw takes nothing from it.
 #[test]
-fn every_star_in_the_family_counts_and_the_last_one_empties_the_slot() {
+fn every_star_in_the_family_counts_and_the_last_one_leaves_an_empty_stack() {
     let Some((store, mut s, id)) = rogue_with(CLAW, HWABI, 1) else { return };
     let out = s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 0));
-    assert_eq!(arrows_in_slot_1(&store, id), 0);
-    let op = out
-        .iter()
-        .find(|r| r.opcode == net::inventory::INVENTORY_OPERATION)
-        .expect("the emptied slot must be reported");
-    assert_eq!(op.body[7], net::inventory::MODE_REMOVE);
+    let row = store.inventory_slot(id, store::InventoryType::Use, 1).unwrap().expect("the stack is still there");
+    assert_eq!((row.item_id, row.kind.quantity()), (HWABI, 0), "Hwabi at 0, in its slot");
+    let ops: Vec<_> = out.iter().filter(|r| r.opcode == net::inventory::INVENTORY_OPERATION).collect();
+    assert_eq!(ops.len(), 1, "{ops:?}");
+    assert_eq!(ops[0].body, net::inventory::inventory_quantity(store::InventoryType::Use.as_u8() as i8, 1, 0), "a count of 0, not a REMOVE");
+
+    let again = s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 0));
+    assert!(!again.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "nothing left to take");
+    assert_eq!(store.inventory_slot(id, store::InventoryType::Use, 1).unwrap().map(|i| i.kind.quantity()), Some(0));
+}
+
+/// **An empty star stack recharges at a general store**, the reason it is kept. Lucy stocks
+/// Subi; 0 of 500 tops up to 500 at 0.3 each = 150 mesos, into the same slot.
+#[test]
+fn an_empty_star_stack_recharges_to_full() {
+    let (mut s, store, id) = recharge_session(1, 1_000);
+    store.set_inventory_slot(id, store::InventoryType::Use, 1, &store::Item::bundle(2_070_000, 0)).unwrap();
+    s.open_shop_for(21, id).unwrap();
+    let out = s.handle(&classic_recharge(1));
+    assert_eq!(out[0].body[0], net::classicshop::RESULT_SUCCESS, "{}", out[0].what);
+    assert_eq!(use_slot(&store, id, 1), 500);
+    assert_eq!(store.mesos(id).unwrap(), 850);
+}
+
+/// **An empty star stack can still be sold** - the one way to get rid of it - whatever count the
+/// client names, and it is not mistaken for a stale click.
+#[test]
+fn an_empty_star_stack_can_be_sold_away() {
+    let (mut s, store, id) = recharge_session(1, 1_000);
+    store.set_inventory_slot(id, store::InventoryType::Use, 1, &store::Item::bundle(2_070_000, 0)).unwrap();
+    s.open_shop_for(21, id).unwrap();
+    let out = s.handle(&classic_sell(1, 2_070_000, 1));
+    assert!(!out[0].what.contains("STALE"), "{}", out[0].what);
+    assert_eq!(store.inventory_slot(id, store::InventoryType::Use, 1).unwrap(), None, "the slot is clear");
+    assert!(out.iter().any(|r| r.body == net::inventory::inventory_removed(store::InventoryType::Use.as_u8() as i8, 1)));
 }
 
 // ---------------------------------------------------------------------------------------
@@ -2666,6 +2959,75 @@ fn an_attack_skill_costs_mp_and_a_potion_does_not_undo_it() {
             r.what
         );
     }
+}
+
+/// The Use-tab slot holding item 2000000 after `shop_session` bought some.
+fn potion_slot(store: &Arc<Store>, id: u32) -> u16 {
+    store.bag(id).unwrap().items_in(store::InventoryType::Use).next().expect("potions in the Use tab").slot
+}
+
+/// **A sale clicked twice before the list redrew sells once, and the second click redraws it.**
+/// The owner, 2026-10-02: *"When users sell to shop too fast, sometimes their view does not refresh
+/// fast enough and they try to sell the same thing again to which the server refuses ... can we
+/// automatically refresh their view"*. The second sell names a slot that is now empty: nothing
+/// is sold, nothing is paid, the latch is cleared with the SILENT type 16 (not "not enough
+/// mesos"), and a REMOVE for that slot goes back so the Sell list redraws. Every effect named.
+#[test]
+fn a_second_sell_of_an_emptied_slot_sells_nothing_and_redraws_the_slot() {
+    let (mut s, store, id) = shop_session();
+    store.set_mesos(id, 1000).unwrap();
+    s.handle(&npc_click(1000));
+    s.handle(&classic_buy(0, 2000000, 3));
+    let slot = potion_slot(&store, id);
+    s.handle(&classic_sell(slot, 2000000, 3));
+    let paid_once = store.mesos(id).unwrap();
+
+    let out = s.handle(&classic_sell(slot, 2000000, 3));
+    assert_eq!(out[0].opcode, net::classicshop::CLASSIC_SHOP_RESULT);
+    assert_eq!(out[0].body, vec![net::classicshop::RESULT_ACKNOWLEDGED], "silent, not a refusal message: {}", out[0].what);
+    assert!(out[0].what.contains("STALE"), "{}", out[0].what);
+    assert_eq!(out.len(), 2, "the result and the slot, nothing else - no mesos: {out:?}");
+    assert_eq!(out[1].body, net::inventory::inventory_removed(store::InventoryType::Use.as_u8() as i8, slot as i16));
+    assert_eq!(store.mesos(id).unwrap(), paid_once, "paid once");
+}
+
+/// **A stale sell of a slot that now holds something else** - another item, or fewer than the
+/// click asked for - sells nothing and sends the slot's real contents.
+#[test]
+fn a_stale_sell_of_a_changed_slot_sells_nothing_and_sends_what_is_there() {
+    let (mut s, store, id) = shop_session();
+    store.set_mesos(id, 1000).unwrap();
+    s.handle(&npc_click(1000));
+    s.handle(&classic_buy(0, 2000000, 3));
+    let slot = potion_slot(&store, id);
+    let use_tab = store::InventoryType::Use.as_u8() as i8;
+
+    // Fewer than asked: 3 held, 5 asked.
+    let out = s.handle(&classic_sell(slot, 2000000, 5));
+    assert_eq!(out[0].body, vec![net::classicshop::RESULT_ACKNOWLEDGED], "{}", out[0].what);
+    assert_eq!(out[1].body, net::inventory::inventory_quantity(use_tab, slot as i16, 3), "the real count");
+    // Another item: the client thinks the slot holds 2000001.
+    let out = s.handle(&classic_sell(slot, 2000001, 1));
+    assert_eq!(out[0].body, vec![net::classicshop::RESULT_ACKNOWLEDGED], "{}", out[0].what);
+    assert_eq!(use_slot(&store, id, slot), 3, "nothing left the bag");
+    assert_eq!(store.mesos(id).unwrap(), 1000 - 3 * 50, "and nothing was paid");
+}
+
+/// **Selling part of a stack leaves the rest on screen.** Until 2026-10-02 every sale sent a REMOVE,
+/// so selling 1 of 3 potions emptied the slot on screen while the server kept 2.
+#[test]
+fn selling_part_of_a_stack_sends_the_count_left_not_a_remove() {
+    let (mut s, store, id) = shop_session();
+    store.set_mesos(id, 1000).unwrap();
+    s.handle(&npc_click(1000));
+    s.handle(&classic_buy(0, 2000000, 3));
+    let slot = potion_slot(&store, id);
+    let out = s.handle(&classic_sell(slot, 2000000, 1));
+    assert_eq!(out[0].body[0], net::classicshop::RESULT_ACKNOWLEDGED);
+    let use_tab = store::InventoryType::Use.as_u8() as i8;
+    assert!(out.iter().any(|r| r.body == net::inventory::inventory_quantity(use_tab, slot as i16, 2)), "2 left: {out:?}");
+    assert!(!out.iter().any(|r| r.body == net::inventory::inventory_removed(use_tab, slot as i16)), "no REMOVE");
+    assert_eq!(use_slot(&store, id, slot), 2);
 }
 
 /// **Selling works, and sends NO buy-back row and NO type-10 refresh.**
@@ -3681,12 +4043,13 @@ fn a_pets_auto_hp_drinks_the_potion_and_answers_the_latch() {
 }
 
 
-/// **A change is kept for the account and comes back in every character's SetField.**
+/// **Sound is kept for the account; the pet's auto-potion thresholds for the character.**
 /// The capture's own HP/MP warning pair (`flHP=7`, `flMP=3`) and a sound volume, sent through
-/// the real dispatcher; then a second character on the same account logs in and its record
-/// carries both blocks, with presence 16 and 19 set.
+/// the real dispatcher. A second character on the same account logs in: its record carries the
+/// sound and NOT the first character's thresholds - the owner, 2026-10-02: *"other characters may
+/// want to use different auto potion setup."* Then it sets its own, and the first keeps 7/3.
 #[test]
-fn options_are_saved_per_account_and_sent_back_in_the_record() {
+fn sound_is_per_account_and_the_auto_potion_thresholds_are_per_character() {
     let (mut s, store, id) = gm_session();
     let mut pair = net::clientsettings::CLIENT_OPTIONS_CHANGED.to_le_bytes().to_vec();
     pair.extend(net::clientsettings::options_changed(1, &[(0x10, 7), (0x11, 3)]));
@@ -3697,15 +4060,16 @@ fn options_are_saved_per_account_and_sent_back_in_the_record() {
     let account = s.claimed.as_ref().unwrap().account_id;
     assert_eq!(
         store.client_settings(account).unwrap(),
-        vec![(0, 0, 30), (0, 1, 1), (1, 0x10, 7), (1, 0x11, 3)],
-        "COUNT (0x41) is not a key and is dropped"
+        vec![(0, 0, 30), (0, 1, 1)],
+        "the account keeps the sound; COUNT (0x41) is not a key and is dropped"
     );
+    assert_eq!(store.character_settings(id).unwrap(), vec![(1, 0x10, 7), (1, 0x11, 3)], "the character keeps flHP/flMP");
 
     let (b28, b32) = s.option_records();
     assert_eq!(b28, vec![(101_563, "flHP=7;flMP=3".to_string())]);
     assert_eq!(b32, vec![(368, "vBG1=30;mBG1=1".to_string())]);
 
-    // A second character on the same account sees them.
+    // A second character on the same account: the sound, and none of the first one's thresholds.
     let other = store
         .create_character(account, 0, &net::opcode::Character { name: "Second".into(), ..Default::default() })
         .unwrap()
@@ -3716,9 +4080,31 @@ fn options_are_saved_per_account_and_sent_back_in_the_record() {
     again.claim_for_character(other);
     let out = again.handle(&crate::session::CLIENT_MIGRATION_HELLO.to_le_bytes());
     let set = out.iter().find(|r| r.opcode == net::opcode::SET_FIELD).expect("the login SetField");
-    assert!(set.what.contains("quest 101563 = flHP=7;flMP=3"), "{}", set.what);
+    assert!(!set.what.contains("flHP"), "the first character's threshold leaked: {}", set.what);
     let block = net::clientsettings::shared_quest_ex_block(&b32);
-    assert!(set.body.windows(block.len()).any(|w| w == &block[..]), "block #32 is in the record");
+    assert!(set.body.windows(block.len()).any(|w| w == &block[..]), "block #32 - the sound - is in the record");
+
+    let mut own = net::clientsettings::CLIENT_OPTIONS_CHANGED.to_le_bytes().to_vec();
+    own.extend(net::clientsettings::options_changed(1, &[(0x10, 12)]));
+    again.handle(&own);
+    assert_eq!(again.option_records().0, vec![(101_563, "flHP=12".to_string())]);
+    assert_eq!(s.option_records().0, vec![(101_563, "flHP=7;flMP=3".to_string())], "the first is untouched");
+}
+
+/// **Nobody's threshold resets on the upgrade.** Before 2026-10-02 `flHP` was an account row; a
+/// character that has not set its own still gets it, and its own row wins once it does.
+#[test]
+fn an_account_threshold_from_before_the_split_is_the_fallback_until_the_character_sets_one() {
+    let (mut s, store, id) = gm_session();
+    let account = s.claimed.as_ref().unwrap().account_id;
+    store.save_client_settings(account, 1, &[(0x10, 5), (0x11, 9)]).unwrap();
+    assert_eq!(s.option_records().0, vec![(101_563, "flHP=5;flMP=9".to_string())]);
+    let mut own = net::clientsettings::CLIENT_OPTIONS_CHANGED.to_le_bytes().to_vec();
+    own.extend(net::clientsettings::options_changed(1, &[(0x10, 2)]));
+    s.handle(&own);
+    assert_eq!(s.option_records().0, vec![(101_563, "flHP=2;flMP=9".to_string())]);
+    assert_eq!(store.client_settings(account).unwrap(), vec![(1, 0x10, 5), (1, 0x11, 9)], "the account row is not rewritten");
+    assert_eq!(store.character_settings(id).unwrap(), vec![(1, 0x10, 2)]);
 }
 
 #[test]
@@ -6499,6 +6885,33 @@ fn an_untradeable_item_dropped_fades_for_everyone_and_nobody_gets_it() {
         faded.iter().map(|r| &r.what).collect::<Vec<_>>()
     );
     assert_eq!(wisp.fields.with_drops(crate::fields::FieldKey::world(SHARED_MAP), |d| d.len()), 0);
+}
+
+/// **An empty star stack drops and is picked up like any item.** The owner, 2026-10-02: *"A star
+/// that has 0 ammo is still allowed to be dropped on the ground and picked up."* Dropping it is
+/// not refused as "nothing in that slot": the slot is cleared (mode 3) and the stack lies on
+/// the floor at 0. Picking it up puts it back in a slot of its own at 0 - not nowhere - with no
+/// "x1 earned" line for a count it does not have.
+#[test]
+fn an_empty_star_stack_drops_and_is_picked_up_at_zero() {
+    let (mut s, store, id) = gm_session();
+    s.last_position = Some((520, 395));
+    store.set_inventory_slot(id, store::InventoryType::Use, 1, &store::Item::bundle(2_070_006, 0)).unwrap();
+    let map = crate::fields::FieldKey::world(s.claimed_character().unwrap().map_id);
+    let object_id = s.fields.with_drops(map, |d| d.next_object_id());
+
+    let out = s.on_inventory_move(&inventory_move(use_tab(), 1, 0, 1));
+    assert_eq!(out[0].body, net::inventory::inventory_removed(use_tab(), 1), "the slot is cleared: {}", out[0].what);
+    assert!(out.iter().any(|r| r.opcode == net::drops::DROP_ENTER_FIELD), "and the stack is on the floor");
+    assert_eq!(store.inventory_slot(id, store::InventoryType::Use, 1).unwrap(), None);
+
+    let got = s.on_pick_up(0x032C, &pick_up_body(object_id));
+    let row = store.bag_items(id, store::InventoryType::Use).unwrap();
+    assert_eq!(row.len(), 1, "it came back: {got:?}");
+    assert_eq!((row[0].item.item_id, row[0].item.kind.quantity()), (2_070_006, 0), "Ilbi, still empty");
+    assert!(got.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "the bag is told");
+    assert!(!got.iter().any(|r| r.opcode == net::message::MESSAGE), "no 'x1 earned' for an empty stack");
+    assert_eq!(s.fields.with_drops(map, |d| d.len()), 0, "and it left the floor");
 }
 
 /// A `0x032C` body with the drop's object id where the client puts it: **offset 13**.
@@ -9780,7 +10193,7 @@ fn a_hair_change_is_broadcast_to_the_other_clients_without_a_reload() {
     assert_eq!(u32::from_le_bytes(seen[0].body[..4].try_into().unwrap()), my_id, "it names the changer");
     assert_eq!(seen[0].body[4], 1, "flag bit 0: a look follows");
     assert_eq!(&seen[0].body[5..5 + 195 + 5 * chr.equips.len()], &net::opcode::avatar_look(&chr)[..], "then the compact look, byte for byte");
-    assert!(seen[0].body[5..].windows(4).any(|w| u32::from_le_bytes(w.try_into().unwrap()) == 42_600), "the look carries the new hair id");
+    assert!(seen[0].body[5..].windows(4).any(|w| u32::from_le_bytes(w.try_into().unwrap()) == 42_604), "the look carries the new hair id - Ubel Hair in its default Green");
 }
 
 /// **`--look-reenter` is the fallback**: the leave, the enter with the new look, for that one
@@ -9805,7 +10218,7 @@ fn with_look_reenter_a_hair_change_is_a_leave_then_an_enter_for_the_other_client
     let ops: Vec<u16> = seen.iter().map(|r| r.opcode).collect();
     assert_eq!(ops, vec![net::userpool::USER_LEAVE_FIELD, net::userpool::USER_ENTER_FIELD], "leave then enter, no 0x02AE: {ops:x?}");
     assert_eq!(u32::from_le_bytes(seen[0].body[..4].try_into().unwrap()), my_id, "the leave names the changer, nobody else");
-    assert!(seen[1].body.windows(4).any(|w| u32::from_le_bytes(w.try_into().unwrap()) == 42_600), "the enter carries the new hair");
+    assert!(seen[1].body.windows(4).any(|w| u32::from_le_bytes(w.try_into().unwrap()) == 42_604), "the enter carries the new hair - Ubel Hair in its default Green");
 }
 
 /// **Putting on or taking off any equip reaches the other client at once.** The owner,
@@ -12523,7 +12936,7 @@ fn a_beauty_coupon_confirm_changes_the_hair_and_spends_the_coupon() {
     let use_tab = store::InventoryType::Use;
     let slot = store.add_item(id, use_tab, &store::Item::bundle(2_543_143, 1), 1).unwrap()[0].slot;
     let before = s.claimed_character().unwrap().hair;
-    assert_ne!(before, 42_600);
+    assert_ne!(before, 42_604);
 
     let mut body = slot.to_le_bytes().to_vec();
     body.extend_from_slice(&2_543_143u32.to_le_bytes());
@@ -12538,8 +12951,8 @@ fn a_beauty_coupon_confirm_changes_the_hair_and_spends_the_coupon() {
     assert_eq!(scs.len(), 1, "ONE StatChanged - the redraw and the unlock are the same packet: {out:?}");
     assert_eq!(scs[0].body[0], 1, "exclusive-request byte set, so the 0x0165 latch clears");
     assert_eq!(stat_changed_mask(&scs[0].body), net::stats::bits::HAIR, "{:?}", scs[0].body);
-    assert_eq!(stat_changed_first_u32(&scs[0].body), 42_600, "the new hair rides the packet");
-    assert_eq!(s.claimed_character().unwrap().hair, 42_600, "Übel Hair");
+    assert_eq!(stat_changed_first_u32(&scs[0].body), 42_604, "the new hair rides the packet");
+    assert_eq!(s.claimed_character().unwrap().hair, 42_604, "Übel Hair in its default Green");
     assert!(store.bag(id).unwrap().items_in(use_tab).all(|i| i.item.item_id != 2_543_143), "the coupon is spent");
 
     // The control: the same confirm again - the slot is empty now - is refused with the
@@ -12549,7 +12962,7 @@ fn a_beauty_coupon_confirm_changes_the_hair_and_spends_the_coupon() {
     assert_eq!(out[0].opcode, net::combat::STAT_CHANGED);
     assert_eq!(stat_changed_mask(&out[0].body), 0, "a refusal redraws nothing");
     assert_eq!(out[0].body[0], 1, "but still unlocks");
-    assert_eq!(s.claimed_character().unwrap().hair, 42_600);
+    assert_eq!(s.claimed_character().unwrap().hair, 42_604);
 
     // And a face coupon writes the face, with the FACE bit.
     let fslot = store.add_item(id, use_tab, &store::Item::bundle(2_890_911, 1), 1).unwrap()[0].slot;
@@ -12558,8 +12971,8 @@ fn a_beauty_coupon_confirm_changes_the_hair_and_spends_the_coupon() {
     let out = s.on_beauty_coupon_confirm(&body);
     let sc = out.iter().find(|r| r.opcode == net::combat::STAT_CHANGED).unwrap();
     assert_eq!(stat_changed_mask(&sc.body), net::stats::bits::FACE);
-    assert_eq!(stat_changed_first_u32(&sc.body), 22_039);
-    assert_eq!(s.claimed_character().unwrap().face, 22_039, "Übel Face");
+    assert_eq!(stat_changed_first_u32(&sc.body), 22_639);
+    assert_eq!(s.claimed_character().unwrap().face, 22_639, "Übel Face in its default Violet");
 }
 
 // ---------------------------------------------------------------------------------------
@@ -12887,6 +13300,48 @@ fn a_saved_key_layout_is_restored_right_after_the_setfield() {
     assert_eq!(slot(0x2A), (1, 1_001_001), "Slash Blast on LShift");
     assert_eq!(slot(0x34), (5, 52));
     assert_eq!(slot(0x10), (4, 8), "and Q is still the factory menu, not a zero");
+}
+
+/// **Key layouts and the pet's potions are per CHARACTER, not per account.** The owner, 2026-10-02:
+/// *"Can you also make sure that keymapping are also saved for character?"* Two characters on
+/// one account: the first binds LCtrl to Power Strike and picks potions 2000001 / 2000003 for
+/// the pet (keymap options A and B, the ids the live log shows); the second's field entry
+/// carries none of it, and its own choice leaves the first's alone.
+#[test]
+fn two_characters_on_one_account_keep_their_own_keys_and_pet_potions() {
+    let (mut s, store, id) = claimed_session();
+    let mut delta = vec![0u8, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 1, 0x1D, 1];
+    delta.extend_from_slice(&1_001_002u32.to_le_bytes());
+    s.on_keymap_change(&delta);
+    s.on_keymap_change(&[1, 0x81, 0x84, 0x1e, 0x00]); // option A = 2000001
+    s.on_keymap_change(&[2, 0x83, 0x84, 0x1e, 0x00]); // option B = 2000003
+
+    let account = s.claimed.as_ref().unwrap().account_id;
+    let other = store
+        .create_character(account, 0, &net::opcode::Character { name: "Second".into(), ..Default::default() })
+        .unwrap()
+        .id;
+    assert_ne!(other, id);
+    store.create_migration(account, other, 0, 0).unwrap();
+    let mut again = Session::new(store.clone(), s.config.clone());
+    again.claim_for_character(other);
+
+    let theirs = again.keymap_replies();
+    assert!(!theirs.iter().any(|r| r.opcode == net::keymap::KEYMAP_OPT_A || r.opcode == net::keymap::KEYMAP_OPT_B), "no pet potions leaked: {theirs:?}");
+    if let Some(km) = theirs.iter().find(|r| r.opcode == net::keymap::KEYMAP_INIT) {
+        let b = &km.body;
+        assert_ne!(u32::from_le_bytes(b[2 + 0x1D * 5..6 + 0x1D * 5].try_into().unwrap()), 1_001_002, "Power Strike leaked onto LCtrl");
+    }
+
+    again.on_keymap_change(&[1, 0x80, 0x84, 0x1e, 0x00]); // the second picks 2000000
+    let opt_a = |sess: &Session| {
+        sess.keymap_replies().into_iter().find(|r| r.opcode == net::keymap::KEYMAP_OPT_A).map(|r| r.body)
+    };
+    assert_eq!(opt_a(&again), Some(net::keymap::keymap_opt(2_000_000)));
+    assert_eq!(opt_a(&s), Some(net::keymap::keymap_opt(2_000_001)), "the first keeps its own");
+    let mine = s.keymap_replies();
+    let km = mine.iter().find(|r| r.opcode == net::keymap::KEYMAP_INIT).expect("the first's layout");
+    assert_eq!(u32::from_le_bytes(km.body[2 + 0x1D * 5..6 + 0x1D * 5].try_into().unwrap()), 1_001_002);
 }
 
 /// **A controller binding survives a map change, and does not land on the keyboard.** The owner,

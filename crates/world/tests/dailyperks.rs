@@ -192,9 +192,9 @@ fn the_tool_command_opens_the_three_option_menu() {
     let text = world::dailyperks::menu_text([false; world::dailyperks::PERKS.len()]);
     assert!(text.contains("Gain 1000 Leaf Points"));
     assert!(text.contains("Level up"));
-    assert!(text.contains("Reset AP & SP"));
+    assert!(!text.contains("Reset"), "the AP/SP reset is the Cash Shop's job since 2026-10-02: {text}");
     assert!(text.contains("Return to Henesys"));
-    assert_eq!(text.matches("#L").count(), 4, "the three favours and the Henesys escape, no more");
+    assert_eq!(text.matches("#L").count(), 3, "Leaf Points, a level and the Henesys escape, no more");
 }
 
 /// **The command is PUBLIC.** The owner, 2026-09-08: *"Introduce a new public command !tool"*. The
@@ -367,10 +367,10 @@ fn the_menu_marks_what_has_been_used_without_moving_anything() {
     assert_eq!(out.len(), 1);
     assert_eq!(
         out[0].body,
-        net::script::npc_menu(ADMIN_TEMPLATE, &world::dailyperks::menu_text([false, true, false, false])),
+        net::script::npc_menu(ADMIN_TEMPLATE, &world::dailyperks::menu_text([false, true, false])),
         "line 1 is marked used and lines 0 and 2 are not"
     );
-    assert!(out[0].what.contains("1 of 4 favours already used"), "{}", out[0].what);
+    assert!(out[0].what.contains("1 of 3 favours already used"), "{}", out[0].what);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -405,7 +405,7 @@ fn leaf_points_credits_the_wallet_once_and_says_so() {
     assert!(text.contains("LeafPoints PAID"), "{text}");
     assert!(text.contains("1000 Leaf Points"), "the balance reaches the screen: {text}");
     // And the other two favours are untouched.
-    for perk in [Perk::LevelUp, Perk::ResetApSp] {
+    for perk in [Perk::LevelUp, Perk::ReturnToHenesys] {
         assert_eq!(
             store.daily_claim_day(perk.scope(), i64::from(id), perk.store_key()).unwrap(),
             None,
@@ -558,101 +558,30 @@ fn a_level_the_curve_does_not_price_is_refused_without_spending_the_day() {
 }
 
 // ---------------------------------------------------------------------------------------
-// 3. Reset AP & SP
+// 3. The AP/SP reset is gone
 // ---------------------------------------------------------------------------------------
 
-/// **Every effect of the reset, and the conservation law under it.** Points spent on the four
-/// stats, points spent on max HP, and learned skills all come back - and the total is
-/// conserved rather than invented: the AP refunded is exactly what the stats and the ledger
-/// gave up.
+/// **The AP/SP reset is no longer a favour.** The owner, 2026-10-02: *"Remove the daily perk for AP
+/// and SP reset since that can be done via Cash Shop now."* Its old number, `#L3#` before the
+/// Henesys escape moved up to `#L2#`, now names nothing: answered out loud, and nothing about
+/// the character moves - no stat, no skill, and no claim stamped under the retired key.
 #[test]
-fn reset_returns_the_stats_the_hp_ledger_and_the_skills() {
+fn the_old_reset_number_names_nothing_and_resets_nothing() {
     let (mut s, store, account_id, id) = session();
     let mut chr = character(&store, account_id, id);
     chr.strength = 24;
-    chr.dexterity = 10;
-    chr.intelligence = 4;
-    chr.luck = 4;
-    chr.ap = 3; // some already unspent, which must survive
     store.save_character_progress(&chr).unwrap();
-    // One point into max HP, recorded the only moment it is distinguishable from a level-up.
-    store.record_ap_spend(id, 1, 0).unwrap();
-    let before = character(&store, account_id, id);
     store.set_skill_level(id, 1_000_000, 3).unwrap();
-    assert_eq!(store.skills(id).unwrap().len(), 1);
 
-    let out = take(&mut s, Perk::ResetApSp);
+    s.handle(&tool());
+    let out = s.handle(&pick(3));
     assert_well_formed(&out);
-
-    let after = character(&store, account_id, id);
-    // (24-4) + (10-4) + 0 + 0 = 26 from the stats, plus 1 from the HP ledger.
-    let expected_refund = 26 + 1;
-    assert_eq!(after.ap, before.ap + expected_refund, "points in equals points out");
-    assert_eq!(
-        (after.strength, after.dexterity, after.intelligence, after.luck),
-        (4, 4, 4, 4),
-        "every stat back to the floor"
-    );
-    assert_eq!(
-        after.max_hp,
-        before.max_hp - net::abilityup::policy::MAX_HP_PER_AP,
-        "the HP that point bought is removed with the constant that granted it"
-    );
-    assert_eq!(store.ap_spend(id).unwrap().total(), 0, "and the ledger is cleared");
-    assert!(store.skills(id).unwrap().is_empty(), "the skill is unlearned");
-    assert!(log_of(&out).contains("ResetApSp PAID"), "{}", log_of(&out));
-}
-
-/// **The second reset the same day changes nothing**, and that is a stronger claim than it
-/// looks: `!resetap` is idempotent by construction, so a broken gate here would be invisible
-/// on the stats. What it would not be invisible on is the *skills* - so this one re-learns a
-/// skill between the two attempts and checks it is still there.
-#[test]
-fn reset_refuses_the_second_time_the_same_day() {
-    let (mut s, store, account_id, id) = session();
-    store.set_skill_level(id, 1_000_000, 3).unwrap();
-    take(&mut s, Perk::ResetApSp);
-    assert!(store.skills(id).unwrap().is_empty());
-
-    // Spend again, the way a player would between two clicks.
-    let mut chr = character(&store, account_id, id);
-    chr.strength = 30;
-    store.save_character_progress(&chr).unwrap();
-    store.set_skill_level(id, 1_000_000, 2).unwrap();
-
-    let out = take(&mut s, Perk::ResetApSp);
-    assert_well_formed(&out);
-    assert!(log_of(&out).contains("NOTHING PAID"), "{}", log_of(&out));
-    let after = character(&store, account_id, id);
-    assert_eq!(after.strength, 30, "the second reset did not run");
-    assert_eq!(store.skills(id).unwrap().len(), 1, "and the skill is still learned");
-}
-
-/// Nothing spent means nothing to give back, **and the day is not spent either**.
-#[test]
-fn a_character_with_nothing_to_reset_is_refused_without_spending_the_day() {
-    let (mut s, store, account_id, id) = session();
-    let mut chr = character(&store, account_id, id);
-    // The creation roll is 12/5/4/4, which is already above the floor - so "nothing spent"
-    // has to be set up explicitly rather than assumed of a fresh character.
-    chr.strength = 4;
-    chr.dexterity = 4;
-    chr.intelligence = 4;
-    chr.luck = 4;
-    store.save_character_progress(&chr).unwrap();
-    assert_eq!(store.skills(id).unwrap().len(), 0);
-    assert_eq!(store.ap_spend(id).unwrap().total(), 0);
-
-    let out = take(&mut s, Perk::ResetApSp);
-    assert_well_formed(&out);
-    assert!(log_of(&out).contains("NOTHING CLAIMED"), "{}", log_of(&out));
-    assert_eq!(
-        store
-            .daily_claim_day(Perk::ResetApSp.scope(), i64::from(id), Perk::ResetApSp.store_key())
-            .unwrap(),
-        None,
-        "a no-op must not eat a day"
-    );
+    assert!(!out.is_empty(), "a number the menu never offered is still answered");
+    assert!(!log_of(&out).contains("PAID:"), "{}", log_of(&out));
+    assert_eq!(character(&store, account_id, id).strength, 24, "no stat came back");
+    assert_eq!(store.skills(id).unwrap().len(), 1, "no skill was unlearned");
+    assert_eq!(store.daily_claim_day(store::SCOPE_CHARACTER, i64::from(id), "resetapsp").unwrap(), None);
+    assert_eq!(Perk::ReturnToHenesys.selection(), 2, "the escape is #L2# now");
 }
 
 // ---------------------------------------------------------------------------------------
@@ -721,10 +650,6 @@ fn return_to_henesys_moves_the_record_once_a_day_and_never_charges_for_a_no_op()
 #[test]
 fn all_three_can_be_taken_once_each_in_a_day_and_no_more() {
     let (mut s, store, account_id, id) = session();
-    let mut chr = character(&store, account_id, id);
-    chr.strength = 20; // something to reset
-    store.save_character_progress(&chr).unwrap();
-
     for perk in PERKS {
         let out = take(&mut s, perk);
         assert_well_formed(&out);
@@ -742,8 +667,8 @@ fn all_three_can_be_taken_once_each_in_a_day_and_no_more() {
         net::script::npc_menu(ADMIN_TEMPLATE, &world::dailyperks::menu_text([true; world::dailyperks::PERKS.len()]))
     );
     // **A second click refuses, and this deliberately does not pin which refusal.** There are
-    // two shapes - "you already had this today" and the pre-claim "there is nothing to give
-    // back" - and which one a spent `Reset AP & SP` produces depends on an ordering decision
+    // two shapes - "you already had this today" and a pre-claim refusal such as "you are already
+    // in Henesys" - and which one a spent favour produces depends on an ordering decision
     // (`grant_daily_perk` step 0) that is about the *sentence*, not about the gate. Pinning it
     // here would make a wording improvement look like a regression. What must hold, and what is
     // asserted, is that no favour ran twice and that the refusal was said out loud.

@@ -94,8 +94,9 @@ SETUP
                                         (from the world hub's directory)
 
    Every player has !online (who is on, across channels), !rates, !scroll and
-   !tool - four favours a day: Leaf Points, a level, an AP/SP reset, and a
-   teleport to Henesys for anyone stuck in a map. Each is once per UTC day.
+   !tool - three favours a day: Leaf Points, a level, and a teleport to
+   Henesys for anyone stuck in a map. Each is once per UTC day. (AP and SP
+   resets are bought in the Cash Shop.)
 
    The code appears as a chat notice on your screen and nowhere else - the
    server keeps only a hash and never logs it. The same codes come from this
@@ -212,6 +213,25 @@ THE DISCORD STATUS MESSAGE
 
   The URL is a secret: anyone who has it can post as the webhook. Do not share this folder's
   copy of it.
+
+DAMAGE CHEATERS: damage-suspects.log
+------------------------------------
+
+The game client works out its own damage and tells the server. The server now works out
+the most each hit could be for that character - weapon, gear, stats, attack buffs, the
+skill used and their best stars or arrows - and a hit more than 25% over that is CAPPED
+to it. Every capped hit adds a line to damage-suspects.log in this folder: the date, the
+character, the account, what was claimed and what was expected. A name that shows up
+again and again is someone to look at.
+
+Every skill is checked, including the thief and archer ones with their own rules: Three
+Snails and Shadow Meso deal a set amount, Lucky Seven uses LUK, Arrow Bomb's percent comes
+from its own tooltip. Only an attack the server has no numbers for at all is applied as the
+client says, and world-ch0.log notes it as "unchecked".
+
+The check has not yet been measured against a full night of honest play. If an honest
+player's name appears in damage-suspects.log, or players say their hits feel cut short,
+restart with -DamageGuardLogOnly: the same log, but every hit is applied in full.
 
 IF A SERVER EXITS ON ITS OWN
 ----------------------------

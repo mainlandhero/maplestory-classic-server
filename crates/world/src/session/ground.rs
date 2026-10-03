@@ -74,13 +74,13 @@ impl Session {
         // un-snapped point is what the coins fall FROM. See `crate::drops::arc_from`.
         let (rest_x, rest_y) = self.config.footholds.rest_at(chr.map_id, x, y, (x, y));
 
-        let in_slot = self
-            .store
-            .bag_items(chr.id, inv)
-            .ok()
-            .and_then(|rows| rows.iter().find(|i| i.slot == slot).map(|i| i.item.kind.quantity()))
-            .unwrap_or(0);
-        if in_slot == 0 {
+        let row = self.store.bag_items(chr.id, inv).ok().and_then(|rows| rows.into_iter().find(|i| i.slot == slot));
+        let in_slot = row.map_or(0, |r| r.item.kind.quantity());
+        // **An empty star stack drops like any item** (the owner, 2026-10-02: *"A star that has 0
+        // ammo is still allowed to be dropped on the ground and picked up"*) - whole, since
+        // there is nothing to split. `remove_item` takes a 0 row whatever count it is given.
+        let empty_stars = row.is_some_and(|r| in_slot == 0 && net::bag::bundle_has_serial(r.item.item_id));
+        if in_slot == 0 && !empty_stars {
             return self.refuse_drop(m, "there is nothing in that slot");
         }
         // **Dropping part of a stack.** The owner, 2026-09-09: *"I see that partial drop is not
@@ -537,15 +537,19 @@ impl Session {
                     // The client composes "<item> x<n> earned." from its own string table.
                     // A zero count would make it format a string it never built, so the
                     // builder refuses one - see net::message::item_gained.
-                    let picked = drop.quantity().max(1);
-                    out.push(Reply {
-                        opcode: net::message::MESSAGE,
-                        body: net::message::item_gained(drop.item_id(), u32::from(picked)),
-                        what: format!(
-                            "Message: picked up {} x{picked}, screen message area",
-                            drop.item_id()
-                        ),
-                    });
+                    // An EMPTY star stack has no count to announce, and "x1" would be a lie -
+                    // it arrives in the bag at 0 and says nothing.
+                    if drop.quantity() > 0 {
+                        let picked = drop.quantity();
+                        out.push(Reply {
+                            opcode: net::message::MESSAGE,
+                            body: net::message::item_gained(drop.item_id(), u32::from(picked)),
+                            what: format!(
+                                "Message: picked up {} x{picked}, screen message area",
+                                drop.item_id()
+                            ),
+                        });
+                    }
                     // Only now is the drop really gone. The leave packet goes last, after
                     // the bag write it depends on has succeeded - and it goes to the whole
                     // field, not just this picker.

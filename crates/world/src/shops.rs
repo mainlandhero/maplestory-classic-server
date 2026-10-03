@@ -155,6 +155,11 @@ pub struct ItemData {
     /// three event stars. Kept as an integer so this struct stays `Eq`; the wire wants an
     /// IEEE double and `net::classicshop` converts at the one place it is written.
     pub unit_price_milli: u32,
+    /// `info/incWAT` on a throwing star, arrow or bullet - the **attack** it adds to a throw,
+    /// absolute (Subi 15 ... Hwabi 29, arrows 0..3). `0` for everything else, and for a file
+    /// older than 2026-10-02 (six columns). **[L]**, read out of `Item/Consume/0207.img`: this
+    /// client calls it `incWAT`, not `incPAD`. `crate::damageguard` counts it.
+    pub ammo_attack: u32,
 }
 
 impl ItemData {
@@ -205,6 +210,15 @@ pub struct Shop {
     /// entries is a separate job with its own ambiguity.
     pub map_label: String,
     pub items: Vec<ShopItem>,
+}
+
+impl Shop {
+    /// A **general store**: every Grocer, the two town-hall General Stores and the 24 Hr
+    /// Mobile Store. The owner, 2026-10-02: *"All stars should be rechargeable at any general
+    /// store"* - so these counters recharge every star, not only the Subi they stock.
+    pub fn is_general_store(&self) -> bool {
+        self.role == "Grocer" || self.role == "Mobile Store" || self.role.ends_with("General Store")
+    }
 }
 
 /// Every shop, plus everything that went wrong loading them.
@@ -287,6 +301,7 @@ pub fn load_item_data(path: &Path) -> HashMap<u32, ItemData> {
                 trade_block: v[3] != 0,
                 slot_max: u16::try_from(v[4]).unwrap_or(u16::MAX),
                 unit_price_milli,
+                ammo_attack: f.get(6).and_then(|x| x.parse::<u32>().ok()).unwrap_or(0),
             },
         );
     }
@@ -644,6 +659,29 @@ fn join_ids(ids: &[u32]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **Which counters are general stores**, against every role `data/shops.txt` uses: the
+    /// ten Grocers, the two town-hall General Stores and the Mobile Store - thirteen - and no
+    /// weapon, armor, scroll or furniture seller.
+    #[test]
+    fn the_general_stores_are_the_grocers_the_general_stores_and_the_mobile_store() {
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/shops.txt")).unwrap();
+        let mut general = Vec::new();
+        for line in text.lines().filter_map(|l| l.strip_prefix("shop:")) {
+            let role = line.split('|').nth(1).unwrap().trim().to_string();
+            let shop = Shop { npc: String::new(), role: role.clone(), map_label: String::new(), items: Vec::new() };
+            if shop.is_general_store() {
+                general.push(role);
+            } else {
+                assert!(
+                    ["Seller", "Furnishings", "Scroll Shop", "Merchant", "Sauna Manager"].iter().any(|k| role.contains(k)),
+                    "an unclassified role: {role}"
+                );
+            }
+        }
+        assert_eq!(general.len(), 13, "{general:?}");
+        assert_eq!(general.iter().filter(|r| *r == "Grocer").count(), 10);
+    }
 
     /// **Both scrolls stack to 100**, overriding the client's own `slotMax`.
     ///

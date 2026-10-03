@@ -52,6 +52,7 @@ pub mod firsttime;
 pub mod consumables;
 pub mod cosmetics;
 pub mod damage;
+pub mod damageguard;
 pub mod footholds;
 pub mod freemarket;
 pub mod itemrecovery;

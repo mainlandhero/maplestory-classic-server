@@ -212,6 +212,18 @@ impl ClassicShopRow {
         Self { unit_price_milli, ..self }
     }
 
+    /// A **recharge-only** row: a star or bullet the counter does not sell but will top up.
+    ///
+    /// Price `0` is what makes it recharge-only, and **[L]**: the row loop copies a `207`/`233`
+    /// row into the Recharge list at `141fa001a` *first*, then at `141fa030c` jumps a row whose
+    /// price (`row+0x38`), barter count (`+0x4c`) and point cost (`+0x58`) are all zero
+    /// straight to the row's destructor at `141fa1178` - past `+0x340` and every Buy tab. So it
+    /// is in the Recharge list and nowhere a player can buy it. The server must still refuse a
+    /// buy that names it, because the row index is ours and a forged body can name any index.
+    pub fn recharge_only(item_id: u32, unit_price_milli: u32) -> Self {
+        Self::buy(item_id, 0, 1).with_unit_price(unit_price_milli)
+    }
+
     /// The unit price as the client reads it, or `None` when this row carries no such field.
     pub fn unit_price(&self) -> Option<f64> {
         crate::bag::bundle_has_serial(self.item_id)

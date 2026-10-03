@@ -77,7 +77,17 @@ impl Session {
                     // **Never zero.** `ItemData::slot_max` is zero for 2495 of the 2785 rows in
                     // `gm-handbook/itemdata.txt`, and a zero cap makes every purchase of that row
                     // fail with no message at all - to the player or to us.
-                    i16::try_from(self.config.shops.max_per_purchase(item.item_id)).unwrap_or(100),
+                    //
+                    // **A star or bullet row sells ONE SET per purchase** (the owner, 2026-10-02:
+                    // *"on purchase, the player should receive a full stack of that star consumable
+                    // instead of just a singular 1"*), so its cap is 1, which the client draws as a
+                    // plain yes/no instead of a quantity box (`research/classic-shop-rows.md` §3
+                    // row 42, `== 1`). `classic_buy` hands over the full `slotMax`.
+                    if net::bag::bundle_has_serial(item.item_id) {
+                        1
+                    } else {
+                        i16::try_from(self.config.shops.max_per_purchase(item.item_id)).unwrap_or(100)
+                    },
                 )
                 // **The recharge price rides on the same row.** The owner, 2026-09-06: stars
                 // "should be able to recharge ... at general merchants". The client offers
@@ -116,6 +126,28 @@ impl Session {
             return None; // a zero-row shop is a different client arm, not an empty counter
         }
 
+        // **Every star recharges at a general store**, stocked or not. The owner, 2026-10-02,
+        // after a dropped Wolbi could not be recharged at a Grocer that sells only Subi: *"All
+        // stars should be rechargeable at any general store."* The client offers Recharge only
+        // for an id in its Recharge list, and that list is built from the rows we send - so
+        // each star the counter does not stock goes out as a price-0 recharge-only row
+        // (`ClassicShopRow::recharge_only`: in the Recharge list, in no Buy tab). Appended
+        // AFTER the stocked rows so no Buy row's index moves. Stars only - `207xxxx` with a
+        // unit price and a stack size; this client has no bullets in its item table.
+        if shop.is_general_store() {
+            let mut stars: Vec<(u32, u32)> = self
+                .config
+                .shops
+                .item_data
+                .iter()
+                .filter(|(id, d)| **id / 10_000 == 207 && d.unit_price_milli > 0 && d.slot_max > 0)
+                .filter(|(id, _)| !rows.iter().any(|r| r.item_id == **id))
+                .map(|(id, d)| (*id, d.unit_price_milli))
+                .collect();
+            stars.sort_unstable();
+            rows.extend(stars.into_iter().map(|(id, unit)| net::classicshop::ClassicShopRow::recharge_only(id, unit)));
+        }
+
         // **The blast-radius control survives the opcode change**, and is worth more here than
         // it was: `--shop-rows 1` tells a bad row apart from too many rows in one launch,
         // which is the scarcest thing on this project. A zero-row shop is a different client
@@ -130,14 +162,16 @@ impl Session {
         let body = net::classicshop::classic_open_shop(template, &rows);
         let what = format!(
             "ClassicOpenShop 0x055D: {} ({}) for character {character_id} - {} rows ({} buy, \
-             {} sell, {} buy-back, {} rechargeable with a unit price), {} bytes{}{}",
+             {} sell, {} buy-back, {} rechargeable with a unit price, {} of them recharge-only), \
+             {} bytes{}{}",
             shop.npc,
             shop.role,
             rows.len(),
-            rows.iter().filter(|r| !r.sell && !r.buy_back).count(),
+            rows.iter().filter(|r| !r.sell && !r.buy_back && r.price > 0).count(),
             rows.iter().filter(|r| r.sell).count(),
             rows.iter().filter(|r| r.buy_back).count(),
             rows.iter().filter(|r| r.unit_price().is_some_and(|p| p > 0.0)).count(),
+            rows.iter().filter(|r| r.price == 0 && r.unit_price().is_some_and(|p| p > 0.0)).count(),
             body.len(),
             if skipped_free > 0 {
                 format!(" - {skipped_free} row(s) DROPPED for a zero buy price")
@@ -210,6 +244,14 @@ impl Session {
                 &format!("row {row_index} is not among the {} rows we sent", rows.len()),
             );
         };
+        // **A recharge-only row is not for sale.** The client never offers it (price 0 skips
+        // every Buy tab), so a buy naming one is a forged body - and would be free stars.
+        if row.price == 0 && !row.buy_back {
+            return self.classic_refused(
+                net::classicshop::RESULT_NOT_ENOUGH_MESOS,
+                &format!("row {row_index} (item {}) is recharge-only, not for sale", row.item_id),
+            );
+        }
         // The client also names the item. Disagreement means our list and its list have
         // drifted, and buying the wrong thing is worse than refusing.
         if row.item_id != item_id {
@@ -243,21 +285,28 @@ impl Session {
         }
 
         let cap = u16::try_from(row.max_per_purchase.max(1)).unwrap_or(1);
-        let qty = quantity.clamp(1, cap);
+        // **A star or bullet is sold by the SET**: one purchase, the row's price, a full
+        // `slotMax` stack (Subi 500, Ilbi 800) - whatever count the client names, because the
+        // row went out with a cap of 1 (see `open_shop_for`). Everything else by the unit.
+        let set = net::bag::bundle_has_serial(row.item_id).then(|| self.config.shops.max_stack(row.item_id));
+        let qty = if set.is_some() { 1 } else { quantity.clamp(1, cap) };
         let cost = u64::from(qty).saturating_mul(row.price);
         let cost = u32::try_from(cost).unwrap_or(u32::MAX);
         let max_stack = self.config.shops.max_per_purchase(row.item_id);
         let item = if inv == store::InventoryType::Equip {
             store::Item::equip(row.item_id)
         } else {
-            store::Item::bundle(row.item_id, qty)
+            store::Item::bundle(row.item_id, set.unwrap_or(qty))
         };
         match self.store.buy_item(chr.id, inv, &item, max_stack, cost) {
             Ok(changed) => {
                 let what = if row.buy_back {
                     format!("bought BACK {qty}x {} for {cost} mesos", row.item_id)
                 } else {
-                    format!("bought {qty}x {} for {cost} mesos", row.item_id)
+                    match set {
+                        Some(n) => format!("bought a SET of {n} x {} for {cost} mesos", row.item_id),
+                        None => format!("bought {qty}x {} for {cost} mesos", row.item_id),
+                    }
                 };
                 let mut out = vec![Reply {
                     opcode: net::classicshop::CLASSIC_SHOP_RESULT,
@@ -310,6 +359,41 @@ impl Session {
                 &format!("item {item_id} is a quest item and may not be sold"),
             );
         }
+        // **A sale of something that is no longer there is a stale view, not a cheat.** The
+        // owner, 2026-10-02: *"When users sell to shop too fast, sometimes their view does not
+        // refresh fast enough and they try to sell the same thing again to which the server
+        // refuses."* The Sell list is drawn from the bag and redraws on the `0x0070` that
+        // follows a sale (plan step 29c, on screen) - but a second click can leave before that
+        // lands. So when the slot is empty, holds a different item, or holds fewer than asked,
+        // nothing is sold and the slot's REAL state goes back, which redraws the list, under
+        // the silent type 16: no "not enough mesos" for a click that was merely early.
+        let held = self.store.inventory_slot(chr.id, inv, slot).ok().flatten();
+        let stale = match &held {
+            None => Some("the slot is already empty".to_string()),
+            Some(h) if h.item_id != item_id => Some(format!("the slot holds item {}, not {item_id}", h.item_id)),
+            // An EMPTY star stack (`Store::spend_ammo`) is sold whole, whatever count is named.
+            Some(h)
+                if inv != store::InventoryType::Equip
+                    && h.kind.quantity() < quantity
+                    && !(h.kind.quantity() == 0 && net::bag::bundle_has_serial(h.item_id)) =>
+            {
+                Some(format!("the slot holds {}, not {quantity}", h.kind.quantity()))
+            }
+            Some(_) => None,
+        };
+        if let Some(why) = stale {
+            let mut out = vec![Reply {
+                opcode: net::classicshop::CLASSIC_SHOP_RESULT,
+                body: net::classicshop::classic_shop_refused(net::classicshop::RESULT_ACKNOWLEDGED),
+                what: format!(
+                    "ClassicShopResult type 16 (acknowledged, nothing sold): a STALE sell of {quantity}x \
+                     {item_id} from {inv:?} slot {slot} - {why}; the slot's real state follows so the \
+                     Sell list redraws"
+                ),
+            }];
+            out.extend(self.slot_resync(inv, slot, held.as_ref()));
+            return out;
+        }
         // The sell price is the client's own `Item.wz` price - the owner, 2026-08-19: *"The prices
         // client side most likely represents sell prices."* `data/shops.txt` holds only what
         // the NPC charges.
@@ -324,11 +408,11 @@ impl Session {
                     body: net::classicshop::classic_shop_refused(net::classicshop::RESULT_ACKNOWLEDGED),
                     what: format!("ClassicShopResult type 16 (acknowledged, no tab change): sold {quantity}x {item_id} from slot {slot}"),
                 }];
-                out.push(Reply {
-                    opcode: net::inventory::INVENTORY_OPERATION,
-                    body: net::inventory::inventory_removed(inv.as_u8() as i8, slot as i16),
-                    what: format!("InventoryOperation REMOVE: {inv:?} slot {slot}"),
-                });
+                // **What is LEFT in the slot**, not "the slot is gone": until 2026-10-02 every
+                // sale sent a REMOVE, so selling 5 of 100 potions emptied the slot on screen
+                // while the server still held 95.
+                let left = self.store.inventory_slot(chr.id, inv, slot).ok().flatten();
+                out.extend(self.slot_resync(inv, slot, left.as_ref()));
                 out.extend(self.meso_reply(chr.id));
                 // **NO Buy Back, and NO type-10 refresh. Both kill this client.**
                 //
@@ -359,6 +443,34 @@ impl Session {
             ),
             Err(e) => self
                 .classic_refused(net::classicshop::RESULT_NOT_ENOUGH_MESOS, &format!("sell failed: {e}")),
+        }
+    }
+
+    /// One bag slot as the server holds it, for the client to redraw: a REMOVE when it is
+    /// empty, a quantity change for a stack, and for anything else a REMOVE and then the item
+    /// itself, so a slot that changed under the client's feet is replaced rather than merged.
+    fn slot_resync(&self, inv: store::InventoryType, slot: u16, held: Option<&store::Item>) -> Vec<Reply> {
+        let removed = Reply {
+            opcode: net::inventory::INVENTORY_OPERATION,
+            body: net::inventory::inventory_removed(inv.as_u8() as i8, slot as i16),
+            what: format!("InventoryOperation REMOVE: {inv:?} slot {slot}"),
+        };
+        match held {
+            None => vec![removed],
+            Some(item) if inv != store::InventoryType::Equip => vec![Reply {
+                opcode: net::inventory::INVENTORY_OPERATION,
+                body: net::inventory::inventory_quantity(inv.as_u8() as i8, slot as i16, item.kind.quantity()),
+                what: format!("InventoryOperation QUANTITY: {inv:?} slot {slot} now holds {} of item {}", item.kind.quantity(), item.item_id),
+            }],
+            Some(item) => {
+                let mut out = vec![removed];
+                out.extend(self.inventory_added_replies(
+                    inv,
+                    &[store::InvItem { inv_type: inv, slot, item: item.clone() }],
+                    "the slot as the server holds it",
+                ));
+                out
+            }
         }
     }
 
@@ -418,7 +530,8 @@ impl Session {
         }
         // The window offers Recharge only for an id this counter listed with a unit price, so
         // anything else is a drifted list or a forged body - refused, not priced from the
-        // item table, because a shop that does not stock a star should not recharge it.
+        // item table. A general store lists every star (recharge-only rows, `open_shop_for`);
+        // any other counter recharges only a star it stocks.
         let Some(unit_milli) = rows
             .iter()
             .filter(|r| r.item_id == item_id)
