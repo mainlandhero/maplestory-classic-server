@@ -131,7 +131,7 @@ later** of `0xC0000005` instead - which is the same pattern as local runs 2 and 
 | 00:00:02.964 | pool sentry armed, repair on, adaptive 2000 ms, dumps capped at 0 |
 | 00:03:35.825 | **damage found and repaired**, bucket 1, `0x0000000100000020` |
 | 00:04:56.374 | **`CLIENT FAULT` 0xC0000005 at `0x14094e1d0`** |
-| 00:05:03.103 | 1.2 GB dump written to `C:\Users\wes10\Downloads\MapleCW-setup\MapleCW\dumps\` |
+| 00:05:03.103 | 1.2 GB dump written to `C:\MapleCW\dumps\` |
 | 00:05:03.206 | last line: heartbeat, `1 confirmed finding(s)`, `1 header(s) repaired` |
 
 Traffic was idle: of 747 lines the opcodes are `0x03E4` control ack (228) and `0x0453` NPC idle
@@ -147,7 +147,7 @@ object in the size class the writer is known to corrupt. What is **not** proven 
 pointer was corrupted by *that* writer. A stale pointer into a recycled slot produces the same
 fault, and so does an ordinary use-after-free with no writer involved.
 
-**One artifact settles it, and it exists**: the 1.2 GB dump on wes10's machine. The faulting
+**One artifact settles it, and it exists**: the 1.2 GB dump on that player's machine. The faulting
 `rcx` is the whole question - a value that differs from a live node address by `1` or `2` in the
 low dword is the writer's signature and nothing else's. `tools/dumpwalk.py` and
 `tools/poolchain.py` read these dumps already.
@@ -177,6 +177,6 @@ cheapest crash rate this project has: it needs no hook log and no dump from the 
 * The `0x40` quarantine (`-GuardPage`, default bucket `0x40`) is aimed at exactly this class,
   and **has never been shipped to these users** - it is not in what they are running.
 * The `0x20` repair they *are* running demonstrably worked and demonstrably was not enough.
-* Ask wes10 for the dump, or for the output of the two repo tools run against it. It is the only
+* Ask that player for the dump, or for the output of the two repo tools run against it. It is the only
   thing that turns §6 from an argument into a measurement.
 * Count `os error 10054` per session in the server log as a standing crash metric.

@@ -3382,7 +3382,7 @@ launcher's `DEFAULT_SESSION` carries `guardpage=0x20+0x40`, so these users get i
 launcher build. See START HERE for the kill switch.
 
 Still circumstantial, and the artifact that settles it exists: a **1.2 GB dump on that player's
-machine** (`C:\Users\wes10\…\dumps\`). The faulting `rcx` is the whole question - off by 1 or
+machine** (`C:\MapleCW\dumps\`). The faulting `rcx` is the whole question - off by 1 or
 2 in the low dword is the writer's signature and nothing else's. Also free and worth adopting:
 `os error 10054` per session in `world.log` is the **server-side fingerprint of a client dying**
 (a clean logout closes gracefully), and in the one window the server logs cover it was 2 of 2.
