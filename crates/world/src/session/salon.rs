@@ -135,7 +135,12 @@ impl Session {
             });
             return Some(vec![Reply {
                 opcode: net::script::SCRIPT_MESSAGE,
-                body: net::script::npc_avatar(template, salon::choice_prompt(second), &pool),
+                body: net::script::npc_avatar(
+                    template,
+                    second.coupon(Tier::Signature).unwrap_or(0),
+                    salon::choice_prompt(second),
+                    &pool,
+                ),
                 what: format!(
                     "ScriptMessage AVATAR (type 0x0a) from NPC {template}: face {} in {} eye colour(s) this client draws; the reply's index picks one",
                     chr.face,
@@ -164,7 +169,14 @@ impl Session {
                 });
                 Some(vec![Reply {
                     opcode: net::script::SCRIPT_MESSAGE,
-                    body: net::script::npc_avatar(template, salon::choice_prompt(desk), &pool),
+                    // The coupon types the box: without it a colour box rewrites every
+                    // candidate to the current colour (net::script::SCRIPT_TYPE_AVATAR).
+                    body: net::script::npc_avatar(
+                        template,
+                        desk.coupon(Tier::Signature).unwrap_or(0),
+                        salon::choice_prompt(desk),
+                        &pool,
+                    ),
                     what: format!(
                         "ScriptMessage AVATAR (type 0x0a) from NPC {template}: {} {desk:?} candidates for a {} character ({}), drawn on the player; the reply's index picks one",
                         pool.len(),
@@ -356,6 +368,12 @@ mod tests {
         b
     }
 
+    /// The coupon a type-0x0a pick box names - its first body field.
+    fn coupon_in(body: &[u8]) -> u32 {
+        let b = &body[net::script::SCRIPT_HEAD_LEN..];
+        u32::from_le_bytes(b[..4].try_into().unwrap())
+    }
+
     /// The candidate ids in a type-0x0a pick box.
     fn ids_in(body: &[u8]) -> Vec<u32> {
         let b = &body[net::script::SCRIPT_HEAD_LEN..];
@@ -434,6 +452,7 @@ mod tests {
 
         let out = s.on_script_reply(&menu_reply(salon::MENU_SECOND));
         assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_AVATAR, "{:?}", names(&out));
+        assert_eq!(coupon_in(&out[0].body), salon::SIGNATURE_EYE_COLOR_COUPON, "types the box as eye colour (0xd)");
         let all: Vec<u32> = (0..9).map(|c| 22_035 + c * 100).collect();
         assert_eq!(ids_in(&out[0].body), all, "every eye colour of Frieren Face");
 
@@ -464,6 +483,7 @@ mod tests {
         assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_MENU, "{:?}", names(&out));
         let out = s.on_script_reply(&menu_reply(salon::MENU_SIGNATURE));
         assert_eq!(ids_in(&out[0].body), (42_540..=42_547).collect::<Vec<_>>());
+        assert_eq!(coupon_in(&out[0].body), salon::SIGNATURE_COLOR_COUPON, "types the box as hair colour (0x17), not style");
         s.handle(&avatar_pick(5));
         assert_eq!(look(&store, id), (42_545, 22_035), "Frieren Hair in blue");
     }
