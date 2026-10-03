@@ -25,8 +25,8 @@
 //! * **Equip** - "Equipment drops will remain the same": the community table's seven.
 //! * **Use** - the owner's list of the same day, potions and food, with their quantities. The
 //!   2026-09-23 potion bundles (100 Blue, Orange, White, 20 Elixir) are in it unchanged.
-//!   **Salad** and **Fried Chicken** were given with no quantity, so they are one each; every
-//!   other food on that list is fifty. That is the reading to change if it was an omission.
+//!   **Salad** and **Fried Chicken** are a hundred each (the owner, the same day, after the
+//!   list first went out without their quantities); every other food on it is fifty.
 //! * **Scroll** - the 2026-09-23 scrolls, split out of the old Use lines: every 60% and 10%
 //!   attack scroll, and the community table's four non-attack scrolls.
 //! * **Etc** - ores eight each, the Screw ten.
@@ -72,8 +72,8 @@ pub const USE: [Prize; 20] = [
     (2_022_000, 20),  // Pure Water
     (2_012_002, 10),  // Sap of Ancient Tree
     (2_012_001, 10),  // Fairy's Honey
-    (2_020_000, 1),   // Salad - no quantity given
-    (2_020_001, 1),   // Fried Chicken - no quantity given
+    (2_020_000, 100), // Salad
+    (2_020_001, 100), // Fried Chicken
     (2_020_002, 50),  // Cake
     (2_020_003, 50),  // Pizza
     (2_020_004, 50),  // Hamburger
@@ -191,7 +191,7 @@ mod tests {
             (2_012_002, 10),
             (2_012_001, 10),
         ]);
-        assert_eq!(USE[8..10], [(2_020_000, 1), (2_020_001, 1)], "Salad and Fried Chicken: no quantity given");
+        assert_eq!(USE[8..10], [(2_020_000, 100), (2_020_001, 100)], "Salad and Fried Chicken");
         assert!(USE[10..].iter().all(|&(_, q)| q == 50));
         assert_eq!(USE[10..].iter().map(|&(id, _)| id).collect::<Vec<_>>(), (2_020_002..=2_020_011).collect::<Vec<_>>());
         assert!(EQUIPS.iter().all(|&(_, q)| q == 1));
