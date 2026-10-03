@@ -1170,30 +1170,46 @@ fn use_slot(store: &Arc<Store>, id: u32, slot: u16) -> u16 {
         .unwrap_or(0)
 }
 
-/// The Grocer's Subi rows go out with the unit price in the eight bytes the client reads as
-/// the recharge double - both the Buy row and its Sell twin - and the potion row is unchanged.
+/// The client's Buy index for the first row of `item_id` that is for sale: its position among
+/// the rows that are not recharge-only, which is how the window counts
+/// (`net::classicshop::buy_row_index`).
+fn client_buy_index(rows: &[net::classicshop::ClassicShopRow], item_id: u32) -> u16 {
+    let kept: Vec<_> = rows.iter().filter(|r| !r.is_recharge_only() && !r.buy_back).collect();
+    kept.iter().position(|r| r.item_id == item_id).expect("the counter sells it") as u16
+}
+
+/// **The Grocer's Subi gets a recharge row IN FRONT of its Buy row**, and that row is what
+/// makes Recharge appear. Read off the bytes we send: the window prices a bag stack from the
+/// FIRST Subi row in its Recharge list as `(row+0x10c - count) * unitPrice` and draws Recharge
+/// only above zero (`research/shop-recharge-button.md`). The recharge row carries the full
+/// 500 there; the Buy row keeps 1, one set per purchase, which alone priced 480 Subi at
+/// `(1 - 480) * 0.3` - below zero, no button. The potion row carries no double at all.
 #[test]
-fn a_grocers_star_rows_carry_the_recharge_price_and_the_potion_row_does_not() {
+fn a_grocers_subi_is_priced_for_recharge_from_a_full_stack_row_ahead_of_its_buy_row() {
     let (mut s, _store, id) = recharge_session(480, 1_000);
     let out = s.open_shop_for(21, id).expect("Lucy keeps a shop");
     let body = &out[0].body;
     let (_, rows) = s.open_shop.clone().expect("the rows we sent are kept for the buy");
-    // Buy rows only (potion, quest item, subi): no Sell twins since 2026-09-16.
+    // (unitPrice, row+0x10c) of each Subi row, in wire order, off the bytes.
     let mut at = net::classicshop::CLASSIC_HEAD_LEN;
-    let mut priced = 0;
+    let mut subi = Vec::new();
     for row in &rows {
         let len = row.wire_len();
         assert!(!row.sell, "no row is a Sell twin: {}", row.item_id);
-        if net::bag::bundle_has_serial(row.item_id) {
-            let bits = u64::from_le_bytes(body[at + len - 12..at + len - 4].try_into().unwrap());
-            assert_eq!(f64::from_bits(bits), 0.3, "Subi's unitPrice, on the Buy row");
-            priced += 1;
+        if row.item_id == 2_070_000 {
+            let r = &body[at..at + len];
+            let unit = f64::from_bits(u64::from_le_bytes(r[len - 12..len - 4].try_into().unwrap()));
+            let cap = i16::from_le_bytes(r[len - 4..len - 2].try_into().unwrap());
+            subi.push((unit, cap, row.price));
         }
         at += len;
     }
     assert_eq!(at, body.len(), "walked every row by its own width");
-    assert_eq!(priced, 1, "the one Buy row carries it");
-    assert!(out[0].what.contains("1 rechargeable with a unit price"), "{}", out[0].what);
+    assert_eq!(subi, vec![(0.3, 500, 0), (0.3, 1, 500)], "the recharge row first, then the Buy row");
+    let (unit, full, _) = subi[0];
+    let window = f64::from(i32::from(full) - 480) * unit;
+    assert!((window - 6.0).abs() < 1e-9, "the window offers Recharge at 20 x 0.3: {window}");
+    assert!(out[0].what.contains("2 rechargeable with a unit price, 1 of them recharge-only"), "{}", out[0].what);
 }
 
 #[test]
@@ -1239,8 +1255,10 @@ fn buying_stars_hands_over_a_full_set_at_the_rows_price() {
     let (mut s, store, id) = recharge_session(500, 2_000);
     s.open_shop_for(21, id).unwrap();
     let (_, rows) = s.open_shop.clone().unwrap();
-    let subi = rows.iter().position(|r| r.item_id == 2_070_000).expect("Lucy stocks Subi") as u16;
-    assert_eq!(rows[usize::from(subi)].max_per_purchase, 1, "a yes/no, not a quantity box");
+    let subi = client_buy_index(&rows, 2_070_000);
+    assert_eq!(subi, 2, "potion, quest item, Subi - its recharge row takes no index");
+    let row = rows.iter().find(|r| r.item_id == 2_070_000 && !r.is_recharge_only()).unwrap();
+    assert_eq!(row.max_per_purchase, 1, "a yes/no, not a quantity box");
     assert!(rows.iter().filter(|r| r.item_id == 2_000_000).all(|r| r.max_per_purchase > 1), "a potion keeps its box");
 
     let out = s.handle(&classic_buy(subi, 2_070_000, 3));
@@ -1262,7 +1280,7 @@ fn buying_stars_leaves_partial_and_empty_stacks_alone() {
     store.set_inventory_slot(id, store::InventoryType::Use, 2, &store::Item::bundle(2_070_000, 0)).unwrap();
     s.open_shop_for(21, id).unwrap();
     let (_, rows) = s.open_shop.clone().unwrap();
-    let subi = rows.iter().position(|r| r.item_id == 2_070_000).expect("Lucy stocks Subi") as u16;
+    let subi = client_buy_index(&rows, 2_070_000);
     let out = s.handle(&classic_buy(subi, 2_070_000, 1));
     assert_eq!(out[0].body[0], net::classicshop::RESULT_SUCCESS, "{}", out[0].what);
     let held = |slot| store.inventory_slot(id, store::InventoryType::Use, slot).unwrap();
@@ -1300,21 +1318,27 @@ fn dropped_wolbi_session(wolbi: u16, mesos: u32) -> (Session, Arc<Store>, u32) {
 /// **A general store recharges a star it does not sell.** The owner, 2026-10-02: *"All stars
 /// should be rechargeable at any general store"*, after 2 dropped Wolbi could not be topped up
 /// at a Grocer that stocks only Subi. Wolbi goes out as a recharge-only row - price 0, so the
-/// client files it in the Recharge list and no Buy tab - AFTER every stocked row, and the
-/// recharge tops it up at Wolbi's own 0.4.
+/// client files it in the Recharge list and no Buy tab - AFTER every stocked row, with the
+/// full stack in `row+0x10c` so the window prices 2 Wolbi above zero - and the recharge tops
+/// it up at Wolbi's own 0.4.
 #[test]
 fn a_general_store_recharges_a_dropped_star_it_does_not_stock() {
     let (mut s, store, id) = dropped_wolbi_session(2, 1_000);
     let out = s.open_shop_for(21, id).expect("Lucy keeps a shop");
     let (_, rows) = s.open_shop.clone().unwrap();
     let ids: Vec<u32> = rows.iter().map(|r| r.item_id).collect();
-    assert_eq!(ids, vec![2_000_000, 4_031_507, 2_070_000, 2_070_001], "stocked rows first, the extra star last");
-    let wolbi = rows[3];
-    assert_eq!(wolbi.price, 0, "recharge-only: price 0 keeps it out of every Buy tab");
+    assert_eq!(
+        ids,
+        vec![2_000_000, 4_031_507, 2_070_000, 2_070_000, 2_070_001],
+        "stocked rows (Subi behind its recharge row), the extra star last"
+    );
+    let wolbi = rows[4];
+    assert!(wolbi.is_recharge_only(), "price 0 keeps it out of every Buy tab");
     assert_eq!(wolbi.unit_price(), Some(0.4));
-    assert_eq!(rows[2].price, 500, "Subi is still sold at its shelf price");
+    assert_eq!(wolbi.max_per_purchase, 500, "the full stack the window prices from");
+    assert_eq!(rows[3].price, 500, "Subi is still sold at its shelf price");
     assert!(out[0].what.contains("3 buy,"), "{}", out[0].what);
-    assert!(out[0].what.contains("2 rechargeable with a unit price, 1 of them recharge-only"), "{}", out[0].what);
+    assert!(out[0].what.contains("3 rechargeable with a unit price, 2 of them recharge-only"), "{}", out[0].what);
     let walked: usize = net::classicshop::CLASSIC_HEAD_LEN + rows.iter().map(|r| r.wire_len()).sum::<usize>();
     assert_eq!(walked, out[0].body.len(), "every row on the wire at its own width");
 
@@ -1325,8 +1349,9 @@ fn a_general_store_recharges_a_dropped_star_it_does_not_stock() {
     assert_eq!(store.mesos(id).unwrap(), 800);
 }
 
-/// **A recharge-only row cannot be bought** - the client never offers it, so a buy naming its
-/// index is a forged body, and answering it would hand out free stars.
+/// **A recharge-only row cannot be bought** - the client never offers it and gives it no Buy
+/// index, so a buy naming one past the kept rows is a forged body, and answering it would hand
+/// out free stars. Index 3 is past Lucy's three kept rows (potion, quest item, Subi).
 #[test]
 fn buying_a_recharge_only_row_is_refused_and_moves_nothing() {
     let (mut s, store, id) = dropped_wolbi_session(2, 1_000);

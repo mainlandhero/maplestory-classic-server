@@ -184,15 +184,13 @@
     comes from melee. RECHARGE: at any Grocer (Lucy, Mina, Luna...) select a partial star stack
     in your inventory and press Recharge. Expected: the stack fills to slotMax (Subi 500) and
     the meso count drops by ceil(missing x unitPrice), Subi 0.3 per star; write down the number
-    the window showed next to "Recharge:" and the number the mesos moved by - if they differ
-    the rounding direction is the client's and ours is wrong by that much. EVERY STAR at a
-    general store (2026-10-02): a Grocer, a town General Store or the Mobile Store now also
-    lists each star it does not sell as a price-0 recharge-only row, so a dropped Wolbi must
-    recharge too (0.4 per star). Two claims, both from the listing alone: (1) the Buy tab still
-    shows ONLY the shelf - no Wolbi/Ilbi/... at 0 mesos; if they appear, price 0 does NOT keep a
-    row out of the Buy list and the server is refusing them (log says "recharge-only, not for
-    sale"); (2) Recharge on the Wolbi works. If the button stays dead and world-ch0.log has no
-    "recharged item 2070001", the client wants something besides the Recharge list. SLASH
+    the window showed next to "Recharge:" and the number the mesos moved by - both are
+    ceil(missing x unitPrice) by the listing (2026-10-03); a LOWER label is the client's own
+    discount (FUN_141fb9f30, untraced). EVERY STAR at a general store (2026-10-02): a Grocer, a
+    town General Store or the Mobile Store also lists each star it does not sell as a price-0
+    recharge-only row, so a dropped Wolbi recharges too (0.4 per star). The Buy tab still shows
+    ONLY the shelf - a Wolbi/Ilbi/... at 0 mesos there means price 0 does NOT hide a row. The
+    button itself is plan step 39f. SLASH
     BLAST now costs HP (3 at level 1) as well as MP; Power Strike does not. MAX HP INCREASE:
     The owner's 358/447 screenshot settled experiment A - the CLIENT adds the percent on top of the
     server's max, and the server was calling 358 full. Every ceiling the server enforces is now
@@ -2673,18 +2671,28 @@
                the slot goes blank / the client dies on the 0 -> this client cannot draw a
                           0-count stack; paste the "down to 0" line and client-exit.log
           b. throw again with only the empty stack: no star leaves, no damage line oddity
-          c. at a Grocer, Recharge the empty stack: 500, and 150 mesos (0.3 x 500) -> fixed
+          c. at a Grocer, Recharge the empty stack: the label reads "Recharge: 150", the stack
+             fills to 500 and the mesos drop by 150 -> fixed
           d. drop the empty stack, pick it back up: it returns at 0, no "x1" message -> fixed
           e. relog: still 0 (not 1 - the store used to read a 0 back as 1) -> fixed
-          f. (2026-10-03) players report stars "still cannot be recharged". At Dr. Faymus or
-             any Grocer, select a partial Wolbi and press Recharge, then search world-ch0.log:
-               "recharged item 2070001"         -> works; the earlier report was an old build
-               "recharge:" + a reason            -> refused by the server; paste that line
-               neither, and the ClassicOpenShop line says "0 of them recharge-only"
-                                                 -> the server that ran predates the fix
-               neither, and it says "N of them recharge-only" (N > 0)
-                                                 -> the client never asked: the Recharge list
-                                                    is not all it checks - paste the line
+          f. (2026-10-03) THE RECHARGE BUTTON. It was never drawn for a stack of 1 or more:
+             every star row told the window its full stack was 1, and the window prices a
+             recharge as (full - held) x unitPrice and shows the button only above 0
+             (research/shop-recharge-button.md). Hold 37 Subi AND 2 Wolbi, go to Luna or any
+             Grocer, open the Sell tab:
+               a Recharge button on BOTH, labels "Recharge: 139" (463 x 0.3) and
+               "Recharge: 200" (498 x 0.4); press each: full, mesos down by the label -> fixed
+               a button on Wolbi only        -> Subi's recharge row is not the one found
+                                                first; paste the ClassicOpenShop line
+               a button on neither           -> something else gates the button; paste the
+                                                ClassicOpenShop line ("N of them recharge-
+                                                only" must be N > 0, or the server is old)
+               a button, pressed, no refill  -> paste the "recharge:" line from world-ch0.log
+             Then BUY one Subi set there: still a yes/no and +500 Subi for 500 mesos.
+             BUY INDEX: only Max (Kerning City Civic Center) sells anything AFTER a star. If
+             you hold the grade, buy Unagi there: Unagi arrives -> fixed; "row N is item X and
+             the client asked for Y" in world-ch0.log -> the client DOES count the recharge
+             rows; paste it (no wrong item can be sold - the server refuses it)
           g. (2026-10-03) every star stack is its own: hold a partial Wolbi AND an empty one,
              pick up dropped Wolbi and buy a set - each lands in a NEW slot at its own count,
              and neither old stack changes. Recharge the HIGHER-slot partial stack: that one
@@ -5691,15 +5699,8 @@ function Show-TestPlan {
         Write-Host '       star thrown - the data has no bulletConsume, so [I]). Double Stab'
         Write-Host '       with a dagger: 0. If NOTHING drops and world-ch0.log says "SHOOT body'
         Write-Host '       did not parse", that is the finding: no 0x00E0 was ever captured.'
-        Write-Host '       RECHARGE: at Lucy/Mina/Luna, click a partial star stack, press'
-        Write-Host '       Recharge. Stack fills to 500 (Subi); mesos drop by missing x 0.3,'
-        Write-Host '       rounded UP. WRITE DOWN the "Recharge:" number the window showed'
-        Write-Host '       and what the mesos moved by - a difference is the rounding rule.'
-        Write-Host '       EVERY STAR at a general store (Grocer / General Store / Mobile'
-        Write-Host '       Store), 2026-10-02: recharge a DROPPED Wolbi there (0.4 each).'
-        Write-Host '       Works = the price-0 recharge-only rows do their job. Also look at'
-        Write-Host '       the Buy tab: Wolbi/Ilbi/... at 0 mesos there means price 0 does'
-        Write-Host '       NOT hide a row (the server refuses those buys either way).'
+        Write-Host '       RECHARGE: see step 39f. Buy tab: Wolbi/Ilbi/... at 0 mesos there'
+        Write-Host '       means price 0 does NOT hide a row (the server refuses those buys).'
         Write-Host '    0g. WARRIOR AUDIT. SLASH BLAST costs HP (3 at level 1) AND MP now;'
         Write-Host '       Power Strike only MP. Watch the HP bar tick down per swing.'
         Write-Host '       MAX HP INCREASE (found from your 358/447 screenshot: the CLIENT adds'
@@ -6439,13 +6440,15 @@ function Show-TestPlan {
         Write-Host ''
         Write-Host '  39. EMPTY STARS (2026-10-02): !item 2070000 3, throw until out: the stack STAYS' -ForegroundColor White
         Write-Host '       at 0 -> fixed. Blank slot or client death on the 0 -> paste client-exit.log' -ForegroundColor Yellow
-        Write-Host '       Recharge it at a Grocer (500, 150 mesos); drop + pick up (back at 0, no' -ForegroundColor Cyan
+        Write-Host '       Recharge it at a Grocer ("Recharge: 150", 500); drop + pick up (back at 0, no' -ForegroundColor Cyan
         Write-Host '       "x1"); relog (still 0, not 1) -> fixed' -ForegroundColor Cyan
-        Write-Host '   39f. RECHARGE STILL FAILS? (2026-10-03) Recharge a partial Wolbi at a Grocer,' -ForegroundColor White
-        Write-Host '       then search world-ch0.log: "recharged item 2070001" -> works (old build before);' -ForegroundColor Cyan
-        Write-Host '       "recharge:" + a reason -> the server refused, paste it; neither -> paste the' -ForegroundColor Yellow
-        Write-Host '       ClassicOpenShop line: "0 of them recharge-only" = old server, N > 0 = the' -ForegroundColor Yellow
-        Write-Host '       client never asked, so it checks more than the Recharge list' -ForegroundColor Yellow
+        Write-Host '   39f. RECHARGE BUTTON (2026-10-03, never drawn before): hold 37 Subi + 2 Wolbi,' -ForegroundColor White
+        Write-Host '       Grocer, Sell tab: a Recharge button on BOTH, "Recharge: 139" and' -ForegroundColor White
+        Write-Host '       "Recharge: 200"; press each: full, mesos down by the label -> fixed' -ForegroundColor Cyan
+        Write-Host '       Wolbi only -> Subi''s recharge row not found first; neither -> paste the' -ForegroundColor Yellow
+        Write-Host '       ClassicOpenShop line; pressed, no refill -> paste the "recharge:" line' -ForegroundColor Yellow
+        Write-Host '       Then buy Subi: yes/no, +500 for 500. At Max (Kerning Civic Center), if' -ForegroundColor Cyan
+        Write-Host '       you hold the grade, buy Unagi: arrives -> fixed; "client asked for" -> paste' -ForegroundColor Yellow
         Write-Host '   39g. ONE STACK PER SLOT (2026-10-03): with a partial AND an empty Wolbi, pick up' -ForegroundColor White
         Write-Host '       Wolbi and buy a set: each in a NEW slot, old stacks unchanged. Recharge the' -ForegroundColor Cyan
         Write-Host '       higher-slot partial: that one fills, not the lower -> fixed' -ForegroundColor Cyan

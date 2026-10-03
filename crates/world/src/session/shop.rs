@@ -70,6 +70,16 @@ impl Session {
                 skipped_free += 1;
                 continue;
             }
+            // **A star the counter sells gets a recharge row IN FRONT of its Buy row.** The
+            // window prices Recharge from the FIRST Recharge-list row with the id, as
+            // `(row+0x10c - count) * unitPrice`, and the Buy row's `+0x10c` is 1 - one set per
+            // purchase - which prices every stack of one or more at `<= 0`: no Recharge.
+            // The recharge row carries the full stack there instead and takes no Buy index
+            // (`net::classicshop::buy_row_index`), so the Buy row is untouched.
+            // `research/shop-recharge-button.md`.
+            if let Some(twin) = self.recharge_row(item.item_id) {
+                rows.push(twin);
+            }
             rows.push(
                 net::classicshop::ClassicShopRow::buy(
                     item.item_id,
@@ -132,20 +142,21 @@ impl Session {
         // for an id in its Recharge list, and that list is built from the rows we send - so
         // each star the counter does not stock goes out as a price-0 recharge-only row
         // (`ClassicShopRow::recharge_only`: in the Recharge list, in no Buy tab). Appended
-        // AFTER the stocked rows so no Buy row's index moves. Stars only - `207xxxx` with a
-        // unit price and a stack size; this client has no bullets in its item table.
+        // after the stocked rows; a recharge-only row takes no Buy index wherever it sits
+        // (`net::classicshop::buy_row_index`). Stars only - `207xxxx` with a unit price and a
+        // stack size; this client has no bullets in its item table.
         if shop.is_general_store() {
-            let mut stars: Vec<(u32, u32)> = self
+            let mut stars: Vec<u32> = self
                 .config
                 .shops
                 .item_data
-                .iter()
-                .filter(|(id, d)| **id / 10_000 == 207 && d.unit_price_milli > 0 && d.slot_max > 0)
-                .filter(|(id, _)| !rows.iter().any(|r| r.item_id == **id))
-                .map(|(id, d)| (*id, d.unit_price_milli))
+                .keys()
+                .copied()
+                .filter(|id| id / 10_000 == 207)
+                .filter(|id| !rows.iter().any(|r| r.item_id == *id))
                 .collect();
             stars.sort_unstable();
-            rows.extend(stars.into_iter().map(|(id, unit)| net::classicshop::ClassicShopRow::recharge_only(id, unit)));
+            rows.extend(stars.into_iter().filter_map(|id| self.recharge_row(id)));
         }
 
         // **The blast-radius control survives the opcode change**, and is worth more here than
@@ -237,8 +248,9 @@ impl Session {
             return self
                 .classic_refused(net::classicshop::RESULT_NOT_ENOUGH_MESOS, "no shop is open");
         };
-        // **The index is into the list we sent**, which is the only defensible reading of it.
-        let Some(row) = rows.get(usize::from(row_index)).copied() else {
+        // **The index counts the rows the client kept**, which is every row we sent except the
+        // recharge-only ones (`net::classicshop::buy_row_index`, [L] from the row loop).
+        let Some(row) = net::classicshop::buy_row_index(&rows, row_index).map(|at| rows[at]) else {
             return self.classic_refused(
                 net::classicshop::RESULT_NOT_ENOUGH_MESOS,
                 &format!("row {row_index} is not among the {} rows we sent", rows.len()),
@@ -489,6 +501,19 @@ impl Session {
         self.config.shops.item_data.get(&item_id).map(|d| d.unit_price_milli).unwrap_or(0)
     }
 
+    /// The recharge-only row for a star, carrying its full stack in `row+0x10c`, or `None` for
+    /// anything that is not a `207xxxx` star with a unit price and a `slotMax` in the item table.
+    /// See `ClassicShopRow::recharge_only` for why the full stack is the whole fix.
+    fn recharge_row(&self, item_id: u32) -> Option<net::classicshop::ClassicShopRow> {
+        if item_id / 10_000 != 207 {
+            return None;
+        }
+        let data = self.config.shops.item_data.get(&item_id)?;
+        let slot_max = i16::try_from(data.slot_max).ok().filter(|m| *m > 0)?;
+        (data.unit_price_milli > 0)
+            .then(|| net::classicshop::ClassicShopRow::recharge_only(item_id, data.unit_price_milli, slot_max))
+    }
+
     /// `u8 2` - **recharge** the throwing stars or bullets in one Use-tab slot.
     ///
     /// The owner, 2026-09-06: *"they should be able to recharge stars at general merchants."* The
@@ -497,9 +522,12 @@ impl Session {
     ///
     /// **What it costs.** `ceil((slotMax - held) * unitPrice)` whole mesos, `unitPrice` being
     /// the item's own `info/unitPrice` (Subi 0.3 ... Hwabi 1.0, `ItemData::unit_price_milli`).
-    /// The rounding direction is **[I]**: the client formats its own *"Recharge: %lld"* and
-    /// the arithmetic behind that string has not been read, so the test plan asks for the
-    /// number the window shows against the number the meso count moved by.
+    /// Rounded **up**, the same as the window: **[L]** its *"Recharge: %lld"* label prints
+    /// `ceil((row+0x10c - held) * unitPrice)` (`141fb0049`..`141fb0055`, then string `0x4B0`
+    /// at `141fb0183`) - unless `FUN_141fb9f30` returns a lower discounted price. What feeds
+    /// that discount is not traced (one input, `FUN_1402c9510`, sits beside the citizenship
+    /// checks), so a label below the charge is that, not this arithmetic.
+    /// `research/shop-recharge-button.md`.
     ///
     /// **How it lands.** `Store::recharge_slot` sets exactly the slot the player pointed at to
     /// `slotMax` and takes the total price, in one transaction, and the `0x0070` reports that

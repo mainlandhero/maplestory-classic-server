@@ -212,16 +212,31 @@ impl ClassicShopRow {
         Self { unit_price_milli, ..self }
     }
 
-    /// A **recharge-only** row: a star or bullet the counter does not sell but will top up.
+    /// A **recharge-only** row: what the window prices a star's Recharge from.
     ///
     /// Price `0` is what makes it recharge-only, and **[L]**: the row loop copies a `207`/`233`
     /// row into the Recharge list at `141fa001a` *first*, then at `141fa030c` jumps a row whose
     /// price (`row+0x38`), barter count (`+0x4c`) and point cost (`+0x58`) are all zero
     /// straight to the row's destructor at `141fa1178` - past `+0x340` and every Buy tab. So it
     /// is in the Recharge list and nowhere a player can buy it. The server must still refuse a
-    /// buy that names it, because the row index is ours and a forged body can name any index.
-    pub fn recharge_only(item_id: u32, unit_price_milli: u32) -> Self {
-        Self::buy(item_id, 0, 1).with_unit_price(unit_price_milli)
+    /// buy that names it, because a forged body can name any index.
+    ///
+    /// **`slot_max` goes in `row+0x10c`, and that is what makes Recharge appear at all.** The
+    /// Sell list builder `FUN_141fa77a0` prices each star in the bag from the FIRST row in the
+    /// Recharge list (`shopUI+0x358`) with its id: `(row+0x10c - count) * row+0x40`, into the
+    /// Sell entry's `+0x40` (`141fa7a40`..`141fa7a58`). The row renderer draws Recharge only
+    /// when that is `> 0.0` (`141faf1e8`, `141fb002b`). On a Buy row `+0x10c` is the
+    /// per-purchase cap, and a star's is 1 (one set per purchase); here nothing is bought, so it
+    /// is the full stack. Until 2026-10-03 it was 1 here too, every stack of one or more priced
+    /// at `<= 0`, and no star was ever offered Recharge. `research/shop-recharge-button.md`.
+    pub fn recharge_only(item_id: u32, unit_price_milli: u32, slot_max: i16) -> Self {
+        Self::buy(item_id, 0, slot_max).with_unit_price(unit_price_milli)
+    }
+
+    /// True for a row the client destroys before any Buy tab: price `0`, not buy-back
+    /// (`141fa030c` -> `141fa1178`). It takes no Buy index - see [`buy_row_index`].
+    pub fn is_recharge_only(&self) -> bool {
+        self.price == 0 && !self.buy_back
     }
 
     /// The unit price as the client reads it, or `None` when this row carries no such field.
@@ -389,6 +404,25 @@ pub fn classic_shop_refresh(rows: &[ClassicShopRow]) -> Vec<u8> {
     w.u8(RESULT_REFRESH_LIST);
     list_body(&mut w, rows);
     w.into_vec()
+}
+
+/// Which of `rows` a Buy request's `rowIndex` names, or `None` past the end.
+///
+/// **The client does not count recharge-only rows.** **[L]** `research/msexe-classicshop-rowloop.txt`:
+/// a Buy row's index is `skipped - 1 + len(shopUI+0x340)` once it is appended (`141fa0b40`), where
+/// `skipped` (`[rbp+4]`) counts the rows the loop passes over at `141f9f84f`, `141f9fa50`,
+/// `141fa0357`, `141fa0571` and `141fa0743` - and the price-0 jump at `141fa030c` to
+/// `141fa1178` touches neither. So every recharge-only row ahead of a Buy row lowers that row's
+/// index by one, and the index is the position among the rows that are not recharge-only.
+///
+/// Buy Back rows take the raw loop counter instead (`141fa008e`), and none is ever sent
+/// (`UI/UIShop.img/Shop` has no Buy Back tab), so they are left out here as well.
+pub fn buy_row_index(rows: &[ClassicShopRow], client_index: u16) -> Option<usize> {
+    rows.iter()
+        .enumerate()
+        .filter(|(_, r)| !r.is_recharge_only() && !r.buy_back)
+        .nth(usize::from(client_index))
+        .map(|(at, _)| at)
 }
 
 /// `0x055E` type `10`, the list refresh. See [`classic_shop_refresh`].
@@ -720,6 +754,67 @@ mod tests {
         let unpriced = classic_open_shop(9_000_000, &[ClassicShopRow::buy(2_070_000, 500, 100)]);
         assert_eq!(unpriced.len(), body.len());
         assert_eq!(&unpriced[at..at + 8], &[0u8; 8], "no price is still 0.0, and Recharge stays unreachable");
+    }
+
+    /// What the window does with a star row's bytes when it prices a bag stack of `count`,
+    /// modelled on the listing and fed the bytes off the wire, not the struct:
+    /// the decoder puts the 8 bytes before the tail into `row+0x40` and `movsx`es the `i16`
+    /// into `row+0x10c` (`1404ba5c2`); `FUN_141fa77a0` stores
+    /// `(double)(row+0x10c - count) * row+0x40` in the Sell entry (`141fa7a40`..`141fa7a58`),
+    /// and the renderer draws Recharge only when that is `> 0.0` (`141faf1e8`).
+    fn window_recharge_price(row_bytes: &[u8], count: i32) -> f64 {
+        let n = row_bytes.len();
+        let unit = f64::from_bits(u64::from_le_bytes(row_bytes[n - 12..n - 4].try_into().unwrap()));
+        let full = i32::from(i16::from_le_bytes(row_bytes[n - 4..n - 2].try_into().unwrap()));
+        f64::from(full - count) * unit
+    }
+
+    fn only_row_bytes(row: ClassicShopRow) -> Vec<u8> {
+        let body = classic_open_shop(9_000_000, &[row]);
+        assert_eq!(body.len(), CLASSIC_HEAD_LEN + row.wire_len());
+        body[CLASSIC_HEAD_LEN..].to_vec()
+    }
+
+    /// **The bug, and its fix, on the bytes.** A star row with `+0x10c = 1` - every star row
+    /// until 2026-10-03, recharge-only or stocked - prices a stack of one or more at `<= 0`,
+    /// so the window never drew Recharge for it. A recharge-only row now carries the full
+    /// stack there, and every partial or empty stack prices above zero; a full one prices at 0.
+    #[test]
+    fn a_recharge_only_row_makes_the_window_price_every_partial_stack_above_zero() {
+        let old = only_row_bytes(ClassicShopRow::buy(2_070_001, 0, 1).with_unit_price(400));
+        assert!(window_recharge_price(&old, 0) > 0.0, "only an empty stack was ever priced");
+        for count in [1, 2, 499] {
+            assert!(window_recharge_price(&old, count) <= 0.0, "cap 1: {count} Wolbi got no Recharge");
+        }
+
+        let wolbi = only_row_bytes(ClassicShopRow::recharge_only(2_070_001, 400, 500));
+        for count in [0, 1, 2, 499] {
+            let price = window_recharge_price(&wolbi, count);
+            assert!(price > 0.0, "{count} Wolbi: {price}");
+            assert!((price - f64::from(500 - count) * 0.4).abs() < 1e-9, "{count} Wolbi: {price}");
+        }
+        assert_eq!(window_recharge_price(&wolbi, 500), 0.0, "a full stack is not offered Recharge");
+
+        // Ilbi's 800 survives the `i16` and the client's sign extension.
+        let ilbi = only_row_bytes(ClassicShopRow::recharge_only(2_070_006, 500, 800));
+        assert!((window_recharge_price(&ilbi, 3) - 797.0 * 0.5).abs() < 1e-9);
+    }
+
+    /// A Buy request's index skips the recharge-only rows, because the client never counted
+    /// them (`141fa030c` jumps past the `skipped` counter and `+0x340` both).
+    #[test]
+    fn a_buy_index_skips_recharge_only_rows() {
+        let rows = [
+            ClassicShopRow::buy(2_000_000, 50, 100),
+            ClassicShopRow::recharge_only(2_070_000, 300, 500),
+            ClassicShopRow::buy(2_070_000, 500, 1).with_unit_price(300),
+            ClassicShopRow::buy(2_000_001, 160, 100),
+            ClassicShopRow::recharge_only(2_070_001, 400, 500),
+        ];
+        assert_eq!(buy_row_index(&rows, 0), Some(0));
+        assert_eq!(buy_row_index(&rows, 1), Some(2), "the stocked Subi, behind its recharge row");
+        assert_eq!(buy_row_index(&rows, 2), Some(3));
+        assert_eq!(buy_row_index(&rows, 3), None, "the trailing recharge row has no Buy index");
     }
 
     #[test]

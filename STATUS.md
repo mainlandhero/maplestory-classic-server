@@ -429,26 +429,26 @@ the ammo's attack - this client names it **`incWAT`** (Ilbi 27), and the first d
 never been compared with a night of real hits; a suspects line naming an honest character is
 the model being low, and log-only is the fix until it is corrected.
 
-**2026-10-03: NO STAR SHOWS AS RECHARGEABLE - the open lead is `FUN_141fa77a0`, never decompiled.**
-The owner: *"The clients couldn't have asked to charge because the NPC shop don't display them as
-rechargeable."* What is established, all **[L]** from listings already in `research/`:
-* our star rows decode right: `FUN_141f9...` row reader (`research/msexe-classicshop-rows.txt`,
-  the `0x1f95f0` / `0x238d90` test) reads the 8-byte unit-price double into `row+0x40` for a
-  `207`/`233` id and a `u16` into `+0x10c`, exactly the six-byte-wider row `net::classicshop` writes;
-* the Recharge builder `FUN_141fb9240` (`research/msexe-classicshop-transaction.txt` ~2441) indexes
-  **`shopUI+0x360`** - the Sell display list built from the player's bag, `0x130` per entry - by the
-  selected row `+0x4a8`, returns if `*(double*)(entry+0x40) == 0.0`, and sends `entry+0x128` as the
-  inventory slot;
-* `+0x360` is filled by **`FUN_141fa77a0(shopUI, tab, &shopUI+0x360)`**, called at `141fa1ef0` right
-  after the row loop (`research/msexe-classicshop-rowloop.txt`), and again from the `0x055E` path.
-  **Its body is not in `research/`.** Whatever it does to `entry+0x40` decides whether Recharge is
-  offered.
-Leading hypothesis, **[I], not checked**: it looks a bag item's unit price up in the shop's row
-lists. If that is `+0x340` (every surviving row) or a Buy tab rather than `+0x358` (the Recharge
-list), the price-0 recharge-only rows - destroyed at `141fa030c` before `+0x340` - can never be found,
-while a STOCKED star (Subi at a Grocer) would be. No recharge of any star, stocked or not, has ever
-been observed (no `0x00F5` sub-op 2 in any fixture). Next: decompile `141fa77a0 +callees` and
-`141fb9cf0`; or the one in-game check - does a partial **Subi** stack get Recharge at a Grocer?
+**2026-10-03: NO STAR SHOWED AS RECHARGEABLE because every star row said its full stack was 1 -
+fixed in code, [L] end to end, never on a screen.** The owner: *"The clients couldn't have asked to
+charge because the NPC shop don't display them as rechargeable."* `FUN_141fa77a0` is decompiled
+(`research/shop-recharge-button.md`, dumps beside it). It prices each bag star from the FIRST row of
+that id in the Recharge list `shopUI+0x358` as `(row+0x10c - count) x row+0x40` (`141fa7a40`..`58`),
+and the row renderer draws Recharge only when that is `> 0.0` (`141faf1e8`, `141fb002b`; `XMM6` is
+zeroed at `141faed3b`). Every star row we sent had `+0x10c = 1` - the Buy row's one-set-per-purchase
+cap, and the recharge-only rows copied it - so every stack of one or more priced at `<= 0`: no
+button, no `0x00F5` sub-op 2, which is what every fixture shows. **The hypothesis this entry first
+recorded was wrong:** the lookup IS the Recharge list, and the recharge-only rows were found; they just
+carried 1. The fix: a recharge-only row carries slotMax in `+0x10c`
+(`ClassicShopRow::recharge_only(id, unit, slot_max)`); every star a counter SELLS gets one placed
+**directly before** its Buy row (first match wins, and the Buy row keeps its cap of 1 and its
+yes/no); and since the client gives a price-0 row **no Buy index** (`141fa030c` jumps past the
+skip counter `[rbp+4]` and `+0x340`; index written at `141fa0b40`), `classic_buy` maps the index
+with `net::classicshop::buy_row_index`. That mapping only shows where a row FOLLOWS a stocked
+star - one counter, **Max** in Kerning City (Unagi, Grape Juice, Elixir after Wolbi); Subi is the
+last row at every Grocer. A wrong mapping is refused on the item id, never sells the wrong thing.
+Also settled: the label is `ceil` (`141fb0050`), the same as the charge, unless `FUN_141fb9f30`'s
+untraced discount applies. **[I]:** that the button now appears; plan step 39f.
 
 **2026-10-03: every star stack is its own slot; a recharge fills the slot it names - built, tests
 only.** The owner, after player reports: *"pick ups of stars items such as Wolbis should result in a
@@ -458,8 +458,9 @@ should not alter any existing stack (including the 0 ammo count slots) and just 
 starting with a full stack in the next available slot."* `place_into_bag` no longer tops up an
 existing stack of a `207`/`233` id - a pickup, purchase, gift or GM `!item` lands in free slots - and
 `Store::recharge_slot` replaces the recharge's `buy_item`, which had filled the LOWEST partial stack
-of the id, so with two Wolbi stacks a recharge could fill the wrong one. **Not explained: the same
-report says stars "still cannot be recharged".** The general-store recharge-only rows (below) are
+of the id, so with two Wolbi stacks a recharge could fill the wrong one. **Explained the same day (entry
+above): the window never offered Recharge.** The same
+report says stars "still cannot be recharged". The general-store recharge-only rows (below) are
 still unseen on a screen and nothing here can tell why a recharge failed; the discriminator is in
 plan step 39f: whether the server that ran had the rows, whether a recharge request arrived, and
 what it was refused for. A drag of one star stack onto another (`move_item`) still merges - not
@@ -3449,7 +3450,8 @@ HP absorb, Steal's theft. The test plan's T19 says what each screen outcome mean
   been captured**, and the shared parser was decoded from melee. A shot that fails to parse
   now logs `SHOOT body did not parse` instead of taking nothing silently - look for that line
   first if a throw takes nothing.
-* **Recharge** works at every Grocer: the star row carries `info/unitPrice` (measured: Subi 0.3
+* **Recharge** works at every Grocer (**never seen working: the window could not offer Recharge
+  for a stack of one or more - see the 2026-10-03 entry**): the star row carries `info/unitPrice` (measured: Subi 0.3
   ... Hwabi 1.0, now column six of `itemdata.txt`) in the eight bytes the client reads as the
   recharge double. Cost is `ceil(missing x unitPrice)`; ceil-vs-truncate is the client's and a
   run decides it.
