@@ -31,6 +31,22 @@ pub fn note_kill(template: u32, character: u32, dropped: &[crate::droptables::Ro
     pending().lock().unwrap_or_else(|e| e.into_inner()).note(store::Store::unix_now(), template, character, &items);
 }
 
+/// One Companion's Magic Box opened by `character`, and the prizes it gave. Counted in the same
+/// tables under the box's own id, [`crate::magicbox::BOX`], as though the box were a monster
+/// and opening it a kill; `crate::dropweb::live_json` names that row `"box"` and keeps it out
+/// of the page's kill and player totals.
+pub fn note_box_opened(character: u32, prizes: &[(u32, u16)]) {
+    let items: Vec<(u32, u32)> = prizes.iter().map(|&(i, q)| (i, u32::from(q))).collect();
+    pending().lock().unwrap_or_else(|e| e.into_inner()).note(store::Store::unix_now(), crate::magicbox::BOX, character, &items);
+}
+
+/// How many times `item` has been counted from `template` and not yet written. For tests.
+#[cfg(test)]
+pub fn pending_drops(template: u32, item: u32) -> u64 {
+    let held = pending().lock().unwrap_or_else(|e| e.into_inner());
+    held.drops.iter().filter(|((_, t, i), _)| *t == template && *i == item).map(|(_, (d, _))| d).sum()
+}
+
 /// Write everything counted so far, and start counting afresh. A failed write puts the counts
 /// back, so the next flush carries them.
 pub fn flush(store: &store::Store) {

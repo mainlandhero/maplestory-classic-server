@@ -540,6 +540,17 @@ which the launcher delivers once the server is repackaged. And the collaboration
 each style in its **default** colour (`ab39b6a`, `crate::cosmetics`): Fern Hair -> Violet 42576,
 Übel Hair -> Green 42604, Übel Face -> Violet 22639. Plan TP 8/9.
 
+**2026-10-03: opened Companion's Magic Boxes feed the drops page.** The owner: *"Companion's
+Magic Box when opened do not feed into the drops data page"*. Only kills were counted. Now
+`session/firsttime.rs::open_magic_box` calls `killstats::note_box_opened` with what was actually
+GIVEN. That counts the box in the seven-day tables under its own id, `magicbox::BOX`, as though
+it were a monster. `dropweb::live_json` names that row `"box"`, the id the tables already give
+it. It reads `store.kill_stats_apart(.., Some(BOX))`, so boxes are not kills or killers in the
+page's totals. The box shows "N opened, M players", and each prize gets a Seen count with its
+share of boxes. The global table's Seen counts kills only. Tests cover the store, the JSON and
+the open handler, and the page was rendered against a fixture. Not yet seen on the live server.
+The counts reach the page after the next five-minute flush.
+
 **2026-10-02: the drops page - the King Slime's shoes, and a stricter search.** The page read only
 `data/drops.txt`, so it said the King Slime drops no Slime Shoes; the shoes are made in code, one
 per party member (`session/firsttime.rs`). `dropweb::INSTANCED` now adds them as a row tagged
