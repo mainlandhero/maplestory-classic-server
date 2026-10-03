@@ -429,6 +429,27 @@ the ammo's attack - this client names it **`incWAT`** (Ilbi 27), and the first d
 never been compared with a night of real hits; a suspects line naming an honest character is
 the model being low, and log-only is the fix until it is corrected.
 
+**2026-10-03: NO STAR SHOWS AS RECHARGEABLE - the open lead is `FUN_141fa77a0`, never decompiled.**
+The owner: *"The clients couldn't have asked to charge because the NPC shop don't display them as
+rechargeable."* What is established, all **[L]** from listings already in `research/`:
+* our star rows decode right: `FUN_141f9...` row reader (`research/msexe-classicshop-rows.txt`,
+  the `0x1f95f0` / `0x238d90` test) reads the 8-byte unit-price double into `row+0x40` for a
+  `207`/`233` id and a `u16` into `+0x10c`, exactly the six-byte-wider row `net::classicshop` writes;
+* the Recharge builder `FUN_141fb9240` (`research/msexe-classicshop-transaction.txt` ~2441) indexes
+  **`shopUI+0x360`** - the Sell display list built from the player's bag, `0x130` per entry - by the
+  selected row `+0x4a8`, returns if `*(double*)(entry+0x40) == 0.0`, and sends `entry+0x128` as the
+  inventory slot;
+* `+0x360` is filled by **`FUN_141fa77a0(shopUI, tab, &shopUI+0x360)`**, called at `141fa1ef0` right
+  after the row loop (`research/msexe-classicshop-rowloop.txt`), and again from the `0x055E` path.
+  **Its body is not in `research/`.** Whatever it does to `entry+0x40` decides whether Recharge is
+  offered.
+Leading hypothesis, **[I], not checked**: it looks a bag item's unit price up in the shop's row
+lists. If that is `+0x340` (every surviving row) or a Buy tab rather than `+0x358` (the Recharge
+list), the price-0 recharge-only rows - destroyed at `141fa030c` before `+0x340` - can never be found,
+while a STOCKED star (Subi at a Grocer) would be. No recharge of any star, stocked or not, has ever
+been observed (no `0x00F5` sub-op 2 in any fixture). Next: decompile `141fa77a0 +callees` and
+`141fb9cf0`; or the one in-game check - does a partial **Subi** stack get Recharge at a Grocer?
+
 **2026-10-03: every star stack is its own slot; a recharge fills the slot it names - built, tests
 only.** The owner, after player reports: *"pick ups of stars items such as Wolbis should result in a
 separate item stack"*, and *"The star should occupy an entire slot, no matter the ammo count. Even if
