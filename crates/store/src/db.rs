@@ -303,6 +303,8 @@ impl Store {
         // already has skills learned.
         crate::skillpoints::create_tables(&conn)?;
         crate::rates::create_tables(&conn)?;
+        // The `!announce` banner text, one row or none. `announcement.rs`.
+        crate::announcement::create_tables(&conn)?;
         // Which account a credential-less game connection is served as. New table, so
         // `CREATE TABLE IF NOT EXISTS` is enough. `claims.rs` ALSO ensures the table inside
         // each of its three methods, and that belt-and-braces is deliberate rather than
