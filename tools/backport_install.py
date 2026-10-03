@@ -597,6 +597,102 @@ def look_icons(build_dir, source, manifest, add):
     return counts
 
 
+def _outlinks(node, path, canvas_prefix, out):
+    """Every `(property path, canvas node)` under `node` whose `_outlink` points into
+    `canvas_prefix` (`Character/Hair/_Canvas/00042570.img/`), from a `wz-dump cat` JSON tree."""
+    if not isinstance(node, dict):
+        return
+    link = node.get("_outlink")
+    if isinstance(link, str) and link.startswith(canvas_prefix):
+        out.append((path, link[len(canvas_prefix):]))
+    for key, child in node.items():
+        if isinstance(child, dict) and key != "_outlink":
+            _outlinks(child, path + "/" + key if path else key, canvas_prefix, out)
+
+
+def recolor_looks(build_dir, source, manifest, add):
+    """**Real colours for the collaboration hairs and faces** (the owner, 2026-10-02) - see
+    `tools/collab_recolor.py` for the rules and the colours.
+
+    Every variant that is not its art's own colour gets its base layers recoloured, written
+    into the variant's OWN `_Canvas` image under `recolor/<node>` (`newcanvas`, the format the
+    source layer uses), and its property image's outlinks repointed there. The art's own slot
+    is left alone, so it keeps Nexon's pixels. Returns the number of variants recoloured."""
+    sys.path.insert(0, os.path.join(REPO, "tools"))
+    import collab_recolor as cr
+    wz_png = _wz_png()
+    out_root = os.path.join(build_dir, "recolor")
+    base_layers = {}  # (kind, base) -> {node: (rgba, w, h, fmt)}
+    eye_hue = {}
+    done = 0
+    for items in manifest["sets"].values():
+        for it in items:
+            kind = it["type"]
+            if kind not in ("Hair", "Face"):
+                continue
+            planned = cr.plan(it["id"], kind)
+            if planned is None or planned[3] is None:
+                continue
+            base, slot, art, target = planned
+            tree_rel = "Character/" + kind
+            base_img = "%08d.img" % base
+            dest = "%08d.img" % HAIR_HAT_RENAMES.get(it["id"], it["id"])
+            key = (kind, base)
+            if key not in base_layers:
+                part = modern_part(source, tree_rel + "/_Canvas", base_img)
+                exp = os.path.join(out_root, "base", kind, base_img[:-4])
+                os.makedirs(exp, exist_ok=True)
+                r = subprocess.run([WZ_DUMP, "canvas", part, base_img, exp], capture_output=True,
+                                   text=True, encoding="utf-8", errors="replace")
+                if r.returncode != 0:
+                    raise SystemExit("wz-dump canvas %s failed: %s" % (base_img, r.stderr.strip()))
+                layers = {}
+                for e in json.load(open(os.path.join(exp, "manifest.json"), encoding="utf-8")):
+                    w, h, fmt = int(e["width"]), int(e["height"]), int(e["format"])
+                    payload = open(os.path.join(exp, e["file"]), "rb").read()
+                    layers[e["node"].lstrip("/")] = (wz_png.to_rgba(wz_png.inflate(payload), w, h, fmt), w, h, fmt)
+                base_layers[key] = layers
+                if kind == "Face" and "default/face" in layers:
+                    rgba, w, h, _ = layers["default/face"]
+                    eye_hue[base] = cr.art_eye_hue(rgba, w, h, art)
+            layers = base_layers[key]
+            # The variant's own property image, read from the modern part it was copied from.
+            prop = os.path.join(source, it["prop_archive"])
+            r = subprocess.run([WZ_DUMP, "cat", prop, "%08d.img" % it["id"]], capture_output=True,
+                               text=True, encoding="utf-8", errors="replace")
+            if r.returncode != 0:
+                raise SystemExit("wz-dump cat %s/%08d.img failed: %s" % (prop, it["id"], r.stderr.strip()))
+            links = []
+            _outlinks(json.loads(r.stdout), "", "%s/_Canvas/%s/" % (tree_rel, base_img), links)
+            links = [(pp, cn) for pp, cn in links if not pp.startswith("info/") and cn in layers]
+            if not links:
+                continue
+            out_dir = os.path.join(out_root, kind, dest[:-4])
+            os.makedirs(out_dir, exist_ok=True)
+            canvas_rows, prop_rows, written = [], [], {}
+            for prop_path, node in links:
+                if node not in written:
+                    rgba, w, h, fmt = layers[node]
+                    px = cr.recolor_layer(rgba, w, h, kind, target, art, eye_hue.get(base))
+                    raw = to_bgra4444(px, w, h) if fmt == 1 else bytes(
+                        v for i in range(w * h) for v in (px[i * 4 + 2], px[i * 4 + 1], px[i * 4], px[i * 4 + 3]))
+                    pay = os.path.join(out_dir, node.replace("/", ".") + ".bin")
+                    with open(pay, "wb") as fh:
+                        fh.write(zlib.compress(raw, 9))
+                    canvas_rows.append("recolor/%s\tnewcanvas\t%d,%d,%d,%s,-,-" % (node, w, h, 1 if fmt == 1 else 2, pay))
+                    written[node] = True
+                prop_rows.append("%s/_outlink\tstr\t%s/_Canvas/%s/recolor/%s" % (prop_path, tree_rel, dest, node))
+            for name, rows, tree in (("pixels.tsv", canvas_rows, tree_rel + "/_Canvas"), ("links.tsv", prop_rows, tree_rel)):
+                path = os.path.join(out_dir, name)
+                with open(path, "w", encoding="utf-8", newline="\n") as fh:
+                    fh.write("# %s %s: slot %d recoloured from %s (art slot %d) - tools/collab_recolor.py\n" % (kind, dest, slot, base_img, art))
+                    fh.write("\n".join(rows) + "\n")
+                add(tree, "patch\t%s\t%s" % (dest, path))
+            done += 1
+    print("  recolour   %d collaboration hair/face variant(s) given their own colour (step 4e)" % done)
+    return done
+
+
 def modern_part(source, tree_rel, image):
     """Which part of a modern tree holds `image`, via the tree listing."""
     tree_dir = os.path.join(source, *tree_rel.split("/"))
@@ -1220,6 +1316,9 @@ def main():
     # 4d. info/icon for the backported equips whose modern image has only iconRaw (the six
     #     weapon covers): this client's lists read `icon`. See `cover_icons`.
     cover_icons(args.build_dir, source, manifest, add)
+    # 4e. Real colours for the collaboration hairs and faces (2026-10-02): every variant drew
+    #     its base colour's pixels. See `recolor_looks` and tools/collab_recolor.py.
+    recolor_looks(args.build_dir, source, manifest, add)
 
     # 5. Build every archive against its classic base.
     built = []
