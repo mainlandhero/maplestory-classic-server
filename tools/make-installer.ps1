@@ -83,7 +83,12 @@ param(
     # else. No server executables, no gm-handbook, no authored server data - see the comment
     # on $binaries. install.ps1 detects the difference and skips account creation, which is a
     # server-side step. Roughly 470 MB rather than 900 MB, almost all of it the client's WZ.
-    [switch]$ClientOnly
+    [switch]$ClientOnly,
+    # A -ClientOnly run ALSO builds the Mac client, out\MapleCW-setup-mac.zip: MapleCW.app around
+    # this same payload (tools\make_mac_client.py, docs\mac-client.md). The owner, 2026-10-02:
+    # every client release ships for Windows AND Mac. -NoMac skips it for a quick Windows-only
+    # check; a payload for players should never be built with it.
+    [switch]$NoMac
 )
 
 $ErrorActionPreference = 'Stop'
@@ -94,7 +99,10 @@ if (-not $OutDir) { $OutDir = Join-Path $repo 'out' }
 
 $clientSrc = Join-Path $repo 'client-patched'
 $stage     = Join-Path $OutDir 'MapleCW'
-$zipPath   = Join-Path $OutDir 'MapleCW-setup.zip'
+# **Three release zips, named for who installs them** (the owner, 2026-10-02): the server's
+# (tools\package-server.ps1, MapleCW-server.zip), this script's -ClientOnly one for Windows
+# players, and the Mac app below. The full server+client payload keeps its old name.
+$zipPath   = if ($ClientOnly) { Join-Path $OutDir 'MapleCW-setup-windows.zip' } else { Join-Path $OutDir 'MapleCW-setup.zip' }
 
 function Fail([string]$msg) { throw $msg }
 
@@ -245,7 +253,15 @@ if (-not $SkipBuild) {
         # launcher replaces itself on first run is a package whose build identity lies. One
         # launcher build, one digest: the setup zip, the client payload and the server's
         # bin\ alike.
-        {
+        #
+        # **`& {`, not `{`.** Until 2026-10-02 this was a bare `{ ... }`, which PowerShell does
+        # not run - it is a script-block VALUE, and the host prints its source text. So no
+        # package since 2026-09-16 built this launcher: each shipped whatever target-static\
+        # held from the last tools\package-server.ps1 run, and the digest line below printed
+        # that stale file's identity as if it were this build's. Found when the Mac client's
+        # launcher changes were missing from the payload and the log showed the block's own
+        # code where a cargo build should have been.
+        & {
             #
             # grap64.dll is deliberately NOT built this way. It is injected into
             # MapleStory.exe, and tools\package-server.ps1's header is explicit that changing
@@ -446,6 +462,24 @@ if (-not $NoZip) {
     Write-Host ("sha256 {0}" -f (Get-FileHash $zipPath -Algorithm SHA256).Hash)
 }
 
+# ---------------------------------------------------------------- the Mac client
+# The same payload, wrapped in MapleCW.app. Nothing is rebuilt for the Mac: it runs these
+# exact Windows binaries in Wine. Python because the app's launch script must be marked
+# executable inside the zip, and PowerShell 5.1's ZipFile cannot say so.
+$macZip = Join-Path $OutDir 'MapleCW-setup-mac.zip'
+if ($ClientOnly -and -not $NoMac) {
+    Write-Host ''
+    Write-Host 'building the Mac client (MapleCW.app around the same payload)...' -ForegroundColor Cyan
+    $macArgs = @((Join-Path $here 'make_mac_client.py'), '--payload', $stage, '--out', $macZip)
+    if ($NoClient) { $macArgs += '--no-client' }
+    & python @macArgs
+    if ($LASTEXITCODE -ne 0) { Fail 'the Mac client build failed (see above)' }
+    Write-Host ("sha256 {0}" -f (Get-FileHash $macZip -Algorithm SHA256).Hash)
+} elseif ($ClientOnly) {
+    Write-Host ''
+    Write-Host 'NO Mac client built (-NoMac). A release for players needs both zips.' -ForegroundColor Yellow
+}
+
 Write-Host ''
 if ($ClientOnly) {
     # There is no install.ps1 in a client payload any more, so telling somebody to run one
@@ -456,6 +490,13 @@ if ($ClientOnly) {
     Write-Host '  both ports and the account name after the first successful Start Game.' -ForegroundColor Cyan
     Write-Host '  Accounts are made in its REGISTER tab with a code a GM mints (!registrationcode).' -ForegroundColor Cyan
     Write-Host '  If the Visual C++ redistributable is missing it says so in words at Start Game.' -ForegroundColor Cyan
+    if (-not $NoMac) {
+        Write-Host ''
+        Write-Host 'On a Mac: unzip MapleCW-setup-mac.zip (it holds only MapleCW.app), move the app to' -ForegroundColor Cyan
+        Write-Host '  Applications, then paste ONE line in Terminal (both tools ship with macOS):' -ForegroundColor Cyan
+        Write-Host '    xattr -dr com.apple.quarantine /Applications/MapleCW.app && codesign --force --deep --sign - /Applications/MapleCW.app' -ForegroundColor Cyan
+        Write-Host '  Nothing else to install: the app carries its own Wine and DXVK (Rosetta 2 on Apple Silicon).' -ForegroundColor Cyan
+    }
 } else {
     Write-Host 'On the target machine: unzip, then from an ELEVATED PowerShell window run' -ForegroundColor Cyan
     Write-Host '  powershell -ExecutionPolicy Bypass -File "<unzipped path>\MapleCW\install.ps1"' -ForegroundColor Cyan

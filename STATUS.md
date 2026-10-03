@@ -382,6 +382,32 @@ carries risk**: the handler's trailing virtual call resolves to a method that re
 and if that resolution is wrong the body is short. Plan step 13(b) asks for `client-exit.log`
 rather than assuming. Never on a screen.
 
+**2026-10-02: the Mac client - `MapleCW.app`, built and NEVER run on a Mac.** The owner: every client
+release now ships for Windows AND macOS (`CLAUDE.md`, standing constraints). Nexon's own Mac client
+(`client-mac/`, gitignored) turned out to be a CrossOver 25 bottle running the **Windows** `MapleStory.exe`,
+with NGS-X as a native helper beside Wine - so ours is not a port either: `tools/mac/MapleCW` installs the
+same `-ClientOnly` payload (launcher, `grap64.dll`, client) into `~/Library/Application Support/MapleCW` and
+runs the launcher with the Wine runtime inside the player's own `MapleStory Launcher.app`, in a bottle of
+MapleCW's own cloned from Nexon's template (`CX_BOTTLE_PATH`). `make-installer.ps1 -ClientOnly` now writes
+`out\MapleCW-setup-mac.zip` (only the `.app` inside) beside `MapleCW-setup-windows.zip` (`tools/make_mac_client.py`, which marks the script 0755 - a
+Windows zip cannot). Under Wine the launcher logs `running under Wine ... the Mac client` and **skips the
+firewall rule with a warning** (Wine's `netsh` would report success and block nothing); the hook log says
+the same. Measured only on Windows: the packager's self-test, the script under Git Bash against a fake
+CrossOver tree, `wine::detect() == None` here, and the installer dry run. **Unmeasured, in the order a
+first run meets them** (`docs/mac-client.md` has the checklist): macOS bash 3.2, CrossOver making our bottle,
+the egui window over Wine's OpenGL, and the big one - `141b2a280:rdx=0` re-arms by **trap-flag
+single-step**, which Rosetta 2 may not honour on Apple Silicon. **Same evening, from four Mac runs:** the app, bottle and launcher start
+worked; the window needed a Wine-gated glutin patch (`vendor/README.md`: winemac refuses non-forward-compatible
+3.2+ GL contexts); self-update now refuses a server launcher without the Mac mark under Wine; and
+`make-installer.ps1`'s static-launcher build had been a bare `{}` that never ran since 2026-09-16. Then the owner
+asked for no Nexon dependency: **`MapleCW.app` now carries Gcenx's open-source Wine 11.0 build** (pinned by
+SHA-256, downloaded once into `out\wine\`, never committed) and always uses it; Nexon's CrossOver is a test-only
+`MAPLECW_USE_NEXON=1`. It did not: the client wants D3D11 feature level 11_0 (SM 5.0 shaders) and wined3d cannot give
+that on a Mac, so **DXVK-macOS is bundled for `MapleStory.exe`** - and with it **the game was played on
+the owner's Mac (Apple Silicon) the same night**: sign-in over the LAN, login screen with no dialog, into the world. A
+player's setup is one Terminal line (`xattr` + ad-hoc `codesign`, both part of macOS - the signature is what
+gets the app Local Network access). `docs/mac-client.md` has every step and the measurements.
+
 **2026-10-02: a turn-in no longer repeats the quest's completion lines - the client draws `Say.1` itself.**
 Players: *"quests are repeating lines in general."* Decompiling the client's `0x0151` builder
 (`FUN_141f0e4c0`) shows it draws `Say/<state>` - its lines, and the yes/no or menu on the last one -

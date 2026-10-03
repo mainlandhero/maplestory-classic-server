@@ -1,0 +1,4 @@
+# The Mac client's files run on macOS, where a CRLF in a shell script's first line makes the
+# app fail to start ("bad interpreter: /bin/bash^M"). tools/make_mac_client.py also normalises
+# them, but a checkout should not need rescuing.
+tools/mac/* text eol=lf

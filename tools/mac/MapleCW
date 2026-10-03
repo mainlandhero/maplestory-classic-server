@@ -1,0 +1,252 @@
+#!/bin/bash
+# MapleCW for macOS - the executable inside MapleCW.app (Contents/MacOS/MapleCW).
+#
+# The Mac client is NOT a port. Nexon's own Mac build of Classic World ("MapleStory
+# Launcher.app") is a CrossOver bottle running the Windows MapleStory.exe under Wine. This app
+# does the same with OUR pieces: the Windows maplecw-launcher.exe, the grap64.dll GameGuard
+# stub and the pinned client, unchanged, in a Wine prefix of its own. docs/mac-client.md.
+#
+# It needs nothing else installed: the Wine it runs is inside it (Contents/Resources/wine).
+#
+# What it does, in order:
+#   1. copy the payload out of the app into a writable folder (the launcher writes markers,
+#      logs and its own updates beside itself, and an app bundle is the wrong place for that);
+#   2. make the Wine prefix on the first start;
+#   3. start maplecw-launcher.exe in it.
+#
+# Environment overrides, for testing only:
+#   MAPLECW_HOME          where the writable copy and the prefix live
+#                         (default: ~/Library/Application Support/MapleCW)
+#   MAPLECW_D3D_RENDERER  gl | vulkan - wined3d's backend, written to the prefix at each start
+#                         (unset leaves whatever is there; Wine's default is gl)
+#   MAPLECW_WINE          a different plain Wine binary instead of the bundled one
+#   MAPLECW_USE_NEXON=1   Nexon's CrossOver runtime instead (needs "MapleStory Launcher.app"; kept
+#                         so a rendering problem can be compared against the runtime Nexon tuned)
+#   MAPLECW_NEXON_APP     where that app is, if not in Applications
+#   MAPLECW_DRYRUN=1      print what would run, start nothing, show no dialogs
+
+set -u
+
+APP="$(cd "$(dirname "$0")/../.." && pwd)"
+PAYLOAD="$APP/Contents/Resources/payload"
+SUPPORT="${MAPLECW_HOME:-$HOME/Library/Application Support/MapleCW}"
+INSTALL="$SUPPORT/MapleCW"
+LOG="$SUPPORT/mac-launch.log"
+DRYRUN="${MAPLECW_DRYRUN:-}"
+
+mkdir -p "$SUPPORT" || exit 1
+
+# Everything below, Wine's own output included, goes to the log. When a Mac player says "it
+# did nothing", this file and maplecw-hook.log are what they send.
+if [ -z "$DRYRUN" ]; then
+    exec >>"$LOG" 2>&1
+fi
+
+say() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+# A failure the player can see. Without the dialog an app that cannot start simply bounces
+# in the Dock and vanishes, which reads as "the Mac client does not work" and nothing more.
+fail() {
+    say "FAILED: $*"
+    if [ -z "$DRYRUN" ] && command -v osascript >/dev/null 2>&1; then
+        local text="${*//\"/\\\"}"
+        osascript -e "display alert \"MapleCW could not start\" message \"$text
+
+Details: $LOG\" as critical" >/dev/null 2>&1
+    fi
+    exit 1
+}
+
+say "MapleCW.app starting from $APP"
+
+# ---------------------------------------------------------------- 1. the payload
+#
+# Copied when the app's stamp differs from the installed one - a first run, or a newer zip.
+# Between releases the launcher keeps itself and the client current over the network
+# (self-update and the client patch), exactly as on Windows, so this copy is not the update
+# channel; it is the install.
+#
+# Files a player's launcher wrote are kept across a re-copy: the remembered game folder,
+# server address and account name, and a server config the player may have edited.
+PRESERVE="maplecw-launcher.remembered.toml maplecw-launcher.toml"
+
+[ -d "$PAYLOAD" ] || fail "this MapleCW.app has no payload ($PAYLOAD). Download it again."
+[ -f "$PAYLOAD/maplecw-launcher.exe" ] || fail "the payload has no maplecw-launcher.exe. Download MapleCW again."
+
+if ! cmp -s "$PAYLOAD/.payload-stamp" "$INSTALL/.payload-stamp" 2>/dev/null; then
+    say "installing the payload into $INSTALL (stamp $(head -c 16 "$PAYLOAD/.payload-stamp" 2>/dev/null))"
+    if [ -n "$DRYRUN" ]; then
+        say "dry run: would copy $PAYLOAD/ to $INSTALL/"
+    else
+        mkdir -p "$INSTALL" "$SUPPORT/.keep" || fail "cannot create $INSTALL"
+        for f in $PRESERVE; do
+            [ -f "$INSTALL/$f" ] && mv -f "$INSTALL/$f" "$SUPPORT/.keep/$f"
+        done
+        # The stamp goes in LAST, so a copy that dies half-way is retried on the next start.
+        rm -f "$INSTALL/.payload-stamp"
+        if command -v rsync >/dev/null 2>&1; then
+            rsync -a --exclude .payload-stamp "$PAYLOAD/" "$INSTALL/" || fail "copying the payload failed"
+        else
+            cp -Rp "$PAYLOAD/." "$INSTALL/" || fail "copying the payload failed"
+            rm -f "$INSTALL/.payload-stamp"
+        fi
+        for f in $PRESERVE; do
+            [ -f "$SUPPORT/.keep/$f" ] && mv -f "$SUPPORT/.keep/$f" "$INSTALL/$f"
+        done
+        cp -p "$PAYLOAD/.payload-stamp" "$INSTALL/.payload-stamp" 2>/dev/null
+        # Quarantine means nothing to Wine, but an unzipped copy carries it on every file and
+        # a player opening the folder in Finder should not be asked about each one.
+        command -v xattr >/dev/null 2>&1 && xattr -dr com.apple.quarantine "$INSTALL" 2>/dev/null
+        say "payload installed"
+    fi
+fi
+
+# ---------------------------------------------------------------- 2. the Wine runtime
+#
+# **The Wine inside this app, always.** The owner, 2026-10-02: MapleCW.app must not need Nexon's
+# app, and every Mac player runs the same runtime, so a report from one Mac reproduces on
+# another. It is an unmodified open-source build - Gcenx's macOS build of WineHQ stable - and its
+# licence notice is beside it (Contents/Resources/wine/README-WINE.txt).
+#
+# The CrossOver path below is kept behind MAPLECW_USE_NEXON=1 only: the first Mac runs used it,
+# and when something renders wrong under plain Wine, "does it render under the runtime Nexon
+# tuned?" is the first comparison worth one launch.
+MODE=""
+WINE=""
+CXROOT=""
+BUNDLED="$APP/Contents/Resources/wine/bin/wine"
+
+find_nexon_app() {
+    local candidates=()
+    [ -n "${MAPLECW_NEXON_APP:-}" ] && candidates+=("$MAPLECW_NEXON_APP")
+    candidates+=("/Applications/MapleStory Launcher.app" "$HOME/Applications/MapleStory Launcher.app")
+    if command -v mdfind >/dev/null 2>&1; then
+        while IFS= read -r found; do
+            [ -n "$found" ] && candidates+=("$found")
+        done < <(mdfind "kMDItemCFBundleIdentifier == 'com.nexon.maplestory.na.v1'" 2>/dev/null)
+    fi
+    local app
+    for app in "${candidates[@]}"; do
+        local root="$app/Contents/SharedSupport/maplestoryna"
+        local w
+        for w in "$root/bin/wine" "$root/MapleStory Launcher/wine"; do
+            if [ -x "$w" ] && [ -f "$w" ]; then
+                CXROOT="$root"
+                WINE="$w"
+                return 0
+            fi
+        done
+    done
+    return 1
+}
+
+if [ -n "${MAPLECW_USE_NEXON:-}" ]; then
+    find_nexon_app || fail "MAPLECW_USE_NEXON is set but Nexon's MapleStory Launcher.app was not found."
+    MODE="crossover"
+elif [ -n "${MAPLECW_WINE:-}" ]; then
+    [ -x "$MAPLECW_WINE" ] || fail "MAPLECW_WINE is set to $MAPLECW_WINE, which is not an executable."
+    MODE="plain"
+    WINE="$MAPLECW_WINE"
+elif [ -x "$BUNDLED" ]; then
+    MODE="bundled"
+    WINE="$BUNDLED"
+else
+    fail "this MapleCW.app has no Wine inside it ($BUNDLED). Download MapleCW again."
+fi
+say "Wine: $MODE, $WINE"
+
+# ---------------------------------------------------------------- 3. start the launcher
+cd "$INSTALL" 2>/dev/null || [ -n "$DRYRUN" ] || fail "cannot enter $INSTALL"
+
+if [ "$MODE" = "crossover" ]; then
+    # Our own CrossOver bottle, cloned from Nexon's template - see docs/mac-client.md. The
+    # template's NAME is read from support/default rather than assumed.
+    BOTTLE="$(basename "$(readlink "$CXROOT/support/default" 2>/dev/null || echo maplestory)")"
+    [ -f "$CXROOT/support/$BOTTLE/system.reg" ] || fail "Nexon's app has no bottle template at $CXROOT/support/$BOTTLE - its layout has changed. Report this with $LOG."
+    export CX_BOTTLE_PATH="$SUPPORT/Bottles"
+    mkdir -p "$CX_BOTTLE_PATH" 2>/dev/null
+    # Deliberately NOT --enable-alt-loader: that hands the process to the socket Nexon's
+    # helper app serves, and that helper is the thing that starts their anti-cheat.
+    CMD=("$WINE" --bottle "$BOTTLE" --wait-children --workdir "$INSTALL" "$INSTALL/maplecw-launcher.exe")
+    say "bottle: $CX_BOTTLE_PATH/$BOTTLE (Nexon's CrossOver, by request)"
+else
+    export WINEPREFIX="$SUPPORT/prefix"
+    export WINEARCH=win64
+    # Wine Mono (.NET) is not bundled - neither the launcher nor the client is a .NET program,
+    # and it is 236 MB. Without this, Wine asks to download it when it makes the prefix.
+    export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-mscoree=}"
+    # Wine's "fixme:" lines are tens of thousands of lines of noise; errors still reach the log.
+    export WINEDEBUG="${WINEDEBUG:-fixme-all}"
+    WINESERVER="$(dirname "$WINE")/wineserver"
+
+    regset() {
+        "$WINE" reg add "$1" /v "$2" /t "$3" /d "$4" /f >/dev/null 2>&1 || say "WARNING: could not set $1\\$2"
+    }
+
+    if [ -z "$DRYRUN" ] && [ ! -f "$WINEPREFIX/system.reg" ]; then
+        say "creating the Wine prefix $WINEPREFIX (first start - a minute or two, nothing on screen)"
+        "$WINE" wineboot --init
+        [ -x "$WINESERVER" ] && "$WINESERVER" -w
+        # No Direct3D tuning copied from Nexon's bottle: its CSMT=disabled was tried both ways on
+        # 2026-10-02 and changed nothing, and with DXVK below wined3d does not draw the game at all.
+        say "prefix created"
+    fi
+    if [ -z "$DRYRUN" ] && [ -n "${MAPLECW_D3D_RENDERER:-}" ]; then
+        regset 'HKCU\Software\Wine\Direct3D' renderer REG_SZ "$MAPLECW_D3D_RENDERER"
+        say "Direct3D renderer set to $MAPLECW_D3D_RENDERER (MAPLECW_D3D_RENDERER)"
+    fi
+    # **Direct3D 11 for the client comes from DXVK, not from Wine.** Measured 2026-10-02 on the
+    # owner's Mac: Gr2D_DX11.dll asks D3D11CreateDevice for exactly ONE feature level, 11_0, and all
+    # 203 of its shaders are Shader Model 5.0 - and Wine's own wined3d cannot give 11_0 on a Mac
+    # (OpenGL there stops at 4.1; MoltenVK has no geometry shaders). Both renderers failed with
+    # "Failed to create command stream". DXVK-macOS (Contents/Resources/dxvk) translates D3D11 to
+    # Vulkan over the MoltenVK in this Wine and offers 11_0 without geometry shaders.
+    #
+    # Installed into the prefix's system32 and switched on for MapleStory.exe ALONE, through
+    # Wine's per-application DllOverrides: the launcher keeps Wine's builtin d3d11 (it draws with
+    # OpenGL anyway), and nothing is written into the client folder, which the launcher's version
+    # check compares against the server's copy. MAPLECW_NO_DXVK=1 turns it back to builtin.
+    DXVK="$APP/Contents/Resources/dxvk"
+    SYS32="$WINEPREFIX/drive_c/windows/system32"
+    APPKEY='HKCU\Software\Wine\AppDefaults\MapleStory.exe\DllOverrides'
+    if [ -z "$DRYRUN" ] && [ -d "$DXVK" ] && [ -d "$SYS32" ]; then
+        if [ -n "${MAPLECW_NO_DXVK:-}" ]; then
+            regset "$APPKEY" d3d11 REG_SZ builtin
+            regset "$APPKEY" d3d10core REG_SZ builtin
+            rm -f "$WINEPREFIX/.maplecw-dxvk"
+            say "DXVK switched OFF for MapleStory.exe (MAPLECW_NO_DXVK) - Wine's own d3d11"
+        else
+            for f in d3d11.dll d3d10core.dll; do
+                cmp -s "$DXVK/$f" "$SYS32/$f" || cp -f "$DXVK/$f" "$SYS32/$f" || say "WARNING: could not install $f"
+            done
+            if ! cmp -s "$DXVK/VERSION" "$WINEPREFIX/.maplecw-dxvk" 2>/dev/null; then
+                regset "$APPKEY" d3d11 REG_SZ native
+                regset "$APPKEY" d3d10core REG_SZ native
+                cp -f "$DXVK/VERSION" "$WINEPREFIX/.maplecw-dxvk" 2>/dev/null
+            fi
+            say "DXVK: $(head -1 "$DXVK/VERSION" 2>/dev/null) for MapleStory.exe"
+        fi
+    fi
+    CMD=("$WINE" "$INSTALL/maplecw-launcher.exe")
+    say "prefix: $WINEPREFIX ($("$WINE" --version 2>/dev/null || echo 'version unknown'))"
+fi
+
+# Which launcher, by the same 16-hex digest the build logs print. On 2026-10-02 a test reported
+# "the fix did not work" from a Mac that was still running the zip built before the fix; this
+# line would have said so in the first screen of the log.
+if command -v shasum >/dev/null 2>&1 && [ -f "$INSTALL/maplecw-launcher.exe" ]; then
+    say "launcher: sha256 $(shasum -a 256 "$INSTALL/maplecw-launcher.exe" | cut -c1-16)"
+fi
+say "running: ${CMD[*]}"
+if [ -n "$DRYRUN" ]; then
+    printf 'DRYRUN-CMD:'
+    printf ' [%s]' "${CMD[@]}"
+    printf '\n'
+    exit 0
+fi
+"${CMD[@]}"
+status=$?
+say "the launcher exited with status $status"
+exit 0

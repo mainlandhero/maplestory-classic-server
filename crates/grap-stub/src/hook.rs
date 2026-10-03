@@ -125,6 +125,7 @@ const PAGE_GUARD: u32 = 0x100;
 
 extern "system" {
     fn GetModuleHandleA(name: *const u8) -> *mut c_void;
+    fn GetProcAddress(module: *mut c_void, name: *const u8) -> *mut c_void;
     fn VirtualProtect(addr: *mut c_void, size: usize, new: u32, old: *mut u32) -> i32;
     fn VirtualQuery(addr: *const c_void, buf: *mut MemoryBasicInformation, len: usize) -> usize;
     fn VirtualAlloc(addr: *mut c_void, size: usize, typ: u32, protect: u32) -> *mut c_void;
@@ -358,12 +359,41 @@ pub fn install_once() {
         "install_once: our code IS running. env={by_env} marker={by_marker} -> {}",
         if enabled { "installing" } else { "standing down" }
     ));
+    // The Mac client is this stub in a Wine bottle (`docs/mac-client.md`). Every patch here
+    // was measured on Windows; a hook log that does not say which it ran on cannot be read.
+    if let Some(v) = wine_version() {
+        log(&format!("install_once: running under Wine {v} - the Mac client; patches measured on Windows only"));
+    }
     if !enabled {
         return;
     }
     std::thread::spawn(|| {
         wait_for_text_then_install();
     });
+}
+
+/// `wine_get_version()` when this process is running under Wine, else `None`.
+///
+/// Read only: two lookups in `ntdll`, which Windows' does not export and Wine's does. The
+/// launcher's `crate::wine` asks the same question the same way.
+fn wine_version() -> Option<String> {
+    // SAFETY: plain lookups; `wine_get_version` is `const char *(void)` where it exists.
+    unsafe {
+        let ntdll = GetModuleHandleA(b"ntdll.dll\0".as_ptr());
+        if ntdll.is_null() {
+            return None;
+        }
+        let f = GetProcAddress(ntdll, b"wine_get_version\0".as_ptr());
+        if f.is_null() {
+            return None;
+        }
+        let f: extern "C" fn() -> *const std::ffi::c_char = std::mem::transmute(f);
+        let p = f();
+        if p.is_null() {
+            return Some("(unknown version)".to_string());
+        }
+        Some(std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned())
+    }
 }
 
 /// How long to keep waiting for `.text` to settle before installing anyway.
