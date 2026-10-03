@@ -525,7 +525,7 @@ pub fn npc_menu(speaker_template: u32, text: &str) -> Vec<u8> {
 /// (`14127dc9f`, `dcb2`, `dcdc`, `dced`, then the loop at `dd03`, then `de00`):
 ///
 /// ```text
-/// u32  echo         read and carried into the reply (Say's `echo`, the same slot)
+/// u32  coupon       the coupon's item id - it decides what the box DOES (below); 0 = guess
 /// str  text         the prompt
 /// u8   (one raw byte, echoed back in the reply - sent as 0)
 /// u8   count
@@ -533,14 +533,35 @@ pub fn npc_menu(speaker_template: u32, text: &str) -> Vec<u8> {
 /// u32  trailing     read and unused (Say has the same tail)
 /// ```
 ///
+/// **The first `u32` is the coupon, and it is not optional for a colour box.** The owner,
+/// 2026-10-02, with a screenshot of each: the hair-colour and eye-colour boxes opened, and
+/// *"clicking the Next button does not rotate through all of the available colors"*. Read off
+/// the client **[L]**: `FUN_142a8a190` hands this value to `FUN_142a91f30` as `param_2`, which
+/// types the box from it (`FUN_1401a8170` -> `FUN_140417ed0`, by item id) and only falls back
+/// to the FIRST candidate's id when it is 0. Then every candidate is rewritten against the
+/// player's current look by type (`FUN_1401a8660`):
+///
+/// | coupon | type | each candidate becomes |
+/// |---|---|---|
+/// | 0, hair ids / 5150100, 5150000 | `0x15` | the candidate STYLE in the player's current colour |
+/// | 0, face ids / 5152200, 5152000 | `0xb` | the candidate FACE at the player's current eye colour |
+/// | 5151100, 5151000 | `0x17` | the player's current style in the candidate's COLOUR |
+/// | 5152100 | `0xd` | the player's current face at the candidate's EYE COLOUR |
+/// | 0, ids under 24000 / 5153000 | `1` | unchanged (skins) |
+///
+/// With 0, eight hair colours were typed as styles and all rewritten to the current colour -
+/// eight identical looks, which is exactly what Next walked through. The style, face and skin
+/// boxes come out the same either way; only the colour boxes needed it.
+///
 /// **The box is modal**: the handler builds the UI (`FUN_142a57d30`, 2000 bytes), runs it,
 /// and writes the `0x00F3` itself from the result - `vtable+0x130` returning 1 (OK), 0
 /// (cancel) or 3 (nothing sent). See [`parse_avatar_reply`] for what comes back.
 pub const SCRIPT_TYPE_AVATAR: u8 = 0x0a;
 
 /// A "pick one of these looks" box: the text, then `styles` drawn on the player's avatar.
-/// The reply's `selection` is an index into `styles`.
-pub fn npc_avatar(speaker_template: u32, text: &str, styles: &[u32]) -> Vec<u8> {
+/// `coupon` is the item being used - see [`SCRIPT_TYPE_AVATAR`] for why it matters. The
+/// reply's `selection` is an index into `styles`.
+pub fn npc_avatar(speaker_template: u32, coupon: u32, text: &str, styles: &[u32]) -> Vec<u8> {
     let mut w = PacketWriter::new();
     w.u32(0); //                     handle
     w.u8(0); //                      head field 2
@@ -549,7 +570,7 @@ pub fn npc_avatar(speaker_template: u32, text: &str, styles: &[u32]) -> Vec<u8> 
     w.u8(SCRIPT_TYPE_AVATAR); //     message type
     w.u16(0); //                     flags
     w.u8(0); //                      head field 8
-    w.u32(0); //                     14127dc9f  echo
+    w.u32(coupon); //                14127dc9f  the coupon: types the box (FUN_142a91f30)
     w.str(text); //                  14127dcb2
     w.u8(0); //                      14127dcdc  one raw byte, echoed in the reply
     w.u8(styles.len() as u8); //     14127dced  count
@@ -883,10 +904,10 @@ mod avatar_tests {
     /// trailing. The 14-byte head + 4 + (2 + 5) + 1 + 1 + 3 * 4 + 4.
     #[test]
     fn the_avatar_box_is_laid_out_the_way_the_handler_reads_it() {
-        let b = npc_avatar(213, "Pick!", &[30_050, 31_110, 30_400]);
+        let b = npc_avatar(213, 5_151_100, "Pick!", &[30_050, 31_110, 30_400]);
         assert_eq!(b[10], SCRIPT_TYPE_AVATAR, "message type at the head's offset 10");
         let body = &b[SCRIPT_HEAD_LEN..];
-        assert_eq!(&body[..4], &0u32.to_le_bytes(), "echo");
+        assert_eq!(&body[..4], &5_151_100u32.to_le_bytes(), "the coupon, first");
         assert_eq!(&body[4..6], &5u16.to_le_bytes(), "text length");
         assert_eq!(&body[6..11], b"Pick!");
         assert_eq!(body[11], 0, "the raw byte");
