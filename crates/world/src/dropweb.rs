@@ -338,9 +338,22 @@ impl Whereabouts {
     }
 }
 
+/// **Drops the server makes in code rather than from `data/drops.txt`**: `(mob, item)`, each one
+/// per party member, visible and collectable only by that member, untouched by the drop rate.
+/// The owner, 2026-10-02: the page said the King Slime does not drop Slime Shoes, because it reads
+/// only the table; the shoes are `session/firsttime.rs`'s `party_quest_personal_drops`. The
+/// page tags such a row **instanced** and explains it on hover.
+pub const INSTANCED: &[(u32, u32)] = &[(crate::firsttime::KING_SLIME, crate::firsttime::SLIME_SHOES)];
+
+/// Names players use that the client does not: the search matches these too. The client calls
+/// the Slime Shoes **Squishy Shoes** (`gm-handbook/items.txt` 1072128).
+pub const ALIASES: &[(u32, &str)] = &[(crate::firsttime::SLIME_SHOES, "Slime Shoes")];
+
 /// `/tables.json`: the shape the page reads - `mobs` (`id`, `name`, `level`, `rows` of
-/// `[item, ppm, min, max, fixed]`, `maps` of `[map, name, spawn points]`, `also`), `global`,
-/// and `items` (`id -> [name, kind, quest, desc, [tooltip lines]]`). A monster that appears
+/// `[item, ppm, min, max, fixed]` - plus a sixth `1` on an **instanced** row, see
+/// [`INSTANCED`] - `maps` of `[map, name, spawn points]`, `also`), `global`, `items`
+/// (`id -> [name, kind, quest, desc, [tooltip lines]]`) and `aliases` (`id -> other name`,
+/// which the search also matches). A monster that appears
 /// nowhere ([`Whereabouts`]) is left out. A mob
 /// with no meso row gets the server's level-scaled default as a `fixed` row: always dropped,
 /// not scaled by the rate (`session/combat.rs`). The First Time Together box is the last
@@ -359,8 +372,14 @@ pub fn tables_json(config: &Config, mob_names: &HashMap<u32, String>, descs: &Ha
     mobs.sort_by_key(|(level, t, _)| (*level, *t));
     let whereabouts = Whereabouts::of(config);
     mobs.retain(|(_, t, _)| whereabouts.exists(*t));
-    let row = |s: &mut String, first: &mut bool, item: u32, ppm: u32, lo: u32, hi: u32, fixed: bool| {
-        let _ = write!(s, "{}[{item},{ppm},{lo},{hi},{}]", if *first { "" } else { "," }, u8::from(fixed));
+    let row = |s: &mut String, first: &mut bool, item: u32, ppm: u32, lo: u32, hi: u32, fixed: bool, instanced: bool| {
+        let _ = write!(
+            s,
+            "{}[{item},{ppm},{lo},{hi},{}{}]",
+            if *first { "" } else { "," },
+            u8::from(fixed),
+            if instanced { ",1" } else { "" }
+        );
         *first = false;
     };
     for (i, (level, t, rows)) in mobs.iter().enumerate() {
@@ -378,12 +397,18 @@ pub fn tables_json(config: &Config, mob_names: &HashMap<u32, String>, descs: &Ha
         let mut first = true;
         if !config.drops.has_meso_row(*t) {
             if let Some((lo, hi)) = crate::droptables::level_meso_range(*level) {
-                row(&mut s, &mut first, 0, crate::droptables::PER_MILLION, lo, hi, true);
+                row(&mut s, &mut first, 0, crate::droptables::PER_MILLION, lo, hi, true, false);
             }
         }
         for e in rows.iter() {
-            row(&mut s, &mut first, e.item_id, e.chance_ppm, e.min_qty, e.max_qty, false);
+            row(&mut s, &mut first, e.item_id, e.chance_ppm, e.min_qty, e.max_qty, false, false);
             items.insert(e.item_id, ());
+        }
+        for &(mob, item) in INSTANCED {
+            if mob == *t {
+                row(&mut s, &mut first, item, crate::droptables::PER_MILLION, 1, 1, true, true);
+                items.insert(item, ());
+            }
         }
         s.push_str("]}");
     }
@@ -401,17 +426,21 @@ pub fn tables_json(config: &Config, mob_names: &HashMap<u32, String>, descs: &Ha
     for slot in &crate::magicbox::SLOTS {
         let share = crate::droptables::PER_MILLION / slot.prizes.len() as u32;
         for &(item, q) in slot.prizes {
-            row(&mut s, &mut first, item, share, u32::from(q), u32::from(q), true);
+            row(&mut s, &mut first, item, share, u32::from(q), u32::from(q), true, false);
             items.insert(item, ());
         }
     }
     s.push_str("]}],\"global\":[");
     let mut first = true;
     for e in config.drops.global() {
-        row(&mut s, &mut first, e.item_id, e.chance_ppm, e.min_qty, e.max_qty, false);
+        row(&mut s, &mut first, e.item_id, e.chance_ppm, e.min_qty, e.max_qty, false, false);
         items.insert(e.item_id, ());
     }
-    s.push_str("],\"items\":{");
+    s.push_str("],\"aliases\":{");
+    for (i, (item, alias)) in ALIASES.iter().enumerate() {
+        let _ = write!(s, "{}\"{item}\":\"{}\"", if i > 0 { "," } else { "" }, esc(alias));
+    }
+    s.push_str("},\"items\":{");
     let mut ids: Vec<u32> = items.into_keys().filter(|i| *i != 0).collect();
     ids.sort();
     for (i, id) in ids.iter().enumerate() {
@@ -476,6 +505,26 @@ mod tests {
         // The client's description, its escape kept for the page to break the line on.
         assert!(j.contains("\"4000001\":[\"Snail Shell\",\"etc\",0,\"A shell from a snail.\\\\nAn etc item.\",[]]"), "{j}");
         assert!(!j.contains("<"), "no raw angle bracket can close the page's script");
+    }
+
+    /// **The King Slime's Squishy Shoes are on the page, tagged instanced.** The owner, 2026-10-02:
+    /// the page said the King Slime does not drop Slime Shoes - it read only `data/drops.txt`,
+    /// and the shoes are made in code, one per party member. The row is the table's Pass,
+    /// then the shoes at 100% with a sixth field `1`; the item is named, and "Slime Shoes" is
+    /// an alias the search matches. No other mob gets a sixth field.
+    #[test]
+    fn the_king_slimes_shoes_are_an_instanced_row_and_slime_shoes_finds_them() {
+        let mut c = config();
+        c.drops = crate::droptables::DropTables::parse(
+            "2 | 4000001 | 60 | 1 | 1 | 0 | Snail Shell\n800003 | 4001002 | 100 | 1 | 1 | 1 | Pass\n800003 | 0 | 100 | 1 | 1 | 1 | mesos\n",
+        );
+        c.mobs.insert(80_000_400, vec![net::mob::FieldMob::new(1, crate::firsttime::KING_SLIME, 0, 0, 1, 10)]);
+        c.item_names.insert(crate::firsttime::SLIME_SHOES, "Squishy Shoes".into());
+        let j = tables_json(&c, &HashMap::new(), &HashMap::new());
+        assert!(j.contains("\"rows\":[[4001002,1000000,1,1,0],[0,1000000,1,1,0],[1072128,1000000,1,1,1,1]]"), "{j}");
+        assert!(j.contains("\"1072128\":[\"Squishy Shoes\",\"equip\""), "{j}");
+        assert!(j.contains("\"aliases\":{\"1072128\":\"Slime Shoes\"}"), "{j}");
+        assert!(j.contains("[[4000001,600000,1,1,0]]"), "the Snail's row has no sixth field: {j}");
     }
 
     /// **A monster no map spawns is left off the page** - unless the server brings it some other

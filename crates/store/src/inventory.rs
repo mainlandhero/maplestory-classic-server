@@ -785,7 +785,12 @@ pub(crate) fn item_from_row(row: &rusqlite::Row<'_>, base: usize) -> rusqlite::R
         // Anything that is not the equip byte is read as a bundle. A `CHECK` keeps the column
         // to 1 or 2, so this can only be reached by a hand-edited database, and a stack of
         // one is a far better failure than an item that disappears.
-        ItemKind::Bundle { quantity: u16::try_from(quantity).unwrap_or(1).max(1) }
+        //
+        // **Except an empty star stack**, which is a real 0 (`Store::spend_ammo`, 2026-10-02):
+        // read as 1, every emptied stack would hand its owner one free star back.
+        let q = u16::try_from(quantity).unwrap_or(1);
+        let empty_stars = q == 0 && u32::try_from(item_id).is_ok_and(net::bag::bundle_has_serial);
+        ItemKind::Bundle { quantity: if empty_stars { 0 } else { q.max(1) } }
     };
     // Server-only, immediately after the stat block - `item_columns` appends it there.
     // Tolerant of NULL so a row written before this column existed reads as "no failures",
@@ -842,14 +847,15 @@ pub(crate) fn create_tables(conn: &Connection) -> Result<()> {
             CHECK (inv_type BETWEEN 1 AND 6),
             CHECK (slot >= 1),
             CHECK (kind IN (1, 2)),
-            CHECK (quantity >= 1),
+            {quantity_check},
             -- An equip is unique; a stack of two equips is not a thing the client can draw.
             CHECK (kind <> 1 OR quantity = 1)
         );
 
         CREATE INDEX IF NOT EXISTS idx_inventory_character ON inventory(character_id);
         "#,
-        stats = equip_stat_declarations()
+        stats = equip_stat_declarations(),
+        quantity_check = QUANTITY_CHECK,
     ))?;
     // **`inventory` needs the ALTER path too now, and it did not before.** The comment above
     // says a plain `CREATE TABLE IF NOT EXISTS` is enough "because the table is new" - that was
@@ -862,6 +868,63 @@ pub(crate) fn create_tables(conn: &Connection) -> Result<()> {
     // is for: it replays their real schema rather than a fresh one.
     add_equip_stat_columns(conn, "inventory")?;
     add_equip_stat_columns(conn, "equipment")?;
+    allow_empty_rechargeable_stacks(conn)?;
+    Ok(())
+}
+
+/// `inventory`'s quantity rule: at least one, **except a throwing star or bullet stack, which may
+/// be empty** - `Store::spend_ammo` keeps it at 0 so it can be recharged (the owner, 2026-10-02).
+/// `item_id / 10000` is integer division on an INTEGER column, the same `207`/`233` test as
+/// `net::bag::bundle_has_serial`.
+pub(crate) const QUANTITY_CHECK: &str = "CHECK (quantity >= 1 OR (kind = 2 AND item_id / 10000 IN (207, 233)))";
+
+/// The rule every `inventory` table was created with until 2026-10-02.
+const OLD_QUANTITY_CHECK: &str = "CHECK (quantity >= 1)";
+
+/// **Rebuild a deployed `inventory` under [`QUANTITY_CHECK`].** SQLite cannot alter a CHECK in
+/// place and `CREATE TABLE IF NOT EXISTS` does nothing to a table that exists, so the owner's live
+/// table keeps refusing an empty star stack until this runs - and the live database is not the
+/// repo's (memory: `maplecw-live-db-migrations`), so it has to happen on open.
+///
+/// SQLite's documented rebuild: the table's own stored `CREATE` with the one rule swapped,
+/// under a new name; every row copied across by column order (same columns, same order);
+/// the old table dropped, the new one renamed, its indexes re-made from their own stored SQL.
+/// One transaction, so a half-rebuilt table cannot exist. Keyed on the old rule's text, so
+/// it runs once and is a no-op on every later open. Nothing references `inventory`, so no
+/// foreign key can dangle mid-rebuild.
+fn allow_empty_rechargeable_stacks(conn: &Connection) -> Result<()> {
+    let sql: Option<String> = conn
+        .query_row("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'inventory'", [], |r| r.get(0))
+        .optional()?;
+    let Some(sql) = sql else { return Ok(()) };
+    if !sql.contains(OLD_QUANTITY_CHECK) {
+        return Ok(());
+    }
+    let indexes: Vec<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'inventory' AND sql IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()?
+    };
+    // The table name is the first "inventory" in its own CREATE - nothing before it says it.
+    let name_at = sql.find("inventory").expect("the stored CREATE names its table");
+    let rebuilt = format!(
+        "{}inventory_rebuild{}",
+        &sql[..name_at],
+        &sql[name_at + "inventory".len()..].replacen(OLD_QUANTITY_CHECK, QUANTITY_CHECK, 1)
+    );
+    let tx = conn.unchecked_transaction()?;
+    tx.execute_batch(&rebuilt)?;
+    tx.execute_batch(
+        "INSERT INTO inventory_rebuild SELECT * FROM inventory;
+         DROP TABLE inventory;
+         ALTER TABLE inventory_rebuild RENAME TO inventory;",
+    )?;
+    for index in indexes {
+        tx.execute_batch(&index)?;
+    }
+    tx.commit()?;
     Ok(())
 }
 
@@ -1138,6 +1201,16 @@ pub(crate) fn place_into_bag(
         bag.items.push(placed);
         return Ok(vec![placed]);
     }
+    // **An empty star stack is still an item** (`Store::spend_ammo`, the owner 2026-10-02): picked
+    // up off the floor it takes a slot of its own at 0, the way it left one. Without this the
+    // loop below would place "nothing" and report success, and the stack would vanish.
+    if item.kind == (ItemKind::Bundle { quantity: 0 }) && net::bag::bundle_has_serial(item.item_id) {
+        let slot = lowest_free(bag, inv_type).ok_or_else(full)?;
+        set_slot(conn, character_id, inv_type, slot, item)?;
+        let placed = InvItem { inv_type, slot, item: *item };
+        bag.items.push(placed);
+        return Ok(vec![placed]);
+    }
     let mut remaining = match item.kind {
         ItemKind::Equip(_) => {
             let slot = lowest_free(bag, inv_type).ok_or_else(full)?;
@@ -1206,6 +1279,16 @@ pub(crate) fn take_from_bag(
         return Err(StoreError::SlotEmpty { slot });
     };
     let have = item.kind.quantity();
+    // **An emptied star stack** (`Store::spend_ammo` keeps rechargeables at 0): selling or
+    // dropping it takes the empty stack, whatever count the client names - there is nothing
+    // to count, and refusing would leave a slot nobody can ever clear.
+    if have == 0 {
+        conn.execute(
+            "DELETE FROM inventory WHERE character_id = ?1 AND inv_type = ?2 AND slot = ?3",
+            rusqlite::params![i64::from(character_id), inv_type.as_u8(), slot],
+        )?;
+        return Ok(Item::bundle(item.item_id, 0));
+    }
     let want = count.unwrap_or(have).max(1);
     if want > have {
         return Err(StoreError::NotEnoughItems { slot, item_id: item.item_id, have, want });
@@ -1289,6 +1372,39 @@ impl Store {
         let changed = place_into_bag(&tx, character_id, &mut bag, inv_type, item, max_stack)?;
         tx.commit()?;
         Ok(changed)
+    }
+
+    /// **Spend ammunition from a stack**: `count` thrown or fired out of one slot. Returns what is
+    /// left in it.
+    ///
+    /// Like [`Store::remove_item`], except that a **rechargeable** stack - throwing stars and
+    /// bullets, `net::bag::bundle_has_serial` - that reaches zero **stays in its slot at 0**.
+    /// The owner, 2026-10-02: *"When stars reach 0, it should remain in the player's inventory
+    /// because they should be able to recharge them at any general store."* An empty stack is
+    /// still a stack: a purchase, a pickup or a recharge of the same star tops it up
+    /// (`place_into_bag` fills any stack below `slotMax`, 0 included). Anything else that hits
+    /// zero leaves the slot, as before.
+    pub fn spend_ammo(&self, character_id: u32, inv_type: InventoryType, slot: u16, count: u16) -> Result<u16> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let Some(item) = read_slot(&tx, character_id, inv_type, slot)? else {
+            return Err(StoreError::SlotEmpty { slot });
+        };
+        let have = item.kind.quantity();
+        if count > have {
+            return Err(StoreError::NotEnoughItems { slot, item_id: item.item_id, have, want: count });
+        }
+        let left = have - count;
+        if left == 0 && !net::bag::bundle_has_serial(item.item_id) {
+            tx.execute(
+                "DELETE FROM inventory WHERE character_id = ?1 AND inv_type = ?2 AND slot = ?3",
+                rusqlite::params![i64::from(character_id), inv_type.as_u8(), slot],
+            )?;
+        } else {
+            set_slot(&tx, character_id, inv_type, slot, &Item::bundle(item.item_id, left))?;
+        }
+        tx.commit()?;
+        Ok(left)
     }
 
     /// Take `count` out of a slot. `None` takes the whole slot.
@@ -1660,8 +1776,12 @@ pub fn plan_consolidation(stacks: &[Stack]) -> Vec<StackChange> {
         .collect();
     // The slide: the k-th surviving stack belongs in slot k. Ascending, so by the time a
     // stack moves, every slot below its destination holds something that has already slid.
+    // **An emptied star stack survives** (`Store::spend_ammo`): it was 0 before the pour and
+    // is a real row, so it slides like any stack - only a stack the POUR emptied is gone.
+    let was_empty: std::collections::HashSet<u16> =
+        stacks.iter().filter(|s| s.quantity == 0).map(|s| s.slot).collect();
     let mut next: u16 = 1;
-    for s in work.iter().filter(|s| s.quantity > 0) {
+    for s in work.iter().filter(|s| s.quantity > 0 || was_empty.contains(&s.slot)) {
         if s.slot != next {
             out.push(StackChange::Moved { from: s.slot, to: next });
         }
@@ -3203,5 +3323,108 @@ mod item_id_rename_tests {
         let mut expected: Vec<String> = ITEM_ID_TABLES.iter().map(|s| s.to_string()).collect();
         expected.sort();
         assert_eq!(with_item_id, expected, "tables carrying item_id vs the rename list");
+    }
+
+    // -- empty star stacks (the owner, 2026-10-02) ------------------------------------------
+
+    fn rogue(store: &Store) -> u32 {
+        let account = store.create_account("wisp", "correct horse battery").unwrap();
+        store.create_character(account, 0, &net::opcode::Character { name: "Pebble".into(), ..Default::default() }).unwrap().id
+    }
+
+    /// **A star stack that runs out stays at 0; an arrow quiver that runs out is gone.** Every
+    /// other path still treats a slot that reaches zero as empty.
+    #[test]
+    fn spending_the_last_star_keeps_the_stack_and_the_last_arrow_does_not() {
+        let store = Store::open_in_memory().unwrap();
+        let id = rogue(&store);
+        store.set_inventory_slot(id, InventoryType::Use, 1, &Item::bundle(2_070_000, 3)).unwrap();
+        store.set_inventory_slot(id, InventoryType::Use, 2, &Item::bundle(2_060_000, 1)).unwrap();
+        assert_eq!(store.spend_ammo(id, InventoryType::Use, 1, 3).unwrap(), 0);
+        assert_eq!(store.inventory_slot(id, InventoryType::Use, 1).unwrap(), Some(Item::bundle(2_070_000, 0)));
+        assert_eq!(store.spend_ammo(id, InventoryType::Use, 2, 1).unwrap(), 0);
+        assert_eq!(store.inventory_slot(id, InventoryType::Use, 2).unwrap(), None, "arrows have no recharge");
+        assert!(store.spend_ammo(id, InventoryType::Use, 1, 1).is_err(), "nothing to spend from an empty stack");
+        // A potion can never be stored at 0 - the CHECK still says so.
+        assert!(store.set_inventory_slot(id, InventoryType::Use, 3, &Item::bundle(2_000_000, 0)).is_err());
+    }
+
+    /// **The empty stack round-trips the floor and the shop**: taking it (a drop or a sale) clears
+    /// the slot whatever count is named; putting it back (a pickup) takes a free slot of its
+    /// own at 0 rather than vanishing; and a purchase of the same star tops it up.
+    #[test]
+    fn an_empty_star_stack_can_be_taken_put_back_and_refilled() {
+        let store = Store::open_in_memory().unwrap();
+        let id = rogue(&store);
+        store.set_inventory_slot(id, InventoryType::Use, 1, &Item::bundle(2_070_001, 0)).unwrap();
+        assert_eq!(store.remove_item(id, InventoryType::Use, 1, Some(1)).unwrap(), Item::bundle(2_070_001, 0));
+        assert_eq!(store.inventory_slot(id, InventoryType::Use, 1).unwrap(), None);
+        let placed = store.add_item(id, InventoryType::Use, &Item::bundle(2_070_001, 0), 500).unwrap();
+        assert_eq!(placed.len(), 1, "a pickup of an empty stack lands somewhere");
+        assert_eq!(placed[0].item, Item::bundle(2_070_001, 0));
+        let slot = placed[0].slot;
+        let topped = store.add_item(id, InventoryType::Use, &Item::bundle(2_070_001, 200), 500).unwrap();
+        assert_eq!(topped[0].slot, slot, "the same star fills the empty stack first");
+        assert_eq!(store.inventory_slot(id, InventoryType::Use, slot).unwrap(), Some(Item::bundle(2_070_001, 200)));
+    }
+
+    /// **Consolidating keeps an empty star stack** as a stack that slides, not a hole another
+    /// stack can slide into.
+    #[test]
+    fn consolidation_keeps_an_empty_star_stack() {
+        let s = |slot, item_id, quantity, cap| Stack { slot, item_id, quantity, cap };
+        assert_eq!(
+            plan_consolidation(&[s(2, 2_070_000, 0, 500), s(5, 2_000_000, 10, 100)]),
+            vec![StackChange::Moved { from: 2, to: 1 }, StackChange::Moved { from: 5, to: 2 }],
+            "the empty stack slides up and holds slot 1; the potion sits after it"
+        );
+    }
+
+    /// **A deployed `inventory` is rebuilt under the new rule, once, with every row, column and
+    /// index intact.** The table here is created with the exact pre-2026-10-02 CHECK, holding a
+    /// star stack and an equip; after `create_tables` an empty star stack is accepted, an empty
+    /// potion still refused, the rows read back unchanged, the index is back, and a second open
+    /// is a no-op.
+    #[test]
+    fn a_deployed_inventory_table_is_rebuilt_to_allow_empty_star_stacks() {
+        let store = Store::open_in_memory().unwrap();
+        let id = rogue(&store);
+        store.set_inventory_slot(id, InventoryType::Use, 1, &Item::bundle(2_070_000, 37)).unwrap();
+        store.set_inventory_slot(id, InventoryType::Equip, 1, &Item::equip(1_302_000)).unwrap();
+        {
+            // Put the old rule back by rebuilding the table the other way, the way the live
+            // database still has it.
+            let conn = store.conn();
+            let sql: String = conn
+                .query_row("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'inventory'", [], |r| r.get(0))
+                .unwrap();
+            assert!(sql.contains(QUANTITY_CHECK), "a fresh table has the new rule");
+            let old = sql.replacen(QUANTITY_CHECK, OLD_QUANTITY_CHECK, 1).replacen("inventory", "inventory_old", 1);
+            conn.execute_batch(&old).unwrap();
+            conn.execute_batch(
+                "INSERT INTO inventory_old SELECT * FROM inventory; DROP TABLE inventory;
+                 ALTER TABLE inventory_old RENAME TO inventory;",
+            )
+            .unwrap();
+            let refused = conn.execute(
+                "UPDATE inventory SET quantity = 0 WHERE character_id = ?1 AND inv_type = 2 AND slot = 1",
+                [i64::from(id)],
+            );
+            assert!(refused.is_err(), "positive control: the old rule refuses an empty star stack");
+            create_tables(&conn).unwrap();
+            create_tables(&conn).unwrap(); // the second open: nothing left to do
+            let sql: String = conn
+                .query_row("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'inventory'", [], |r| r.get(0))
+                .unwrap();
+            assert!(sql.contains(QUANTITY_CHECK) && !sql.contains(OLD_QUANTITY_CHECK), "{sql}");
+            let index: i64 = conn
+                .query_row("SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_inventory_character'", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(index, 1, "the index came back");
+        }
+        assert_eq!(store.inventory_slot(id, InventoryType::Use, 1).unwrap(), Some(Item::bundle(2_070_000, 37)));
+        assert_eq!(store.inventory_slot(id, InventoryType::Equip, 1).unwrap().map(|i| i.item_id), Some(1_302_000));
+        assert_eq!(store.spend_ammo(id, InventoryType::Use, 1, 37).unwrap(), 0, "and now it may reach 0");
+        assert!(store.set_inventory_slot(id, InventoryType::Use, 2, &Item::bundle(2_000_000, 0)).is_err());
     }
 }

@@ -1,6 +1,12 @@
-//! **`!tool`'s three daily favours**: 1000 Leaf Points, a level, and an AP/SP reset. Level-up
-//! and the reset are once per **character** per UTC day; Leaf Points are once per **account** -
+//! **`!tool`'s daily favours**: 1000 Leaf Points, a level, and a return to Henesys. Level-up and
+//! the return are once per **character** per UTC day; Leaf Points are once per **account** -
 //! see [`Perk::scope`].
+//!
+//! **The AP/SP reset was removed on 2026-10-02.** The owner: *"Remove the daily perk for AP and SP
+//! reset since that can be done via Cash Shop now"* - the AP and SP Reset scrolls
+//! (`net::cashitem`). Its store key `resetapsp` is retired, not reused: old claim rows under it
+//! are inert. Removing it moved Return to Henesys from `#L3#` to `#L2#`; the menu is rebuilt for
+//! every `!tool`, so no open menu can carry the old number across the change.
 //!
 //! The owner, 2026-09-08: *"repurpose the 'MapleStory Administrator' NPC into a quality-of-life
 //! NPC ... Gain 1000 Leaf Points / Level up (grant exactly the EXP needed to reach the next
@@ -22,7 +28,7 @@
 //!
 //! # The NPC, and how it was picked rather than guessed
 //!
-//! Template **9010000**, `String.wz/Npc.img/9010000/name = "Maple Administrator"`. **[L]**
+//! Template **9010000**, `String.wz/Npc.img/9010000/name = "Maple Administrator"` in the classic client, "MapleStory Administrator" since the Signature Style backport renamed it (`crate::signaturestyle`). **[L]**
 //!
 //! Five templates in this client carry that name - `800016`, `900000`, `900001`, `900002` and
 //! `9010000` - so the name alone does not identify one, and picking by name would have been a
@@ -105,7 +111,7 @@
 //!
 //! **An option already used today is still listed, in the same position**, with
 //! `(already used today)` appended. It would read better to drop it from the list; that would
-//! also make `#L1#` mean "level up" on one day and "reset AP & SP" on the next, and the
+//! also make `#L1#` mean "level up" on one day and "return to Henesys" on the next, and the
 //! selection number is the only thing the answer carries. A menu whose indices depend on
 //! hidden state is one relog away from paying out the wrong option. Fixed positions are worth
 //! more than a tidy list, and there is a test that says the list is always three lines long.
@@ -155,7 +161,7 @@ pub const COMMAND: &str = "tool";
 pub const COMMAND_TYPED: &str = "!tool";
 
 /// What `String.wz/Npc.img/9010000/name` calls them. For log lines and for the greeting.
-pub const ADMIN_NAME: &str = "Maple Administrator";
+pub const ADMIN_NAME: &str = "MapleStory Administrator";
 
 /// The map they stand on: Henesys. **[L]** `gm-handbook/npcs.txt`. Used only by the test that
 /// checks the table against the dump, so a future WZ that moves their fails loudly here rather
@@ -226,8 +232,6 @@ pub enum Perk {
     /// Exactly the experience needed to reach the next level, from the same
     /// `crate::expcurve::ExpCurve` every kill and every turn-in uses.
     LevelUp,
-    /// `!resetap` and `!resetsp`, run together.
-    ResetApSp,
     /// A `SetField` to Henesys - [`HENESYS`], its first spawn point. The owner, 2026-09-14:
     /// *"Since there may be unexpected outcomes as we implement the server, the player may
     /// become stuck in certain maps. There should be an additional option also limited to
@@ -236,10 +240,10 @@ pub enum Perk {
     ReturnToHenesys,
 }
 
-/// The four, in menu order. **The index into this array IS the `#L` number** - see
+/// The three, in menu order. **The index into this array IS the `#L` number** - see
 /// [`perk_at`] - so the order is load-bearing rather than cosmetic. New favours go on the
 /// END: a player's muscle memory for "#L1 is level up" is worth more than a tidy grouping.
-pub const PERKS: [Perk; 4] = [Perk::LeafPoints, Perk::LevelUp, Perk::ResetApSp, Perk::ReturnToHenesys];
+pub const PERKS: [Perk; 3] = [Perk::LeafPoints, Perk::LevelUp, Perk::ReturnToHenesys];
 
 /// Where [`Perk::ReturnToHenesys`] lands: Henesys in this client's numbering
 /// (`gm-handbook/maps.txt` row `10001000, Henesys` - **not** the `100000000` of other
@@ -256,7 +260,6 @@ impl Perk {
         match self {
             Perk::LeafPoints => "leafpoints",
             Perk::LevelUp => "levelup",
-            Perk::ResetApSp => "resetapsp",
             Perk::ReturnToHenesys => "henesys",
         }
     }
@@ -271,7 +274,7 @@ impl Perk {
     /// day into one shared wallet. Now the allowance is on the same footing as the pot it pays
     /// into, and 1000 a day means 1000 a day however many characters the account has.
     ///
-    /// **Level-up and the AP/SP reset stay per character on purpose.** Both change one
+    /// **Level-up and the return to Henesys stay per character on purpose.** Both change one
     /// character's own row, so an account-wide allowance would mean levelling one character
     /// spends the other five's turn - a coupling nobody asked for. The rule that falls out is
     /// worth stating: *a perk's allowance belongs to whatever its grant actually modifies.*
@@ -283,7 +286,7 @@ impl Perk {
     pub fn scope(self) -> &'static str {
         match self {
             Perk::LeafPoints => SCOPE_ACCOUNT,
-            Perk::LevelUp | Perk::ResetApSp | Perk::ReturnToHenesys => SCOPE_CHARACTER,
+            Perk::LevelUp | Perk::ReturnToHenesys => SCOPE_CHARACTER,
         }
     }
 
@@ -292,7 +295,6 @@ impl Perk {
         match self {
             Perk::LeafPoints => "Gain 1000 Leaf Points",
             Perk::LevelUp => "Level up",
-            Perk::ResetApSp => "Reset AP & SP",
             Perk::ReturnToHenesys => "Return to Henesys (if you are stuck)",
         }
     }
@@ -424,25 +426,6 @@ pub fn no_curve_for_level(level: u32) -> String {
     )
 }
 
-/// Nothing to reset: stats at the floor, no HP/MP ability spend recorded, no skills learned.
-/// **Refused before the claim is taken.**
-pub fn nothing_to_reset() -> String {
-    "You have nothing spent to give back - your stats are already at the floor and you have \
-     learned no skills. I have not used up your day."
-        .to_string()
-}
-
-/// The reset went through.
-pub fn reset_line(ap: u16, skills: usize) -> String {
-    if skills == 0 {
-        format!("Done - #b{ap}#k ability point(s) are back in your pool.")
-    } else {
-        format!(
-            "Done - #b{ap}#k ability point(s) are back in your pool and #b{skills}#k skill(s) \
-             have been unlearned."
-        )
-    }
-}
 
 /// The grant failed after the day was claimed, and the day has been given back.
 ///
@@ -518,16 +501,13 @@ mod tests {
         // name; exactly one of them stands anywhere a player can walk to, and that is the whole
         // reason this template was chosen. If a future dump places another of them in a town,
         // the choice needs re-making and this fails.
-        let same_name: Vec<u32> = rows
-            .iter()
-            .map(|(_, t)| *t)
-            .filter(|t| name_of(*t).as_deref() == Some(ADMIN_NAME))
-            .collect();
+        // The backport renamed 9010000 alone, so the four others still carry the classic name:
+        // an Administrator is either.
+        let is_admin = |t: u32| matches!(name_of(t).as_deref(), Some(n) if n == ADMIN_NAME || n == "Maple Administrator");
+        let same_name: Vec<u32> = rows.iter().map(|(_, t)| *t).filter(|t| is_admin(*t)).collect();
         let in_towns: Vec<u32> = rows
             .iter()
-            .filter(|(m, t)| {
-                name_of(*t).as_deref() == Some(ADMIN_NAME) && (10_000_000..10_100_000).contains(m)
-            })
+            .filter(|(m, t)| is_admin(*t) && (10_000_000..10_100_000).contains(m))
             .map(|(_, t)| *t)
             .collect();
         assert!(same_name.len() >= 4, "several templates share the name: {same_name:?}");
@@ -594,7 +574,7 @@ mod tests {
         }
         assert_eq!(perk_at(PERKS.len() as u32), None, "one past the end is not an option");
         assert_eq!(perk_at(u32::MAX), None, "and neither is the client's own -2");
-        assert_eq!(PERKS.len(), 4, "three favours the owner asked for on 2026-09-08 and the Henesys escape of 2026-09-14");
+        assert_eq!(PERKS.len(), 3, "Leaf Points and a level (2026-09-08) and the Henesys escape (2026-09-14); the AP/SP reset went to the Cash Shop on 2026-10-02");
     }
 
     /// **A used option keeps its number.** This is the invariant the module doc argues for,
@@ -608,8 +588,8 @@ mod tests {
         }
         // Every one of the eight used/unused combinations still draws three lines, and each
         // perk is still on its own number.
-        for mask in 0u8..16 {
-            let used = [mask & 1 != 0, mask & 2 != 0, mask & 4 != 0, mask & 8 != 0];
+        for mask in 0u8..8 {
+            let used = [mask & 1 != 0, mask & 2 != 0, mask & 4 != 0];
             let text = menu_text(used);
             for (i, perk) in PERKS.iter().enumerate() {
                 assert!(
@@ -617,7 +597,7 @@ mod tests {
                     "mask {mask:03b}: {perk:?} left line {i}"
                 );
             }
-            assert_eq!(text.matches("#L").count(), PERKS.len(), "mask {mask:04b}: one line per favour");
+            assert_eq!(text.matches("#L").count(), PERKS.len(), "mask {mask:03b}: one line per favour");
             assert_eq!(
                 text.matches("(already used today)").count(),
                 used.iter().filter(|u| **u).count(),
@@ -647,15 +627,12 @@ mod tests {
         let mut all: Vec<String> = vec![
             header(),
             no_such_option(),
-            nothing_to_reset(),
-            menu_text([false, true, false, false]),
+            menu_text([false, true, false]),
             already_in_henesys(),
             leaf_points_line(LEAF_POINTS_PER_CLAIM, 4_200),
             level_up_line(12, 13, 1_003),
             already_max_level(120),
             no_curve_for_level(500),
-            reset_line(25, 0),
-            reset_line(25, 4),
             granted("Done."),
         ];
         for perk in PERKS {
@@ -682,7 +659,8 @@ mod tests {
     fn the_store_keys_are_pinned_and_distinct() {
         assert_eq!(Perk::LeafPoints.store_key(), "leafpoints");
         assert_eq!(Perk::LevelUp.store_key(), "levelup");
-        assert_eq!(Perk::ResetApSp.store_key(), "resetapsp");
+        assert_eq!(Perk::ReturnToHenesys.store_key(), "henesys");
+        assert!(PERKS.iter().all(|p| p.store_key() != "resetapsp"), "the retired reset key is never reused");
         let mut keys: Vec<&str> = PERKS.iter().map(|p| p.store_key()).collect();
         keys.sort_unstable();
         keys.dedup();
@@ -698,7 +676,7 @@ mod tests {
     #[test]
     fn leaf_points_are_scoped_to_the_account_and_the_other_two_to_the_character() {
         assert_eq!(Perk::LeafPoints.scope(), store::SCOPE_ACCOUNT);
-        for perk in [Perk::LevelUp, Perk::ResetApSp] {
+        for perk in [Perk::LevelUp, Perk::ReturnToHenesys] {
             assert_eq!(
                 perk.scope(),
                 store::SCOPE_CHARACTER,

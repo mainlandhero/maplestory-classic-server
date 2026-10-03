@@ -102,6 +102,19 @@ pub fn key_name(group: u32, key: u32) -> Option<&'static str> {
     }
 }
 
+/// **The options kept per CHARACTER rather than per account**: the pet's auto-potion setup.
+/// The owner, 2026-10-02: *"other characters may want to use different auto potion setup."*
+/// `acpHP` / `flHP` / `flMP` are the game-option trio (the live server's log shows the window
+/// sending `flHP` and `flMP`); `petHP2`, `wrnHP3` and `wrnMP3` are their group-0 twins, the
+/// older slots the reader falls back to, kept with them so the fallback cannot leak another
+/// character's threshold. Everything else - sound, screen, chat, UI - stays per account.
+pub const PER_CHARACTER_KEYS: [&str; 6] = ["acpHP", "flHP", "flMP", "petHP2", "wrnHP3", "wrnMP3"];
+
+/// Whether `(group, key)` is stored for the character ([`PER_CHARACTER_KEYS`]).
+pub fn is_per_character(group: u32, key: u32) -> bool {
+    key_name(group, key).is_some_and(|n| PER_CHARACTER_KEYS.contains(&n))
+}
+
 /// Which of [`SYSTEM_OPTIONS_QUESTS`] a system option goes in: its name's trailing digit -
 /// `vBG1` in 368, `fSize2` in 369, `wrnHP3` in 370, the rest (`aMyPet`, `infItm`, ...) in 481.
 /// Any of the four would be read; this keeps each record short.

@@ -62,6 +62,11 @@ pub struct Config {
     /// rebuild. The game options (HP/MP warning, block #28) are not affected.
     pub system_options: bool,
 
+    /// **The damage guard** - `--damage-guard enforce|log|off`, default enforce
+    /// (`crate::damageguard`). A hit more than 25% over what the character could deal is capped
+    /// to that and its attacker written to `damage-suspects.log`; `log` applies it in full.
+    pub damage_guard: crate::damageguard::Mode,
+
     /// **Which host a Change Channel answer names** - `--advertise`, the same flag and the
     /// same rule as the login server's, because both write a channel address into a packet
     /// the client dials. `channels` above keeps the ports; this decides the host per
@@ -2695,6 +2700,7 @@ impl Default for Config {
             link: None,
             drops_web: None,
             system_options: true,
+            damage_guard: crate::damageguard::Mode::Enforce,
             advertise: std::sync::Arc::new(net::advertise::Advertiser::default()),
             map_names: HashMap::new(),
             item_names: HashMap::new(),

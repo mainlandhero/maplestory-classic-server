@@ -1104,6 +1104,28 @@ pub struct CastNumbers {
     /// applies to its own drawing) this rides a temporary stat, so the server has to raise its
     /// ceilings only **while the stat is held** — `session::pools` reads it off the held buff.
     pub indie_mhp_r: Option<u32>,
+    /// `fixdamage` - a hit of exactly this many points, whatever the stats. Three Snails' 15.
+    pub fix_damage: Option<u32>,
+    /// The **tooltip's** `damage N%`, for a skill whose `damage` column says 0 although it
+    /// deals damage. Arrow Bomb is the one: `damage` 0 at every level, tooltip *"damage 80%"*
+    /// ... *"damage 140%"*. **[L]**, the client's own text; `None` when it states no percent.
+    pub tooltip_damage_percent: Option<u32>,
+}
+
+/// The `N` in the first `damage N%` of a tooltip, case-insensitive. `"MP -14; Stun chance 30%
+/// for 2 sec; damage 80%"` gives 80; the stun's `30%` is not preceded by "damage".
+pub fn tooltip_damage_percent(tooltip: &str) -> Option<u32> {
+    let lower = tooltip.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(at) = lower[from..].find("damage ") {
+        let start = from + at + "damage ".len();
+        let digits: String = lower[start..].chars().take_while(|c| c.is_ascii_digit()).collect();
+        if !digits.is_empty() && lower[start + digits.len()..].starts_with('%') {
+            return digits.parse().ok();
+        }
+        from = start;
+    }
+    None
 }
 
 /// One skill's rows, plus the columns that are constant across them.
@@ -1254,11 +1276,14 @@ const WANTED_MORE: [&str; 3] = ["attackCount", "mobCount", "bulletCount"];
 /// combat numbers. The cost of that leniency is bounded: a missing column reads as "the
 /// skill grants no such stat", which turns a party buff into a chat notice rather than into
 /// a wrong number.
-const OPTIONAL: [&str; 19] = [
+const OPTIONAL: [&str; 21] = [
     "indieSpeed", "indieJump", "indiePad", "indieMad", "indiePdd", "indieMdd", "ltX", "mhpR", "mmpR",
     // Added 2026-09-07 for the second- and third-job audit. Same leniency, same bounded cost.
     "noBulletConsume", "itemCon", "itemConNo", "moneyCon", "x", "y", "prop", "indieAcc", "indieEva",
     "indieMhpR",
+    // Added 2026-10-02 for the damage guard (`crate::damageguard`): Three Snails' fixed damage,
+    // and the tooltip - the only place Arrow Bomb states its damage percent.
+    "fixdamage", "tooltip",
 ];
 
 /// Resolve the [`OPTIONAL`] columns that this header actually has.
@@ -1535,6 +1560,8 @@ fn parse_cast(
         indie_acc: at_opt("indieAcc")?,
         indie_eva: at_opt("indieEva")?,
         indie_mhp_r: at_opt("indieMhpR")?.map(|v| u32::try_from(v).unwrap_or(0)),
+        fix_damage: at_opt("fixdamage")?.map(|v| u32::try_from(v).unwrap_or(0)),
+        tooltip_damage_percent: opt.get("tooltip").and_then(|i| f.get(*i)).and_then(|t| tooltip_damage_percent(t)),
     })
 }
 

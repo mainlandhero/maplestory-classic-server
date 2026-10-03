@@ -81,6 +81,11 @@ param(
     # after that update, restart with -NoSystemOptions. The HP/MP warning (the pet's
     # auto-potion threshold) is not affected and keeps working either way.
     [switch]$NoSystemOptions,
+    # **The damage guard only LOGS** (2026-10-02). By default a hit more than 25% over what the
+    # character could deal is capped to that and the attacker written to damage-suspects.log. If
+    # honest players' hits look cut short, restart with -DamageGuardLogOnly: the same log, every
+    # hit applied in full.
+    [switch]$DamageGuardLogOnly,
     [switch]$Stop
 )
 
@@ -345,6 +350,7 @@ for ($ch = 0; $ch -lt $Channels; $ch++) {
         '--log-file', "`"$(Join-Path $root $chLog)`""
     )
     if ($NoSystemOptions) { $worldArgs += @('--system-options', 'off') }
+    if ($DamageGuardLogOnly) { $worldArgs += @('--damage-guard', 'log') }
     $w = Start-Process -FilePath (Join-Path $bin 'maplecw-world.exe') -WorkingDirectory $root `
         -ArgumentList $worldArgs -PassThru -NoNewWindow `
         -RedirectStandardOutput (Join-Path $root "$chLog.out") `

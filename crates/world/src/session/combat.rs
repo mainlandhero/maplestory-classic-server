@@ -517,15 +517,31 @@ impl Session {
             }
             let take = remaining.min(held);
             let take_u16 = u16::try_from(take).unwrap_or(u16::MAX);
-            if let Err(e) = self.store.remove_item(chr.id, store::InventoryType::Use, row.slot, Some(take_u16)) {
-                crate::server::log(&format!(
-                    "   arrows: could not take {take} from Use slot {} for {why}: {e}",
-                    row.slot
-                ));
-                break;
+            // `spend_ammo`, not `remove_item`: a STAR stack that runs out stays in its slot at 0
+            // so it can be recharged (the owner, 2026-10-02), and the client is told "0 left"
+            // rather than "gone". Arrows have no recharge and leave the slot as before.
+            let left = match self.store.spend_ammo(chr.id, store::InventoryType::Use, row.slot, take_u16) {
+                Ok(left) => left,
+                Err(e) => {
+                    crate::server::log(&format!(
+                        "   arrows: could not take {take} from Use slot {} for {why}: {e}",
+                        row.slot
+                    ));
+                    break;
+                }
+            };
+            if left == 0 && net::bag::bundle_has_serial(row.item.item_id) {
+                out.push(Reply {
+                    opcode: net::inventory::INVENTORY_OPERATION,
+                    body: net::inventory::inventory_quantity(store::InventoryType::Use.as_u8() as i8, row.slot as i16, 0),
+                    what: format!(
+                        "InventoryOperation QUANTITY: Use slot {} down to 0 - an empty star stack stays to be recharged",
+                        row.slot
+                    ),
+                });
+            } else {
+                out.extend(self.stack_change_replies(store::InventoryType::Use, row.slot, left));
             }
-            let left = u16::try_from(held - take).unwrap_or(0);
-            out.extend(self.stack_change_replies(store::InventoryType::Use, row.slot, left));
             taken_from.push(format!("slot {} ({} -> {left})", row.slot, held));
             remaining -= take;
         }
@@ -657,6 +673,10 @@ impl Session {
         // computed its damage; rejecting the swing here would desynchronise the very thing
         // this is fixing. If the MP does not cover it we spend what there is and say so.
         let mut out = thrown;
+        // **The damage guard prices this swing first** - before the ammo below is spent, so a
+        // throw that empties its stack is still priced with that stack's attack.
+        // `session/damageguard.rs`.
+        let pricing = self.price_swing(opcode, payload);
         out.extend(self.spend_attack_costs(opcode, payload));
         // **And the arrows or stars it cost.** Same rule as the MP: the shot has already
         // left the weapon on screen, so the server takes what it owes and never refuses.
@@ -687,6 +707,10 @@ impl Session {
         let me = self.subscriber.get();
         // The templates this swing actually damaged, for the per-swing effects below.
         let mut landed: Vec<u32> = Vec::new();
+        // What the guard let through, summed - Drain heals from this, not from the claim.
+        let mut dealt: u64 = 0;
+        // The mobs this swing really damaged - a debuffing skill (Disorder) marks exactly these.
+        let mut damaged: Vec<u32> = Vec::new();
         for target in &attack.targets {
             if self.fields.mob_hp(map, target.object_id).is_none() {
                 continue; // not a mob of ours, or already dead and removed
@@ -747,9 +771,14 @@ impl Session {
                 }
             }
 
-            let damage = target.total_damage();
+            // **Guarded**: a hit more than 25% over what this character could deal is capped
+            // to that and its attacker logged as a suspect (`crate::damageguard`, the owner
+            // 2026-10-02).
+            let damage = self.guarded_damage(&pricing, target);
+            dealt = dealt.saturating_add(damage);
             if damage > 0 {
                 landed.push(template);
+                damaged.push(target.object_id);
             }
             out.extend(self.deal_to_mob(map, target.object_id, damage, chr_id));
         }
@@ -775,10 +804,13 @@ impl Session {
             if skill_id == crate::advbuffs::HEAL {
                 out.extend(self.heal_cast(level));
             }
+            // **A debuff on every mob the swing damaged** - Disorder's attack and defence cut.
+            // `session/mobdebuff.rs`; the packet is `net::mobstat`.
+            out.extend(self.debuff_mobs(map, skill_id, level, &damaged));
             // **Drain**: `prop`% chance to absorb `x`% of the damage dealt as HP. **[L]** for
             // the columns (*"2% chance to absorb 5% of damage as HP"*).
             if skill_id == crate::advbuffs::DRAIN {
-                let total: u64 = attack.targets.iter().map(|t| t.total_damage()).sum();
+                let total: u64 = dealt;
                 if let Some(row) = self.config.firstjob.level(skill_id, level).copied() {
                     let prop = u64::from(row.prop.unwrap_or(0));
                     let x = row.x.and_then(|x| u64::try_from(x).ok()).unwrap_or(0);
@@ -1916,7 +1948,7 @@ impl Session {
         // Falls back to the client's number when the template is unknown or carries no
         // attack column - a mob we have no data for should still hurt.
         let claimed = hit.damage;
-        let computed = self.incoming_damage_for(hit.mob_template_id, &chr);
+        let computed = self.incoming_damage_for(hit.mob_template_id, hit.mob_object_id, &chr);
         // **When the client sends a real number, take it - that is the whole point.**
         //
         // The owner, 2026-08-28: *"try harder to see how the client can compute its own mob damage
@@ -2187,12 +2219,17 @@ impl Session {
     fn incoming_damage_for(
         &mut self,
         template: u32,
+        object_id: u32,
         chr: &net::opcode::Character,
     ) -> Option<u32> {
         let pa_damage = self.config.mob_attack.get(&template).copied().unwrap_or(0);
         if pa_damage == 0 {
             return None;
         }
+        // **A Disorder'd mob hits softer** - its attack cut, floored at 1 so a debuff never
+        // turns a hit into nothing. `session/mobdebuff.rs`.
+        let cut = self.mob_attack_cut(self.field_of(chr), object_id);
+        let pa_damage = pa_damage.saturating_sub(cut).max(1);
         // **Equipment, the STR seed, and any held defence buff.**
         //
         // The owner, 2026-08-28: *"Iron Body did not seem to reduce the damage I take."* It could

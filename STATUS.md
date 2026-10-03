@@ -382,6 +382,148 @@ carries risk**: the handler's trailing virtual call resolves to a method that re
 and if that resolution is wrong the body is short. Plan step 13(b) asks for `client-exit.log`
 rather than assuming. Never on a screen.
 
+**2026-10-02: Disorder's debuff - the FIRST mob status this server has ever sent. Built, never on a
+screen.** The owner: *"skill debuffs do not work on mobs, such as Thief's Disorder"*, then after a run
+(`world-ch0.log` 04:46-04:47: four casts, three hits of 38/42/44, no status packet) *"Still no debuff
+status shown"*. Decoded statically the same day (`net::mobstat` has every address): the per-mob
+dispatcher's jump table puts **`0x03E6` = set** and **`0x03E7` = reset**; the set is a 20-byte
+MSB-first mask, per status `i32 value, i32 reason, i16 duration x 500 ms`, gated extras, then an
+unconditional `u16, u8` and a gated `u8` (always sent). **PAD = 12, PDR = 13 is [D]**: this
+client reads one extra `u32` for index 13 and one for 15, exactly the PDR/MDR extras of the v214
+reference one index later. On every mob a Disorder actually damaged, `session/mobdebuff.rs` sends
+the set (attack `-x`, defence `-y`, `time` s) to the attacker and the map, records it in
+`Fields::mob_debuffs`, and cuts that mob's attack in the touch-damage FALLBACK while it lasts. No
+reset is sent: the client stores the expiry itself. Threaten, Slow and the mob self-buffs are the
+same packet with more indices - not done. Plan step 42.
+
+**2026-10-02: stars and bullets are bought by the SET.** The owner: *"when purchasing stars from the
+general store, on purchase, the player should receive a full stack of that star consumable instead
+of just a singular 1."* A `207`/`233` row now goes out with a per-purchase cap of 1 - the client's
+yes/no instead of a quantity box (`research/classic-shop-rows.md` §3 row 42) - and `classic_buy`
+hands over one full `slotMax` stack (Subi 500, Ilbi 800) at the row's price, whatever count the
+client names. It tops up a partial stack of the same star first, as any purchase does. Never on a
+screen: plan step 41.
+
+**2026-10-02: THE DAMAGE GUARD - a hit more than 25% over what the character could deal is CAPPED, and
+logged. Built, never against honest play.** The owner: *"refuses the damage reported by the player if it
+exceeds what it expects"*, *"log the suspecting damage cheaters"*, then *"change that to 25%+ over, and
+cap the attack plus log instead of dropping"*. `crate::damageguard` (rules) and
+`session/damageguard.rs` (inputs): per hit, the top of `damage::physical_window` over every action
+(the action is still unparsed), for the character's real STR/DEX/INT/LUK + every worn item's
+stats (`Session::dressed`), weapon attack + the best held ammo's attack + the attack buff
+(CTS 84), and the skill's `damage` % - or for magic, `magic::magic_ceiling` with `mad` %. A hit
+the client flags critical (`flag_b`, [D]) may reach 2.5x the top, any other 1.2x (the model's
+own margin), then +25%; over that it counts AS the limit. Each capped hit goes to the channel
+log and `damage-suspects.log` beside it (`SUSPECT name (character, account): claimed ...`).
+**Every thief and archer skill is priced** (the owner: *"Why can we not create formulas for thief and
+archer skills?"* - the first cut skipped six, and each was already in data): Three Snails at its
+`fixdamage`, Shadow Meso at `moneyCon` x `x` (200 mesos x 8), Lucky Seven by the client's own 3.0
+LUK multiplier, Avenger and Power Knockback by the ordinary claw / bow formula, Arrow Bomb at the
+percent in its tooltip (its `damage` column is 0) - `firstjob::CastNumbers` gained `fix_damage`
+and `tooltip_damage_percent`. **Never priced, applied whole:** a skill with no damage, mad or
+tooltip percent, no weapon - and **a weapon reading 0 attack**, found writing the tests: with no templates loaded a sword priced at a ceiling of 1
+and a million capped to 2. `--damage-guard enforce|log|off` (default enforce;
+`start-server.ps1 -DamageGuardLogOnly` = log). Needed data: `itemdata.txt` gains a 7th column,
+the ammo's attack - this client names it **`incWAT`** (Ilbi 27), and the first dump read
+`incPAD` and came back all zeros. **[I], and the reason for plan step 40:** the ceiling has
+never been compared with a night of real hits; a suspects line naming an honest character is
+the model being low, and log-only is the fix until it is corrected.
+
+**2026-10-02: a star stack that runs out STAYS, at 0, to be recharged - built, never on a screen.** The
+owner: *"When stars reach 0, it should remain in the player's inventory because they should be able to
+recharge them at any general store"*, and *"A star that has 0 ammo is still allowed to be dropped on the
+ground and picked up."* `Store::spend_ammo` replaces `remove_item` for thrown ammo: a `207`/`233`
+stack ends at 0 in its slot (client told `0x0070` mode 1 quantity 0, not a REMOVE); arrows still
+leave. **The database refused a 0 until now** - `inventory` had `CHECK (quantity >= 1)` - so
+`inventory::allow_empty_rechargeable_stacks` rebuilds a deployed table once, on open, under
+`QUANTITY_CHECK` (0 allowed only for kind 2 and `item_id / 10000` in 207, 233), keyed on the old
+rule's text; replayed on a synthetic old-shape table and on a copy of the repo's real database
+(277 inventory rows, old rule present). Also fixed on the way: `item_from_row` read every 0 back as
+**1** (a free star per emptied stack), consolidation now keeps an empty stack as a stack, a drop
+of one is no longer refused as "nothing in that slot", a pickup puts it in its own slot at 0
+(it used to place nothing and vanish) with no "x1 earned" line, and an empty stack can be sold.
+A purchase, pickup or recharge of the same star fills the empty stack first. **[I], the one a
+client run settles: whether this client draws a 0-count star stack** - GMS did; nothing here
+has measured this client. Not handled: depositing an empty stack in storage hits `storage_item`'s
+own `CHECK (quantity >= 1)` and is refused as a failed deposit. Plan step 39.
+*Asked the same day, answered from the code rather than changed:* a star's or arrow's attack bonus
+is the CLIENT's - it computes every hit itself (`crate::damage` module doc), and `on_attack` applies
+`target.total_damage()` untrimmed, so no server rule can drop it. The damage ceiling
+`damage::max_plausible_hit` is unwired; wiring it would need the ammo's attack added, or it would
+clip Ilbi and Hwabi hits.
+
+**2026-10-02: `!tool` no longer resets AP & SP.** The owner: *"Remove the daily perk for AP and SP reset
+since that can be done via Cash Shop now."* `dailyperks::PERKS` is Leaf Points, Level up, Return to
+Henesys - the escape moved from `#L3#` to `#L2#` (the menu is rebuilt per `!tool`, so nothing
+stale can carry the old number); `#L3#` now names nothing and a test pins that it resets nothing.
+The `resetapsp` claim key is retired, never reused. `!resetap`/`!resetsp` (GM) are untouched. Same
+pass: `ADMIN_NAME` follows the backport's rename to "MapleStory Administrator", which had left
+`the_administrator_stands_in_henesys...` failing since the handbook was regenerated.
+
+**2026-10-02: selling too fast no longer gets a refusal - the slot is redrawn instead.** The owner:
+*"When users sell to shop too fast, sometimes their view does not refresh fast enough and they try
+to sell the same thing again to which the server refuses."* The Sell list redraws from the
+`0x0070` after a sale (plan 29c, on screen), but a second click can leave first; it reached an
+empty slot and came back as type 2, "not enough mesos". `classic_sell` now checks the slot first:
+empty, a different item, or fewer than asked -> nothing sold, the silent type 16, and the slot's
+real state (`slot_resync`) so the list redraws. No refused sale is in any live or local log
+since 2026-09-22, so the symptom itself was never captured; the fix rests on the code path. Found
+on the way, from the code: **every sale sent a REMOVE**, so selling part of a stack emptied the
+slot on screen while the server kept the rest; it now sends the count left. Plan step 38.
+
+**2026-10-02: the pet's auto-potion setup is per CHARACTER; key layouts already were.** The owner:
+*"The pet auto hp seems to be account wide ... other characters may want to use different auto
+potion setup"*, then *"make sure that keymapping are also saved for character"*. The options
+store (`store::clientsettings`, same day) kept everything per account. Now
+`net::clientsettings::PER_CHARACTER_KEYS` - `acpHP`, `flHP`, `flMP` and their group-0 twins
+`petHP2`, `wrnHP3`, `wrnMP3` - go in a new `character_settings` table, and at field entry the
+character's rows overlay the account's. A character that never set one still gets the account's
+pre-split row, so no live threshold resets; no migration. Sound, screen and UI options stay per
+account. **Keymaps needed no change:** `store::keymap` has been keyed by character since
+2026-09-08, the pet's potions are its options A/B (the live log shows `2000000`/`2000003` per
+character), every live `0x0199` merged under the sending character, and a session test now pins
+two characters on one account keeping separate layouts and potions. Never on a screen; plan step 37b.
+
+**2026-10-02: an eye-colour desk at the plastic surgery** (another session, commit `30d9e9f`).
+Dr. Feeble (Henesys, 10001043) and Riza (Orbis, 20000031) take the Signature Eye Color Coupon
+5152100 on a third menu line beside the skin coupon: the player's own face in every eye colour the
+client draws - all nine for the collaboration faces 22035..22042. Collaboration hair colour already
+worked at Brittany and Andre; a test pins it. **On a screen the colour boxes opened and Next showed
+ONE look** (the owner, both boxes). Fixed in `2ab2e4d`: the pick box's first `u32` is the **coupon
+item id**, not an echo - the client types the box from it (`FUN_142a91f30` -> `FUN_1401a8170` ->
+`FUN_140417ed0`), and with 0 it treated colour candidates as styles and rewrote every one to the
+current colour. `research/msexe-avatar-box-type.c`. The fix is unmeasured: plan TP 7/8 expect nine
+eye colours on Fern Face 22036 and eight hair colours with changing labels on Fern Hair 42570; one
+look still means the coupon type is not what the client reads (watch `FUN_142a91f30`'s param_2).
+Same day, same session: the collaboration hairs and faces got **real colours** (`db45025`,
+`tools/collab_recolor.py` and `tools/backport_install.py`: recoloured archives installed into
+`client-patched/`, originals kept as `.bak`, handbook regenerated), so those boxes should show
+eight visibly different hairs and nine visibly different eyes - players need the client patch,
+which the launcher delivers once the server is repackaged. And the collaboration coupons now give
+each style in its **default** colour (`ab39b6a`, `crate::cosmetics`): Fern Hair -> Violet 42576,
+Übel Hair -> Green 42604, Übel Face -> Violet 22639. Plan TP 8/9.
+
+**2026-10-02: the drops page - the King Slime's shoes, and a stricter search.** The page read only
+`data/drops.txt`, so it said the King Slime drops no Slime Shoes; the shoes are made in code, one
+per party member (`session/firsttime.rs`). `dropweb::INSTANCED` now adds them as a row tagged
+**instanced** (hover explains), and `dropweb::ALIASES` lets "Slime Shoes" find this client's
+"Squishy Shoes". The owner then: *"the fuzzy search is too fuzzy"*. A typed word now matches only a
+word that STARTS with it, and one-typo tolerance (5+ letters) applies only when nothing matches
+exactly, with the status line saying so. Measured on the built page, rows matched before -> after:
+`mano wand` 18 -> 2, `hat` 242 -> 29, `shoe` 131 -> 66, `bow` 94 -> 51; `snail`, `slime shoes`
+unchanged; `slyme` still finds the Slime through the fallback. `tools/drops_page.py` mirrors both.
+
+**2026-10-02: every star recharges at any general store - built, never on a screen.** The owner,
+after 2 dropped Wolbi could not be recharged at a Grocer: *"All stars should be rechargeable at
+any general store."* The client offers Recharge only for an id in its Recharge list, which it
+builds from the shop's rows, and Grocers list only Subi; the server log for every Grocer opened
+read `1 rechargeable`, and no recharge request ever reached it. Now every general store (the
+ten Grocers, the two town-hall General Stores, the Mobile Store - `Shop::is_general_store`)
+appends a **price-0 recharge-only row** for each `207xxxx` star it does not stock, after the
+stocked rows so no Buy index moves. That price 0 keeps a row off the Buy tabs while it still
+joins the Recharge list is **[L]** (`research/classic-shop-rows.md` §5, `141fa030c`), not
+observed; a buy naming one is refused server-side. Plan step 0f asks for both halves.
+
 **2026-10-02: the Mac client - `MapleCW.app`, built and NEVER run on a Mac.** The owner: every client
 release now ships for Windows AND macOS (`CLAUDE.md`, standing constraints). Nexon's own Mac client
 (`client-mac/`, gitignored) turned out to be a CrossOver 25 bottle running the **Windows** `MapleStory.exe`,

@@ -42,6 +42,10 @@ maplecw-world - one channel of the MapleCW game world
   --system-options on|off
                    send each account's saved sound/system options at field entry
                    (default on). 'off' if logins fail to decode after 2026-10-02.
+  --damage-guard enforce|log|off
+                   cap a hit more than 25% over what the character could deal, and
+                   write the attacker to damage-suspects.log (default enforce). 'log'
+                   records the same and applies the hit in full.
   --migration-peer-policy require|record
                    what to do when the connection claiming a migration does not come
                    from the address the migration was minted for. require (default)
@@ -220,6 +224,11 @@ fn main() -> ExitCode {
                     Ok(())
                 }
                 _ => Err(format!("--system-options {v}: expected on or off")),
+            }),
+            "--damage-guard" => value().and_then(|v| {
+                world::damageguard::Mode::parse(&v)
+                    .map(|m| config.damage_guard = m)
+                    .ok_or_else(|| format!("--damage-guard {v}: expected enforce, log or off"))
             }),
             "--world-id" => value().and_then(|v| {
                 v.parse().map(|n| config.world_id = n).map_err(|e| format!("--world-id {v}: {e}"))

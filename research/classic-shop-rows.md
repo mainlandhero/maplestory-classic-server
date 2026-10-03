@@ -355,6 +355,26 @@ flag is intact at both. Checked, not assumed.
 At `141fa0303` a Buy Back row **skips the Buy-tab classification entirely** (`jne 0x141fa1178`),
 so a row is either merchandise or repurchase, never both.
 
+**So does a row with nothing to pay - and that is how a recharge-only row is made.** **[L]**,
+read 2026-10-02 with `tools/dis_at.py 0x141f9fff5 0x360`:
+
+```asm
+141fa030c  cmp qword ptr [rbp + 0x178], 0     ; row+0x38  price
+141fa0314  jne 0x141fa032c
+141fa0316  cmp dword ptr [rbp + 0x18c], r12d  ; row+0x4c  barter count   (r12d is 0 here)
+141fa031d  jne 0x141fa032c
+141fa031f  cmp dword ptr [rbp + 0x198], r12d  ; row+0x58  point cost
+141fa0326  je  0x141fa1178                    ; all zero -> the row's destructor, next row
+```
+
+(`rbp+0x140` is the row: `[rbp+0x148]` is the itemId the `/10000` test divides.) The Recharge
+list copy at `141fa001a` (`141fbd400` appends, `141fbc610` copies the local row into it) has
+**already happened** by then, and `+0x340` (`141fa0af7`) and the Buy tabs come after. A
+`207`/`233` row with price, barter and point cost all zero is therefore **in the Recharge list
+and on no Buy tab** - the server sends one per star a general store does not stock
+(`ClassicShopRow::recharge_only`). Not yet seen on a screen; `tools/test-server.ps1` step 0f
+asks.
+
 > **2026-09-16, measured on screen: the first per-row `u8` does NOT take a row out of the
 > Buy list.** The server sent every stocked item twice - once plain, once with that byte set
 > and the WZ `info/price` (a Shop2 habit: there, the sign of the price chose the tab) - and

@@ -185,8 +185,14 @@
     in your inventory and press Recharge. Expected: the stack fills to slotMax (Subi 500) and
     the meso count drops by ceil(missing x unitPrice), Subi 0.3 per star; write down the number
     the window showed next to "Recharge:" and the number the mesos moved by - if they differ
-    the rounding direction is the client's and ours is wrong by that much. A star Lucy does not
-    list (Wolbi and up) is refused with the not-enough-mesos message; that is deliberate. SLASH
+    the rounding direction is the client's and ours is wrong by that much. EVERY STAR at a
+    general store (2026-10-02): a Grocer, a town General Store or the Mobile Store now also
+    lists each star it does not sell as a price-0 recharge-only row, so a dropped Wolbi must
+    recharge too (0.4 per star). Two claims, both from the listing alone: (1) the Buy tab still
+    shows ONLY the shelf - no Wolbi/Ilbi/... at 0 mesos; if they appear, price 0 does NOT keep a
+    row out of the Buy list and the server is refusing them (log says "recharge-only, not for
+    sale"); (2) Recharge on the Wolbi works. If the button stays dead and world-ch0.log has no
+    "recharged item 2070001", the client wants something besides the Recharge list. SLASH
     BLAST now costs HP (3 at level 1) as well as MP; Power Strike does not. MAX HP INCREASE:
     The owner's 358/447 screenshot settled experiment A - the CLIENT adds the percent on top of the
     server's max, and the server was calling 358 full. Every ceiling the server enforces is now
@@ -309,8 +315,8 @@
                                                       the 0x00E7 and whether anything went back.
           Then run !tool again the SAME session and pick the same option: it must REFUSE IN
           WORDS, never go silent, and the log must say NOTHING PAID. Reset is UTC midnight.
-          Leaf Points are per ACCOUNT (a second character is refused); Level up and the AP/SP
-          reset are per CHARACTER (a second character still gets its own).
+          Leaf Points are per ACCOUNT (a second character is refused); Level up and Henesys
+          are per CHARACTER (a second character still gets its own).
       (f) THE MAPLE ADMINISTRATOR HERSELF - Henesys, far left near the portal. Click them.
           They must give their QUEST or their greeting and NEVER the favours menu. That is the
           point of (e) being a command: the client's click fork is keyed on their TEMPLATE, so
@@ -2230,6 +2236,26 @@
                 nothing opens / the client dies -> paste the line and client-exit.log
            5. Orbis: Franz and Riza do the same -> fixed
            6. the other client sees the new face/skin without a map change -> fixed
+           7. EYE COLOUR (2026-10-02). Dr. Feeble (and Riza in Orbis) take the Signature Eye
+              Color Coupon 5152100 on a THIRD menu line beside the skin coupon. The owner's
+              first try: the box OPENED but Next showed one look. Fixed in 2ab2e4d: the box's
+              first u32 is the COUPON id, which the client types the box from (0 made it
+              treat colour candidates as styles and rewrite them to your current colour).
+              Wear Fern Face 22036, !item 5152100 1, pick the line: Next cycles NINE eye
+              colours; pick one -> only the eyes change, coupon gone -> fixed
+                Next still shows ONE look -> the coupon type is not what the client reads;
+                          next, watch FUN_142a91f30's param_2
+           8. HAIR COLOUR, same fix: Brittany with 5151100 on Fern Hair 42570 - Next cycles
+              all EIGHT colours and the label changes (Black, Red, ...) -> fixed
+                one look only -> as 7
+              The collaboration hairs and faces now have REAL colours (db45025: the recoloured
+              archives in client-patched, delivered by the launcher once the server is
+              repackaged), so the eight hairs and nine eyes must look VISIBLY different, not
+              eight copies of one colour under different labels -> fixed
+                labels change, pictures do not -> this client has not got the client patch yet
+           9. COUPON DEFAULTS (ab39b6a): a collaboration coupon gives the style in its DEFAULT
+              colour - Fern Hair coupon -> Violet 42576, Ubel Hair -> Green 42604, Ubel Face ->
+              Violet 22639. Use one: the colour on screen is that default -> fixed
 
      T6. !npcreload. Add a line to data/npc-dialogue.txt while the server is RUNNING, then
          run the command and click that NPC.
@@ -2611,11 +2637,67 @@
              works without a map change. Still needs a map change -> the second 0x007C did not
              apply; world-ch0.log shows "skill points now [...]" right after the LEVEL line
 
+    42. DISORDER'S DEBUFF (2026-10-02) - the first mob status ever sent (0x03E6). A thief with
+        Disorder: hit a mob with it and look ABOVE the mob.
+          a. a debuff icon appears over the mob for ~10-30 s (by level) -> fixed
+               no icon, nothing else odd -> the status index (12 attack / 13 defence) is not
+                          what this client draws; paste the "MobStatSet 0x03E6" line
+               the client dies / disconnects on the hit -> the packet layout is wrong: paste
+                          client-exit.log and the 0x03E6 line - this is the measurement
+          b. let the debuffed mob touch you: a little less damage than before (attack -5..-25)
+          c. the OTHER client on the map sees the same icon
+
+    41. STARS BY THE SET (2026-10-02). At a Grocer, buy Subi Throwing Stars once.
+          a. the window asks yes/no (no quantity box) -> fixed
+               a quantity box still appears -> the cap of 1 is not what hides it; buy 3 anyway:
+                          you must still get ONE set for ONE price
+          b. the Use tab gains 500 Subi and the mesos drop by 500 (one set) -> fixed
+               1 star, or 3 sets charged -> paste the "bought a SET" line from world-ch0.log
+
+    40. THE DAMAGE GUARD (2026-10-02). A hit more than 25% over what the character could deal is
+        CAPPED to that, and the attacker gets a line in damage-suspects.log (beside world-ch0.log).
+          a. play normally on EVERY class you have - warrior, magician (Magic Claw), archer,
+             thief with Ilbi or better, Power Strike / Slash Blast, crits included. Then:
+               damage-suspects.log absent or empty -> the ceiling holds for honest play -> fixed
+               a line names one of YOUR characters -> the model is low for that case: paste the
+                          line (it lists weapon, skill, attack, stats). Until fixed, restart
+                          with -DamageGuardLogOnly
+          b. EVERY thief and archer skill is priced now - Lucky Seven, Avenger, Shadow Meso
+             (mesos x 8), Three Snails (fixed 15/25/35), Arrow Bomb, Power Knockback. Use each
+             once: a suspects line for one of them is that skill's pricing being low - paste it
+          c. the cap itself cannot be triggered by an honest client; it is pinned by
+             the_damage_guard_caps_an_impossible_hit_and_passes_an_honest_one
+
+    39. EMPTY STAR STACKS (2026-10-02). A thief with a claw and a SMALL star stack (!item 2070000 3).
+          a. throw until it runs out: the stack STAYS in the Use tab showing 0 -> fixed
+               the slot goes blank / the client dies on the 0 -> this client cannot draw a
+                          0-count stack; paste the "down to 0" line and client-exit.log
+          b. throw again with only the empty stack: no star leaves, no damage line oddity
+          c. at a Grocer, Recharge the empty stack: 500, and 150 mesos (0.3 x 500) -> fixed
+          d. drop the empty stack, pick it back up: it returns at 0, no "x1" message -> fixed
+          e. relog: still 0 (not 1 - the store used to read a 0 back as 1) -> fixed
+
+    38. FAST SELLING (2026-10-02). At any NPC shop, Sell tab.
+          a. double-click-sell one item as FAST as you can, twice on the same row: it sells
+             ONCE, mesos rise once, NO "not enough mesos" message, and the row disappears from
+             the Sell list -> fixed (world-ch0.log: "a STALE sell ... the slot's real state
+             follows")
+               the row stays listed after the stale click -> a REMOVE does not redraw the list
+                          when it repeats one already sent; paste the STALE line
+          b. sell PART of a potion stack (e.g. 1 of 3): the slot shows 2 left, not empty ->
+             fixed. Before this, the slot vanished on screen while the server kept the rest
+
     37. OPTIONS KEPT ON THE SERVER (2026-10-02). Two characters on one account.
           a. log in; System Options: change the HP warning % (the pet's auto-potion threshold),
              the effect volume. world-ch0.log shows "options: account N group ..." for each
           b. Change Channel, then log out and back in: both kept. Then the OTHER character:
-             the same values (per account)
+             the same VOLUME (per account) but NOT the first one's HP/MP warning % - since
+             2026-10-02 the pet's auto-potion setup (acpHP/flHP/flMP and their wrnHP3/wrnMP3/
+             petHP2 twins) is per CHARACTER; the log line marks those keys "(character)". A
+             character that never set one gets the account's pre-split value. Set a different
+             % on the second, go back to the first: its own % is still there. The potions the
+             pet drinks and the key layout were already per character (keymap); check the
+             second character does NOT inherit the first's pet potions or key bindings
           c. THE RISK: a login now carries record block #32 for the first time. Login fails
              or the client dies right after SetField -> restart the server with
              -NoSystemOptions and log in again. Works then -> #32's placement is wrong; the
@@ -3306,7 +3388,7 @@
     COMMANDS (GM): !map, !item, !exp, !heal, !job, !learn, !nx, !lp, !resetap, !resetsp,
     !npcecho, !setrates, !npcreload, !registrationcode, !recoverycode, !track <name> (channel
     and map of one player, from the world hub's directory). EVERYONE: !rates, !online (who is
-    on, across channels), !tool (four favours a day now - Leaf Points, Level up, Reset AP&SP,
+    on, across channels), !tool (three favours a day - Leaf Points, Level up (the AP/SP reset left 2026-10-02: Cash Shop),
     and RETURN TO HENESYS for a player stuck in a map; refused free if already there), !scroll,
     !help - a player's !help shows only those. PRUNED 2026-09-06 on the owner's instruction:
     !kit, !buff, !unbuff, !npcfx, !migsweep, !buy, !locker and the per-kind rate setters
@@ -5600,7 +5682,11 @@ function Show-TestPlan {
         Write-Host '       Recharge. Stack fills to 500 (Subi); mesos drop by missing x 0.3,'
         Write-Host '       rounded UP. WRITE DOWN the "Recharge:" number the window showed'
         Write-Host '       and what the mesos moved by - a difference is the rounding rule.'
-        Write-Host '       Wolbi and up at Lucy is refused (they list only Subi): deliberate.'
+        Write-Host '       EVERY STAR at a general store (Grocer / General Store / Mobile'
+        Write-Host '       Store), 2026-10-02: recharge a DROPPED Wolbi there (0.4 each).'
+        Write-Host '       Works = the price-0 recharge-only rows do their job. Also look at'
+        Write-Host '       the Buy tab: Wolbi/Ilbi/... at 0 mesos there means price 0 does'
+        Write-Host '       NOT hide a row (the server refuses those buys either way).'
         Write-Host '    0g. WARRIOR AUDIT. SLASH BLAST costs HP (3 at level 1) AND MP now;'
         Write-Host '       Power Strike only MP. Watch the HP bar tick down per swing.'
         Write-Host '       MAX HP INCREASE (found from your 358/447 screenshot: the CLIENT adds'
@@ -5663,7 +5749,7 @@ function Show-TestPlan {
         Write-Host '             nothing at all          -> check world-ch0.log for the 0x00E7'
         Write-Host '           Run !tool again the same session: it must REFUSE IN WORDS and'
         Write-Host '           log NOTHING PAID. Reset is UTC midnight. Leaf Points are per'
-        Write-Host '           ACCOUNT; Level up and the AP/SP reset are per CHARACTER.'
+        Write-Host '           ACCOUNT; Level up and Henesys are per CHARACTER. NO RESET.'
         Write-Host '       (f) THE ADMINISTRATOR HERSELF, Henesys. Click them: they must give'
         Write-Host '           their QUEST or their greeting, NEVER the favours menu. That is why'
         Write-Host '           (e) is a command - the click fork is keyed on their TEMPLATE, so'
@@ -6108,6 +6194,16 @@ function Show-TestPlan {
         Write-Host '         box - FIRST SKIN BOX EVER; blank/identical figures -> ids need +12000,' -ForegroundColor Yellow
         Write-Host '         paste the AVATAR line. Pick -> skin changes in place, SKIN bit -> fixed' -ForegroundColor Green
         Write-Host '      5. Orbis: Franz/Riza the same; 6. the other client sees it -> fixed'
+        Write-Host '      7. COLOUR BOXES (fix 2ab2e4d - your try showed ONE look on Next):' -ForegroundColor White
+        Write-Host '         Dr. Feeble, 5152100, Fern Face 22036: Next cycles NINE eye colours' -ForegroundColor Cyan
+        Write-Host '         Brittany, 5151100, Fern Hair 42570: Next cycles EIGHT colours, label' -ForegroundColor Cyan
+        Write-Host '         changes (Black, Red, ...). Pick -> only the colour changes -> fixed' -ForegroundColor Green
+        Write-Host '         still ONE look -> coupon type is not what the client reads; watch' -ForegroundColor Yellow
+        Write-Host '         FUN_142a91f30 param_2 next' -ForegroundColor Yellow
+        Write-Host '         The colours must look DIFFERENT (real recolours, db45025, via the client' -ForegroundColor Cyan
+        Write-Host '         patch). Labels change but pictures do not -> no client patch yet' -ForegroundColor Yellow
+        Write-Host '      8. COUPON DEFAULTS: Fern Hair coupon -> Violet 42576, Ubel Hair -> Green' -ForegroundColor White
+        Write-Host '         42604, Ubel Face -> Violet 22639 - that colour on screen -> fixed' -ForegroundColor Cyan
         Write-Host '  T6. !npcreload. Add a line to data/npc-dialogue.txt with the' -ForegroundColor White
         Write-Host '      server RUNNING, run the command, click that NPC.'
         Write-Host '        a) new line with no restart?'
@@ -6315,8 +6411,33 @@ function Show-TestPlan {
         Write-Host '  38. SP ON LEVEL-UP (2026-10-02): skill window open, level up - SP rises at once,' -ForegroundColor White
         Write-Host '       + works with no map change / channel change' -ForegroundColor Cyan
         Write-Host ''
-        Write-Host '  37. OPTIONS PER ACCOUNT (2026-10-02): set HP warning % + effect volume; relog,' -ForegroundColor White
-        Write-Host '       change channel, other character on the account: all kept' -ForegroundColor Cyan
+        Write-Host '  42. DISORDER DEBUFF (2026-10-02, FIRST 0x03E6 EVER): hit a mob with Disorder,' -ForegroundColor White
+        Write-Host '       look ABOVE it: debuff icon for 10-30 s -> fixed' -ForegroundColor Cyan
+        Write-Host '       no icon -> wrong status index; client dies -> wrong layout: paste' -ForegroundColor Yellow
+        Write-Host '       client-exit.log + the "MobStatSet 0x03E6" line from world-ch0.log' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  41. STARS BY THE SET (2026-10-02): buy Subi once at a Grocer: yes/no (no qty box),' -ForegroundColor White
+        Write-Host '       +500 Subi for 500 mesos -> fixed. 1 star or 3 sets charged -> paste the line' -ForegroundColor Cyan
+        Write-Host ''
+        Write-Host '  40. DAMAGE GUARD (2026-10-02): play every class, crits and skills included.' -ForegroundColor White
+        Write-Host '       Then damage-suspects.log (beside world-ch0.log) empty -> ceiling holds -> fixed' -ForegroundColor Cyan
+        Write-Host '       a line names YOUR character -> paste it; restart -DamageGuardLogOnly' -ForegroundColor Yellow
+        Write-Host '       use Lucky Seven, Avenger, Shadow Meso, Arrow Bomb, Power Knockback once each' -ForegroundColor Cyan
+        Write-Host ''
+        Write-Host '  39. EMPTY STARS (2026-10-02): !item 2070000 3, throw until out: the stack STAYS' -ForegroundColor White
+        Write-Host '       at 0 -> fixed. Blank slot or client death on the 0 -> paste client-exit.log' -ForegroundColor Yellow
+        Write-Host '       Recharge it at a Grocer (500, 150 mesos); drop + pick up (back at 0, no' -ForegroundColor Cyan
+        Write-Host '       "x1"); relog (still 0, not 1) -> fixed' -ForegroundColor Cyan
+        Write-Host ''
+        Write-Host '  38. FAST SELLING (2026-10-02): sell the same row twice, fast: sells ONCE, no' -ForegroundColor White
+        Write-Host '       "not enough mesos", the row leaves the Sell list -> fixed' -ForegroundColor Cyan
+        Write-Host '       row still listed -> paste the "a STALE sell" line from world-ch0.log' -ForegroundColor Yellow
+        Write-Host '       sell 1 of 3 potions: the slot shows 2 left, not empty -> fixed' -ForegroundColor Cyan
+        Write-Host ''
+        Write-Host '  37. OPTIONS ON THE SERVER (2026-10-02): set HP warning % + effect volume; relog,' -ForegroundColor White
+        Write-Host '       change channel: both kept. OTHER character on the account: same volume,' -ForegroundColor Cyan
+        Write-Host '       but its OWN HP/MP warning %, pet potions and key layout (per character)' -ForegroundColor Cyan
+        Write-Host '       - set a different % there, back to the first: the first''s % is intact' -ForegroundColor Cyan
         Write-Host '       login fails after SetField -> restart with -NoSystemOptions; works then =' -ForegroundColor Yellow
         Write-Host '       block #32 placement wrong (HP warning should still be kept)' -ForegroundColor Yellow
         Write-Host ''

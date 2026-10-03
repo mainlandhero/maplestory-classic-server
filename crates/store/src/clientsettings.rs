@@ -7,6 +7,11 @@
 //! from quest ex records at field entry; nothing stored them, so every login started from the
 //! defaults. A row is one `(group, key) = value`, exactly as the client numbers them - the names
 //! and the quest each one travels in are `net::clientsettings`'s business, not the database's.
+//!
+//! **The pet's auto-potion keys are per CHARACTER.** The owner, 2026-10-02: *"The pet auto hp seems
+//! to be account wide, when ideally this configuration should be saved per character, since
+//! other characters may want to use different auto potion setup."* Those rows go in
+//! `character_settings`, same shape; which keys they are is `net::clientsettings::is_per_character`.
 
 use rusqlite::{params, Connection};
 
@@ -22,6 +27,13 @@ pub(crate) fn create_tables(conn: &Connection) -> Result<()> {
             key         INTEGER NOT NULL,
             value       INTEGER NOT NULL,
             PRIMARY KEY (account_id, grp, key)
+        );
+        CREATE TABLE IF NOT EXISTS character_settings (
+            character_id INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+            grp          INTEGER NOT NULL,
+            key          INTEGER NOT NULL,
+            value        INTEGER NOT NULL,
+            PRIMARY KEY (character_id, grp, key)
         );
         "#,
     )?;
@@ -58,6 +70,35 @@ impl Store {
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
+
+    /// [`Store::save_client_settings`] for one character's own keys.
+    pub fn save_character_settings(&self, character_id: u32, group: u32, entries: &[(u32, i32)]) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        for (key, value) in entries {
+            tx.execute(
+                "INSERT OR REPLACE INTO character_settings (character_id, grp, key, value) VALUES (?1, ?2, ?3, ?4)",
+                params![i64::from(character_id), i64::from(group), i64::from(*key), i64::from(*value)],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Every stored `(group, key, value)` for the character, ordered by group then key.
+    pub fn character_settings(&self, character_id: u32) -> Result<Vec<(u32, u32, i32)>> {
+        let conn = self.conn();
+        let mut stmt = conn
+            .prepare("SELECT grp, key, value FROM character_settings WHERE character_id = ?1 ORDER BY grp, key")?;
+        let rows = stmt.query_map(params![i64::from(character_id)], |r| {
+            Ok((
+                u32::try_from(r.get::<_, i64>(0)?).unwrap_or(0),
+                u32::try_from(r.get::<_, i64>(1)?).unwrap_or(0),
+                i32::try_from(r.get::<_, i64>(2)?).unwrap_or(0),
+            ))
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
 }
 
 #[cfg(test)]
@@ -78,5 +119,24 @@ mod tests {
             "the one-key change replaced flHP and left flMP"
         );
         assert!(store.client_settings(b).unwrap().is_empty(), "another account sees none of it");
+    }
+
+    #[test]
+    fn character_settings_belong_to_one_character_and_go_with_it() {
+        let store = Store::open_in_memory().unwrap();
+        let a = store.create_account("wisp", "correct horse battery").unwrap();
+        let mk = |name: &str| {
+            store
+                .create_character(a, 0, &net::opcode::Character { name: name.into(), ..Default::default() })
+                .unwrap()
+                .id
+        };
+        let (one, two) = (mk("Pebble"), mk("Cobalt"));
+        store.save_character_settings(one, 1, &[(0x10, 7), (0x11, 3)]).unwrap();
+        store.save_character_settings(one, 1, &[(0x10, 4)]).unwrap();
+        store.save_character_settings(two, 1, &[(0x10, 12)]).unwrap();
+        assert_eq!(store.character_settings(one).unwrap(), vec![(1, 0x10, 4), (1, 0x11, 3)]);
+        assert_eq!(store.character_settings(two).unwrap(), vec![(1, 0x10, 12)]);
+        assert!(store.client_settings(a).unwrap().is_empty(), "nothing leaks into the account's rows");
     }
 }

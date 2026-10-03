@@ -607,6 +607,8 @@ impl Drop for Session {
 }
 
 mod ability;
+pub(crate) mod damageguard;
+pub(crate) mod mobdebuff;
 mod boat;
 mod hotel;
 mod megaphone;
