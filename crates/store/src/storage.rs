@@ -270,6 +270,15 @@ fn place_into_storage(
         }
         ItemKind::Bundle { quantity } => quantity,
     };
+    // **A star or bullet stack is one item and never joins another** (the owner, 2026-10-03:
+    // separate star items must not *"stack into 1 item"*). It takes a slot of its own, whole.
+    if net::bag::bundle_has_serial(item.item_id) {
+        let slot = boxed.lowest_free().ok_or(StoreError::StorageFull { slots: boxed.slots })?;
+        set_storage_slot_row(conn, account_id, slot, item)?;
+        let placed = StorageItem { slot, item: *item };
+        boxed.items.push(placed);
+        return Ok(vec![placed]);
+    }
     let cap = max_stack.max(1);
 
     if cap > 1 {
@@ -427,6 +436,8 @@ impl Store {
         }
 
         let mut boxed = read_storage(&tx, account_id)?;
+        // A star or bullet stack is one item: it goes in whole, whatever count was named.
+        let count = if net::bag::bundle_has_serial(peek.item_id) { None } else { count };
         let taken = inventory::take_from_bag(&tx, character_id, inv_type, slot, count)?;
         let changed = place_into_storage(&tx, account_id, &mut boxed, &taken, max_stack)?;
         tx.commit()?;
@@ -450,6 +461,12 @@ impl Store {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let mut bag = inventory::read_bag(&tx, character_id)?;
+        // A star or bullet stack is one item: it comes out whole, whatever count was named.
+        let whole = read_storage(&tx, account_id)?
+            .items
+            .iter()
+            .any(|i| i.slot == storage_slot && net::bag::bundle_has_serial(i.item.item_id));
+        let count = if whole { None } else { count };
         let taken = take_from_storage(&tx, account_id, storage_slot, count)?;
         let changed =
             inventory::place_into_bag(&tx, character_id, &mut bag, inv_type, &taken, max_stack)?;
@@ -935,6 +952,30 @@ mod tests {
             Err(StoreError::SlotOutOfRange { slot: 2, slots: 1 })
         ));
         assert_eq!(store.storage(account).unwrap().slots, 10);
+    }
+
+    /// **Star stacks stay separate items in storage too.** Two partial Subi stacks deposited
+    /// side by side keep their own slots and counts; a bag-to-box deposit naming 1 takes the
+    /// whole stack, and the withdrawal brings it back whole into a slot of its own.
+    #[test]
+    fn star_stacks_stay_whole_and_separate_in_storage() {
+        let (store, account, chr, _) = store_with_two_characters();
+        store.set_storage_slots(account, 10).unwrap();
+        store.storage_deposit(account, &Item::bundle(2_070_000, 120), 500).unwrap();
+        store.storage_deposit(account, &Item::bundle(2_070_000, 200), 500).unwrap();
+        let counts = |store: &Store| -> Vec<u16> {
+            store.storage(account).unwrap().items.iter().map(|i| i.item.kind.quantity()).collect()
+        };
+        assert_eq!(counts(&store), vec![120, 200], "not poured into one");
+
+        store.set_inventory_slot(chr, InventoryType::Use, 1, &Item::bundle(2_070_000, 37)).unwrap();
+        store.store_item(account, chr, InventoryType::Use, 1, Some(1), 500).unwrap();
+        assert_eq!(counts(&store), vec![120, 200, 37], "the whole 37, in a slot of its own");
+        assert_eq!(store.inventory_slot(chr, InventoryType::Use, 1).unwrap(), None);
+
+        store.take_item(account, chr, 2, Some(1), InventoryType::Use, 500).unwrap();
+        assert_eq!(store.inventory_slot(chr, InventoryType::Use, 1).unwrap(), Some(Item::bundle(2_070_000, 200)));
+        assert_eq!(counts(&store), vec![120, 37]);
     }
 
     /// Deleting the account takes its box with it.

@@ -96,7 +96,17 @@ impl Session {
         // at least one. Asking for more than is there takes what is there rather than
         // refusing: the client draws the number and a stack can shrink between the drag
         // starting and the packet arriving.
-        let requested = net::drops::drop_count(m).min(in_slot);
+        //
+        // **A star or bullet stack drops whole, ammo and all.** The owner, 2026-10-03: *"when
+        // dropping stars as items on the ground, the server only removes 1 quantity ... it
+        // should drop the entire item along with its ammo information"*. The client names a
+        // count of 1 for it; the stack is one item (`Store::move_item` will not split it
+        // either), so the count is ignored and the floor item carries every star in the slot.
+        let requested = if row.is_some_and(|r| net::bag::bundle_has_serial(r.item.item_id)) {
+            in_slot
+        } else {
+            net::drops::drop_count(m).min(in_slot)
+        };
         let whole = whole_slot_is_leaving(requested, in_slot);
         let remaining_in_slot = if whole { None } else { Some(in_slot - requested) };
 

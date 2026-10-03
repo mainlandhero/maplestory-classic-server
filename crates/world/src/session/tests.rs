@@ -6934,6 +6934,61 @@ fn an_empty_star_stack_drops_and_is_picked_up_at_zero() {
     assert_eq!(s.fields.with_drops(map, |d| d.len()), 0, "and it left the floor");
 }
 
+/// **A star stack drops whole, ammo and all.** The owner, 2026-10-03: *"when dropping stars as
+/// items on the ground, the server only removes 1 quantity ... it should drop the entire item
+/// along with its ammo information"*. The client names a count of 1; 480 Ilbi leave the slot
+/// (a REMOVE, not a count of 479), lie on the floor as one item, and come back as one stack
+/// of 480 in a slot of its own.
+#[test]
+fn a_star_stack_drops_whole_and_is_picked_up_with_its_count() {
+    let (mut s, store, id) = gm_session();
+    s.last_position = Some((520, 395));
+    store.set_inventory_slot(id, store::InventoryType::Use, 1, &store::Item::bundle(2_070_006, 480)).unwrap();
+    store.set_inventory_slot(id, store::InventoryType::Use, 2, &store::Item::bundle(2_070_006, 37)).unwrap();
+    let map = crate::fields::FieldKey::world(s.claimed_character().unwrap().map_id);
+    let object_id = s.fields.with_drops(map, |d| d.next_object_id());
+
+    let out = s.on_inventory_move(&inventory_move(use_tab(), 1, 0, 1));
+    assert_eq!(out[0].body, net::inventory::inventory_removed(use_tab(), 1), "the whole slot leaves: {}", out[0].what);
+    assert_eq!(store.inventory_slot(id, store::InventoryType::Use, 1).unwrap(), None);
+    let on_floor = s.fields.with_drops(map, |d| d.get(object_id).map(|f| f.quantity()));
+    assert_eq!(on_floor, Some(480), "one item on the floor, every star in it");
+
+    let got = s.on_pick_up(0x032C, &pick_up_body(object_id));
+    let held: Vec<(u16, u16)> = store
+        .bag_items(id, store::InventoryType::Use)
+        .unwrap()
+        .iter()
+        .map(|r| (r.slot, r.item.kind.quantity()))
+        .collect();
+    assert_eq!(held, vec![(1, 480), (2, 37)], "back as its own stack of 480, the 37 untouched: {got:?}");
+}
+
+/// **Two stacks of the same star never become one.** The owner, 2026-10-03: separate star items
+/// must not *"stack into 1 item"*. Dragging one onto the other swaps them (mode 2, both rows
+/// intact), and the Consolidate button leaves both - it only slides.
+#[test]
+fn star_stacks_swap_instead_of_merging_and_consolidate_leaves_them_apart() {
+    let (mut s, store, id) = gm_session();
+    store.set_inventory_slot(id, store::InventoryType::Use, 1, &store::Item::bundle(2_070_006, 120)).unwrap();
+    store.set_inventory_slot(id, store::InventoryType::Use, 3, &store::Item::bundle(2_070_006, 200)).unwrap();
+    let out = s.on_inventory_move(&inventory_move(use_tab(), 3, 1, 200));
+    assert_eq!(out.len(), 1, "one swap packet: {out:?}");
+    let held = |store: &Arc<Store>| -> Vec<(u16, u16)> {
+        store
+            .bag_items(id, store::InventoryType::Use)
+            .unwrap()
+            .iter()
+            .map(|r| (r.slot, r.item.kind.quantity()))
+            .collect()
+    };
+    assert_eq!(held(&store), vec![(1, 200), (3, 120)], "swapped, not poured together");
+
+    let cap = |_: u32| 800u16;
+    store.consolidate_bag(id, store::InventoryType::Use, &cap).unwrap();
+    assert_eq!(held(&store), vec![(1, 200), (2, 120)], "consolidate slides the stars up and merges nothing");
+}
+
 /// A `0x032C` body with the drop's object id where the client puts it: **offset 13**.
 fn pick_up_body(object_id: u32) -> Vec<u8> {
     let mut b = vec![0u8; 13];

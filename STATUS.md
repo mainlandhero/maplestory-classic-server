@@ -429,6 +429,19 @@ the ammo's attack - this client names it **`incWAT`** (Ilbi 27), and the first d
 never been compared with a night of real hits; a suspects line naming an honest character is
 the model being low, and log-only is the fix until it is corrected.
 
+**2026-10-03: a star stack is one item everywhere - built, tests only.** The owner: separate star
+items must not *"stack into 1 item"*, and a dropped star should go down *"along with its ammo
+information"* - the drop took 1. Now `207`/`233` stacks (`net::bag::bundle_has_serial`): a drag
+onto another stack of the same star SWAPS (`Store::move_item`, which also moves a star whole to an
+empty slot - no split); Consolidate and Sort slide them but never pour (`plan_consolidation`); a drop
+takes the whole slot whatever count the client named (`on_drop_request`); `place_into_bag` puts a
+star bundle in ONE slot whatever `max_stack` says, so a picked-up 480 stays 480; and storage deposit
+and withdrawal move it whole into a slot of its own, never onto another. **Existing merged stacks
+cannot be un-merged:** the database stored one row with the total, so where two stacks became one
+the split is gone. No ammo was lost to it - the total survived - and a recharge is priced per
+missing star, so a merged stack costs exactly what its parts would have. Trade (85b5d9bd) already
+offers a star stack whole; completion is not built yet.
+
 **2026-10-03: NO STAR SHOWED AS RECHARGEABLE because every star row said its full stack was 1 -
 fixed in code, [L] end to end, never on a screen.** The owner: *"The clients couldn't have asked to
 charge because the NPC shop don't display them as rechargeable."* `FUN_141fa77a0` is decompiled

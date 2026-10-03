@@ -1221,6 +1221,17 @@ pub(crate) fn place_into_bag(
         }
         ItemKind::Bundle { quantity } => quantity,
     };
+    // **A star or bullet stack arrives as ONE item and stays one** (the owner, 2026-10-03: a
+    // dropped star goes down *"along with its ammo information"*). Whatever count it carries
+    // lands in one slot - a pickup, a withdrawal, a gift - rather than being cut at `max_stack`
+    // into several stacks a recharge would each fill: one item in, one item out.
+    if net::bag::bundle_has_serial(item.item_id) {
+        let slot = lowest_free(bag, inv_type).ok_or_else(full)?;
+        set_slot(conn, character_id, inv_type, slot, item)?;
+        let placed = InvItem { inv_type, slot, item: *item };
+        bag.items.push(placed);
+        return Ok(vec![placed]);
+    }
     let cap = max_stack.max(1);
 
     // **A star or bullet stack never takes in another.** The owner, 2026-10-03: *"pick ups of
@@ -1468,6 +1479,28 @@ impl Store {
         };
         let Some(source) = find(src) else { return Err(StoreError::SlotEmpty { slot: src }) };
         let target = find(dst);
+
+        // **A star or bullet stack is one item: it moves whole and never merges.** The owner,
+        // 2026-10-03: *"The star should occupy an entire slot, no matter the ammo count"*, and
+        // separate star items must not *"stack into 1 item"*. Dropped on another stack of the
+        // same star it swaps, the same as two different items; dragged to an empty slot it goes
+        // whole, whatever count the client named - a split would mint a second stack that a
+        // recharge then fills.
+        if net::bag::bundle_has_serial(source.item_id) {
+            let outcome = if target.is_some() {
+                swap_slots(&tx, character_id, inv_type, src, dst)?;
+                MoveOutcome::Swapped
+            } else {
+                tx.execute(
+                    "UPDATE inventory SET slot = ?4
+                      WHERE character_id = ?1 AND inv_type = ?2 AND slot = ?3",
+                    rusqlite::params![i64::from(character_id), inv_type.as_u8(), src, dst],
+                )?;
+                MoveOutcome::Moved
+            };
+            tx.commit()?;
+            return Ok(outcome);
+        }
 
         let outcome = match target {
             // Empty destination: one UPDATE, and the whole stack goes unless a partial count
@@ -1748,7 +1781,9 @@ pub fn plan_consolidation(stacks: &[Stack]) -> Vec<StackChange> {
     work.sort_by_key(|s| s.slot);
     let before: Vec<u16> = work.iter().map(|s| s.quantity).collect();
     for later in 1..work.len() {
-        if work[later].cap <= 1 {
+        // **Star and bullet stacks are never poured** (the owner, 2026-10-03: each is its own
+        // item, and separate ones must not *"stack into 1 item"*). They only slide up.
+        if work[later].cap <= 1 || net::bag::bundle_has_serial(work[later].item_id) {
             continue;
         }
         for earlier in 0..later {

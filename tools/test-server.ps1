@@ -2717,6 +2717,12 @@
              pick up dropped Wolbi and buy a set - each lands in a NEW slot at its own count,
              and neither old stack changes. Recharge the HIGHER-slot partial stack: that one
              fills, the lower one does not -> fixed
+          h. (2026-10-03) a star stack is ONE item. With two partial Subi stacks (37 and 120):
+               drag one onto the other: they SWAP, both counts unchanged -> fixed
+               (a merge into 157 = the old server)
+               press Consolidate / Sort: they slide up, still two stacks -> fixed
+               drop the 120: the slot empties (not 119), pick it up: 120 in a new slot -> fixed
+               store one at Mr. Kim, take it back: same count, own slot -> fixed
 
     38. FAST SELLING (2026-10-02). At any NPC shop, Sell tab.
           a. double-click-sell one item as FAST as you can, twice on the same row: it sells
@@ -6485,6 +6491,10 @@ function Show-TestPlan {
         Write-Host '   39g. ONE STACK PER SLOT (2026-10-03): with a partial AND an empty Wolbi, pick up' -ForegroundColor White
         Write-Host '       Wolbi and buy a set: each in a NEW slot, old stacks unchanged. Recharge the' -ForegroundColor Cyan
         Write-Host '       higher-slot partial: that one fills, not the lower -> fixed' -ForegroundColor Cyan
+        Write-Host '   39h. STAR = ONE ITEM (2026-10-03): two Subi stacks (37, 120). Drag one onto the' -ForegroundColor White
+        Write-Host '       other: SWAP, counts kept; Consolidate/Sort: still two; drop the 120: slot' -ForegroundColor Cyan
+        Write-Host '       empties (not 119), pick up: 120 in a new slot; store + withdraw: same -> fixed' -ForegroundColor Cyan
+        Write-Host '       a merge into 157, or 119 left behind -> the old server; paste the line' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  38. FAST SELLING (2026-10-02): sell the same row twice, fast: sells ONCE, no' -ForegroundColor White
         Write-Host '       "not enough mesos", the row leaves the Sell list -> fixed' -ForegroundColor Cyan
