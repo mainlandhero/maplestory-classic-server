@@ -2347,20 +2347,22 @@ level, 200, 1, 0, 15, 50, 15, 7 7 7
         assert!(closed);
     }
 
-    /// **Opening a Companion's Magic Box.** The owner, 2026-09-23. Two boxes stacked in one Use
-    /// slot; the `0x0114` for that slot opens ONE: exactly one prize from the table in its
-    /// table quantity, the slot left holding one box (not emptied - boxes stack), the
-    /// player told what they got, and the client's request latch cleared. A packet naming the
-    /// wrong slot opens nothing and costs nothing.
+    /// **Opening a Companion's Magic Box.** The owner, 2026-09-23, and 2026-10-03 for the four
+    /// slots. Two boxes stacked in one Use slot; the `0x0114` for that slot opens ONE:
+    /// exactly one prize from EACH slot - an equip, a use item, a scroll, an etc item - in its
+    /// table quantity, the slot left holding one box (not emptied - boxes stack), the player
+    /// told what they got, and the client's request latch cleared. A packet naming the wrong
+    /// slot opens nothing and costs nothing.
     #[test]
-    fn a_magic_box_opens_into_one_prize_from_the_table() {
+    fn a_magic_box_opens_into_one_prize_from_each_slot() {
         let (store, config, fields) = channel();
         let account = store.create_account("maplecw", "correct horse battery").unwrap();
         let mut cfg = (*config).clone();
         cfg.item_names.insert(crate::magicbox::BOX, "Companion's Magic Box".into());
-        for n in 0..crate::magicbox::LINES {
-            let (id, _) = crate::magicbox::line(n);
-            cfg.item_names.insert(id, format!("item {id}"));
+        for slot in &crate::magicbox::SLOTS {
+            for &(id, _) in slot.prizes {
+                cfg.item_names.insert(id, format!("item {id}"));
+            }
         }
         let config = Arc::new(cfg);
         let chr = net::opcode::Character { name: "Opener".to_string(), map_id: 100_000_000, level: 30, ..Default::default() };
@@ -2393,26 +2395,104 @@ level, 200, 1, 0, 15, 50, 15, 7 7 7
         assert!(!out.is_empty(), "answered, so the client's latch clears");
         assert_eq!(held_everywhere(), vec![(crate::magicbox::BOX, 2)]);
 
-        // The right slot: one box becomes one prize.
+        // The right slot: one box becomes four prizes, one per slot, in slot order.
         let out = s.handle(&open(box_slot));
         let now = held_everywhere();
         let boxes: u32 = now.iter().filter(|(i, _)| *i == crate::magicbox::BOX).map(|(_, q)| q).sum();
         assert_eq!(boxes, 1, "one of the two was opened, and the other is still there");
         let prizes: Vec<(u32, u32)> = now.into_iter().filter(|(i, _)| *i != crate::magicbox::BOX).collect();
-        assert_eq!(prizes.len(), 1, "exactly one prize: {prizes:?}");
-        let (item, qty) = prizes[0];
-        let line = (0..crate::magicbox::LINES).map(crate::magicbox::line).find(|(i, _)| *i == item).expect("a prize from the table");
-        assert_eq!(qty, u32::from(line.1), "in the table's quantity");
-        // The owner, 2026-09-24: the box lost and the prize gained, as two grey chat-log lines in
-        // that order - and no yellow notice any more.
+        assert_eq!(prizes.len(), 4, "exactly four prizes: {prizes:?}");
+        let mut got = Vec::new();
+        for slot in &crate::magicbox::SLOTS {
+            let mine: Vec<&(u32, u32)> = prizes.iter().filter(|(i, _)| slot.prizes.iter().any(|p| p.0 == *i)).collect();
+            assert_eq!(mine.len(), 1, "one {} prize: {prizes:?}", slot.name);
+            let (item, qty) = *mine[0];
+            let line = slot.prizes.iter().find(|p| p.0 == item).unwrap();
+            assert_eq!(qty, u32::from(line.1), "{item} in the table's quantity");
+            got.push((item, qty));
+        }
+        // The owner, 2026-09-24: the box lost and each prize gained, as grey chat-log lines in
+        // that order - and no yellow notice.
         let lines: Vec<&Vec<u8>> = out.iter().filter(|r| r.opcode == net::stats::USER_EFFECT_LOCAL).map(|r| &r.body).collect();
-        assert_eq!(
-            lines,
-            vec![&net::message::item_lost_in_chat(crate::magicbox::BOX, 1), &net::message::item_gained_in_chat(item, qty)],
-            "one line for the box going, one for the prize arriving"
-        );
-        assert!(!out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE), "the old yellow notice is gone");
+        let mut want = vec![net::message::item_lost_in_chat(crate::magicbox::BOX, 1)];
+        want.extend(got.iter().map(|&(item, qty)| net::message::item_gained_in_chat(item, qty)));
+        assert_eq!(lines, want.iter().collect::<Vec<_>>(), "one line for the box going, one per prize arriving");
+        assert!(!out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE), "no yellow notice");
         assert!(out.len() > lines.len() + 1, "the stack change and the latch release are still sent");
+
+        // The owner, 2026-10-03: Lakelis says what each slot gave, in one NPC box.
+        let boxes: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::script::SCRIPT_MESSAGE).collect();
+        assert_eq!(boxes.len(), 1, "exactly one NPC box");
+        let given: Vec<(&str, crate::magicbox::Prize)> =
+            crate::magicbox::SLOTS.iter().zip(&got).map(|(slot, &(i, q))| (slot.name, (i, q as u16))).collect();
+        assert_eq!(boxes[0].body, net::script::npc_say(crate::firsttime::LAKELIS, &crate::magicbox::lakelis_text(&given), false, false));
+        assert_eq!(s.conversation.as_ref().map(|c| c.path.as_str()), Some(crate::questroom::REFUSAL_PATH), "parked so its OK closes it");
+        // OK on the box: silence, conversation cleared.
+        let mut ok = Vec::new();
+        ok.extend_from_slice(&0u32.to_le_bytes());
+        ok.push(0);
+        ok.extend_from_slice(&0u32.to_le_bytes());
+        ok.extend_from_slice(&0u16.to_le_bytes());
+        ok.push(net::script::SCRIPT_ACTION_YES as u8);
+        let closed = s.on_script_reply(&ok);
+        assert!(closed.is_empty(), "{:?}", closed.iter().map(|r| &r.what).collect::<Vec<_>>());
+        assert!(s.conversation.is_none());
+
+        // **Never a second box over an open one.** The last box opened while a conversation
+        // is up: the prizes and chat lines still come, Lakelis does not.
+        s.conversation = Some(crate::session::Conversation {
+            npc_template: 2000,
+            quest_id: None,
+            path: "0".to_string(),
+            sent: 0,
+            awaiting_yes_no: false,
+            sent_with_next: false,
+        });
+        let out = s.handle(&open(box_slot));
+        assert_eq!(out.iter().filter(|r| r.opcode == net::stats::USER_EFFECT_LOCAL).count(), 5, "the box and four prizes, in chat");
+        assert!(!out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE), "no second NPC box");
+        assert_eq!(s.conversation.as_ref().map(|c| c.npc_template), Some(2000), "the open conversation is untouched");
+    }
+
+    /// **A full tab refuses the whole box.** The Etc tab packed with things that do not stack
+    /// with any ore: the box stays, nothing from any other slot arrives either, and the player
+    /// is told which tab to clear.
+    #[test]
+    fn a_magic_box_with_no_room_for_one_slot_gives_nothing_and_is_kept() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut cfg = (*config).clone();
+        cfg.item_names.insert(crate::magicbox::BOX, "Companion's Magic Box".into());
+        for slot in &crate::magicbox::SLOTS {
+            for &(id, _) in slot.prizes {
+                cfg.item_names.insert(id, format!("item {id}"));
+            }
+        }
+        for n in 0..200 {
+            cfg.item_names.insert(4_000_000 + n, format!("filler {n}"));
+        }
+        let config = Arc::new(cfg);
+        let chr = net::opcode::Character { name: "Packed".to_string(), map_id: 100_000_000, level: 30, ..Default::default() };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        store.create_migration(account, id, 0, 0).unwrap();
+        let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+        s.claim_for_character(id);
+        let _ = s.give_item(crate::magicbox::BOX, 1, "test").unwrap();
+        let etc_slots = store.bag(id).unwrap().slots_in(store::InventoryType::Etc);
+        for n in 0..u32::from(etc_slots) {
+            let _ = s.give_item(4_000_000 + n, 1, "test").unwrap();
+        }
+        let box_slot = store.bag_items(id, store::InventoryType::Use).unwrap()[0].slot;
+        let mut b = net::cashitem::CLIENT_USE_CASH_ITEM.to_le_bytes().to_vec();
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b.extend_from_slice(&box_slot.to_le_bytes());
+        b.extend_from_slice(&crate::magicbox::BOX.to_le_bytes());
+        let out = s.handle(&b);
+        assert!(!out.is_empty(), "answered");
+        let uses: Vec<u32> = store.bag_items(id, store::InventoryType::Use).unwrap().iter().map(|r| r.item.item_id).collect();
+        assert_eq!(uses, vec![crate::magicbox::BOX], "the box is kept and no use item or scroll arrived");
+        assert!(store.bag_items(id, store::InventoryType::Equip).unwrap().is_empty(), "no equip arrived");
+        assert_eq!(store.bag_items(id, store::InventoryType::Etc).unwrap().len(), usize::from(etc_slots), "no ore arrived");
     }
 
     /// **A run of one does not go on.** The owner, 2026-09-23: *"A party of 1 should not be allowed

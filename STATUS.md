@@ -3520,6 +3520,7 @@ which on screen is indistinguishable from absent.
 | **EXP shares to other players** | wired 2026-08-29 and **never executed on a wire either**: 329 kill-EXP lines in the archive, zero carrying a damage fraction. Nobody has ever killed a mob together |
 | return scrolls, `!npcreload`, Phil routing Beginners to their instructor | wired since 2026-08-29 |
 | **arrows leave the Use tab** | 2026-09-06. A normal shot 1, Arrow Blow 1, Double Shot 2, Power Knockback 0; bows take `2060xxx`, crossbows `2061xxx`; never refuses. Six tests over real captured swings; not yet watched |
+| **Companion's Magic Box gives one of each slot** | 2026-10-03, the owner. One equip, one use, one scroll and one etc item per box (`crate::magicbox::SLOTS`, the Use slot is the owner's 20-line potion and food list); all four checked for room first, a full tab keeps the box. Then a **Lakelis `Say` box** listing each slot, parked under `questroom::REFUSAL_PATH` so its OK closes silently, and skipped when a conversation is already open. The drops page shows the four slots and each slot's odds. Tests only - **an NPC box opened from an item use (`0x0114`) rather than an NPC click has not been watched**; if the client refuses it, the chat lines still say everything |
 
 ### What is blocked, and on what
 

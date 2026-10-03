@@ -344,7 +344,8 @@ impl Whereabouts {
 /// nowhere ([`Whereabouts`]) is left out. A mob
 /// with no meso row gets the server's level-scaled default as a `fixed` row: always dropped,
 /// not scaled by the rate (`session/combat.rs`). The First Time Together box is the last
-/// "mob", `kind` set, one line per prize at `1 / LINES`.
+/// "mob", `kind` set, with `slots` (`[kind, lines]`): a box gives one prize from every slot,
+/// so each line is `1 / its slot's length`.
 pub fn tables_json(config: &Config, mob_names: &HashMap<u32, String>, descs: &HashMap<u32, String>) -> String {
     let mut items: HashMap<u32, ()> = HashMap::new();
     let mut s = String::with_capacity(256 * 1024);
@@ -386,17 +387,23 @@ pub fn tables_json(config: &Config, mob_names: &HashMap<u32, String>, descs: &Ha
         }
         s.push_str("]}");
     }
-    // The party quest's reward box: one line per prize, equal odds, untouched by the rate.
-    let share = crate::droptables::PER_MILLION / crate::magicbox::LINES as u32;
+    // The party quest's reward box: one prize from EACH slot, so a line's odds are within its
+    // slot (`1 / slot length`), untouched by the rate. `slots` names them for the page.
     let _ = write!(
         s,
-        ",{{\"id\":\"box\",\"name\":\"Companion's Magic Box\",\"level\":0,\"kind\":\"First Time Together reward\",\"rows\":["
+        ",{{\"id\":\"box\",\"name\":\"Companion's Magic Box\",\"level\":0,\"kind\":\"First Time Together reward\",\"slots\":["
     );
+    for (i, slot) in crate::magicbox::SLOTS.iter().enumerate() {
+        let _ = write!(s, "{}[\"{}\",{}]", if i > 0 { "," } else { "" }, slot.name, slot.prizes.len());
+    }
+    s.push_str("],\"rows\":[");
     let mut first = true;
-    for n in 0..crate::magicbox::LINES {
-        let (item, q) = crate::magicbox::line(n);
-        row(&mut s, &mut first, item, share, u32::from(q), u32::from(q), true);
-        items.insert(item, ());
+    for slot in &crate::magicbox::SLOTS {
+        let share = crate::droptables::PER_MILLION / slot.prizes.len() as u32;
+        for &(item, q) in slot.prizes {
+            row(&mut s, &mut first, item, share, u32::from(q), u32::from(q), true);
+            items.insert(item, ());
+        }
     }
     s.push_str("]}],\"global\":[");
     let mut first = true;
@@ -462,7 +469,9 @@ mod tests {
         assert!(j.contains("\"id\":7,\"name\":\"Mob 7\",\"level\":6,\"maps\":[[100,\"Snail Garden\",1]],\"also\":[],\"rows\":[[0,1000000,10,13,1],"), "level 6: 10-13 mesos, fixed: {j}");
         assert!(j.contains("\"global\":[[4031065,5000,1,1,0]]"));
         assert!(j.contains("\"kind\":\"First Time Together reward\""));
-        assert!(j.contains(&format!("[2043701,{},1,1,1]", 1_000_000 / crate::magicbox::LINES as u32)), "the Wand scroll in the box");
+        assert!(j.contains("\"slots\":[[\"equip\",7],[\"use\",20],[\"scroll\",36],[\"etc\",14]]"), "one prize per slot: {j}");
+        assert!(j.contains(&format!("[2043701,{},1,1,1]", 1_000_000 / crate::magicbox::SCROLLS.len() as u32)), "the Wand scroll, 1 in 36 of the scroll slot");
+        assert!(j.contains(&format!("[2020011,{},50,50,1]", 1_000_000 / crate::magicbox::USE.len() as u32)), "50 W Ramen, 1 in 20 of the use slot");
         assert!(j.contains("\"4000004\":[\"Squishy \\\"Liquid\\\"\",\"etc\",0,\"\",[]]"), "{j}");
         // The client's description, its escape kept for the page to break the line on.
         assert!(j.contains("\"4000001\":[\"Snail Shell\",\"etc\",0,\"A shell from a snail.\\\\nAn etc item.\",[]]"), "{j}");
