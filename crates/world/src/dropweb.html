@@ -176,6 +176,7 @@ body { margin: 0; }
   <div id="mobs" class="list"></div>
   <section id="items" class="items" hidden></section>
   <section class="global" id="global"></section>
+  <section class="global" id="scrollstats" hidden></section>
 
   <footer>
     <p>The <b>Companion's Magic Box</b> from First Time Together is listed with the monsters. Every box gives one equip, one use item, one scroll and one etc item; its "1 in N" is the chance of that prize within its slot, counted in boxes, not kills.</p>
@@ -462,6 +463,30 @@ function renderGlobal() {
       `<tr><td colspan="${LIVE ? 7 : 6}" class="empty">No global drops of the selected kinds.</td></tr>`}</tbody></table></div>`;
 }
 
+// Scroll luck across the whole server, by each scroll's listed success rate. Lucky Day uses
+// are not counted (they always succeed). Served by the game server only; the saved page has no
+// live data and leaves the section hidden.
+function renderScrolls() {
+  const rows = LIVE && LIVE.scrolls ? LIVE.scrolls : null;
+  $("scrollstats").hidden = !rows;
+  if (!rows) return;
+  const pct = (n, d) => d ? (100 * n / d).toFixed(1) + "%" : "-";
+  const fmt = (n) => n.toLocaleString();
+  let uses = 0, wins = 0, expect = 0, gone = 0;
+  const body = rows.map(([rate, u, s, d]) => {
+    uses += u; wins += s; expect += u * rate / 100; gone += d;
+    const diff = u ? (100 * s / u - rate) : 0;
+    return `<tr><td>${rate}% scrolls</td><td class="num">${fmt(u)}</td><td class="num">${fmt(s)}</td>` +
+      `<td class="num"><b>${pct(s, u)}</b></td><td class="num">${u ? (diff >= 0 ? "+" : "") + diff.toFixed(1) + " pts" : "-"}</td>` +
+      `<td class="num">${fmt(d)}</td></tr>`;
+  }).join("");
+  const total = uses ? `<tr><td><b>All scrolls</b></td><td class="num"><b>${fmt(uses)}</b></td><td class="num"><b>${fmt(wins)}</b></td>` +
+    `<td class="num"><b>${pct(wins, uses)}</b></td><td class="num">expected ${pct(expect, uses)}</td><td class="num"><b>${fmt(gone)}</b></td></tr>` : "";
+  $("scrollstats").innerHTML = `<h2>Scroll luck on this server</h2><p>Every scroll used on this server since tracking began, grouped by the success rate the scroll lists. <b>Observed</b> is how often they actually worked. Uses on an item marked by a <b>Lucky Day Scroll</b> always succeed, so they are left out. Updated at most every 30 minutes.</p>` +
+    `<div class="panel tbl"><table><thead><tr><th>Listed rate</th><th class="num">Used</th><th class="num">Succeeded</th><th class="num">Observed</th><th class="num">vs listed</th><th class="num">Destroyed</th></tr></thead>` +
+    `<tbody>${body || `<tr><td colspan="6" class="empty">No scrolls used yet.</td></tr>`}${total}</tbody></table></div>`;
+}
+
 function render() {
   $("v-mobs").setAttribute("aria-pressed", state.view === "mobs");
   $("v-items").setAttribute("aria-pressed", state.view === "items");
@@ -510,6 +535,7 @@ function start() {
   state.rate = LIVE ? LIVE.rate : (saved.rate > 0 ? saved.rate : 1);
   $("rate").value = state.rate;
   renderLive();
+  renderScrolls();
   render();
 }
 if (DATA) {

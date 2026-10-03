@@ -241,6 +241,13 @@ impl Session {
                 "   scroll: the equip was written but the scroll would not leave the bag",
             );
         }
+        // **The server-wide tally for the drops page** (the owner, 2026-10-03), by the scroll's
+        // listed rate. A Lucky Day use is guaranteed whatever its rate, so it is left out.
+        if !lucky {
+            if let Err(e) = self.store.record_scroll_use(success_pct, applied.succeeded, applied.destroyed) {
+                crate::server::log(&format!("   scroll: the use could not be counted for the drops page: {e}"));
+            }
+        }
 
         // ---- tell the client --------------------------------------------------------
         let result = if applied.destroyed {
@@ -677,6 +684,28 @@ mod tests {
         }
         assert_eq!(held(&store, id, scrolls::LUCKY_DAY), 5, "one Lucky Day per mark; the refused second ones took nothing");
         assert_eq!(held(&store, id, HAT_SCROLL_10), 5);
+        // **None of the seven reaches the drops page's scroll tally** - guaranteed is not luck.
+        assert!(store.scroll_stats().unwrap().is_empty(), "Lucky Day uses are not counted");
+    }
+
+    /// **An unmarked scroll is counted at its listed rate**, whichever way it went - the drops
+    /// page's server-wide scroll luck (the owner, 2026-10-03). A refused one is not a use.
+    #[test]
+    fn an_ordinary_scroll_use_is_counted_for_the_drops_page() {
+        let (store, mut s, id) = wearing_a_hat(&[(HAT_SCROLL_10, 3)]);
+        let mut won = 0;
+        for _ in 0..3 {
+            let out = s.on_item_upgrade(&drag(use_slot(&store, id, HAT_SCROLL_10), -1));
+            won += u64::from(effect_result(&out) == ItemUpgradeResult::Succeeded as u8);
+        }
+        assert_eq!(
+            store.scroll_stats().unwrap(),
+            vec![store::scrollstats::ScrollRate { success_pct: 10, uses: 3, successes: won, destroyed: 0 }]
+        );
+        let pet_hat = store.add_item(id, store::InventoryType::Equip, &store::Item::equip(PET_HAT), 1).unwrap()[0].slot;
+        store.add_item(id, store::InventoryType::Use, &store::Item::bundle(HAT_SCROLL_10, 1), 100).unwrap();
+        let _ = s.on_item_upgrade(&drag(use_slot(&store, id, HAT_SCROLL_10), pet_hat as i16));
+        assert_eq!(store.scroll_stats().unwrap()[0].uses, 3, "a refused scroll is not a use");
     }
 
     /// **A Lucky Day mark means the next scroll cannot destroy the item.** The owner, 2026-10-01:

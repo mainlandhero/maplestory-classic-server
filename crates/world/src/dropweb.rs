@@ -12,7 +12,7 @@
 //! |---|---|---|
 //! | `/` | the page (`dropweb.html`, the same file `tools/drops_page.py` embeds) | once, at compile time |
 //! | `/tables.json` | every mob's table, the global table, the PQ box, item and mob names | once, at start |
-//! | `/live.json` | the server's drop rate and the seven days of kills (`store::killstats`) | at most every [`LIVE_TTL`] |
+//! | `/live.json` | the server's drop rate, the seven days of kills (`store::killstats`), and all-time scroll luck by listed rate (`store::scrollstats`) | at most every [`LIVE_TTL`] |
 //!
 //! So a page view costs two map lookups and, once per half hour at most, four aggregate queries
 //! over at most 168 hour buckets. Requests are answered one at a time on one thread with short
@@ -170,7 +170,13 @@ pub fn live_json(store: &store::Store, now: i64) -> String {
         }
         s.push('}');
     }
-    s.push_str("}}");
+    // **Scroll luck, all time**, by listed rate: `[rate, uses, successes, destroyed]`. Lucky Day
+    // uses are never recorded (`session/realscroll.rs`). The owner, 2026-10-03.
+    s.push_str("},\"scrolls\":[");
+    for (i, r) in store.scroll_stats().unwrap_or_default().iter().enumerate() {
+        let _ = write!(s, "{}[{},{},{},{}]", if i > 0 { "," } else { "" }, r.success_pct, r.uses, r.successes, r.destroyed);
+    }
+    s.push_str("]}");
     s
 }
 
@@ -580,7 +586,11 @@ mod tests {
         store.flush_kill_stats(&b).unwrap();
         let j = live_json(&store, now);
         assert!(j.starts_with("{\"rate\":1,"), "{j}");
-        assert!(j.contains("\"players\":2,\"kills\":2,\"mobs\":{\"2\":[2,2]},\"drops\":{\"2\":{\"0\":[1,5]}}}"), "{j}");
+        assert!(j.contains("\"players\":2,\"kills\":2,\"mobs\":{\"2\":[2,2]},\"drops\":{\"2\":{\"0\":[1,5]}},\"scrolls\":[]}"), "{j}");
+        // Scroll luck rides along, by listed rate: [rate, uses, successes, destroyed].
+        store.record_scroll_use(60, true, false).unwrap();
+        store.record_scroll_use(10, false, true).unwrap();
+        assert!(live_json(&store, now).ends_with("\"scrolls\":[[10,1,0,1],[60,1,1,0]]}"));
     }
 
     /// **The cache is the owner's "at worst 30 or 60 minutes out of date"**: kills written after
