@@ -583,7 +583,10 @@ checked against the bag (quantity counting earlier offers from the same slot, th
 `trade_blocked` list, no Cash tab, stars whole). Mode `0x0C` (close) and a dropped connection
 end the room. The partner's window closes with "Trade cancelled by the other character",
 which is inbound mode `0x0C` carrying the partner's OWN slot. Trade rooms moved from a process
-static onto `Fields`, one table per channel. **Not built: the Trade button.** Its packet has
+static onto `Fields`, one table per channel. **The partner is told FIRST, every time** (the
+owner: *"make sure that the counterparty of the trade window also gets updated of that
+offer"*): if they cannot be reached, the trade closes rather than the two windows disagreeing.
+**Not built: the Trade button.** Its packet has
 never been captured and its sender is not found, so nothing changes hands yet; it is logged.
 `research/trade-2026-09-09.md` section 5, plan step 43.
 
