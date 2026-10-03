@@ -645,6 +645,7 @@ mod messenger;
 pub mod worldlink;
 mod pet;
 mod pools;
+mod questmoney;
 mod rates;
 mod recovery;
 mod regen;

@@ -671,6 +671,11 @@ mod tests {
         // 2026-09-28). 506001's is 351.
         assert_eq!(real.values().filter(|q| q.complete_money > 0).count(), 255);
         assert_eq!(real[&506_001].complete_money, 351);
+        // `Act.0.money`: exactly one quest, Nella's 1,000-meso commission - a cost, charged since
+        // 2026-10-02 (session/questmoney.rs). No turn-in costs anything.
+        assert_eq!(real.values().filter(|q| q.start_money != 0).count(), 1);
+        assert_eq!(real[&10_303].start_money, -1_000);
+        assert_eq!(real.values().filter(|q| q.complete_money < 0).count(), 0);
         assert!(real[&506_001].citizenship_contr.as_ref().unwrap().formula.is_some());
     }
 
