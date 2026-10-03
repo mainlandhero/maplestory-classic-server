@@ -210,6 +210,34 @@ mod tests {
         assert!(out.iter().any(|r| r.body == net::message::meso_gained_line(292)), "{out:?}");
     }
 
+    /// **A turn-in that takes part of a stack tells the window the new count, not "removed".**
+    /// The owner, 2026-10-03: handing in an Etc quest cleared the whole stack from the window
+    /// while the rest stayed in the bag, until a map change. Two stacks, 5 and 20, and a quest
+    /// that wants 10: the first goes (REMOVE), the second shows 15 (QUANTITY) - and so does the bag.
+    #[test]
+    fn a_turn_in_that_takes_part_of_a_stack_shows_what_is_left() {
+        const SHELL: u32 = 4_000_000;
+        const SHELLS: u32 = 990_002;
+        let (store, mut s, id) = session(0);
+        let mut cfg = (*s.config).clone();
+        cfg.quests.insert(SHELLS, Quest {
+            start_npc: Some(NELLA),
+            end_npc: Some(NELLA),
+            complete_rewards: vec![crate::config::RewardItem { id: SHELL, count: -10, prop: 0, gender: None }],
+            ..Quest::default()
+        });
+        s.config = Arc::new(cfg);
+        let etc = store::InventoryType::Etc;
+        store.set_inventory_slot(id, etc, 1, &store::Item::bundle(SHELL, 5)).unwrap();
+        store.set_inventory_slot(id, etc, 2, &store::Item::bundle(SHELL, 20)).unwrap();
+        let _ = s.handle(&quest_request(1, SHELLS));
+        let out = s.handle(&quest_request(2, SHELLS));
+        let ops: Vec<&Vec<u8>> = out.iter().filter(|r| r.opcode == net::inventory::INVENTORY_OPERATION).map(|r| &r.body).collect();
+        assert_eq!(ops, vec![&net::inventory::inventory_removed(4, 1), &net::inventory::inventory_quantity(4, 2, 15)], "{out:?}");
+        let left: Vec<(u16, u16)> = store.bag_items(id, etc).unwrap().iter().map(|r| (r.slot, r.item.kind.quantity())).collect();
+        assert_eq!(left, vec![(2, 15)]);
+    }
+
     /// **A turn-in that costs mesos: refused while short, the quest stays in progress; paid
     /// once when the purse covers it.**
     #[test]
