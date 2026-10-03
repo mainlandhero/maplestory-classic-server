@@ -94,6 +94,9 @@ impl Session {
             ));
             return Vec::new();
         }
+        // The vacuum watch: teleports, impossible speed, stacks, one-way walking.
+        // Identifies only - session/mobwatch.rs.
+        self.watch_mob_move(map, &req);
         // **And now the other screens.** One controller means exactly one client is
         // simulating; without this the mob walks on the controller's screen and stands still
         // on everyone else's, which is the same divergence in a quieter form.
@@ -1925,6 +1928,9 @@ impl Session {
         let Some(mut chr) = self.claimed_character() else { return Vec::new() };
         // Being hit counts as activity: standing in a mob's path is not resting.
         self.note_activity();
+        // Forced misses and shrunken hits - before the miss returns. Identifies only;
+        // session/hitwatch.rs.
+        self.watch_user_hit(&hit, &chr);
         if hit.damage == 0 {
             return Vec::new();
         }

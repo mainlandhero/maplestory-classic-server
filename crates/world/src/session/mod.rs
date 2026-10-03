@@ -274,6 +274,13 @@ pub struct Session {
     /// Drives the chatter cadence. Seeded per session so two connections do not speak in
     /// lockstep, and seedable so a test can pin the sequence.
     rng: Xorshift,
+    /// **The mob-vacuum watch** over the mobs this connection controls - `session/mobwatch.rs`.
+    mob_watch: mobwatch::MobWatch,
+    /// **The forced-miss and low-damage watch** over this connection's `0x00E5` -
+    /// `session/hitwatch.rs`.
+    hit_watch: hitwatch::HitWatch,
+    /// How often each kind of suspicion may be written (`mob-suspects.log`).
+    suspect_throttle: mobwatch::Throttle,
     /// The last time [`Session::tick`] was called, in milliseconds since the connection
     /// opened.
     ///
@@ -647,6 +654,8 @@ mod messenger;
 pub mod worldlink;
 mod pet;
 mod pools;
+mod mobwatch;
+mod hitwatch;
 mod questmoney;
 mod rates;
 mod recovery;
@@ -696,6 +705,9 @@ impl Session {
             in_cash_shop: false,
             chatter: Vec::new(),
             rng: Xorshift(seed),
+            mob_watch: mobwatch::MobWatch::default(),
+            hit_watch: hitwatch::HitWatch::default(),
+            suspect_throttle: mobwatch::Throttle::default(),
             clock_ms: 0,
             pending_suspend_resets: Vec::new(),
             fields,
