@@ -116,6 +116,12 @@ pub fn prepare(
     // it is the only way to tell whether the build they are running is the one that carries
     // a fix. It is first, so a launch that fails at the very next step still says.
     log(Level::Info, store::buildstamp::line());
+    // The Mac client is this launcher in a Wine bottle (`crate::wine`). Said second, so a
+    // pasted log answers "which platform" before anything else can go wrong.
+    let wine = crate::wine::detect();
+    if let Some(w) = &wine {
+        log(Level::Info, w.line());
+    }
     log(Level::Info, format!("paths from: {}", layout.source.label()));
     if let Some(cfg) = &layout.config_file {
         log(Level::Info, format!("config: {}", cfg.display()));
@@ -258,6 +264,8 @@ pub fn prepare_and_launch(
     log: &mut dyn FnMut(Level, String),
 ) -> Result<(), String> {
     prepare(layout, client_token.map(|t| t.as_str()), log)?;
+    // `prepare` has already logged it; asked again here for the firewall and launch lines.
+    let wine = crate::wine::detect();
 
     // The address the client will be handed: a literal, resolved here if a name was typed.
     // Before the probe, so the probe and the client agree on which address was checked.
@@ -396,7 +404,13 @@ pub fn prepare_and_launch(
     // change bought with no information, and on a typo it would block the real server.
     //
     // A failure is a WARNING and the launch continues - see `firewall::apply`.
-    if layout.firewall {
+    //
+    // **Not under Wine** (the Mac client): there is no Windows Firewall in a bottle, and Wine's
+    // `netsh` accepts the command and blocks nothing, so `apply` would report a rule that does
+    // not exist. `crate::wine::firewall_note` says what is true instead.
+    if let Some(w) = &wine {
+        log(Level::Warn, crate::wine::firewall_note(w));
+    } else if layout.firewall {
         match plan.ip.parse::<std::net::Ipv4Addr>() {
             Ok(addr) => match crate::firewall::apply(&layout.client_exe(), &[addr]) {
                 Ok(line) => log(Level::Info, line),
@@ -427,7 +441,14 @@ pub fn prepare_and_launch(
         ),
     );
     let launched = launch::launch_for_pid(&layout.client_exe(), &args, &layout.client_dir)?;
-    log(Level::Good, "client started (Windows will ask for elevation)".into());
+    log(
+        Level::Good,
+        if wine.is_some() {
+            "client started".into()
+        } else {
+            "client started (Windows will ask for elevation)".into()
+        },
+    );
     log(
         if launched.pid.is_some() { Level::Info } else { Level::Warn },
         launched.describe(),

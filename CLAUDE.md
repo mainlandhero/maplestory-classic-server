@@ -11,6 +11,15 @@ Rust workspace, SQLite, patched client in `client-patched/`. Testing only.
 - The firewall rule is scoped to the patched executable only.
 - `client-patched/` exists so the original client is never touched.
 - **Nothing authenticates.** The game socket carries no credentials. Say so whenever reporting progress.
+- **Every client release ships for Windows AND macOS** (the owner, 2026-10-02). One
+  `tools/make-installer.ps1 -ClientOnly` run builds `out/MapleCW-setup-windows.zip` and
+  `out/MapleCW-setup-mac.zip` (only `MapleCW.app` inside); with `tools/package-server.ps1`'s
+  `out/MapleCW-server.zip` those are the three release files. `-NoMac` is for a quick check,
+  never for a release. The Mac client is
+  **the same Windows launcher, stub and client in Wine** (`docs/mac-client.md`), so client-side
+  code must not lean on a Windows-only facility (`netsh`, UAC, the registry, a Windows heap
+  quirk) without asking `launcher::wine::detect()` / the hook's `wine_version()` and saying
+  what happens under Wine. Its first run on a Mac is still unmeasured - the doc lists what.
 - **Never renumber characters from 1.** Ids start at 200 (`FIRST_CHARACTER_ID`); a create reply carrying id 1 made the client silently refuse to transition.
 - **`grap_stub::session::refresh_select_after_dispatch` is load-bearing.** The client builds
   its character-select screen once, from whatever character list exists at that instant; on a

@@ -57,6 +57,40 @@ pub enum Outcome {
     /// The new launcher is installed at `exe` and the previous one is at `old`. **Not started
     /// yet**: the window explains first, then [`restart_into`] starts it and this process exits.
     Replaced { version: String, bytes: u64, exe: PathBuf, old: PathBuf },
+    /// **Under Wine only:** the server's launcher predates the Mac client, so it was not
+    /// installed and this one carries on. See [`MAC_CAPABLE`].
+    DeclinedForMac,
+}
+
+/// **The mark of a launcher that can run on a Mac.** Every launcher built with this guard
+/// carries these bytes - it searches for them, so they are in its own `.rdata` - and no launcher
+/// built before it does.
+///
+/// Why it exists, 2026-10-02: the first Mac launcher whose window opened (the Wine-gated glutin
+/// patch, `vendor/README.md`) pressed Start Game, found the live server publishing a launcher
+/// built that morning, and replaced itself with it - unconditionally, as this module always has.
+/// That launcher's window cannot be created under Wine, and a launcher with no window can never
+/// update itself again: one Start Game against a server that was behind left the player with no
+/// way back short of deleting files. Under Wine a download without this mark is now refused with
+/// a warning and the launch goes on with the launcher that works. On Windows nothing changes.
+///
+/// Bump the suffix only if a later change makes older Mac-capable launchers unusable on a Mac -
+/// and in `tools/make_mac_client.py`'s `MAC_MARK`, which refuses to wrap a launcher without it.
+///
+/// **A `static`, read through `black_box`, and both are load-bearing.** The first version was a
+/// `const` searched for directly. The debug test binary contained it; the RELEASE launcher did
+/// not - the optimiser compiled the 31-byte comparison into immediates, so the bytes never sat
+/// together anywhere in the file, and every Mac launcher would have refused every update,
+/// including good ones. `black_box` forces a load from the static, so the static must exist
+/// in `.rdata` as written. The packager checks the release file for it; the unit test below
+/// only covers the debug build.
+#[used]
+pub static MAC_CAPABLE: [u8; 31] = *b"maplecw-launcher/mac-capable/v1";
+
+/// Does this launcher executable carry [`MAC_CAPABLE`]?
+pub fn mac_capable(exe: &[u8]) -> bool {
+    let needle: &[u8] = std::hint::black_box(&MAC_CAPABLE[..]);
+    exe.windows(needle.len()).any(|w| w == needle)
 }
 
 /// **Check this launcher against the server and replace it if it is behind.**
@@ -96,6 +130,21 @@ pub fn check_and_update(
     );
     let bytes = fetch_file(host, port, pin)?;
     verify(&bytes, &want)?;
+    if let Some(wine) = crate::wine::detect() {
+        if !mac_capable(&bytes) {
+            log(
+                Level::Warn,
+                format!(
+                    "NOT installing the server's launcher {version}: it predates the Mac client and its window \
+                     cannot open under Wine {}, which would leave no way to update again. Keeping this one ({}); \
+                     the server needs a newer launcher (docs/mac-client.md)",
+                    wine.version,
+                    short(&sha256)
+                ),
+            );
+            return Ok(Outcome::DeclinedForMac);
+        }
+    }
     let old = swap_in(&exe, &bytes)?;
     log(
         Level::Good,
@@ -232,6 +281,24 @@ fn fetch_file(host: &str, port: u16, pin: &Fingerprint) -> Result<Vec<u8>, Strin
 
 #[cfg(test)]
 mod tests {
+    /// **The mark is really in a built binary**, not merely in the source: this test's own
+    /// executable is linked from the same library, so if the linker dropped the needle the
+    /// guard would refuse every update on a Mac, including good ones.
+    #[test]
+    fn a_built_launcher_carries_the_mac_mark() {
+        let me = std::fs::read(std::env::current_exe().unwrap()).unwrap();
+        assert!(super::mac_capable(&me), "the test binary does not contain MAC_CAPABLE");
+    }
+
+    #[test]
+    fn a_launcher_without_the_mark_is_not_mac_capable() {
+        assert!(!super::mac_capable(b"MZ\x90\x00 an old launcher with no mark"));
+        let mut with = b"MZ padding ".to_vec();
+        with.extend_from_slice(&super::MAC_CAPABLE);
+        with.extend_from_slice(b" more");
+        assert!(super::mac_capable(&with));
+    }
+
     use super::*;
     use crate::testutil::TempDir;
 

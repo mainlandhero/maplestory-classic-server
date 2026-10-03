@@ -10,3 +10,9 @@ license = "PolyForm-Noncommercial-1.0.0"
 [workspace.dependencies]
 anyhow = "1"
 thiserror = "2"
+
+# A patched glutin, so the launcher's window opens under Wine on macOS - the Mac client.
+# One change, gated on Wine; vendor/README.md says what and why. Remove when upstream glutin
+# sets WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB for core contexts itself.
+[patch.crates-io]
+glutin = { path = "vendor/glutin" }

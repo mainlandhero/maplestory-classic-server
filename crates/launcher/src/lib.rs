@@ -20,6 +20,7 @@
 //! | [`launch`] | `ShellExecuteW`, because the client has an elevation manifest |
 //! | [`prepare`] | Start Game: the whole sequence, in order |
 //! | [`app`] | the window |
+//! | [`wine`] | whether this is the Mac client - the same launcher in a Wine bottle (`docs/mac-client.md`) |
 
 // A GUI launcher should not flash a console window on a test machine. Debug builds keep the
 // console, so a panic during development still says where it came from - and `cargo test`
@@ -40,6 +41,7 @@ mod selfupdate;
 mod servers;
 mod session;
 mod stub;
+mod wine;
 
 #[cfg(test)]
 mod testutil;

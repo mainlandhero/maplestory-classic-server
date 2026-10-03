@@ -5,6 +5,12 @@ Written 2026-09-06. The game client itself - `MapleStory.exe` and the `Data\` fo
 patched. Everything else is below. The client payload `tools\make-installer.ps1` builds
 (`out\MapleCW\`) carries all of it plus `install.ps1`, which does steps 2 to 4 in one go.
 
+**A Mac** needs none of this by hand: `out\MapleCW-setup-mac.zip` is the same launcher, stub and
+client inside `MapleCW.app`, run in the open-source Wine bundled in it. What it needs instead -
+Rosetta 2 on Apple Silicon and one Gatekeeper override - is in
+[`mac-client.md`](mac-client.md) and the zip's own `README-mac.txt`. Section 3 (the firewall)
+does not apply there, and the launcher says so in its log.
+
 ## 1. The launcher: `maplecw-launcher.exe`
 
 Built by `cargo build --release -p launcher` into `target\release\`, or taken from

@@ -7,6 +7,10 @@
 # inside a directory that is itself ignored.
 /client-patched/*
 !/client-patched/README.md
+# Nexon's Mac app (MapleStory Launcher.app, ~400 MB), kept for reference - docs/mac-client.md.
+# Same rule as client-patched/: the contents are ignored and only the README is tracked.
+/client-mac/*
+!/client-mac/README.md
 /research/fixtures/*.bin
 /research/fixtures/*.wz
 /out/

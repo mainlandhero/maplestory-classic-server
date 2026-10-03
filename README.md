@@ -112,6 +112,12 @@ over an independent Python implementation of the protocol and should print `all 
 [`docs/deployment.md`](docs/deployment.md), [`docs/server-machine-checklist.md`](docs/server-machine-checklist.md)
 and [`docs/client-machine-checklist.md`](docs/client-machine-checklist.md).
 
+**Mac players:** the same `-ClientOnly` run also builds `out\MapleCW-setup-mac.zip` - `MapleCW.app`,
+which runs this same launcher, stub and client in an open-source Wine bundled inside it - nothing
+else to install. The packager needs that Wine build downloaded once into `out\wine\` (the URL and
+pinned SHA-256 are in `tools\make_mac_client.py`).
+See [`docs/mac-client.md`](docs/mac-client.md); it has not been run on a Mac yet.
+
 **Nothing authenticates the game socket.** The launcher signs in over TLS and the login server
 ties the client to that sign-in, but the game protocol itself carries no credentials. Run it on
 a network you trust.
