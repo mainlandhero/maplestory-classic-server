@@ -2676,6 +2676,19 @@
           c. at a Grocer, Recharge the empty stack: 500, and 150 mesos (0.3 x 500) -> fixed
           d. drop the empty stack, pick it back up: it returns at 0, no "x1" message -> fixed
           e. relog: still 0 (not 1 - the store used to read a 0 back as 1) -> fixed
+          f. (2026-10-03) players report stars "still cannot be recharged". At Dr. Faymus or
+             any Grocer, select a partial Wolbi and press Recharge, then search world-ch0.log:
+               "recharged item 2070001"         -> works; the earlier report was an old build
+               "recharge:" + a reason            -> refused by the server; paste that line
+               neither, and the ClassicOpenShop line says "0 of them recharge-only"
+                                                 -> the server that ran predates the fix
+               neither, and it says "N of them recharge-only" (N > 0)
+                                                 -> the client never asked: the Recharge list
+                                                    is not all it checks - paste the line
+          g. (2026-10-03) every star stack is its own: hold a partial Wolbi AND an empty one,
+             pick up dropped Wolbi and buy a set - each lands in a NEW slot at its own count,
+             and neither old stack changes. Recharge the HIGHER-slot partial stack: that one
+             fills, the lower one does not -> fixed
 
     38. FAST SELLING (2026-10-02). At any NPC shop, Sell tab.
           a. double-click-sell one item as FAST as you can, twice on the same row: it sells
@@ -6428,6 +6441,14 @@ function Show-TestPlan {
         Write-Host '       at 0 -> fixed. Blank slot or client death on the 0 -> paste client-exit.log' -ForegroundColor Yellow
         Write-Host '       Recharge it at a Grocer (500, 150 mesos); drop + pick up (back at 0, no' -ForegroundColor Cyan
         Write-Host '       "x1"); relog (still 0, not 1) -> fixed' -ForegroundColor Cyan
+        Write-Host '   39f. RECHARGE STILL FAILS? (2026-10-03) Recharge a partial Wolbi at a Grocer,' -ForegroundColor White
+        Write-Host '       then search world-ch0.log: "recharged item 2070001" -> works (old build before);' -ForegroundColor Cyan
+        Write-Host '       "recharge:" + a reason -> the server refused, paste it; neither -> paste the' -ForegroundColor Yellow
+        Write-Host '       ClassicOpenShop line: "0 of them recharge-only" = old server, N > 0 = the' -ForegroundColor Yellow
+        Write-Host '       client never asked, so it checks more than the Recharge list' -ForegroundColor Yellow
+        Write-Host '   39g. ONE STACK PER SLOT (2026-10-03): with a partial AND an empty Wolbi, pick up' -ForegroundColor White
+        Write-Host '       Wolbi and buy a set: each in a NEW slot, old stacks unchanged. Recharge the' -ForegroundColor Cyan
+        Write-Host '       higher-slot partial: that one fills, not the lower -> fixed' -ForegroundColor Cyan
         Write-Host ''
         Write-Host '  38. FAST SELLING (2026-10-02): sell the same row twice, fast: sells ONCE, no' -ForegroundColor White
         Write-Host '       "not enough mesos", the row leaves the Sell list -> fixed' -ForegroundColor Cyan

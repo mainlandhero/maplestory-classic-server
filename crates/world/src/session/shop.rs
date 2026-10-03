@@ -501,12 +501,11 @@ impl Session {
     /// the arithmetic behind that string has not been read, so the test plan asks for the
     /// number the window shows against the number the meso count moved by.
     ///
-    /// **How it lands.** The top-up is a `buy_item` of exactly `slotMax - held` units at the
-    /// total price, in one transaction: `place_into_bag` fills existing partial stacks before
-    /// it opens a slot, and `need` is by construction what the stack has room for, so the
-    /// units land in the slot the player pointed at and the `0x0070` reports that slot's new
-    /// count. Pay-then-fail and fail-then-pay are both impossible for the same reason a
-    /// purchase cannot half-happen.
+    /// **How it lands.** `Store::recharge_slot` sets exactly the slot the player pointed at to
+    /// `slotMax` and takes the total price, in one transaction, and the `0x0070` reports that
+    /// slot's new count. Until 2026-10-03 this was a `buy_item`, which fills the *lowest*
+    /// partial stack of the id first - right only while a player held one stack of that star.
+    /// Pay-then-fail and fail-then-pay are both impossible.
     fn classic_recharge(&mut self, slot: u16) -> Vec<Reply> {
         use net::classicshop::RESULT_NOT_ENOUGH_MESOS as REFUSED;
         let Some(chr) = self.claimed_character() else {
@@ -560,14 +559,12 @@ impl Session {
         let need = slot_max - have;
         let cost_milli = u64::from(need) * u64::from(unit_milli);
         let cost = u32::try_from(cost_milli.div_ceil(1000)).unwrap_or(u32::MAX);
-        match self.store.buy_item(
-            chr.id,
-            store::InventoryType::Use,
-            &store::Item::bundle(item_id, need),
-            slot_max,
-            cost,
-        ) {
-            Ok(changed) => {
+        // `recharge_slot`, not `buy_item`: a purchase fills the lowest partial stack of the id,
+        // so with two Wolbi stacks the units went to whichever came first and the one the
+        // player pointed at could stay where it was.
+        match self.store.recharge_slot(chr.id, slot, item_id, slot_max, cost) {
+            Ok(full) => {
+                let changed = vec![full];
                 let mut out = vec![Reply {
                     opcode: net::classicshop::CLASSIC_SHOP_RESULT,
                     body: net::classicshop::classic_shop_success(item_id, 0),

@@ -429,6 +429,21 @@ the ammo's attack - this client names it **`incWAT`** (Ilbi 27), and the first d
 never been compared with a night of real hits; a suspects line naming an honest character is
 the model being low, and log-only is the fix until it is corrected.
 
+**2026-10-03: every star stack is its own slot; a recharge fills the slot it names - built, tests
+only.** The owner, after player reports: *"pick ups of stars items such as Wolbis should result in a
+separate item stack"*, and *"The star should occupy an entire slot, no matter the ammo count. Even if
+the ammo count is at 0, it should not be removed ... If purchasing a new throwing item consumable, it
+should not alter any existing stack (including the 0 ammo count slots) and just be added as a new item
+starting with a full stack in the next available slot."* `place_into_bag` no longer tops up an
+existing stack of a `207`/`233` id - a pickup, purchase, gift or GM `!item` lands in free slots - and
+`Store::recharge_slot` replaces the recharge's `buy_item`, which had filled the LOWEST partial stack
+of the id, so with two Wolbi stacks a recharge could fill the wrong one. **Not explained: the same
+report says stars "still cannot be recharged".** The general-store recharge-only rows (below) are
+still unseen on a screen and nothing here can tell why a recharge failed; the discriminator is in
+plan step 39f: whether the server that ran had the rows, whether a recharge request arrived, and
+what it was refused for. A drag of one star stack onto another (`move_item`) still merges - not
+asked about, unchanged.
+
 **2026-10-02: a star stack that runs out STAYS, at 0, to be recharged - built, never on a screen.** The
 owner: *"When stars reach 0, it should remain in the player's inventory because they should be able to
 recharge them at any general store"*, and *"A star that has 0 ammo is still allowed to be dropped on the
@@ -442,7 +457,8 @@ rule's text; replayed on a synthetic old-shape table and on a copy of the repo's
 **1** (a free star per emptied stack), consolidation now keeps an empty stack as a stack, a drop
 of one is no longer refused as "nothing in that slot", a pickup puts it in its own slot at 0
 (it used to place nothing and vanish) with no "x1 earned" line, and an empty stack can be sold.
-A purchase, pickup or recharge of the same star fills the empty stack first. **[I], the one a
+~~A purchase, pickup or recharge of the same star fills the empty stack first~~ - **replaced
+2026-10-03, below: only a recharge fills it.** **[I], the one a
 client run settles: whether this client draws a 0-count star stack** - GMS did; nothing here
 has measured this client. Not handled: depositing an empty stack in storage hits `storage_item`'s
 own `CHECK (quantity >= 1)` and is refused as a failed deposit. Plan step 39.
