@@ -617,17 +617,18 @@ impl Session {
             if row.item.item_id != item_id {
                 continue;
             }
-            let take = row.item.kind.quantity().min(left);
+            let held = row.item.kind.quantity();
+            let take = held.min(left);
             self.store.remove_item(character_id, inv, row.slot, Some(take))?;
             left -= take;
-            out.push(Reply {
-                opcode: net::inventory::INVENTORY_OPERATION,
-                body: net::inventory::inventory_removed(inv.as_u8() as i8, row.slot as i16),
-                what: format!(
-                    "InventoryOperation REMOVE: {take} x {item_id} from {inv:?} slot {} - taken back by a quest",
-                    row.slot
-                ),
-            });
+            // **The slot's new count, not a removal, when some of the stack stays.** The owner,
+            // 2026-10-03: handing in 10 of 37 cleared the whole stack from the window while the
+            // other 27 were still in the bag, until a map change redrew it. A REMOVE draws an
+            // empty slot whatever is left behind; `stack_change_replies` sends REMOVE only at 0.
+            for mut r in self.stack_change_replies(inv, row.slot, held - take) {
+                r.what = format!("{} - {take} x {item_id} taken back by a quest ({held} -> {})", r.what, held - take);
+                out.push(r);
+            }
         }
         if left > 0 {
             // Not an error. The quest is completing either way; say so and carry on.
