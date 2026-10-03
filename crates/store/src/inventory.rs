@@ -1223,7 +1223,13 @@ pub(crate) fn place_into_bag(
     };
     let cap = max_stack.max(1);
 
-    if cap > 1 {
+    // **A star or bullet stack never takes in another.** The owner, 2026-10-03: *"pick ups of
+    // stars items such as Wolbis should result in a separate item stack in the player's
+    // inventory instead of adding to an existing slot."* A rechargeable stack is one item with
+    // its own serial (`net::bag::bundle_has_serial`) that is topped up only by a recharge
+    // (`Store::recharge_slot`), so whatever arrives - a pickup, a purchase, a gift - lands in a
+    // slot of its own.
+    if cap > 1 && !net::bag::bundle_has_serial(item.item_id) {
         // Top up existing stacks first, lowest slot first, the way the client's own
         // auto-arrange fills a bag.
         let existing: Vec<(u16, u16)> = bag
@@ -1381,9 +1387,9 @@ impl Store {
     /// bullets, `net::bag::bundle_has_serial` - that reaches zero **stays in its slot at 0**.
     /// The owner, 2026-10-02: *"When stars reach 0, it should remain in the player's inventory
     /// because they should be able to recharge them at any general store."* An empty stack is
-    /// still a stack: a purchase, a pickup or a recharge of the same star tops it up
-    /// (`place_into_bag` fills any stack below `slotMax`, 0 included). Anything else that hits
-    /// zero leaves the slot, as before.
+    /// still a stack, and only a **recharge** of that slot fills it (`Store::recharge_slot`);
+    /// since 2026-10-03 a purchase or pickup of the same star takes a slot of its own
+    /// (`place_into_bag`). Anything else that hits zero leaves the slot, as before.
     pub fn spend_ammo(&self, character_id: u32, inv_type: InventoryType, slot: u16, count: u16) -> Result<u16> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
@@ -2265,6 +2271,36 @@ impl Store {
         adjust_mesos(&tx, character_id, -i64::from(price))?;
         tx.commit()?;
         Ok(changed)
+    }
+
+    /// **Recharge one star or bullet stack to `slot_max`, and pay for it, in one transaction.**
+    ///
+    /// Only the slot the player pointed at moves - not the lowest partial stack of the same
+    /// id, which is where [`Store::buy_item`] would put the units. Returns the slot as it now
+    /// is. Refuses an empty slot, a different item, a non-rechargeable id and a full stack.
+    pub fn recharge_slot(
+        &self,
+        character_id: u32,
+        slot: u16,
+        item_id: u32,
+        slot_max: u16,
+        price: u32,
+    ) -> Result<InvItem> {
+        let inv_type = InventoryType::Use;
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let Some(held) = read_slot(&tx, character_id, inv_type, slot)? else {
+            return Err(StoreError::SlotEmpty { slot });
+        };
+        let have = held.kind.quantity();
+        if held.item_id != item_id || !net::bag::bundle_has_serial(item_id) || have >= slot_max {
+            return Err(StoreError::BagFull { inv_type: inv_type.as_u8(), slots: slot });
+        }
+        let full = Item { kind: ItemKind::Bundle { quantity: slot_max }, ..held };
+        set_slot(&tx, character_id, inv_type, slot, &full)?;
+        adjust_mesos(&tx, character_id, -i64::from(price))?;
+        tx.commit()?;
+        Ok(InvItem { inv_type, slot, item: full })
     }
 
     /// **Sell: hand over and be paid, in one transaction.** Returns the new meso balance.
@@ -3351,7 +3387,8 @@ mod item_id_rename_tests {
 
     /// **The empty stack round-trips the floor and the shop**: taking it (a drop or a sale) clears
     /// the slot whatever count is named; putting it back (a pickup) takes a free slot of its
-    /// own at 0 rather than vanishing; and a purchase of the same star tops it up.
+    /// own at 0 rather than vanishing. More of the same star does NOT fill it - the owner,
+    /// 2026-10-03, every star stack is its own - and a recharge of that slot does.
     #[test]
     fn an_empty_star_stack_can_be_taken_put_back_and_refilled() {
         let store = Store::open_in_memory().unwrap();
@@ -3363,9 +3400,40 @@ mod item_id_rename_tests {
         assert_eq!(placed.len(), 1, "a pickup of an empty stack lands somewhere");
         assert_eq!(placed[0].item, Item::bundle(2_070_001, 0));
         let slot = placed[0].slot;
-        let topped = store.add_item(id, InventoryType::Use, &Item::bundle(2_070_001, 200), 500).unwrap();
-        assert_eq!(topped[0].slot, slot, "the same star fills the empty stack first");
-        assert_eq!(store.inventory_slot(id, InventoryType::Use, slot).unwrap(), Some(Item::bundle(2_070_001, 200)));
+        let more = store.add_item(id, InventoryType::Use, &Item::bundle(2_070_001, 200), 500).unwrap();
+        assert_eq!(more.len(), 1);
+        assert_ne!(more[0].slot, slot, "more of the same star takes a slot of its own");
+        assert_eq!(store.inventory_slot(id, InventoryType::Use, slot).unwrap(), Some(Item::bundle(2_070_001, 0)), "the empty stack is untouched");
+        store.add_mesos(id, 1_000).unwrap();
+        let full = store.recharge_slot(id, slot, 2_070_001, 500, 200).unwrap();
+        assert_eq!((full.slot, full.item), (slot, Item::bundle(2_070_001, 500)), "the recharge fills the slot it names");
+    }
+
+    /// **A star pickup never adds to a stack already in the bag** (the owner, 2026-10-03, about
+    /// Wolbi), partial or not - while a potion still does. And a recharge tops up the slot it
+    /// names, not the lowest partial stack of the same star.
+    #[test]
+    fn a_star_pickup_is_its_own_stack_and_a_recharge_fills_the_slot_named() {
+        let store = Store::open_in_memory().unwrap();
+        let id = rogue(&store);
+        store.set_inventory_slot(id, InventoryType::Use, 1, &Item::bundle(2_070_001, 40)).unwrap();
+        store.set_inventory_slot(id, InventoryType::Use, 2, &Item::bundle(2_000_000, 10)).unwrap();
+        let star = store.add_item(id, InventoryType::Use, &Item::bundle(2_070_001, 3), 500).unwrap();
+        assert_eq!(star.iter().map(|r| (r.slot, r.item)).collect::<Vec<_>>(), vec![(3, Item::bundle(2_070_001, 3))]);
+        assert_eq!(store.inventory_slot(id, InventoryType::Use, 1).unwrap(), Some(Item::bundle(2_070_001, 40)), "the partial stack is untouched");
+        let potion = store.add_item(id, InventoryType::Use, &Item::bundle(2_000_000, 5), 100).unwrap();
+        assert_eq!(potion.iter().map(|r| (r.slot, r.item)).collect::<Vec<_>>(), vec![(2, Item::bundle(2_000_000, 15))], "potions still stack");
+
+        store.add_mesos(id, 1_000).unwrap();
+        let before = store.mesos(id).unwrap();
+        let full = store.recharge_slot(id, 3, 2_070_001, 500, 199).unwrap();
+        assert_eq!((full.slot, full.item), (3, Item::bundle(2_070_001, 500)));
+        assert_eq!(store.inventory_slot(id, InventoryType::Use, 1).unwrap(), Some(Item::bundle(2_070_001, 40)), "not the lower stack");
+        assert_eq!(store.mesos(id).unwrap(), before - 199);
+        assert!(store.recharge_slot(id, 3, 2_070_001, 500, 1).is_err(), "a full stack is refused");
+        assert!(store.recharge_slot(id, 2, 2_000_000, 100, 1).is_err(), "a potion is not recharged");
+        assert!(store.recharge_slot(id, 1, 2_070_001, 500, 1_000_000).is_err(), "too few mesos");
+        assert_eq!(store.inventory_slot(id, InventoryType::Use, 1).unwrap(), Some(Item::bundle(2_070_001, 40)), "and a refusal moves nothing");
     }
 
     /// **Consolidating keeps an empty star stack** as a stack that slides, not a hole another

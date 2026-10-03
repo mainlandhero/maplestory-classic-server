@@ -1251,6 +1251,26 @@ fn buying_stars_hands_over_a_full_set_at_the_rows_price() {
     assert_eq!(store.mesos(id).unwrap(), 1_500, "one set at the row's price, not three");
 }
 
+/// **A purchase never touches a star stack already in the bag** - partial or empty. The owner,
+/// 2026-10-03: *"If purchasing a new throwing item consumable, it should not alter any existing
+/// stack (including the 0 ammo count slots) and just be added as a new item starting with a
+/// full stack in the next available slot."* Slot 1 holds 37 Subi, slot 2 an empty Subi stack:
+/// the set lands whole in slot 3 and both stay as they were.
+#[test]
+fn buying_stars_leaves_partial_and_empty_stacks_alone() {
+    let (mut s, store, id) = recharge_session(37, 2_000);
+    store.set_inventory_slot(id, store::InventoryType::Use, 2, &store::Item::bundle(2_070_000, 0)).unwrap();
+    s.open_shop_for(21, id).unwrap();
+    let (_, rows) = s.open_shop.clone().unwrap();
+    let subi = rows.iter().position(|r| r.item_id == 2_070_000).expect("Lucy stocks Subi") as u16;
+    let out = s.handle(&classic_buy(subi, 2_070_000, 1));
+    assert_eq!(out[0].body[0], net::classicshop::RESULT_SUCCESS, "{}", out[0].what);
+    let held = |slot| store.inventory_slot(id, store::InventoryType::Use, slot).unwrap();
+    assert_eq!(held(1), Some(store::Item::bundle(2_070_000, 37)), "the partial stack is untouched");
+    assert_eq!(held(2), Some(store::Item::bundle(2_070_000, 0)), "the empty stack is untouched");
+    assert_eq!(held(3), Some(store::Item::bundle(2_070_000, 500)), "a full new stack in the next free slot");
+}
+
 /// `recharge_session` with **Wolbi** (unitPrice 0.4, slotMax 500) in the item table but not on
 /// Lucy's shelf, and `wolbi` of them in Use slot 2 - the dropped stack from the owner's
 /// screenshot, 2026-10-02.
