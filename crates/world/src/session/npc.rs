@@ -2514,6 +2514,9 @@ impl Session {
         if let Some(replies) = self.salon_choice_answer(body) {
             return replies;
         }
+        if let Some(replies) = self.salon_mix_answer(body) {
+            return replies;
+        }
         // **And so is the second advancement's choice box.** Same precondition, disjoint
         // path prefix: each answers only when this session has *its* conversation parked, so
         // the order between the two does not matter and a test in each module says so.

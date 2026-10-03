@@ -2635,6 +2635,23 @@
              works without a map change. Still needs a map change -> the second 0x007C did not
              apply; world-ch0.log shows "skill points now [...]" right after the LEVEL line
 
+    44. MIX DYE AND COLORBLEND (2026-10-03). The first look id above 9 999 999 this client is
+        ever sent. !item 5151200 1 and !item 5152300 1 (neither is sold in the Cash Shop).
+          a. Brittany (Henesys salon), menu line "mix two hair colours": the client's own
+             UtilDlgEx_MixHair window opens on your character -> the box is right
+               a plain dialog, or nothing -> paste the "ScriptMessage MIX" line
+          b. pick two colours and a ratio, OK: hair shows BOTH colours, the coupon is gone,
+             world-ch0.log "HAIR bit -> 4xxxxxxx" (8 digits) -> fixed
+               head blank, or the client dies on the HAIR bit -> this client cannot draw a
+               mixed id: paste client-exit.log and that line
+               "mix answer ... refused" -> paste it (it names the reason)
+          c. change map and relog: the mix is still drawn (SetField and character select carry
+             the same id) -> fixed
+          d. Dr. Feeble (Henesys surgery), "blend two eye colours": UtilDlgEx_MixLens, then OK:
+             both eye colours drawn -> fixed
+          e. open the box and pick the look you already wear: the CLIENT warns and nothing is
+             spent
+
     43. TRADE: PUTTING THINGS IN (2026-10-03). Two clients, a trade window open between them.
         Mesos (0x10/1) and items (0x10/0) are answered now, to BOTH windows. Nothing changes
         hands yet: the Trade button's packet is not decoded, and (e) is how it gets measured.
@@ -6450,6 +6467,12 @@ function Show-TestPlan {
         Write-Host ''
         Write-Host '  38. SP ON LEVEL-UP (2026-10-02): skill window open, level up - SP rises at once,' -ForegroundColor White
         Write-Host '       + works with no map change / channel change' -ForegroundColor Cyan
+        Write-Host ''
+        Write-Host '  44. MIX DYE / COLORBLEND (2026-10-03): !item 5151200 1, !item 5152300 1.' -ForegroundColor White
+        Write-Host '       Brittany, "mix two hair colours": the MixHair window opens; pick, OK:' -ForegroundColor Cyan
+        Write-Host '       BOTH colours drawn, coupon gone, still drawn after map change + relog -> fixed' -ForegroundColor Green
+        Write-Host '       blank head / client dies on the HAIR bit -> paste client-exit.log' -ForegroundColor Yellow
+        Write-Host '       Dr. Feeble, "blend two eye colours": the same for the eyes' -ForegroundColor Cyan
         Write-Host ''
         Write-Host '  43. TRADE: PUTTING THINGS IN (2026-10-03): mesos and items now reach BOTH windows.' -ForegroundColor White
         Write-Host '       Nothing changes hands yet (the Trade button is not decoded).' -ForegroundColor Cyan

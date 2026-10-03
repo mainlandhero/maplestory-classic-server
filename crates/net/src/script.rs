@@ -610,6 +610,75 @@ pub fn parse_avatar_reply(body: &[u8]) -> Option<AvatarReply> {
     Some(AvatarReply { selection: Some(index) })
 }
 
+/// Message type `0x2a` - **the mix box**: Custom Mix Dye (two hair colours and a ratio) or
+/// Custom Colorblend (two eye colours and a ratio). Handler `FUN_14127e090`, which entries
+/// `0x29`, `0x2a` and `0x40` of the jump table all reach (`141f6f63b`);
+/// `research/mix-dye-colorblend.md`. **[L]**, listing and decompile agreeing read for read:
+///
+/// ```text
+/// u32  coupon   typed by FUN_1401a8170: 5151200 -> 0x18 MixHairColor -> dialog kind 0x17
+///               (UtilDlgEx_MixHair), 5152300 -> 0xe MixColorLens -> kind 0x19 (UtilDlgEx_MixLens)
+/// str  text     the prompt
+/// u8   mode     0 = the player's own look (FUN_1401a6ee0 reads hair +0x23 / face +0x1f);
+///               'd' (0x64) would be an android's. Echoed in the reply
+/// u32  unused   stored as element 0 of a list nothing reads back
+/// ```
+///
+/// The CLIENT decides which reply type comes back, from the coupon, not from the type we
+/// sent: `0x2a` for a hair coupon and `0x40` for a lens coupon. See [`parse_mix_reply`].
+pub const SCRIPT_TYPE_MIX: u8 = 0x2a;
+/// The reply type the client writes for a Colorblend (lens) box.
+pub const SCRIPT_TYPE_MIX_LENS_REPLY: u8 = 0x40;
+
+/// A mix box for `coupon` - see [`SCRIPT_TYPE_MIX`].
+pub fn npc_mix(speaker_template: u32, coupon: u32, text: &str) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(0); //                     handle
+    w.u8(0); //                      head field 2
+    w.u32(speaker_template);
+    w.u8(0); //                      hasOverride
+    w.u8(SCRIPT_TYPE_MIX); //        message type
+    w.u16(0); //                     flags
+    w.u8(0); //                      head field 8
+    w.u32(coupon); //                14127e0f6  the coupon: picks the dialog
+    w.str(text); //                  14127e105
+    w.u8(0); //                      14127e117  mode: the player's own look
+    w.u32(0); //                     14127e128  unused
+    w.into_vec()
+}
+
+/// What a mix box came back with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MixReply {
+    /// `0x2a` (hair) or `0x40` (lens) - the client's own choice, from the coupon.
+    pub reply_type: u8,
+    /// `Some(the dialog's value)` on OK, `None` on cancel or "that is your look already".
+    /// The value is `(base * 10 + mix) * 1000 + percent` (`FUN_14041a3d0`).
+    pub value: Option<u32>,
+}
+
+/// Decode a `0x00F3` answering a mix box. `None` for any other message type.
+///
+/// Written by `FUN_14127e090` at `14127e675`: `u32 0, u8 type, u8 ok`, then when ok
+/// `u8 mode (raw), u8 0, u32 0, u32 value`. **[L]** `ok` is 0 on cancel AND when the
+/// result equals the current look (`FUN_1401a8500`, after the client's own warning box).
+pub fn parse_mix_reply(body: &[u8]) -> Option<MixReply> {
+    let mut r = PacketReader::new(body);
+    let _handle = r.u32().ok()?;
+    let reply_type = r.u8().ok()?;
+    if reply_type != SCRIPT_TYPE_MIX && reply_type != SCRIPT_TYPE_MIX_LENS_REPLY {
+        return None;
+    }
+    if r.u8().ok()? != 1 {
+        return Some(MixReply { reply_type, value: None });
+    }
+    let _mode = r.u8().ok()?;
+    let _zero = r.u8().ok()?;
+    let _echo = r.u32().ok()?;
+    let value = r.u32().ok()?;
+    Some(MixReply { reply_type, value: Some(value) })
+}
+
 pub const SCRIPT_TYPE_QUEST_YES_NO: u8 = 0x10;
 
 /// Message type 3: the plain `BtYes` / `BtNo` prompt.
@@ -933,6 +1002,40 @@ mod avatar_tests {
         menu.extend_from_slice(&[SCRIPT_TYPE_MENU, 1]);
         assert_eq!(parse_avatar_reply(&menu), None, "a menu's reply is not ours");
         assert_eq!(parse_avatar_reply(&ok[..8]), None, "an OK without its index is not a cancel");
+    }
+
+    /// The mix box's body is exactly the four reads `FUN_14127e090` makes - `u32 coupon, str,
+    /// u8 mode, u32` - and the mode is 0, the player's own look.
+    #[test]
+    fn the_mix_box_carries_the_coupon_the_text_mode_zero_and_one_u32() {
+        let b = npc_mix(1001, 5_151_200, "Mix!");
+        assert_eq!(b[10], SCRIPT_TYPE_MIX);
+        let body = &b[SCRIPT_HEAD_LEN..];
+        assert_eq!(u32::from_le_bytes(body[..4].try_into().unwrap()), 5_151_200);
+        assert_eq!(&body[4..6], &4u16.to_le_bytes());
+        assert_eq!(&body[6..10], b"Mix!");
+        assert_eq!(body[10], 0, "mode 0: the player's own hair/face, not an android's");
+        assert_eq!(body.len(), 4 + 2 + 4 + 1 + 4);
+    }
+
+    /// OK carries the dialog's value last, after the mode, a zero and a u32; cancel is one
+    /// byte; both reply types are ours (hair 0x2a, lens 0x40) and nothing else is.
+    #[test]
+    fn the_mix_reply_parses_hair_lens_and_cancel_and_nothing_else() {
+        let ok = |t: u8| {
+            let mut b = 0u32.to_le_bytes().to_vec();
+            b.extend_from_slice(&[t, 1, 0, 0]);
+            b.extend_from_slice(&0u32.to_le_bytes());
+            b.extend_from_slice(&3_050u32.to_le_bytes());
+            b
+        };
+        assert_eq!(parse_mix_reply(&ok(0x2a)), Some(MixReply { reply_type: 0x2a, value: Some(3_050) }));
+        assert_eq!(parse_mix_reply(&ok(0x40)), Some(MixReply { reply_type: 0x40, value: Some(3_050) }));
+        let mut cancel = 0u32.to_le_bytes().to_vec();
+        cancel.extend_from_slice(&[0x2a, 0]);
+        assert_eq!(parse_mix_reply(&cancel), Some(MixReply { reply_type: 0x2a, value: None }));
+        assert_eq!(parse_mix_reply(&ok(SCRIPT_TYPE_AVATAR)), None, "an avatar box's reply is not ours");
+        assert_eq!(parse_mix_reply(&ok(0x2a)[..10]), None, "an OK without its value is not a cancel");
     }
 }
 

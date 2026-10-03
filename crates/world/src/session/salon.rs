@@ -3,7 +3,10 @@
 //! A salon's owner (Natalie, Don Giovanni) takes the two hair-style coupons and its
 //! assistant (Brittany, Andre) the two hair-colour ones; a surgery's owner (Denma, Franz)
 //! the two face coupons and its assistant (Dr. Feeble, Riza) the skin coupon and the
-//! Signature Eye Color Coupon (2026-10-02 - eye colour had no desk at all). A click counts
+//! Signature Eye Color Coupon (2026-10-02 - eye colour had no desk at all). Both assistants
+//! also take a mix coupon on a fourth line (2026-10-03): Custom Mix Dye at the salon, Custom
+//! Colorblend at the surgery, which open the client's own mix box (`net::script::npc_mix`).
+//! A click counts
 //! the desk's coupons in the Cash tab: none held is a Say linking them and naming the Cash
 //! Shop; otherwise a type-6 menu lists the held ones. The Signature line opens the client's
 //! "pick a look" box (message type `0x0a`) with the desk's candidates; the Mystery line
@@ -29,7 +32,8 @@ impl Session {
         let (shop, desk) = salon::desk_for(template, chr.map_id)?;
         let (has_signature, has_mystery) = self.salon_coupons_held(chr.id, desk);
         let has_second = self.salon_second_held(chr.id, desk);
-        let Some(menu) = salon::menu_text(desk, has_signature, has_mystery, has_second) else {
+        let has_mix = self.salon_mix_held(chr.id, desk);
+        let Some(menu) = salon::menu_text(desk, has_signature, has_mystery, has_second, has_mix) else {
             crate::server::log(&format!(
                 "   salon: character {} clicked {template} ({} {:?}) without coupon {:?} or {:?}; pointed at the Cash Shop",
                 chr.id,
@@ -84,6 +88,11 @@ impl Session {
             .is_some_and(|c| self.held_count(chr_id, c) > 0)
     }
 
+    /// Whether the character holds the desk's mix coupon ([`Desk::mix_coupon`]).
+    fn salon_mix_held(&self, chr_id: u32, desk: Desk) -> bool {
+        desk.mix_coupon().is_some_and(|c| self.held_count(chr_id, c) > 0)
+    }
+
     /// The desk's Signature candidates for this character: the pick box's contents.
     fn salon_candidates(&self, shop: Shop, desk: Desk, chr: &net::opcode::Character) -> Vec<u32> {
         match desk {
@@ -114,6 +123,33 @@ impl Session {
         };
         // Counted again: the menu was built from a count too, but the bag may have moved.
         let (has_signature, has_mystery) = self.salon_coupons_held(chr.id, desk);
+        // The fourth line: the mix coupon, which opens the client's own mix box. The client
+        // draws the player's current hair or face itself (mode 0) and answers with two colours
+        // and a ratio; nothing is spent until that answer is checked.
+        if selection == salon::MENU_MIX {
+            let Some(coupon) = desk.mix_coupon().filter(|_| self.salon_mix_held(chr.id, desk)) else {
+                crate::server::log(&format!("   salon: character {} answered menu line {selection} it was not offered; refused, nothing spent", chr.id));
+                return Some(Vec::new());
+            };
+            self.conversation = Some(Conversation {
+                npc_template: template,
+                quest_id: None,
+                path: salon::MIX_PATH.to_string(),
+                sent: 0,
+                awaiting_yes_no: false,
+                sent_with_next: false,
+            });
+            return Some(vec![Reply {
+                opcode: net::script::SCRIPT_MESSAGE,
+                body: net::script::npc_mix(template, coupon, salon::mix_prompt(desk)),
+                what: format!(
+                    "ScriptMessage MIX (type 0x2a) from NPC {template}: coupon {coupon} - the client opens {} on the player's own {} ({}) and answers 0x2a/0x40 with (base*10+mix)*1000+percent",
+                    if desk == Desk::Colours { "UtilDlgEx_MixHair" } else { "UtilDlgEx_MixLens" },
+                    if desk == Desk::Colours { "hair" } else { "face" },
+                    if desk == Desk::Colours { chr.hair } else { chr.face }
+                ),
+            }]);
+        }
         // The third line: the second desk's Signature pick (the surgery assistant's eye colours).
         if selection == salon::MENU_SECOND {
             let Some(second) = desk.second().filter(|_| self.salon_second_held(chr.id, desk)) else {
@@ -249,13 +285,69 @@ impl Session {
         Some(self.apply_salon_look(desk, Tier::Signature, look))
     }
 
+    /// The mix box came back. `None` when no mix is parked or the body is not a mix reply,
+    /// so the other parsers see it.
+    ///
+    /// **The client's number is a claim.** It names two colours and a ratio; the server takes
+    /// the style from its own record, checks both colours have art in this client, refuses the
+    /// look the player already wears (the client does too, `FUN_1401a8500`), and only then
+    /// spends the coupon - the same order as every other beauty coupon.
+    pub(super) fn salon_mix_answer(&mut self, body: &[u8]) -> Option<Vec<Reply>> {
+        let convo = self.conversation.clone()?;
+        if convo.path != salon::MIX_PATH {
+            return None;
+        }
+        let reply = net::script::parse_mix_reply(body)?;
+        self.conversation = None;
+        let chr = self.claimed_character()?;
+        let Some((_, desk)) = salon::desk_for(convo.npc_template, chr.map_id) else { return Some(Vec::new()) };
+        let Some(value) = reply.value else {
+            crate::server::log(&format!(
+                "   salon: character {} closed the mix box (or picked the look they already wear - the client refuses that itself); nothing spent",
+                chr.id
+            ));
+            return Some(Vec::new());
+        };
+        let hair = desk == Desk::Colours;
+        let expected = if hair { net::script::SCRIPT_TYPE_MIX } else { net::script::SCRIPT_TYPE_MIX_LENS_REPLY };
+        let refuse = |s: &mut Session, why: String| {
+            crate::server::log(&format!("   salon: character {} mix answer {value} refused - {why}; nothing spent", chr.id));
+            s.notice("That mix will not take. Nothing was used up.".to_string())
+        };
+        if reply.reply_type != expected {
+            return Some(refuse(self, format!("reply type {:#04x}, this desk's box answers {expected:#04x}", reply.reply_type)));
+        }
+        let Some(blend) = salon::Blend::from_reply(value) else {
+            return Some(refuse(self, "not (base*10+mix)*1000+percent with colours under 10 and a percent 1..99".to_string()));
+        };
+        let (current, new) = if hair {
+            (chr.hair, salon::mixed_hair(chr.hair, blend, &self.config))
+        } else {
+            (chr.face, salon::blended_face(chr.face, blend, &self.config))
+        };
+        let Some(new) = new else {
+            return Some(refuse(self, format!("{blend:?} on {current}: a colour this client has no art for")));
+        };
+        if salon::same_look(current, new) {
+            return Some(refuse(self, format!("{new} is the look already worn ({current})")));
+        }
+        let Some(coupon) = desk.mix_coupon() else { return Some(Vec::new()) };
+        let look = if hair { Look::Hair(new) } else { Look::Face(new) };
+        Some(self.apply_look_for(coupon, desk, "mix", look))
+    }
+
     /// The look goes on; the desk's coupon for `tier` leaves the Cash tab; the player is
     /// redrawn and the field told. The coupon is checked again here - the box stays open as
     /// long as the player likes, and a coupon traded away meanwhile spends nothing and
     /// changes nothing.
     fn apply_salon_look(&mut self, desk: Desk, tier: Tier, look: Look) -> Vec<Reply> {
-        let Some(mut chr) = self.claimed_character() else { return Vec::new() };
         let Some(coupon) = desk.coupon(tier) else { return Vec::new() };
+        self.apply_look_for(coupon, desk, &format!("{tier:?}"), look)
+    }
+
+    /// [`Session::apply_salon_look`] for a named coupon - the mix coupons are no desk's tier.
+    fn apply_look_for(&mut self, coupon: u32, desk: Desk, tier: &str, look: Look) -> Vec<Reply> {
+        let Some(mut chr) = self.claimed_character() else { return Vec::new() };
         let slot = self
             .store
             .bag_items(chr.id, store::InventoryType::Cash)
@@ -286,11 +378,11 @@ impl Session {
         let stat = match look {
             Look::Hair(h) => {
                 chr.hair = h;
-                super::beautycoupon::look_stat_changed(crate::cosmetics::Kind::Hair, h, false, &format!("the salon: {desk:?} {tier:?}, coupon {coupon}"))
+                super::beautycoupon::look_stat_changed(crate::cosmetics::Kind::Hair, h, false, &format!("the salon: {desk:?} {tier}, coupon {coupon}"))
             }
             Look::Face(f) => {
                 chr.face = f;
-                super::beautycoupon::look_stat_changed(crate::cosmetics::Kind::Face, f, false, &format!("the surgery: {desk:?} {tier:?}, coupon {coupon}"))
+                super::beautycoupon::look_stat_changed(crate::cosmetics::Kind::Face, f, false, &format!("the surgery: {desk:?} {tier}, coupon {coupon}"))
             }
             Look::Skin(s) => {
                 chr.skin = s;
@@ -298,14 +390,14 @@ impl Session {
                     opcode: net::stats::STAT_CHANGED,
                     body: net::stats::StatChange { skin: Some((s, 0)), ..Default::default() }.build(),
                     what: format!(
-                        "StatChanged: SKIN bit -> {s} (u8 skin, u32 0). The surgery: {desk:?} {tier:?}, coupon {coupon}. \
+                        "StatChanged: SKIN bit -> {s} (u8 skin, u32 0). The surgery: {desk:?} {tier}, coupon {coupon}. \
                          The client's handler redraws the body for this bit as it does for HAIR and FACE."
                     ),
                 }
             }
         };
         crate::server::log(&format!(
-            "   salon: character {} {desk:?} {tier:?}: (hair, face, skin) {was:?} -> {look:?}; coupon {coupon} used from Cash slot {slot}",
+            "   salon: character {} {desk:?} {tier}: (hair, face, skin) {was:?} -> {look:?}; coupon {coupon} used from Cash slot {slot}",
             chr.id
         ));
         let mut out = vec![stat];
@@ -314,14 +406,15 @@ impl Session {
         let notice = match look {
             Look::Hair(h) => {
                 let name = self.config.item_names.get(&h).or_else(|| self.config.item_names.get(&salon::base_of(h))).cloned();
+                let colour = salon::hair_blend_name(h).unwrap_or_else(|| salon::colour_name(h).to_string());
                 match (desk, name) {
-                    (Desk::Colours, Some(n)) => format!("Your hair is now {} {n}.", salon::colour_name(h)),
-                    (Desk::Colours, None) => format!("Your hair is now {}.", salon::colour_name(h)),
+                    (Desk::Colours, Some(n)) => format!("Your hair is now {colour} {n}."),
+                    (Desk::Colours, None) => format!("Your hair is now {colour}."),
                     (_, Some(n)) => format!("Your hair is now {n}."),
                     (_, None) => "Your hair has changed.".to_string(),
                 }
             }
-            Look::Face(f) => match self.config.item_names.get(&f).or_else(|| self.config.item_names.get(&(f - (f / 100 % 10) * 100))) {
+            Look::Face(f) => match self.config.item_names.get(&salon::unmixed(f)).or_else(|| self.config.item_names.get(&salon::face_style_of(f))) {
                 Some(n) => format!("Your face is now {n}."),
                 None => "Your face has changed.".to_string(),
             },
@@ -486,5 +579,105 @@ mod tests {
         assert_eq!(coupon_in(&out[0].body), salon::SIGNATURE_COLOR_COUPON, "types the box as hair colour (0x17), not style");
         s.handle(&avatar_pick(5));
         assert_eq!(look(&store, id), (42_545, 22_035), "Frieren Hair in blue");
+    }
+
+    /// A `0x00F3` answering a mix box: OK with the dialog's value, or a cancel.
+    fn mix_answer(reply_type: u8, value: Option<u32>) -> Vec<u8> {
+        let mut b = net::script::CLIENT_SCRIPT_REPLY.to_le_bytes().to_vec();
+        b.extend_from_slice(&0u32.to_le_bytes());
+        match value {
+            Some(v) => {
+                b.extend_from_slice(&[reply_type, 1, 0, 0]);
+                b.extend_from_slice(&0u32.to_le_bytes());
+                b.extend_from_slice(&v.to_le_bytes());
+            }
+            None => b.extend_from_slice(&[reply_type, 0]),
+        }
+        b
+    }
+
+    fn holds(store: &Store, id: u32, coupon: u32) -> bool {
+        store.bag_items(id, store::InventoryType::Cash).unwrap().iter().any(|r| r.item.item_id == coupon)
+    }
+
+    /// **Custom Mix Dye at the salon assistant.** The owner, 2026-10-03: mix dye should work
+    /// *"similar to how players can choose to color their hair ... using the choice coupon"*.
+    /// Brittany lists it on the fourth line; picking it opens the client's own mix box typed by
+    /// the coupon; a cancel spends nothing; Black and Blue at 30 on Frieren Hair puts on
+    /// 42540530, spends the coupon and sends one HAIR bit; the look already worn is refused.
+    #[test]
+    fn the_salon_assistant_mixes_two_hair_colours_with_the_mix_dye_coupon() {
+        let (mut s, store, id) = at(salon::HENESYS_SALON_MAP, salon::NATALIE, salon::BRITTANY, 42_542, 22_035);
+        let out = s.handle(&npc_click(1001));
+        let text = String::from_utf8_lossy(&out[0].body).to_string();
+        assert!(text.contains("#i5151200#"), "the no-coupon line names it: {text}");
+
+        give(&store, id, salon::CUSTOM_MIX_DYE_COUPON);
+        let out = s.handle(&npc_click(1001));
+        let text = String::from_utf8_lossy(&out[0].body).to_string();
+        assert!(text.contains("#L3##i5151200# #t5151200#") && !text.contains("#L0#"), "{text}");
+
+        let out = s.on_script_reply(&menu_reply(salon::MENU_MIX));
+        assert_eq!(out[0].body[10], net::script::SCRIPT_TYPE_MIX, "{:?}", names(&out));
+        assert_eq!(coupon_in(&out[0].body), salon::CUSTOM_MIX_DYE_COUPON, "the coupon picks UtilDlgEx_MixHair");
+
+        // Cancel: nothing spent, nothing changed.
+        assert!(s.handle(&mix_answer(0x2a, None)).is_empty());
+        assert_eq!(look(&store, id), (42_542, 22_035));
+        assert!(holds(&store, id, salon::CUSTOM_MIX_DYE_COUPON));
+
+        s.handle(&npc_click(1001));
+        s.on_script_reply(&menu_reply(salon::MENU_MIX));
+        let out = s.handle(&mix_answer(0x2a, Some(5_030)));
+        assert_eq!(look(&store, id), (42_540_530, 22_035), "Black and Blue, 30");
+        let stat: Vec<&Reply> = out.iter().filter(|r| r.opcode == net::stats::STAT_CHANGED).collect();
+        assert_eq!(stat.len(), 1, "{:?}", names(&out));
+        assert!(stat[0].what.contains("HAIR bit -> 42540530"), "{}", stat[0].what);
+        assert!(!holds(&store, id, salon::CUSTOM_MIX_DYE_COUPON), "the coupon is spent");
+        assert!(names(&out).iter().any(|w| w.contains("Black and Blue")), "{:?}", names(&out));
+
+        // The same look again - here its swapped twin - is refused and costs nothing.
+        give(&store, id, salon::CUSTOM_MIX_DYE_COUPON);
+        s.handle(&npc_click(1001));
+        s.on_script_reply(&menu_reply(salon::MENU_MIX));
+        s.handle(&mix_answer(0x2a, Some(50_070)));
+        assert_eq!(look(&store, id), (42_540_530, 22_035));
+        assert!(holds(&store, id, salon::CUSTOM_MIX_DYE_COUPON), "nothing spent on the look already worn");
+
+        // A plain Signature colour afterwards reads the style under the mix.
+        give(&store, id, salon::SIGNATURE_COLOR_COUPON);
+        s.handle(&npc_click(1001));
+        let out = s.on_script_reply(&menu_reply(salon::MENU_SIGNATURE));
+        assert_eq!(ids_in(&out[0].body), (42_540..=42_547).collect::<Vec<_>>());
+    }
+
+    /// **Custom Colorblend at the surgery assistant.** The lens box answers with type 0x40;
+    /// eye colours 2 and 7 at 60 on Frieren Face 22035 put on 22235760. A hair-type answer at
+    /// this desk, or an eye colour the face has no art for, is refused and spends nothing.
+    #[test]
+    fn the_surgery_assistant_blends_two_eye_colours_with_the_colorblend_coupon() {
+        let (mut s, store, id) = at(salon::HENESYS_SURGERY_MAP, salon::DENMA, salon::DR_FEEBLE, 42_540, 22_035);
+        give(&store, id, salon::CUSTOM_COLORBLEND_COUPON);
+        let out = s.handle(&npc_click(1001));
+        let text = String::from_utf8_lossy(&out[0].body).to_string();
+        assert!(text.contains("#L3##i5152300#"), "{text}");
+
+        let out = s.on_script_reply(&menu_reply(salon::MENU_MIX));
+        assert_eq!(coupon_in(&out[0].body), salon::CUSTOM_COLORBLEND_COUPON, "the coupon picks UtilDlgEx_MixLens");
+        s.handle(&mix_answer(0x2a, Some(27_060)));
+        assert_eq!(look(&store, id), (42_540, 22_035), "a hair answer at the eye desk is refused");
+        assert!(holds(&store, id, salon::CUSTOM_COLORBLEND_COUPON));
+
+        s.handle(&npc_click(1001));
+        s.on_script_reply(&menu_reply(salon::MENU_MIX));
+        s.handle(&mix_answer(0x40, Some(29_060)));
+        assert_eq!(look(&store, id), (42_540, 22_035), "eye colour 9 has no art");
+
+        s.handle(&npc_click(1001));
+        s.on_script_reply(&menu_reply(salon::MENU_MIX));
+        let out = s.handle(&mix_answer(0x40, Some(27_060)));
+        assert_eq!(look(&store, id), (42_540, 22_235_760));
+        assert!(out.iter().any(|r| r.what.contains("FACE bit -> 22235760")), "{:?}", names(&out));
+        assert!(!holds(&store, id, salon::CUSTOM_COLORBLEND_COUPON));
     }
 }

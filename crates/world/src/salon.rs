@@ -110,6 +110,14 @@ pub const SIGNATURE_SKIN_COUPON: u32 = 5_153_000;
 /// Signature Eye Color Coupon - the surgery assistant's second line. There is no Mystery one
 /// on sale (5152300, Custom Colorblend, has no Commodity row).
 pub const SIGNATURE_EYE_COLOR_COUPON: u32 = 5_152_100;
+/// Custom Mix Dye Coupon - two hair colours and a ratio, at the salon assistant (the owner,
+/// 2026-10-03). The client types it `0x18` MixHairColor and opens `UtilDlgEx_MixHair` for
+/// it; `research/mix-dye-colorblend.md`. **Not on sale in this client's Cash Shop** - it
+/// has no `Commodity.img` row (`research/beauty-2026-09-09.md` §2.2).
+pub const CUSTOM_MIX_DYE_COUPON: u32 = 5_151_200;
+/// Custom Colorblend Eye Color Coupon - two eye colours and a ratio, at the surgery assistant.
+/// Typed `0xe` MixColorLens, dialog `UtilDlgEx_MixLens`. Not on sale either.
+pub const CUSTOM_COLORBLEND_COUPON: u32 = 5_152_300;
 
 /// The conversation path of an owner's or assistant's coupon menu.
 pub const MENU_PATH: &str = "salon.menu";
@@ -117,6 +125,8 @@ pub const MENU_PATH: &str = "salon.menu";
 pub const CHOICE_PATH: &str = "salon.choice";
 /// The pick-a-look box for eye colours, which the assistant's desk (skins) cannot name back.
 pub const EYE_CHOICE_PATH: &str = "salon.choice.eyes";
+/// The mix box (`net::script::npc_mix`): Custom Mix Dye or Custom Colorblend.
+pub const MIX_PATH: &str = "salon.mix";
 
 /// The eight hair colours, by the id's last digit.
 pub const COLOURS: [&str; 8] = ["Black", "Red", "Orange", "Blonde", "Green", "Blue", "Purple", "Brown"];
@@ -316,6 +326,16 @@ impl Desk {
         }
     }
 
+    /// The mix coupon this desk takes on its [`MENU_MIX`] line: the salon assistant's Custom
+    /// Mix Dye, the surgery assistant's Custom Colorblend. `None` for an owner.
+    pub fn mix_coupon(self) -> Option<u32> {
+        match self {
+            Desk::Colours => Some(CUSTOM_MIX_DYE_COUPON),
+            Desk::Skins => Some(CUSTOM_COLORBLEND_COUPON),
+            _ => None,
+        }
+    }
+
     /// The desk whose Signature coupon this NPC also takes, on a third menu line: the surgery
     /// assistant's eye colours beside its skins.
     pub fn second(self) -> Option<Desk> {
@@ -342,12 +362,15 @@ pub const MENU_SIGNATURE: u32 = 0;
 pub const MENU_MYSTERY: u32 = 1;
 /// The [`Desk::second`] desk's Signature line.
 pub const MENU_SECOND: u32 = 2;
+/// The [`Desk::mix_coupon`] line.
+pub const MENU_MIX: u32 = 3;
 
 /// The coupon menu for a desk: one line per coupon the player holds, in the client's own
 /// `#d#L%d# %s#l#k` line format with the item's icon and name. `None` when they hold neither.
-pub fn menu_text(desk: Desk, has_signature: bool, has_mystery: bool, has_second: bool) -> Option<String> {
+pub fn menu_text(desk: Desk, has_signature: bool, has_mystery: bool, has_second: bool, has_mix: bool) -> Option<String> {
     let second = desk.second().filter(|_| has_second);
-    if !has_signature && !has_mystery && second.is_none() {
+    let mix = desk.mix_coupon().filter(|_| has_mix);
+    if !has_signature && !has_mystery && second.is_none() && mix.is_none() {
         return None;
     }
     let mut lines = vec![match desk {
@@ -365,6 +388,9 @@ pub fn menu_text(desk: Desk, has_signature: bool, has_mystery: bool, has_second:
         if let Some(c) = d.coupon(Tier::Signature) {
             lines.push(format!("#d#L{MENU_SECOND}##i{c}# #t{c}# - {}#l#k", d.menu_line(Tier::Signature)));
         }
+    }
+    if let Some(c) = mix {
+        lines.push(format!("#d#L{MENU_MIX}##i{c}# #t{c}# - {}#l#k", mix_line(desk)));
     }
     Some(lines.join("\r\n"))
 }
@@ -391,12 +417,38 @@ pub fn no_coupon_line(desk: Desk) -> String {
     if let Some(eye) = desk.second().and_then(|d| d.coupon(Tier::Signature)) {
         lines.push(format!("#i{eye}# #b#t{eye}##k - a new eye colour, you choose"));
     }
+    if let Some(mix) = desk.mix_coupon() {
+        lines.push(format!("#i{mix}# #b#t{mix}##k - {}", mix_line(desk)));
+    }
     lines.push(String::new());
     lines.push(match (desk.coupon(Tier::Mystery), desk.second()) {
         (None, None) => "You can buy it in the #bCash Shop#k.".to_string(),
         _ => "You can buy either in the #bCash Shop#k.".to_string(),
     });
+    // The mix coupons have no Commodity row in this client, so the Cash Shop cannot sell them
+    // (`research/beauty-2026-09-09.md` 2.2) - the line must not say it does.
+    if let Some(mix) = desk.mix_coupon() {
+        lines.push(format!("The #b#t{mix}##k is not sold there."));
+    }
     lines.join("\r\n")
+}
+
+/// What the mix line does, in the menu and the no-coupon list.
+pub fn mix_line(desk: Desk) -> &'static str {
+    match desk {
+        Desk::Skins | Desk::EyeColours => "blend two eye colours",
+        _ => "mix two hair colours",
+    }
+}
+
+/// The prompt over the mix box.
+pub fn mix_prompt(desk: Desk) -> &'static str {
+    match desk {
+        Desk::Skins | Desk::EyeColours => {
+            "Pick two eye colours and how much of each. Your face stays as it is."
+        }
+        _ => "Pick two colours and how much of each. Your style stays as it is.",
+    }
 }
 
 /// The prompt over the pick-a-look box.
@@ -411,31 +463,38 @@ pub fn choice_prompt(desk: Desk) -> &'static str {
 }
 
 /// The id the player ends up wearing after a hair STYLE change: `base` in their current
-/// colour when that colour exists for it, `base` itself otherwise.
+/// colour when that colour exists for it, `base` itself otherwise. **A mixed colour comes
+/// along** when the new style draws both of its colours - the colour is the player's, not the
+/// style's - and drops to the plain first colour when it does not.
 pub fn with_current_colour(base: u32, current_hair: u32, config: &Config) -> u32 {
-    let colour = current_hair % 10;
+    let colour = unmixed(current_hair) % 10;
     let candidate = base + colour;
-    if colour != 0 && config.hair_exists(candidate) {
-        candidate
-    } else {
-        base
+    let plain = if colour != 0 && config.hair_exists(candidate) { candidate } else { base };
+    match blend_of(current_hair) {
+        Some(b) if plain == base + u32::from(b.base) && config.hair_exists(base + u32::from(b.mix)) => {
+            plain * 1000 + u32::from(b.mix) * 100 + u32::from(b.percent)
+        }
+        _ => plain,
     }
 }
 
 /// The same for a face: `base` at the player's current eye colour (the hundreds digit)
-/// when that exists, `base` itself otherwise.
+/// when that exists, `base` itself otherwise - a blended eye colour kept the same way.
 pub fn face_with_current_eye_colour(base: u32, current_face: u32, config: &Config) -> u32 {
-    let colour = (current_face / 100) % 10;
+    let colour = (unmixed(current_face) / 100) % 10;
     let candidate = base + colour * 100;
-    if colour != 0 && config.face_exists(candidate) {
-        candidate
-    } else {
-        base
+    let plain = if colour != 0 && config.face_exists(candidate) { candidate } else { base };
+    match blend_of(current_face) {
+        Some(b) if plain == base + u32::from(b.base) * 100 && config.face_exists(base + u32::from(b.mix) * 100) => {
+            plain * 1000 + u32::from(b.mix) * 100 + u32::from(b.percent)
+        }
+        _ => plain,
     }
 }
 
-/// The player's current hair style (its base id, colour digit 0).
+/// The player's current hair style (its base id, colour digit 0), mixed or not.
 pub fn base_of(hair: u32) -> u32 {
+    let hair = unmixed(hair);
     hair - hair % 10
 }
 
@@ -453,7 +512,7 @@ pub fn colour_variants(current_hair: u32, config: &Config) -> Vec<u32> {
 /// face table does not know the style, so a bare table refuses rather than offers ids that do
 /// not draw.
 pub fn eye_colour_variants(current_face: u32, config: &Config) -> Vec<u32> {
-    let style = current_face - (current_face / 100 % 10) * 100;
+    let style = face_style_of(current_face);
     (0..9).map(|c| style + c * 100).filter(|id| config.face_exists(*id)).collect()
 }
 
@@ -473,7 +532,121 @@ pub fn pick(pool: &[u32], roll: u64) -> Option<u32> {
 
 /// The hair colour's name for a notice.
 pub fn colour_name(hair: u32) -> &'static str {
-    COLOURS.get((hair % 10) as usize).copied().unwrap_or("?")
+    COLOURS.get((unmixed(hair) % 10) as usize).copied().unwrap_or("?")
+}
+
+/// A face's style (eye colour digit 0), blended or not.
+pub fn face_style_of(face: u32) -> u32 {
+    let face = unmixed(face);
+    face - (face / 100 % 10) * 100
+}
+
+// ---------------------------------------------------------------------------------------
+// Mix Dye and Colorblend: two colours and a ratio, inside the ordinary id.
+// ---------------------------------------------------------------------------------------
+
+/// **A mixed hair or blended face is the plain id times 1000, plus `mix * 100 + percent`.**
+/// [L] off the client (`research/mix-dye-colorblend.md`): every look helper first does
+/// `if id > 9_999_999 { id /= 1000 }` (`FUN_14041a0f0`, `FUN_14041a7e0`, `FUN_14041a780`);
+/// the hair composer `FUN_14041a8d0` builds `(style + base) * 1000 + mix * 100 + percent`,
+/// the face composer `FUN_14041a820` the same with the eye colour in the hundreds digit, and
+/// `FUN_14041a520` / `FUN_14041a480` take them apart again. So a mixed look needs no new
+/// field anywhere: it is a bigger `u32` in the same `hair` and `face` slots.
+pub const MIXED_ABOVE: u32 = 9_999_999;
+
+/// The plain id under a mixed one, or the id itself.
+pub fn unmixed(id: u32) -> u32 {
+    if id > MIXED_ABOVE {
+        id / 1000
+    } else {
+        id
+    }
+}
+
+/// Whether a plain look id is a hair rather than a face. Hair ids start at 30000 and face
+/// ids sit at 20000..29999 (`research/beauty-2026-09-09.md` §3) - and once mixed both are
+/// eight digits, so the size of the mixed id cannot tell them apart.
+fn is_hair(id: u32) -> bool {
+    unmixed(id) >= 30_000
+}
+
+/// Two colours and a ratio.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Blend {
+    /// The colour in the plain id: a hair's last digit, a face's hundreds digit.
+    pub base: u8,
+    /// The second colour.
+    pub mix: u8,
+    /// `1..=99`. The client treats `(a, b, p)` and `(b, a, 100 - p)` as the same look
+    /// (`FUN_14041a2a0`), so which colour it is the share of only matters for wording.
+    pub percent: u8,
+}
+
+impl Blend {
+    /// The mix box's answer, `(base * 10 + mix) * 1000 + percent` (`FUN_14041a3d0`), or
+    /// `None` outside what the box itself accepts: both colours under 10, percent `1..=99`
+    /// (`FUN_14041a270`).
+    pub fn from_reply(value: u32) -> Option<Blend> {
+        let (base, mix, percent) = (value / 10_000, (value / 1000) % 10, value % 1000);
+        (base < 10 && mix < 10 && (1..=99).contains(&percent))
+            .then(|| Blend { base: base as u8, mix: mix as u8, percent: percent as u8 })
+    }
+}
+
+/// The blend inside a mixed id, `None` for a plain one.
+pub fn blend_of(id: u32) -> Option<Blend> {
+    if id <= MIXED_ABOVE {
+        return None;
+    }
+    let low = id % 1000;
+    let base = if is_hair(id) { unmixed(id) % 10 } else { unmixed(id) / 100 % 10 };
+    Some(Blend { base: base as u8, mix: (low / 100) as u8, percent: (low % 100) as u8 })
+}
+
+/// The hair a Custom Mix Dye gives: the player's style, `blend.base` and `blend.mix` mixed.
+/// `None` - nothing spent - for a colour outside the eight (`FUN_14041a8d0` leaves the hair
+/// alone there) or one this client has no art for in that style.
+pub fn mixed_hair(current_hair: u32, blend: Blend, config: &Config) -> Option<u32> {
+    let style = base_of(current_hair);
+    let (a, b) = (style + u32::from(blend.base), style + u32::from(blend.mix));
+    (blend.base < 8 && blend.mix < 8 && config.hair_exists(a) && config.hair_exists(b))
+        .then(|| a * 1000 + u32::from(blend.mix) * 100 + u32::from(blend.percent))
+}
+
+/// The face a Custom Colorblend gives: the player's face, eye colours `blend.base` and
+/// `blend.mix` blended (`FUN_14041a820`). `None` for an eye colour this face has no art for.
+pub fn blended_face(current_face: u32, blend: Blend, config: &Config) -> Option<u32> {
+    let style = face_style_of(current_face);
+    let (a, b) = (style + u32::from(blend.base) * 100, style + u32::from(blend.mix) * 100);
+    (blend.base < 9 && blend.mix < 9 && config.face_exists(a) && config.face_exists(b))
+        .then(|| a * 1000 + u32::from(blend.mix) * 100 + u32::from(blend.percent))
+}
+
+/// Whether `new` is the look the player already has, the way the client decides it
+/// (`FUN_1401a9eb0` / `FUN_1401a9e00` -> `FUN_14041a2a0`): the same id, or the same style
+/// with the two colours swapped and the ratio turned round. The client refuses those itself,
+/// and the server must not spend a coupon on one either.
+pub fn same_look(current: u32, new: u32) -> bool {
+    if current == new {
+        return true;
+    }
+    let style = |id: u32| if is_hair(id) { base_of(id) } else { face_style_of(id) };
+    match (blend_of(current), blend_of(new)) {
+        (Some(a), Some(b)) => {
+            style(current) == style(new)
+                && a.base == b.mix
+                && a.mix == b.base
+                && u32::from(a.percent) == 100 - u32::from(b.percent)
+        }
+        _ => false,
+    }
+}
+
+/// The two colour names of a mixed hair, for a notice: "Black and Red".
+pub fn hair_blend_name(hair: u32) -> Option<String> {
+    let b = blend_of(hair)?;
+    let name = |c: u8| COLOURS.get(usize::from(c)).copied().unwrap_or("?");
+    Some(format!("{} and {}", name(b.base), name(b.mix)))
 }
 
 /// The skin's name for a notice.
@@ -625,20 +798,20 @@ mod tests {
     /// desk's no-coupon line names its one coupon.
     #[test]
     fn the_menu_lists_what_is_held_and_an_answer_is_read_back_against_it() {
-        assert_eq!(menu_text(Desk::Styles, false, false, false), None);
-        assert_eq!(menu_text(Desk::Styles, false, false, true), None, "only the surgery assistant has a second line");
-        let both = menu_text(Desk::Styles, true, true, false).unwrap();
+        assert_eq!(menu_text(Desk::Styles, false, false, false, false), None);
+        assert_eq!(menu_text(Desk::Styles, false, false, true, false), None, "only the surgery assistant has a second line");
+        let both = menu_text(Desk::Styles, true, true, false, false).unwrap();
         assert!(both.contains("#L0##i5150100# #t5150100#") && both.contains("#L1##i5150000# #t5150000#"), "{both}");
-        let only_mystery = menu_text(Desk::Colours, false, true, false).unwrap();
+        let only_mystery = menu_text(Desk::Colours, false, true, false, false).unwrap();
         assert!(only_mystery.contains("#L1##i5151000#") && !only_mystery.contains("#L0#"), "{only_mystery}");
-        let faces = menu_text(Desk::Faces, true, true, false).unwrap();
+        let faces = menu_text(Desk::Faces, true, true, false, false).unwrap();
         assert!(faces.contains("#L0##i5152200#") && faces.contains("#L1##i5152000#"), "{faces}");
-        let skins = menu_text(Desk::Skins, true, true, false).unwrap();
+        let skins = menu_text(Desk::Skins, true, true, false, false).unwrap();
         assert!(skins.contains("#L0##i5153000#") && !skins.contains("#L1#"), "no mystery skin line: {skins}");
         assert!(!skins.contains("#L2#"), "no eye line without the eye coupon: {skins}");
-        let both = menu_text(Desk::Skins, true, false, true).unwrap();
+        let both = menu_text(Desk::Skins, true, false, true, false).unwrap();
         assert!(both.contains("#L0##i5153000#") && both.contains("#L2##i5152100# #t5152100#"), "{both}");
-        let eyes_only = menu_text(Desk::Skins, false, false, true).unwrap();
+        let eyes_only = menu_text(Desk::Skins, false, false, true, false).unwrap();
         assert!(eyes_only.contains("#L2##i5152100#") && !eyes_only.contains("#L0#"), "{eyes_only}");
         assert_eq!(tier_of_selection(0, true, true), Some(Tier::Signature));
         assert_eq!(tier_of_selection(1, true, true), Some(Tier::Mystery));
@@ -705,5 +878,55 @@ mod tests {
         assert_eq!(skin_candidates(), vec![0, 1, 2, 3, 4, 5, 6]);
         assert_eq!(skin_name(4), "Ashen");
         assert_eq!(skin_name(9), "?");
+    }
+
+    /// **The mix arithmetic is the client's**, case by case (`research/mix-dye-colorblend.md`).
+    /// Black (0) and Blue (5) at 30 on Frieren Hair 42540 is `42540 * 1000 + 5 * 100 + 30`; eye
+    /// colours 2 and 7 at 60 on face 22035 put colour 2 in the hundreds digit first. The box's
+    /// value `(base*10+mix)*1000+percent` reads back; a 0 or 100 percent, a hair colour past
+    /// the eight and a colour with no art are refused; the swapped twin is the same look; and a
+    /// style or colour change on a mixed hair reads the plain id under it.
+    #[test]
+    fn mixed_ids_are_the_plain_id_times_1000_plus_mix_and_percent() {
+        let mut hair_ids = std::collections::HashSet::new();
+        for c in 0..8 {
+            hair_ids.insert(42_540 + c);
+            hair_ids.insert(30_030 + c);
+        }
+        let face_ids: std::collections::HashSet<u32> = (0..9).map(|c| 22_035 + c * 100).collect();
+        let config = Config { hair_ids, face_ids, ..Config::default() };
+
+        assert_eq!(Blend::from_reply(5_030), Some(Blend { base: 0, mix: 5, percent: 30 }));
+        assert_eq!(Blend::from_reply(27_060), Some(Blend { base: 2, mix: 7, percent: 60 }));
+        assert_eq!(Blend::from_reply(5_000), None, "0 percent is not a mix");
+        assert_eq!(Blend::from_reply(5_100), None, "nor is 100");
+        assert_eq!(Blend::from_reply(105_030), None, "a colour past 9");
+
+        let blue = Blend { base: 0, mix: 5, percent: 30 };
+        let mixed = mixed_hair(42_542, blue, &config).unwrap();
+        assert_eq!(mixed, 42_540_530, "the style kept, colour 0, then mix 5 at 30");
+        assert_eq!((unmixed(mixed), base_of(mixed), colour_name(mixed)), (42_540, 42_540, "Black"));
+        assert_eq!(blend_of(mixed), Some(blue));
+        assert_eq!(hair_blend_name(mixed).as_deref(), Some("Black and Blue"));
+        assert_eq!(mixed_hair(42_540, Blend { base: 0, mix: 8, percent: 30 }, &config), None, "colour 8 is not a hair colour");
+        assert_eq!(mixed_hair(31_000, blue, &config), None, "no art for that style");
+
+        let eyes = blended_face(22_135, Blend { base: 2, mix: 7, percent: 60 }, &config).unwrap();
+        assert_eq!(eyes, 22_235_760, "eye colour 2 in the hundreds digit, then 7 at 60");
+        assert_eq!(face_style_of(eyes), 22_035);
+        assert_eq!(blend_of(eyes), Some(Blend { base: 2, mix: 7, percent: 60 }));
+        assert_eq!(eye_colour_variants(eyes, &config).len(), 9, "a blended face still offers its plain eye colours");
+
+        assert!(same_look(mixed, mixed));
+        assert!(same_look(mixed, 42_545_070), "Blue and Black at 70 is Black and Blue at 30");
+        assert!(!same_look(mixed, 42_545_030), "the ratio turned the other way is a different look");
+        assert!(!same_look(42_540, mixed), "plain and mixed differ");
+
+        // A style change keeps the mix where the new style draws both colours.
+        assert_eq!(with_current_colour(30_030, mixed, &config), 30_030_530);
+        let only_black: std::collections::HashSet<u32> = [30_030].into_iter().collect();
+        let bare = Config { hair_ids: only_black, ..Config::default() };
+        assert_eq!(with_current_colour(30_030, mixed, &bare), 30_030, "no blue art: the plain colour");
+        assert_eq!(face_with_current_eye_colour(22_035, eyes, &config), 22_235_760);
     }
 }

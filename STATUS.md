@@ -429,6 +429,23 @@ the ammo's attack - this client names it **`incWAT`** (Ilbi 27), and the first d
 never been compared with a night of real hits; a suspects line naming an honest character is
 the model being low, and log-only is the fix until it is corrected.
 
+**2026-10-03: Custom Mix Dye and Custom Colorblend at the assistants - built, tests only.** The
+owner: mix dye hair colour and colorblend eye colour should work *"similar to how players can choose
+to color their hair and eye using the choice coupon"*. Decoded today, all **[L]**
+(`research/mix-dye-colorblend.md`). A mixed look is NOT a new field: it is `plain id * 1000 + mix
+* 100 + percent` in the same `hair` / `face` u32, and every client look helper divides an id above
+9 999 999 by 1000 first. The box is `0x055B` type **`0x2a`** (`FUN_14127e090`, also types `0x29`
+and `0x40`): `u32 coupon, str, u8 mode 0, u32`. The coupon picks `UtilDlgEx_MixHair` (5151200) or
+`UtilDlgEx_MixLens` (5152300). The client draws the player's own look and answers `0x00F3` type
+`0x2a` (hair) / `0x40` (lens) with `(base*10+mix)*1000+percent`. Brittany and Andre take the Mix
+Dye coupon and Dr. Feeble and Riza the Colorblend coupon, on a fourth menu line (`#L3`). The answer
+is checked before anything changes: the desk's reply type, both colours drawn by this client, and
+not the look already worn (the client's own swapped-twin rule). Every salon helper now reads the
+plain id under a mixed one, so a style change keeps the mix and a Signature dye clears it. **[I], the
+client run's question: whether this client DRAWS an id above 9 999 999** - plan step 44. **Neither
+coupon can be bought**: no `Commodity.img` row, so the no-coupon line now says so, and `!item` is the
+only source until the owner decides otherwise.
+
 **2026-10-03: a star stack is one item everywhere - built, tests only.** The owner: separate star
 items must not *"stack into 1 item"*, and a dropped star should go down *"along with its ammo
 information"* - the drop took 1. Now `207`/`233` stacks (`net::bag::bundle_has_serial`): a drag
