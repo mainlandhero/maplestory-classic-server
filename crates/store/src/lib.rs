@@ -43,6 +43,7 @@ pub mod fieldreturn;
 pub mod spawnpoint;
 pub mod inventory;
 pub mod keymap;
+pub mod announcement;
 pub mod killstats;
 pub mod scrollstats;
 pub mod kick;

@@ -99,7 +99,8 @@ impl Session {
         // allowance. `crate::dailyperks::COMMAND`.
         let is_gm = self.account_is_gm();
         match name {
-            "rates" => return self.gm_rates(),
+            // `!rate` too: the owner, 2026-10-03, called it *"the public !rate command"*.
+            "rates" | "rate" => return self.gm_rates(),
             // The owner, 2026-09-14: *"`!online` - available to everyone, list all characters that
             // are currently online across all channels."* Names and channels only; where
             // each one IS is `!track`, and that is a GM word.
@@ -161,6 +162,9 @@ impl Session {
             "exp" => self.gm_exp(arg),
             "heal" => self.gm_heal(),
             "setrates" => self.gm_set_rates(arg),
+            // The scrolling banner's text, kept in the database until changed or cleared.
+            // session/rates.rs.
+            "announce" => self.gm_announce(arg),
             "job" => self.gm_job(arg),
             "npcecho" => self.gm_npc_echo(arg),
             "nx" => self.gm_nx(arg),

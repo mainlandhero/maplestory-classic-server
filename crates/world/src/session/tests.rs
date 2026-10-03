@@ -5145,7 +5145,9 @@ fn hex(s: &str) -> Vec<u8> {
 
 
 // ---------------------------------------------------------------------------------------
-// The server's EXP and meso rates, and the banner that announces them.
+// The server's EXP and meso rates, and the banner - which since 2026-10-03 is `!announce`'s
+// alone: a rate change scrolls nothing (the owner: "Players can check the EXP rates using the
+// public !rate command anyways").
 // ---------------------------------------------------------------------------------------
 
 /// The text inside a `0x00AC` type-4 banner, or `None` if the packet is a teardown.
@@ -5167,52 +5169,44 @@ fn banners(out: &[Reply]) -> Vec<Option<String>> {
         .collect()
 }
 
-/// `!exprate 2` stores the rate and puts the banner up **immediately**, with the owner's wording.
+/// `!setrates 2 ...` stores the rate, tells the GM, and **scrolls nothing** - not at once and
+/// not on later ticks. Since 2026-10-03 the banner is `!announce`'s alone.
 #[test]
-fn setrates_stores_the_rate_and_announces_it_at_once() {
+fn setrates_stores_the_rate_and_scrolls_nothing() {
     let (mut s, store, _) = gm_session();
     let out = s.handle(&gm_chat("!setrates 2 1 1 1 30"));
 
     assert_eq!(store.rates().unwrap().exp.rate.per_cent(), 200, "stored as hundredths");
-    assert_eq!(
-        banners(&out),
-        vec![Some("[Event] The Server's EXP rate has been set to 2x".to_string())],
-        "the change announces itself rather than waiting for the next tick"
-    );
+    assert!(banners(&out).is_empty(), "{out:?}");
     assert!(notice_text(&out[0]).contains("2x"), "and the GM who typed it is told: {out:?}");
+    for tick in 1..=6u64 {
+        assert!(banners(&s.tick(tick * 500)).is_empty(), "tick {tick}");
+    }
 }
 
-/// Both rates share one banner, because one banner is all the client has.
+/// **`!announce <message>` scrolls exactly that**, and a bare `!announce` takes it down.
 #[test]
-fn two_rates_produce_one_banner_carrying_both() {
-    let (mut s, _, _) = gm_session();
-    s.handle(&gm_chat("!setrates 2 1 1 1 30"));
-    let out = s.handle(&gm_chat("!setrates 2 3 1 1 30"));
+fn announce_scrolls_the_gms_text_and_a_bare_one_clears_it() {
+    let (mut s, store, _) = gm_session();
+    let out = s.handle(&gm_chat("!announce Double EXP all weekend!"));
+    assert_eq!(banners(&out), vec![Some("Double EXP all weekend!".to_string())]);
+    assert_eq!(store.announcement().unwrap().as_deref(), Some("Double EXP all weekend!"), "stored, so a restart keeps it");
+    assert!(banners(&s.tick(500)).is_empty(), "sent once - a re-send restarts the scroll");
 
-    assert_eq!(
-        banners(&out),
-        vec![Some(
-            "[Event] The Server's EXP rate has been set to 2x [Event] The Server's Meso rate has been set to 3x"
-                .to_string()
-        )]
-    );
+    let out = s.handle(&gm_chat("!announce"));
+    assert_eq!(banners(&out), vec![None], "taken down");
+    assert_eq!(store.announcement().unwrap(), None);
 }
 
-/// Back to 1x, and the END is announced rather than the banner simply vanishing.
-///
-/// The owner, 2026-08-20: *"When either EXP or Meso is set back to 1x again, you should also
-/// immediately display a scrolling notice."*
+/// Back to 1x scrolls nothing either - the old "event has ended" line went with the cycle.
 #[test]
-fn returning_to_normal_announces_the_end() {
+fn returning_to_normal_scrolls_nothing() {
     let (mut s, store, _) = gm_session();
     s.handle(&gm_chat("!setrates 2 1 1 1 30"));
     let out = s.handle(&gm_chat("!setrates 1 1 1 1 30"));
 
     assert_eq!(store.rates().unwrap().exp.rate, store::rates::Rate::NORMAL);
-    assert_eq!(
-        banners(&out),
-        vec![Some("[Event] The EXP rate-up event has ended.".to_string())]
-    );
+    assert!(banners(&out).is_empty(), "{out:?}");
 }
 
 /// `!exprate 1` on a server that was never running an event announces nothing.
@@ -5227,21 +5221,16 @@ fn ending_an_event_that_never_started_says_nothing() {
     assert!(notice_text(&out[0]).contains("already"), "{out:?}");
 }
 
-/// One rate ending while another is still running puts BOTH on the banner: the ending and
-/// the survivor.
+/// A bare `!announce` with nothing set explains itself and scrolls nothing; `!rate` is
+/// `!rates`, the public command the owner pointed players at.
 #[test]
-fn an_ending_and_a_survivor_share_the_banner() {
+fn a_bare_announce_with_nothing_set_scrolls_nothing_and_rate_is_rates() {
     let (mut s, _, _) = gm_session();
-    s.handle(&gm_chat("!setrates 2 1 1 1 30"));
-    s.handle(&gm_chat("!setrates 2 3 1 1 30"));
-    let out = s.handle(&gm_chat("!setrates 1 3 1 1 30"));
-
-    assert_eq!(
-        banners(&out),
-        vec![Some(
-            "[Event] The EXP rate-up event has ended. [Event] The Server's Meso rate has been set to 3x".to_string()
-        )]
-    );
+    let out = s.handle(&gm_chat("!announce"));
+    assert!(banners(&out).is_empty(), "{out:?}");
+    assert!(notice_text(&out[0]).contains("!announce <message>"), "{out:?}");
+    let rate = notice_text(&s.handle(&gm_chat("!rate"))[0]);
+    assert_eq!(rate, notice_text(&s.handle(&gm_chat("!rates"))[0]));
 }
 
 /// The banner is sent when the answer CHANGES and not otherwise. Re-sending it restarts the
@@ -5518,36 +5507,30 @@ fn the_rates_command_is_read_only() {
     assert_eq!(
         store.rates().unwrap(),
         before,
-        "!rates must not touch set_at either - that would restart the banner cycle"
+        "!rates must not touch set_at either"
     );
 }
 
-/// `!droprate` announces itself like the other two, and `!drop rate` is the same command.
+/// The drop rate is set through `!setrates` like the other two, and scrolls nothing.
 #[test]
-fn the_drop_rate_announces_through_setrates() {
+fn the_drop_rate_is_set_through_setrates() {
     let (mut s, store, _) = gm_session();
     let out = s.handle(&gm_chat("!setrates 1 1 4 1 30"));
     assert_eq!(store.rates().unwrap().drop.rate.per_cent(), 400);
-    assert_eq!(
-        banners(&out),
-        vec![Some("[Event] The Server's Drop rate has been set to 4x".to_string())]
-    );
+    assert!(banners(&out).is_empty(), "{out:?}");
 
 }
 
-/// All three at once share one banner, in a fixed order.
+/// **An `!announce` survives rate changes**: three events in a row leave the GM's text alone.
 #[test]
-fn three_events_share_one_banner() {
+fn rate_events_leave_the_announcement_alone() {
     let (mut s, _, _) = gm_session();
-    s.handle(&gm_chat("!setrates 2 1 1 1 30"));
-    s.handle(&gm_chat("!setrates 2 3 1 1 30"));
-    let out = s.handle(&gm_chat("!setrates 2 3 4 1 30"));
-    assert_eq!(
-        banners(&out),
-        vec![Some(
-            "[Event] The Server's EXP rate has been set to 2x [Event] The Server's Meso rate has been set to 3x [Event] The Server's Drop rate has been set to 4x".to_string()
-        )]
-    );
+    s.handle(&gm_chat("!announce Welcome to MapleCW"));
+    for rates in ["!setrates 2 1 1 1 30", "!setrates 2 3 1 1 30", "!setrates 2 3 4 1 30"] {
+        let out = s.handle(&gm_chat(rates));
+        assert!(banners(&out).is_empty(), "{rates}: {out:?}");
+    }
+    assert!(banners(&s.tick(500)).is_empty(), "still the same text on screen");
 }
 
 /// The drop rate scales the CHANCE, and a rate high enough makes an unlikely row certain.
@@ -5924,7 +5907,7 @@ fn an_absent_slot_max_is_unspecified_not_one() {
 }
 
 
-/// `!setrates` sets all three, on one anchor, with one banner naming all of them.
+/// `!setrates` sets all three, on one timestamp, and scrolls nothing.
 #[test]
 fn setrates_sets_all_three_on_one_timestamp() {
     let (mut s, store, _) = gm_session();
@@ -5935,14 +5918,9 @@ fn setrates_sets_all_three_on_one_timestamp() {
     assert_eq!(r.drop.rate.per_cent(), 500);
     assert_eq!(
         r.exp.set_at, r.drop.set_at,
-        "one timestamp, or the banner cycle is re-anchored per rate"
+        "one timestamp for everything that moved"
     );
-    let banner = banners(&out);
-    assert_eq!(banner.len(), 1, "one banner, not three: {out:?}");
-    let text = banner[0].clone().unwrap();
-    for want in ["EXP rate has been set to 2x", "Meso rate has been set to 3x", "Drop rate has been set to 5x"] {
-        assert!(text.contains(want), "{want} missing from {text}");
-    }
+    assert!(banners(&out).is_empty(), "{out:?}");
 }
 
 /// `!setrates 1 1 1` is the one-command way to end everything.
@@ -5952,10 +5930,7 @@ fn setrates_all_ones_ends_every_event() {
     s.handle(&gm_chat("!setrates 2 3 5 1 30"));
     let out = s.handle(&gm_chat("!setrates 1 1 1 1 30"));
     assert!(store.rates().unwrap().all_normal());
-    let text = banners(&out)[0].clone().unwrap();
-    for want in ["The EXP rate-up event has ended.", "The Meso rate-up event has ended.", "The Drop rate-up event has ended."] {
-        assert!(text.contains(want), "{want} missing from {text}");
-    }
+    assert!(banners(&out).is_empty(), "{out:?}");
 }
 
 /// Below 1x is refused, and **nothing is written** - not even the values that were valid.
