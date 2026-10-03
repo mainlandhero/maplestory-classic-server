@@ -1655,12 +1655,17 @@ pub struct Quest {
     pub citizenship_check: Option<(u8, u8)>,
     /// `Act.1.citizenshipContr` - what turning it in banks, and where.
     pub citizenship_contr: Option<CitizenshipContr>,
-    /// `Act.1.money` - mesos for turning it in, at the Quest rate. 255 quests carry one, every
-    /// value positive. **Nothing paid it until 2026-09-28** (the owner: *"make the server pay for
-    /// quest mesos at the 10x rate too for all quests"*) - the quest window showed the amount
-    /// and the purse never moved. `Session::pay_quest_mesos`. The one `Act.0.money` in this
-    /// client (quest 10303, `-1000`, a cost to START) is not read.
-    pub complete_money: u32,
+    /// `Act.1.money` - mesos for turning it in. 255 quests carry one, every value positive,
+    /// paid at the Quest rate. **Nothing paid it until 2026-09-28** (the owner: *"make the server
+    /// pay for quest mesos at the 10x rate too for all quests"*) - the quest window showed the
+    /// amount and the purse never moved. **Signed**: a negative value is a cost, taken at face
+    /// value and refused when the purse is short. `Session::quest_mesos`.
+    pub complete_money: i32,
+    /// `Act.0.money` - mesos on ACCEPTING it, signed the same way. The client ships one:
+    /// quest 10303, Nella's `-1000` commission ("For 1,000 Mesos, I can gather some intel"),
+    /// which nothing charged until the owner, 2026-10-02: *"Quests that take away money should
+    /// properly take away mesos and complain if the player does not have enough mesos"*.
+    pub start_money: i32,
     /// `Check.1.lvmin` - the level needed to TURN IT IN (0 when the quest names none). The
     /// Community Board's weeklies all start at 12 and finish at `12 + 5 (grade - 1)`, so a board
     /// posting has to look at this one, not the start level (the owner, 2026-10-01: a level-17
@@ -1917,6 +1922,9 @@ fn read_quest_rows(text: &str, out: &mut HashMap<u32, Quest>, mode: Overlay) -> 
             }
             "Act" if fill && dotted == "1.money" => {
                 quest.complete_money = value.parse().unwrap_or(0);
+            }
+            "Act" if fill && dotted == "0.money" => {
+                quest.start_money = value.parse().unwrap_or(0);
             }
             "Act" if fill && dotted.starts_with("1.citizenshipContr.") => {
                 let c = quest.citizenship_contr.get_or_insert_with(CitizenshipContr::default);

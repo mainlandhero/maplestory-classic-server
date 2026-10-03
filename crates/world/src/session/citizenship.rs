@@ -601,30 +601,6 @@ impl Session {
         out
     }
 
-    /// `Act.1.money`, at the Quest rate - the same multiplier quest EXP gets. **Every quest**:
-    /// The owner, 2026-09-28, first for the Community Board and then *"for all quests"*. On a
-    /// recorded turn-in only (the caller's early return), so a repeat click pays nothing.
-    pub(super) fn pay_quest_mesos(&mut self, quest_id: u32) -> Vec<Reply> {
-        let base = self.config.quests.get(&quest_id).map_or(0, |q| q.complete_money);
-        if base == 0 {
-            return Vec::new();
-        }
-        let Some(chr) = self.claimed_character() else { return Vec::new() };
-        let rate = self.rate(store::rates::RateKind::Quest);
-        let paid = u32::try_from(rate.apply(u64::from(base))).unwrap_or(u32::MAX).min(i32::MAX as u32);
-        if let Err(e) = self.store.add_mesos(chr.id, i64::from(paid)) {
-            return self.notice(format!("Quest {quest_id}'s {paid} mesos could not be paid: {e}"));
-        }
-        let mut out = self.meso_reply(chr.id);
-        // In the chat box, not the pick-up area (the owner, 2026-10-02).
-        out.push(Reply {
-            opcode: net::message::MESSAGE,
-            body: net::message::meso_gained_line(paid),
-            what: format!("Message: quest {quest_id} paid {paid} mesos ({base} at {rate}x), as a grey chat line"),
-        });
-        out
-    }
-
     /// **The Citizen of Honor earring** for `town`, if this character is grade 10 there and
     /// has not had it. `(replies, handed over)`. A full Equip tab is not a loss: the notice
     /// says so, nothing is marked, and the town's clerk hands it over on the next talk

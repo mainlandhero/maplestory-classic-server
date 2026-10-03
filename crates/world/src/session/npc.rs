@@ -334,6 +334,17 @@ impl Session {
                 return self.bag_full_refusal(finished, speaker, &short, "completed");
             }
         }
+        // A turn-in that costs mesos (`Act.1.money` < 0): taken now, refused when short, and
+        // handed back below if the completion is not recorded. `session/questmoney.rs`.
+        let charged = if in_progress {
+            let speaker = self.config.quests.get(&finished).and_then(|q| q.end_npc.or(q.start_npc)).unwrap_or(0);
+            match self.take_quest_cost(finished, 1, speaker, "completed") {
+                Ok(charged) => charged,
+                Err(refusal) => return refusal,
+            }
+        } else {
+            0
+        };
         // Only a completion that was actually recorded earns a fanfare. Playing one for a
         // quest the character never started would be a sound with nothing behind it.
         let mut recorded = false;
@@ -393,15 +404,17 @@ impl Session {
         // fanfares, and the fanfare was the one effect that was correct. The store was the
         // authority all along and three call sites out of four were asking it.
         if !recorded {
+            self.refund_quest_cost(finished, charged);
             return out;
         }
+        out.extend(self.quest_cost_replies(finished, charged));
         out.extend(self.apply_quest_completion_rewards(finished, chosen));
         // `Act.1.citizenshipContr` - Contribution, and a grade-up when it crosses one.
         // After the rewards, so the item and EXP lines come first. `session/citizenship.rs`.
         out.extend(self.bank_citizenship_contribution(finished));
         // `Act.1.money`, at the Quest rate like the EXP - every quest (the owner, 2026-09-28).
-        // Nothing paid it before. session/citizenship.rs.
-        out.extend(self.pay_quest_mesos(finished));
+        // Nothing paid it before. session/questmoney.rs.
+        out.extend(self.pay_quest_mesos(finished, 1));
         // **The turn-in fanfare.** The owner, 2026-08-21: *"Quest finish still does not trigger
         // the SFX for quest finish."* It did not, because nothing sent one.
         //
@@ -687,6 +700,16 @@ impl Session {
                 return self.bag_full_refusal(quest_id, npc_template, &short, "accepted");
             }
         }
+        // An accept that costs mesos (`Act.0.money` < 0, Nella's commission): taken now,
+        // refused when short, handed back on every path below that does not record the start.
+        let charged = if before.is_none() {
+            match self.take_quest_cost(quest_id, 0, npc_template, "accepted") {
+                Ok(charged) => charged,
+                Err(refusal) => return refusal,
+            }
+        } else {
+            0
+        };
         let mut out = Vec::new();
         if restart {
             match self.store.restart_quest(chr.id, quest_id) {
@@ -701,11 +724,21 @@ impl Session {
                         chr.id
                     ),
                 }),
-                Ok(false) => return Vec::new(),
-                Err(e) => return self.notice(format!("Quest {quest_id} could not be picked up again: {e}")),
+                Ok(false) => {
+                    self.refund_quest_cost(quest_id, charged);
+                    return Vec::new();
+                }
+                Err(e) => {
+                    self.refund_quest_cost(quest_id, charged);
+                    return self.notice(format!("Quest {quest_id} could not be picked up again: {e}"));
+                }
             }
         }
-        let what = match self.store.start_quest(chr.id, quest_id) {
+        let started = self.store.start_quest(chr.id, quest_id);
+        if !matches!(started, Ok(true)) {
+            self.refund_quest_cost(quest_id, charged);
+        }
+        let what = match &started {
             Ok(true) => format!(
                 "quest {quest_id} accepted from NPC {npc_template} by character {} ({}) and stored",
                 chr.id, chr.name
@@ -721,6 +754,12 @@ impl Session {
         out.push(Reply { opcode: net::quest::MESSAGE, body: net::quest::quest_accepted(quest_id), what });
         // Only on the transition. A row that already existed has already been paid.
         if before.is_none() {
+            // The cost line, or `Act.0.money`'s payout, only for a row that was written (a cost
+            // was refunded above otherwise).
+            if matches!(started, Ok(true)) {
+                out.extend(self.quest_cost_replies(quest_id, charged));
+                out.extend(self.pay_quest_mesos(quest_id, 0));
+            }
             out.extend(self.grant_quest_start_items(quest_id));
             out.extend(self.apply_quest_hp(quest_id, 0));
             // **Last, because it changes the field.** A `SetField` tears down whatever
