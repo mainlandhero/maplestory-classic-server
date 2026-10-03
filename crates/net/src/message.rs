@@ -640,6 +640,19 @@ pub fn meso_lost_line(amount: u32) -> Vec<u8> {
     chat_line(chat_category::GREY, &format!("You have lost mesos (-{amount})"))
 }
 
+/// `You have gained mesos (+n)` as a grey **chat** line - the gain twin of
+/// [`meso_lost_line`], for mesos that were *given* rather than picked up.
+///
+/// The owner, 2026-10-02: *"When quests give you mesos, it should use the chat's you have
+/// gained/lost mesos message instead of showing up as a message on the bottom right similar
+/// to picking up mesos."* [`meso_gained`] is the pick-up arm, which draws only in the message
+/// area. The client's own stat-change arm, [`kind::MESO`], does post to chat type 6, but its
+/// body (`u64, u32, str`) is not decoded; this is the measured route the fares already use.
+/// The wording is the client's string `0xE1`.
+pub fn meso_gained_line(amount: u32) -> Vec<u8> {
+    chat_line(chat_category::GREY, &format!("You have gained mesos (+{amount})"))
+}
+
 /// **Superseded by [`meso_lost_line`] for fares.** Kept because it is the client's own word
 /// for the event and the decode above is worth not losing.
 ///

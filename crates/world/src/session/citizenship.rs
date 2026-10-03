@@ -616,10 +616,11 @@ impl Session {
             return self.notice(format!("Quest {quest_id}'s {paid} mesos could not be paid: {e}"));
         }
         let mut out = self.meso_reply(chr.id);
+        // In the chat box, not the pick-up area (the owner, 2026-10-02).
         out.push(Reply {
             opcode: net::message::MESSAGE,
-            body: net::message::meso_gained(paid as i32),
-            what: format!("Message: quest {quest_id} paid {paid} mesos ({base} at {rate}x)"),
+            body: net::message::meso_gained_line(paid),
+            what: format!("Message: quest {quest_id} paid {paid} mesos ({base} at {rate}x), as a grey chat line"),
         });
         out
     }
@@ -1134,7 +1135,8 @@ mod tests {
         assert!(out.iter().any(|r| r.body == net::citizenship::contribution_gained(1, 150)), "150 at grade 2, NOT x10: {out:?}");
         assert!(!out.iter().any(|r| r.body == net::citizenship::contribution_gained(1, 1_500)), "the old 10x is gone");
         assert_eq!(store.mesos(id).unwrap(), 3_510, "351 x10");
-        assert!(out.iter().any(|r| r.body == net::message::meso_gained(3_510)));
+        assert!(out.iter().any(|r| r.body == net::message::meso_gained_line(3_510)), "in the chat box");
+        assert!(!out.iter().any(|r| r.body == net::message::meso_gained(3_510)), "not the pick-up line");
 
         let _ = s.handle(&quest_request(1, STORY_QUEST, 206));
         let out = s.handle(&quest_request(2, STORY_QUEST, 206));
