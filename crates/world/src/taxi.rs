@@ -176,6 +176,17 @@ pub const FARE_MESOS: u32 = 500;
 /// once and read by the two rows that use it.
 pub const VIP_FARE_MESOS: u32 = 10_000;
 
+/// Sleepywood, `10005000` in `gm-handbook/maps.txt`.
+pub const SLEEPYWOOD: u32 = 10_005_000;
+
+/// What any ride **to or from** Sleepywood costs.
+///
+/// The owner, 2026-10-02: *"In taxis, sleepywood should always cost 1000 mesos instead of 500
+/// mesos"*, then *"rides originating from sleepywood should all cost 1000 mesos"*. So every
+/// [`Network::Victoria`] row prices the Sleepywood stop here ([`fare_to`]), and Sleepywood's
+/// own cab carries it as its row fare.
+pub const SLEEPYWOOD_FARE_MESOS: u32 = 1_000;
+
 /// The line break: the **two characters** backslash and `n`.
 ///
 /// Not a real `0x0A`. See the module doc for the listing - a token beginning with `\` and one
@@ -322,7 +333,7 @@ pub const TAXIS: &[Taxi] = &[
     Taxi { template: 302, name: "VIP Cab", home_map: 10_002_000, voice: Voice::Cab, network: Network::Dungeon, fare: VIP_FARE_MESOS, extra: None },
     Taxi { template: 400, name: "Regular Cab", home_map: 10_003_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS, extra: None },
     Taxi { template: 500, name: "Regular Cab", home_map: 10_004_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS, extra: None },
-    Taxi { template: 600, name: "Regular Cab", home_map: 10_005_000, voice: Voice::Cab, network: Network::Victoria, fare: FARE_MESOS, extra: None },
+    Taxi { template: 600, name: "Regular Cab", home_map: SLEEPYWOOD, voice: Voice::Cab, network: Network::Victoria, fare: SLEEPYWOOD_FARE_MESOS, extra: None },
 
     // **No ferry rows.** The Ossyria line (Eurek in Sleepywood and El Nath, the Platform Usher
     // in Orbis) was removed on 2026-09-29 at the owner's word - see `Network`. The ships are the
@@ -402,6 +413,7 @@ fn network_stops(taxi: &Taxi) -> Vec<u32> {
 pub fn fare_to(taxi: &Taxi, map_id: u32) -> u32 {
     match taxi.extra {
         Some(stop) if stop.map_id == map_id => stop.fare,
+        _ if taxi.network == Network::Victoria && map_id == SLEEPYWOOD => SLEEPYWOOD_FARE_MESOS,
         _ => taxi.fare,
     }
 }
@@ -474,9 +486,13 @@ fn map_name(config: &Config, map_id: u32) -> String {
 pub fn header(taxi: &Taxi) -> String {
     let fare = taxi.fare;
     match taxi.voice {
-        Voice::Cab => format!(
-            "Where to? It's #b{fare} mesos#k anywhere on the island - just say the word."
-        ),
+        // No number: since Sleepywood went to 1,000 a cab's fares differ by stop, so every cab
+        // line names its own price (`line_label`). The owner, 2026-10-02: "take you anywhere
+        // on the island for a fair price".
+        Voice::Cab => {
+            "Where to? I can take you anywhere on the island for a fair price - just say the word."
+                .to_string()
+        }
         // Their own shipped `idle0`, then the offer in their own register.
         Voice::TourGuide => format!(
             "Welcome to Classic World! I'm Lyn, and I'd love to show you around Victoria \
@@ -509,15 +525,16 @@ pub fn menu_text(taxi: &Taxi, config: &Config) -> String {
     out
 }
 
-/// What a destination's line says. A network stop is its map name; the row's own stop names
-/// its price too, because the header quoted the other one - "Southperry (Maple Island) -
-/// 20000 mesos" under a header that said the tour is 500.
+/// What a destination's line says. **A cab's every line names its price** - its header
+/// quotes none - as `Henesys - 500 mesos`. Lyn's header quotes the tour's 500, so her network
+/// stops are bare names and only a stop priced away from it says so: "Southperry (Maple
+/// Island) - 20000 mesos", "Sleepywood - 1000 mesos".
 pub fn line_label(taxi: &Taxi, config: &Config, map_id: u32) -> String {
     let name = map_name(config, map_id);
+    let fare = fare_to(taxi, map_id);
     match taxi.extra {
-        Some(stop) if stop.map_id == map_id => {
-            format!("{name} (Maple Island) - {} mesos", stop.fare)
-        }
+        Some(stop) if stop.map_id == map_id => format!("{name} (Maple Island) - {fare} mesos"),
+        _ if taxi.voice == Voice::Cab || fare != taxi.fare => format!("{name} - {fare} mesos"),
         _ => name,
     }
 }
@@ -923,7 +940,9 @@ mod tests {
         // service. If it ever does, a town silently loses its taxi and this catches it.
         assert_eq!(towns, TOWNS, "the six Victoria Island towns");
         for t in &victoria {
-            assert_eq!(t.fare, FARE_MESOS, "a cab charges the cab fare");
+            // Sleepywood's own cab charges the Sleepywood fare for every ride out (2026-10-02).
+            let want = if t.home_map == SLEEPYWOOD { SLEEPYWOOD_FARE_MESOS } else { FARE_MESOS };
+            assert_eq!(t.fare, want, "row {} charges its town's fare", t.template);
         }
 
         // **The VIP cabs.** The owner: *"VIP Cabs should transport players to Dungeon: Ant Tunnel
@@ -1542,5 +1561,61 @@ mod tests {
         let step = route(&store, &cfg, id, henesys_cab(), &MenuReply { selection: Some(5) });
         assert!(matches!(step, Step::Refused { .. }), "{step:?}");
         assert_eq!(store.mesos(id).unwrap(), 50_000);
+    }
+
+    /// **Sleepywood costs 1,000 both ways** (the owner, 2026-10-02): to it from every row that
+    /// goes there, and every ride out of it. Every other town-to-town ride is still 500.
+    #[test]
+    fn every_ride_to_or_from_sleepywood_costs_a_thousand() {
+        let cfg = config();
+        let mut offered = 0;
+        for t in TAXIS.iter().filter(|t| t.network == Network::Victoria) {
+            for map in destinations(t) {
+                let want = match map {
+                    m if t.extra.map(|s| s.map_id) == Some(m) => t.extra.unwrap().fare,
+                    _ if map == SLEEPYWOOD || t.home_map == SLEEPYWOOD => SLEEPYWOOD_FARE_MESOS,
+                    _ => FARE_MESOS,
+                };
+                assert_eq!(fare_to(t, map), want, "row {} to {map}", t.template);
+                // A cab's header names no price, so every one of its lines does.
+                if t.voice == Voice::Cab {
+                    assert!(line_label(t, &cfg, map).ends_with(&format!(" - {want} mesos")), "row {} to {map}", t.template);
+                }
+            }
+            if let Some(sel) = destinations(t).iter().position(|&m| m == SLEEPYWOOD) {
+                offered += 1;
+                let label = line_label(t, &cfg, SLEEPYWOOD);
+                assert_eq!(label, "Sleepywood - 1000 mesos");
+                assert!(menu_text(t, &cfg).contains(&menu_line(sel as u32, &label)));
+            }
+        }
+        assert_eq!(offered, 5, "Lyn and every Regular Cab but Sleepywood's own offer it");
+        assert!(header(henesys_cab()).contains("anywhere on the island for a fair price"), "{}", header(henesys_cab()));
+        // Lyn's header still quotes the tour's 500, so her 500 stops stay bare names.
+        assert_eq!(line_label(lyn(), &cfg, 10_001_000), "Henesys");
+
+        // Out of Sleepywood: 999 is refused, 1,000 rides to Henesys with nothing left.
+        let sleepy = taxi_for(600, SLEEPYWOOD).expect("Sleepywood has a Regular Cab");
+        let to_henesys = destinations(sleepy).iter().position(|&m| m == 10_001_000).unwrap() as u32;
+        let (store, id) = store_with(999);
+        let step = route(&store, &cfg, id, sleepy, &MenuReply { selection: Some(to_henesys) });
+        assert!(matches!(step, Step::Refused { .. }), "{step:?}");
+        assert_eq!(store.mesos(id).unwrap(), 999);
+        let (store, id) = store_with(1_000);
+        let step = route(&store, &cfg, id, sleepy, &MenuReply { selection: Some(to_henesys) });
+        let Step::Ride { map_id, fare, balance, .. } = step else { panic!("expected Ride: {step:?}") };
+        assert_eq!((map_id, fare, balance), (10_001_000, 1_000, 0));
+
+        // 999 is refused and charges nothing; 1,000 rides with nothing left.
+        let sel = destinations(henesys_cab()).iter().position(|&m| m == SLEEPYWOOD).unwrap() as u32;
+        let (store, id) = store_with(999);
+        let step = route(&store, &cfg, id, henesys_cab(), &MenuReply { selection: Some(sel) });
+        let Step::Refused { text, .. } = step else { panic!("expected a refusal: {step:?}") };
+        assert!(text.contains("1000") && text.contains("999"), "{text}");
+        assert_eq!(store.mesos(id).unwrap(), 999);
+        let (store, id) = store_with(1_000);
+        let step = route(&store, &cfg, id, henesys_cab(), &MenuReply { selection: Some(sel) });
+        let Step::Ride { map_id, fare, balance, .. } = step else { panic!("expected Ride: {step:?}") };
+        assert_eq!((map_id, fare, balance), (SLEEPYWOOD, 1_000, 0));
     }
 }
