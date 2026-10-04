@@ -236,7 +236,11 @@ pub enum Event {
     /// left. Their own session gives back their offer (only it can draw their bag) and closes
     /// their window at `slot`, their own member slot, with the message `reason` picks
     /// (`net::trade::LEAVE_*`).
-    TradeEnded { slot: u8, reason: u32 },
+    ///
+    /// With `received`, the trade COMPLETED (`reason` is `net::trade::LEAVE_TRADE_DONE`): the
+    /// store has already moved everything, and this is what landed in this character's bag
+    /// and wallet, for their session to draw before the window closes.
+    TradeEnded { slot: u8, reason: u32, received: Option<store::tradeescrow::Received> },
 
     /// **A stage-clear EXP award**, as a percent of the recipient's OWN next level - which is
     /// why it crosses as a percent and not as an amount: only their session knows their

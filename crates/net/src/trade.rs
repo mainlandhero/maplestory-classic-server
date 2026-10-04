@@ -73,8 +73,16 @@ pub enum Request {
     /// increment is not read off the client; it is taken as the total, which is what the room
     /// echo stores (`mesos[seat] = amount`, `FUN_14214A9C0`) **[I]**.
     PutMesos { amount: u64 },
-    /// Mode `0x10` with any other sub-action - the Trade button among them, whose sender has
-    /// not been found. Carried so the log names it.
+    /// Mode `0x10` sub 2: **the Trade button**. `u8 count`, then per item THIS side put in a
+    /// `(u32 itemId, u32 checksum)` pair. Captured 2026-10-03 [L]: a side with only mesos in
+    /// sent `10000000 02000000 00`; a side with arrows and a scroll in sent count 2,
+    /// `(0x1F6EE0 = 2060000, ..)` and `(0x1F4000 = 2048000, ..)` - its own two items.
+    TradeConfirm { items: Vec<(u32, u32)> },
+    /// Mode `0x10` sub 5: the answer a client gives BY ITSELF when told its partner pressed
+    /// Trade (inbound sub 2, `FUN_14214B090`): the same pairs for every item it sees on the
+    /// PARTNER's side (`items[1]`). Lets the server check both screens show one table.
+    TradeVerify { items: Vec<(u32, u32)> },
+    /// Mode `0x10` with any other sub-action. Carried so the log names it.
     TradeOther { sub: u32 },
     /// Mode 8: a line typed in the trade window's chat. `u32` (a client tick - it rose
     /// between the two captured lines), then the text. Captured 2026-10-03:
@@ -113,6 +121,18 @@ pub fn parse_request(body: &[u8]) -> Option<Request> {
                 trade_slot: c.u8().ok()?,
             },
             TRADE_PUT_MESOS => Request::PutMesos { amount: c.u64().ok()? },
+            sub @ (TRADE_CONFIRM | TRADE_VERIFY) => {
+                let n = c.u8().ok()?;
+                let mut items = Vec::with_capacity(usize::from(n));
+                for _ in 0..n {
+                    items.push((c.u32().ok()?, c.u32().ok()?));
+                }
+                if sub == TRADE_CONFIRM {
+                    Request::TradeConfirm { items }
+                } else {
+                    Request::TradeVerify { items }
+                }
+            }
             sub => Request::TradeOther { sub },
         },
         other => Request::Other { mode: other },
@@ -348,6 +368,22 @@ pub const TRADE_ACTION: u32 = 0x10;
 pub const TRADE_PUT_ITEM: u32 = 0;
 /// Sub-action 1: mesos.
 pub const TRADE_PUT_MESOS: u32 = 1;
+/// Sub-action 2 - outbound the Trade button, inbound "your partner pressed Trade" (no body:
+/// `FUN_14214A9C0` reads nothing more, and calls `FUN_14214B090`, which marks the partner as
+/// ready - `room+0x504 = 1` and a redraw, the indicator - and sends [`TRADE_VERIFY`]).
+pub const TRADE_CONFIRM: u32 = 2;
+/// Sub-action 5, outbound only: the checksums a client sends back on an inbound
+/// [`TRADE_CONFIRM`].
+pub const TRADE_VERIFY: u32 = 5;
+
+/// `0x0575` mode `0x10` sub 2: **your partner pressed Trade.** 8 bytes.
+pub fn partner_confirmed() -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(TRADE_ACTION);
+    w.u32(TRADE_CONFIRM);
+    w.into_vec()
+}
+
 /// The trade grid: the client's own loop bound over `items[seat]` (`cmp r14d, 9`) [L].
 pub const TRADE_SLOTS: u8 = 9;
 
@@ -491,7 +527,18 @@ mod tests {
         assert_eq!(parse_request(&[0x0c, 0, 0, 0]), Some(Request::Leave));
         let hello = [8u8, 0, 0, 0, 0x0a, 0x0c, 0x47, 0x04, 5, 0, b'h', b'e', b'l', b'l', b'o'];
         assert_eq!(parse_request(&hello), Some(Request::Chat { text: "hello".into() }));
-        assert_eq!(parse_request(&[0x10, 0, 0, 0, 2, 0, 0, 0]), Some(Request::TradeOther { sub: 2 }));
+        assert_eq!(parse_request(&[0x10, 0, 0, 0, 7, 0, 0, 0]), Some(Request::TradeOther { sub: 7 }));
+        // The Trade button, both captured bodies of 2026-10-03.
+        assert_eq!(parse_request(&[0x10, 0, 0, 0, 2, 0, 0, 0, 0]), Some(Request::TradeConfirm { items: vec![] }));
+        let two = [
+            0x10u8, 0, 0, 0, 2, 0, 0, 0, 2, 0xe0, 0x6e, 0x1f, 0x00, 0xab, 0xde, 0xda, 0xde, 0x00, 0x40, 0x1f, 0x00, 0x83, 0x38, 0x14, 0xd9,
+        ];
+        assert_eq!(
+            parse_request(&two),
+            Some(Request::TradeConfirm { items: vec![(2_060_000, 0xdedadeab), (2_048_000, 0xd9143883)] })
+        );
+        assert_eq!(parse_request(&two[..24]), None, "a pair one byte short does not decode");
+        assert_eq!(partner_confirmed(), vec![0x10, 0, 0, 0, 2, 0, 0, 0]);
         assert_eq!(parse_request(&eggs[..13]), None, "a put one byte short does not decode");
     }
 

@@ -2652,10 +2652,10 @@
           e. open the box and pick the look you already wear: the CLIENT warns and nothing is
              spent
 
-    43. TRADE, SECOND PASS (2026-10-03). Two clients on one map. Vanilla now: what you put in
-        LEAVES your bag or wallet, and comes back if the trade is cancelled. The Trade button is
-        still not handled (its packet has never been captured), so nothing changes hands.
-        Already seen on screen: your own offer draws on YOUR side of your window.
+    43. TRADE, THIRD PASS (2026-10-03). Two clients on one map. What you put in LEAVES your bag
+        or wallet and comes back if the trade is cancelled; the Trade button now completes it.
+        Already seen on screen: your own offer draws on YOUR side of BOTH windows, the red
+        "You have sent a trade request" line, and puts after the first one.
           a. Tester2 invites the owner: Tester2's chat shows a red "You have sent a trade request
              to '<name>'." -> fixed. Now have the owner open an NPC shop (or storage, or talk
              to an NPC) and invite again: no popup for the owner, and Tester2 sees "'<name>' is
@@ -2670,8 +2670,24 @@
              colours -> fixed. Nothing in one or both -> paste the "mode 8" lines
           e. close the window with things on both sides: the other closes with "Trade cancelled
              by the other character", and BOTH players get their items and mesos back -> fixed
-          f. press Trade: nothing happens yet. Paste the 0x017E line it sends. The 5% meso fee
-             is built (the receiver gets 95%, rounded down) and waits on that packet.
+          f. press Trade on ONE side: the OTHER window shows that side as ready -> fixed.
+               no sign on the other screen -> paste the "0x10/2" line
+          g. press Trade on the other side too: both windows close with "Trade successful.",
+             the items cross, and the mesos arrive LESS 5% (2000 arrives as 1900) -> fixed.
+               the receiver's message says "Received 1900 mesos after fees" or just "Trade
+               successful" - say which; either is fine
+               "There was a problem trading the item." -> paste the 0x10/2 and 0x10/5 lines
+          h. THE ONE UNKNOWN. Tester2 presses Trade; the owner then puts in more mesos INSTEAD of
+             pressing. Tester2 gets a red "<name> changed the trade. Press Trade again ..." -
+             Tester2's press no longer counts. Now:
+               Tester2 CAN press Trade again, then the owner presses: done -> fixed
+               Tester2's button stays greyed -> this client never un-presses a button (nothing
+                          found that clears it). Close the window - both sides get everything
+                          back - and SAY SO: the fix is then to lock the table at the first
+                          press instead
+             Also say whether, after that change, the owner's window still shows Tester2 as
+             ready. And watch for any 0x017E line that is NOT 0x10/2 or 0x10/5 around the
+             second press - a separate "execute" packet would show up there.
 
     42. DISORDER'S DEBUFF (2026-10-02) - the first mob status ever sent (0x03E6). A thief with
         Disorder: hit a mob with it and look ABOVE the mob.
@@ -6475,8 +6491,8 @@ function Show-TestPlan {
         Write-Host '       blank head / client dies on the HAIR bit -> paste client-exit.log' -ForegroundColor Yellow
         Write-Host '       Dr. Feeble, "blend two eye colours": the same for the eyes' -ForegroundColor Cyan
         Write-Host ''
-        Write-Host '  43. TRADE, 2ND PASS (2026-10-03): puts LEAVE the bag/wallet, cancel gives them back.' -ForegroundColor White
-        Write-Host '       Trade button still not handled - nothing changes hands yet.' -ForegroundColor Cyan
+        Write-Host '  43. TRADE, 3RD PASS (2026-10-03): the Trade button completes it now.' -ForegroundColor White
+        Write-Host '       Puts LEAVE the bag/wallet; a cancel gives them back.' -ForegroundColor Cyan
         Write-Host '       a. invite: red "You have sent a trade request to ..." -> fixed. Target in an' -ForegroundColor Green
         Write-Host '          NPC shop/storage/dialogue: no popup, "... is doing something else" -> fixed' -ForegroundColor Green
         Write-Host '       b. drag a stack in: it leaves the bag; drag a SECOND item: it goes in -> fixed' -ForegroundColor Green
@@ -6486,7 +6502,12 @@ function Show-TestPlan {
         Write-Host '          missing -> paste the mode 8 lines' -ForegroundColor Yellow
         Write-Host '       e. close with things on both sides: other window closes "cancelled by the' -ForegroundColor Green
         Write-Host '          other character", BOTH get items + mesos back -> fixed' -ForegroundColor Green
-        Write-Host '       f. press Trade: nothing yet - paste the 0x017E line (5% fee is built)' -ForegroundColor Cyan
+        Write-Host '       f. Trade on ONE side: the other window shows them ready -> fixed' -ForegroundColor Green
+        Write-Host '       g. Trade on both: "Trade successful.", items cross, mesos arrive LESS 5%' -ForegroundColor Green
+        Write-Host '          (2000 -> 1900) -> fixed. "problem trading the item" -> paste 0x10/2 + 0x10/5' -ForegroundColor Yellow
+        Write-Host '       h. UNKNOWN: A presses Trade, B changes mesos instead. A is told in red to press' -ForegroundColor Cyan
+        Write-Host '          again. A CAN press again, then B: done -> fixed. A greyed out -> close the' -ForegroundColor Green
+        Write-Host '          window (all comes back) and SAY SO - then the fix is locking at first press' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  42. DISORDER DEBUFF (2026-10-02, FIRST 0x03E6 EVER): hit a mob with Disorder,' -ForegroundColor White
         Write-Host '       look ABOVE it: debuff icon for 10-30 s -> fixed' -ForegroundColor Cyan

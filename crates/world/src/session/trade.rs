@@ -46,6 +46,8 @@ pub(crate) struct Seat {
     name: String,
     look: Vec<u8>,
     map_id: crate::fields::FieldKey,
+    /// Pressed Trade. Once either side has, nothing more goes on the table.
+    confirmed: bool,
 }
 
 /// Every trade room open on one channel, keyed by the ticket - the inviter's character id.
@@ -111,6 +113,7 @@ impl Session {
                     name: chr.name.clone(),
                     look: net::opcode::avatar_look(&chr),
                     map_id: self.field_of(&chr),
+                    confirmed: false,
                 };
                 self.with_rooms(|rooms| {
                     rooms.retain(|(ticket, _)| *ticket != chr.id);
@@ -175,11 +178,10 @@ impl Session {
             net::trade::Request::PutMesos { amount } => return self.trade_put_mesos(&chr, amount),
             net::trade::Request::Leave => return self.trade_leave(&chr, "closed the trade window"),
             net::trade::Request::Chat { text } => return self.trade_chat(&chr, &text),
-            // **The Trade button is in here.** Its sender has not been found in the client, so
-            // the log names the sub-action and the body (the line above this one) for the run
-            // that presses it. Nothing moves until it is decoded.
+            net::trade::Request::TradeConfirm { items } => return self.trade_confirm(&chr, &items),
+            net::trade::Request::TradeVerify { items } => return self.trade_verify(&chr, &items),
             net::trade::Request::TradeOther { sub } => crate::server::log(&format!(
-                "   trade: character {} sent trade action {sub} (mode 0x10), which is not handled yet - nothing moved. 0 is an item and 1 is mesos; the Trade button is the likely sender of this one.",
+                "   trade: character {} sent trade action {sub} (mode 0x10), which is not handled - nothing moved. 0 item, 1 mesos, 2 the Trade button, 5 the partner's check.",
                 chr.id
             )),
             net::trade::Request::Other { mode } => crate::server::log(&format!(
@@ -206,6 +208,7 @@ impl Session {
             name: chr.name.clone(),
             look: net::opcode::avatar_look(chr),
             map_id: self.field_of(&chr),
+            confirmed: false,
         };
         let room = self.with_rooms(|rooms| {
             let slot = rooms.iter().position(|(t, _)| *t == ticket)?;
@@ -338,6 +341,9 @@ impl Session {
         let Some((_, partner)) = self.trade_partner_of(chr.id) else {
             return self.trade_refused(chr, "You are not trading with anyone");
         };
+        if self.trade_pressed(chr.id) {
+            return self.trade_refused(chr, "You have pressed Trade - your side can no longer change");
+        }
         if !(1..=net::trade::TRADE_SLOTS).contains(&trade_slot) {
             return self.trade_refused(chr, &format!("There is no trade slot {trade_slot}"));
         }
@@ -387,6 +393,7 @@ impl Session {
             chr.id, taken.item_id
         ));
         let mut out = self.stack_change_replies(inv, bag_slot, left);
+        out.extend(self.trade_unconfirm_partner_of(chr.id, &chr.name));
         out.push(Reply {
             opcode: net::trade::MINIROOM_RESULT,
             body: net::trade::put_item(net::trade::SEAT_SELF, trade_slot, &blob),
@@ -404,6 +411,9 @@ impl Session {
         let Some((_, partner)) = self.trade_partner_of(chr.id) else {
             return self.trade_refused(chr, "You are not trading with anyone");
         };
+        if self.trade_pressed(chr.id) {
+            return self.trade_refused(chr, "You have pressed Trade - your side can no longer change");
+        }
         let Ok(total) = u32::try_from(amount) else {
             return self.trade_refused(chr, &format!("{amount} mesos is more than a wallet holds"));
         };
@@ -424,6 +434,7 @@ impl Session {
             chr.id
         ));
         let mut out = self.meso_reply(chr.id);
+        out.extend(self.trade_unconfirm_partner_of(chr.id, &chr.name));
         out.push(Reply {
             opcode: net::trade::MINIROOM_RESULT,
             body: net::trade::put_mesos(net::trade::SEAT_SELF, amount),
@@ -542,7 +553,7 @@ impl Session {
         let told = partner.as_ref().map(|p| {
             self.bus().publish_event_to_character(
                 p.character_id,
-                crate::broadcast::Event::TradeEnded { slot: (1 - seat) as u8, reason: net::trade::LEAVE_CANCELLED_BY_PARTNER },
+                crate::broadcast::Event::TradeEnded { slot: (1 - seat) as u8, reason: net::trade::LEAVE_CANCELLED_BY_PARTNER, received: None },
             )
         });
         crate::server::log(&format!(
@@ -557,16 +568,226 @@ impl Session {
         self.trade_give_back(chr.id, why)
     }
 
-    /// The partner left ([`crate::broadcast::Event::TradeEnded`]): this side's offer comes back,
-    /// and its window closes at `slot` - its own - with the message `reason` picks.
-    pub(super) fn receive_trade_ended(&mut self, slot: u8, reason: u32) -> Vec<Reply> {
+    /// The trade ended on the partner's side ([`crate::broadcast::Event::TradeEnded`]). With
+    /// `received` it COMPLETED and this is what the store already put in this bag and wallet,
+    /// drawn before the window closes (the client words its success message from its own
+    /// wallet having risen). Without, it was cancelled or failed: this side's offer comes back.
+    /// Either way the window closes at `slot` - its own - with the message `reason` picks.
+    pub(super) fn receive_trade_ended(&mut self, slot: u8, reason: u32, received: Option<store::tradeescrow::Received>) -> Vec<Reply> {
         let Some(chr) = self.claimed_character() else { return Vec::new() };
-        let mut out = self.trade_give_back(chr.id, "had the trade cancelled by the other character");
+        let mut out = match received {
+            Some(got) => self.trade_draw_received(chr.id, &got),
+            None => self.trade_give_back(chr.id, "had the trade end on the other side"),
+        };
         out.push(Reply {
             opcode: net::trade::MINIROOM_RESULT,
             body: net::trade::room_leave(slot, reason),
             what: format!("MiniroomResult mode 0x0C to character {} (slot {slot}): their trade window closes, reason {reason}", chr.id),
         });
+        out
+    }
+
+    /// Whether `character` has pressed Trade. Their own side is then fixed - the client
+    /// refuses their puts itself (`FUN_14214B5D0` and `FUN_14214BC10` bail on `room+0x500`, the
+    /// flag the button sets), and the server agrees.
+    fn trade_pressed(&self, character: u32) -> bool {
+        self.with_rooms(|rooms| {
+            rooms.seat_of(character).is_some_and(|(room, seat)| rooms[room].1[seat].as_ref().is_some_and(|s| s.confirmed))
+        })
+    }
+
+    /// **`character`'s side just changed, so a press by their partner no longer counts.** The
+    /// owner, 2026-10-03: *"If the other party does not press trade, but instead modifies
+    /// items/mesos in the trade window, it will cancel the confirmation of the trade for the
+    /// other side, because since trade contents have been changed, the player who originally
+    /// accepted needs to reconfirm the contents of the trade."* The partner is told so in red
+    /// and has to press Trade again.
+    ///
+    /// **Whether this client lets them press again is not measured.** Nothing found clears the
+    /// client's own pressed flag (`room+0x500`) once the button sets it, nor the partner-ready
+    /// flag (`room+0x504`) our 0x10/2 sets - a `[reg+disp]` write scan of the trade class, whose
+    /// blind spot is a store through a pointer. If the button stays greyed, the presser can
+    /// still cancel (everything comes back) - plan step 43 (h) is the measurement.
+    fn trade_unconfirm_partner_of(&mut self, character: u32, changer: &str) -> Vec<Reply> {
+        let cleared = self.with_rooms(|rooms| {
+            let (room, seat) = rooms.seat_of(character)?;
+            let partner = rooms[room].1[1 - seat].as_mut()?;
+            std::mem::replace(&mut partner.confirmed, false).then_some(partner.character_id)
+        });
+        if let Some(partner) = cleared {
+            let text = format!("{changer} changed the trade. Press Trade again to accept the new contents.");
+            self.bus().publish_to_character_anywhere(
+                partner,
+                Reply {
+                    opcode: net::message::MESSAGE,
+                    body: net::message::chat_line_system(&text),
+                    what: format!("Message chat line (system, category 11): {text:?} - their Trade press no longer counts"),
+                },
+            );
+            crate::server::log(&format!("   trade: character {character} changed their side, so partner {partner}'s Trade press is cancelled; they have to press again."));
+        }
+        Vec::new()
+    }
+
+    /// The items `character` really has on the table, as sorted item ids.
+    fn trade_offered_ids(&self, character: u32) -> Vec<u32> {
+        let mut ids: Vec<u32> =
+            self.store.trade_escrow(character).map(|(lines, _)| lines.iter().map(|l| l.item.item_id).collect()).unwrap_or_default();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// **Mode `0x10` sub 2: the Trade button.** The owner, 2026-10-03: *"when I click both trade
+    /// button, the other player does not have an indication that the trade has been accepted
+    /// by the player. When both players clicked the trade, the trade does not happen."*
+    ///
+    /// The first press: the presser's list (`(itemId, checksum)` per item it put in) is checked
+    /// against what is really on the table, the presser's side is fixed, and the partner is sent
+    /// `0x0575` 0x10/2 - their client marks this side ready (the indicator) and answers by
+    /// itself with 0x10/5, its view of this side's items ([`Session::trade_verify`]).
+    /// The second press completes it ([`Session::trade_complete`]).
+    fn trade_confirm(&mut self, chr: &net::opcode::Character, claimed: &[(u32, u32)]) -> Vec<Reply> {
+        let state = self.with_rooms(|rooms| {
+            let (room, seat) = rooms.seat_of(chr.id)?;
+            let partner = rooms[room].1[1 - seat].as_ref()?;
+            let (partner, partner_ready) = (partner.character_id, partner.confirmed);
+            let me = rooms[room].1[seat].as_mut()?;
+            let again = std::mem::replace(&mut me.confirmed, true);
+            Some((seat, partner, partner_ready, again))
+        });
+        let Some((seat, partner, partner_ready, again)) = state else {
+            crate::server::log(&format!("   trade: character {} pressed Trade with no open trade here; nothing done.", chr.id));
+            return Vec::new();
+        };
+        if again {
+            return Vec::new();
+        }
+        let mut listed: Vec<u32> = claimed.iter().map(|&(id, _)| id).collect();
+        listed.sort_unstable();
+        let offered = self.trade_offered_ids(chr.id);
+        if listed != offered {
+            return self.trade_fail(chr, seat, partner, net::trade::LEAVE_PROBLEM, &format!("their client listed {listed:?} but the table holds {offered:?}"));
+        }
+        if partner_ready {
+            return self.trade_complete(chr, seat, partner);
+        }
+        let told = self.tell_trade_partner(
+            partner,
+            net::trade::partner_confirmed(),
+            format!("MiniroomResult 0x10/2 to character {partner}: their partner ({}) pressed Trade", chr.name),
+        );
+        if !told {
+            return self.trade_partner_unreachable(chr, partner);
+        }
+        crate::server::log(&format!(
+            "   trade: character {} pressed Trade ({} item(s) on their side, as listed); their side is fixed and partner {partner} is shown it. Waiting for them.",
+            chr.id,
+            offered.len()
+        ));
+        Vec::new()
+    }
+
+    /// **Mode `0x10` sub 5: the partner's client checking what it was shown.** Sent by itself
+    /// on our 0x10/2: every item it draws on the OTHER side. If that is not what the other side
+    /// really has on the table, the two screens disagree and the trade is stopped - "There was
+    /// a problem trading the item." for both.
+    fn trade_verify(&mut self, chr: &net::opcode::Character, seen: &[(u32, u32)]) -> Vec<Reply> {
+        let Some((seat, partner)) = self.trade_partner_of(chr.id) else {
+            return Vec::new(); // the trade already ended; a late check has nothing to check
+        };
+        let mut shown: Vec<u32> = seen.iter().map(|&(id, _)| id).collect();
+        shown.sort_unstable();
+        let offered = self.trade_offered_ids(partner);
+        if shown != offered {
+            return self.trade_fail(
+                chr,
+                seat,
+                partner,
+                net::trade::LEAVE_PROBLEM,
+                &format!("their window shows the partner offering {shown:?} but the table holds {offered:?}"),
+            );
+        }
+        crate::server::log(&format!(
+            "   trade: character {}'s window shows partner {partner}'s {} item(s) as they are - checked.",
+            chr.id,
+            shown.len()
+        ));
+        Vec::new()
+    }
+
+    /// **Both pressed Trade: everything changes hands.** One transaction in the store
+    /// (`Store::complete_trade`): each side's escrow into the other's bag, mesos less the 5% fee
+    /// (the window's own notice), both escrows emptied. Each side is shown what arrived and its
+    /// window closes with "Trade successful." (reason 9) - this side here, the partner through
+    /// [`crate::broadcast::Event::TradeEnded`] carrying what landed in their bag.
+    ///
+    /// If a bag cannot take its side, or a wallet would pass the cap, NOTHING moves and the
+    /// trade fails: "Trade unsuccessful." for both, and each offer goes back to its owner.
+    fn trade_complete(&mut self, chr: &net::opcode::Character, seat: usize, partner: u32) -> Vec<Reply> {
+        let config = self.config.clone();
+        let max_stack = move |id: u32| config.shops.max_stack(id);
+        match self.store.complete_trade(chr.id, partner, &max_stack) {
+            Ok((mine, theirs)) => {
+                self.with_rooms(|rooms| {
+                    if let Some((room, _)) = rooms.seat_of(chr.id) {
+                        rooms.remove(room);
+                    }
+                });
+                crate::server::log(&format!(
+                    "   trade: COMPLETED between {} and {partner}. {} received {} line(s) and {} mesos; {partner} received {} line(s) and {} mesos (mesos after the 5% fee).",
+                    chr.id,
+                    chr.id,
+                    mine.placed.len(),
+                    mine.mesos,
+                    theirs.placed.len(),
+                    theirs.mesos
+                ));
+                self.bus().publish_event_to_character(
+                    partner,
+                    crate::broadcast::Event::TradeEnded { slot: (1 - seat) as u8, reason: net::trade::LEAVE_TRADE_DONE, received: Some(theirs) },
+                );
+                let mut out = self.trade_draw_received(chr.id, &mine);
+                out.push(Reply {
+                    opcode: net::trade::MINIROOM_RESULT,
+                    body: net::trade::room_leave(seat as u8, net::trade::LEAVE_TRADE_DONE),
+                    what: format!("MiniroomResult mode 0x0C to character {} (slot {seat}): trade window closes, reason 9 - Trade successful", chr.id),
+                });
+                out
+            }
+            Err(e) => self.trade_fail(chr, seat, partner, net::trade::LEAVE_UNSUCCESSFUL, &format!("the exchange could not be made ({e})")),
+        }
+    }
+
+    /// **The trade stops without completing**: the room closes, each offer goes back to its
+    /// owner, and both windows close with `reason`'s message.
+    fn trade_fail(&mut self, chr: &net::opcode::Character, seat: usize, partner: u32, reason: u32, why: &str) -> Vec<Reply> {
+        self.with_rooms(|rooms| {
+            if let Some((room, _)) = rooms.seat_of(chr.id) {
+                rooms.remove(room);
+            }
+        });
+        crate::server::log(&format!(
+            "   trade: STOPPED between {} and {partner} - {why}. Both offers given back, both windows closed with reason {reason}.",
+            chr.id
+        ));
+        self.bus().publish_event_to_character(partner, crate::broadcast::Event::TradeEnded { slot: (1 - seat) as u8, reason, received: None });
+        let mut out = self.trade_give_back(chr.id, "had the trade stopped");
+        out.push(Reply {
+            opcode: net::trade::MINIROOM_RESULT,
+            body: net::trade::room_leave(seat as u8, reason),
+            what: format!("MiniroomResult mode 0x0C to character {} (slot {seat}): trade window closes, reason {reason} - {why}", chr.id),
+        });
+        out
+    }
+
+    /// The packets that show what a completed trade put in this bag and wallet - the wallet
+    /// always, since the client words its success message from its own balance.
+    fn trade_draw_received(&mut self, character: u32, got: &store::tradeescrow::Received) -> Vec<Reply> {
+        let mut out = Vec::new();
+        for (inv, changed) in &got.placed {
+            out.extend(self.inventory_added_replies(*inv, changed, "received in a trade"));
+        }
+        out.extend(self.meso_reply(character));
         out
     }
 
@@ -978,5 +1199,128 @@ mod tests {
         let want = net::trade::chat(0, &who, guest_id, "hello");
         assert_eq!(mine, vec![want.clone()], "the speaker sees their own line");
         assert_eq!(results(&guest.collect_mail()), vec![want], "and so does the partner, with the speaker's seat");
+    }
+
+    /// The Trade button's body: `u8 count` then `(itemId, checksum)` per item.
+    fn confirm_body(items: &[u32]) -> Vec<u8> {
+        let mut b = u32s(&[net::trade::TRADE_ACTION, net::trade::TRADE_CONFIRM]);
+        b.push(items.len() as u8);
+        for &id in items {
+            b.extend_from_slice(&id.to_le_bytes());
+            b.extend_from_slice(&0xdead_beefu32.to_le_bytes());
+        }
+        b
+    }
+
+    /// **Both press Trade and it happens** (the owner, 2026-10-03: *"When both players clicked the
+    /// trade, the trade does not happen"*), and the first press shows on the other screen.
+    ///
+    /// Tester2 offers 2000 mesos, Wisp 1000 arrows. Tester2 presses: Wisp's window is told
+    /// (0x10/2, the indicator). Wisp presses: everything crosses - the arrows to Tester2, the
+    /// mesos to Wisp **less 5%** (1900) - and both windows close with "Trade successful.", each
+    /// at its own slot, after the packets that show what arrived.
+    #[test]
+    fn both_presses_complete_the_trade_with_the_fee() {
+        let (store, config, fields) = channel();
+        let (mut host, host_id, mut guest, guest_id) = trading(&store, &config, &fields);
+        store.set_mesos(host_id, 5000).unwrap();
+        store.set_mesos(guest_id, 100).unwrap();
+        store.add_item(guest_id, store::InventoryType::Use, &store::Item::bundle(2_060_000, 1000), 1000).unwrap();
+        let arrows = store.bag_items(guest_id, store::InventoryType::Use).unwrap()[0].slot;
+        host.handle(&miniroom(&mesos_body(2000)));
+        guest.handle(&miniroom(&eggs_body(1, arrows, 1000)));
+        host.collect_mail();
+        guest.collect_mail();
+
+        // Tester2 presses Trade: nothing for them, the indicator for Wisp.
+        assert!(results(&host.handle(&miniroom(&confirm_body(&[])))).is_empty());
+        assert_eq!(results(&guest.collect_mail()), vec![net::trade::partner_confirmed()], "Wisp sees Tester2 is ready");
+        // Wisp's client checks by itself what it sees on Tester2's side: nothing, which is right.
+        let mut verify = u32s(&[net::trade::TRADE_ACTION, net::trade::TRADE_VERIFY]);
+        verify.push(0);
+        assert!(results(&guest.handle(&miniroom(&verify))).is_empty(), "a matching check stops nothing");
+
+        // Wisp presses Trade: it completes.
+        let mine = guest.handle(&miniroom(&confirm_body(&[2_060_000])));
+        assert_eq!(results(&mine), vec![net::trade::room_leave(1, net::trade::LEAVE_TRADE_DONE)], "Wisp's window: Trade successful");
+        assert!(has(&mine, net::stats::STAT_CHANGED), "Wisp is shown the new balance first");
+        let theirs = host.collect_mail();
+        assert_eq!(results(&theirs), vec![net::trade::room_leave(0, net::trade::LEAVE_TRADE_DONE)], "Tester2's window too");
+        assert!(has(&theirs, net::inventory::INVENTORY_OPERATION), "Tester2 is shown the arrows");
+
+        assert_eq!(store.mesos(guest_id).unwrap(), 100 + 1900, "2000 less the 5% fee");
+        assert_eq!(store.mesos(host_id).unwrap(), 3000);
+        let got: u32 = store.bag_items(host_id, store::InventoryType::Use).unwrap().iter().map(|r| u32::from(r.item.kind.quantity())).sum();
+        assert_eq!(got, 1000, "the arrows crossed");
+        assert!(store.bag_items(guest_id, store::InventoryType::Use).unwrap().is_empty());
+        assert_eq!(store.trade_escrow(host_id).unwrap(), (Vec::new(), 0));
+        assert_eq!(store.trade_escrow(guest_id).unwrap(), (Vec::new(), 0));
+        assert!(fields.trades().is_empty(), "the room is gone");
+    }
+
+    /// A press whose list does not match the table, or a partner's check that does not, stops
+    /// the trade: "There was a problem trading the item." for both, both offers back. And a
+    /// player who pressed cannot change their own side.
+    #[test]
+    fn a_mismatch_stops_the_trade_and_a_press_locks_the_table() {
+        let (store, config, fields) = channel();
+        let (mut host, host_id, mut guest, guest_id) = trading(&store, &config, &fields);
+        store.set_mesos(guest_id, 500).unwrap();
+        store.add_item(host_id, store::InventoryType::Use, &store::Item::bundle(2_000_000, 10), 100).unwrap();
+        let slot = store.bag_items(host_id, store::InventoryType::Use).unwrap()[0].slot;
+        host.handle(&miniroom(&eggs_body(1, slot, 10)));
+        guest.collect_mail();
+
+        // Tester2 presses (honestly); now Tester2's own side is fixed.
+        host.handle(&miniroom(&confirm_body(&[2_000_000])));
+        guest.collect_mail();
+        let out = host.handle(&miniroom(&mesos_body(0)));
+        assert!(results(&out).is_empty() && has(&out, net::stats::STAT_CHANGED), "the presser's side is fixed, and still answered");
+        assert_eq!(store.mesos(guest_id).unwrap(), 500);
+
+        // Wisp's client claims to see something else on Tester2's side.
+        let mut verify = u32s(&[net::trade::TRADE_ACTION, net::trade::TRADE_VERIFY]);
+        verify.push(1);
+        verify.extend_from_slice(&2_000_001u32.to_le_bytes());
+        verify.extend_from_slice(&0u32.to_le_bytes());
+        let mine = guest.handle(&miniroom(&verify));
+        assert_eq!(results(&mine), vec![net::trade::room_leave(1, net::trade::LEAVE_PROBLEM)]);
+        let theirs = host.collect_mail();
+        assert_eq!(results(&theirs), vec![net::trade::room_leave(0, net::trade::LEAVE_PROBLEM)]);
+        assert_eq!(store.bag_items(host_id, store::InventoryType::Use).unwrap()[0].item.kind.quantity(), 10, "back in the bag");
+        assert!(fields.trades().is_empty());
+    }
+
+    /// **A change after a press cancels that press** (the owner, 2026-10-03). Tester2 presses;
+    /// Wisp adds mesos instead of pressing - Tester2 is told in red to press again, and Wisp's
+    /// own press then does NOT complete the trade (Tester2's no longer counts) but shows Tester2
+    /// that Wisp is ready. Tester2's second press completes it, with the new contents.
+    #[test]
+    fn a_change_after_a_press_cancels_that_press() {
+        let (store, config, fields) = channel();
+        let (mut host, host_id, mut guest, guest_id) = trading(&store, &config, &fields);
+        store.set_mesos(host_id, 1000).unwrap();
+        store.set_mesos(guest_id, 1000).unwrap();
+        host.handle(&miniroom(&mesos_body(100)));
+        guest.collect_mail();
+
+        host.handle(&miniroom(&confirm_body(&[])));
+        assert_eq!(results(&guest.collect_mail()), vec![net::trade::partner_confirmed()]);
+        guest.handle(&miniroom(&mesos_body(500)));
+        let told = host.collect_mail();
+        let line = told.iter().find(|r| r.opcode == net::message::MESSAGE).expect("a red line for the presser");
+        assert_eq!(line.body, net::message::chat_line_system("Wisp changed the trade. Press Trade again to accept the new contents."));
+
+        // Wisp presses: not complete, because Tester2's press was cancelled.
+        let out = guest.handle(&miniroom(&confirm_body(&[])));
+        assert!(results(&out).is_empty(), "nothing closes yet");
+        assert_eq!(results(&host.collect_mail()), vec![net::trade::partner_confirmed()], "Tester2 sees Wisp is ready");
+        assert_eq!(store.mesos(guest_id).unwrap(), 500, "nothing crossed");
+
+        // Tester2 presses again: done, with the new contents - 500 from Wisp arrives as 475.
+        let out = host.handle(&miniroom(&confirm_body(&[])));
+        assert_eq!(results(&out), vec![net::trade::room_leave(0, net::trade::LEAVE_TRADE_DONE)]);
+        assert_eq!(store.mesos(host_id).unwrap(), 900 + 475);
+        assert_eq!(store.mesos(guest_id).unwrap(), 500 + 95);
     }
 }

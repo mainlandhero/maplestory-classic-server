@@ -1,0 +1,46 @@
+23:39:15.090 <- [Tester2#214] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 9 byte body 000000000100000000
+23:39:15.090    trade: character 214 opened a miniroom, roomType 1 (trade is 1) and took slot 0 of room 214. Nothing to send until somebody accepts.
+23:39:15.091    0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch) is not answered yet - see crates/world/src/session/
+23:39:15.091 <- [Tester2#214] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 8 byte body 05000000d7000000
+23:39:15.091    trade: character 214 invited character 215 - handed to their session, which answers for itself
+23:39:15.091    0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch) is not answered yet - see crates/world/src/session/
+23:39:15.113    trade: invite from 214 (Tester2) to 215 - popup shown, the inviter told it was sent.
+23:39:15.114 -> [Wisp#215] 0x0575 UNKNOWN MiniroomResult mode 5: trade invite from Tester2 (214) to character 215, 29 bytes, type=1. Nothing authenticates.
+23:39:15.206 -> [Tester2#214] 0x0089 UNKNOWN Message chat line (system, category 11): "You have sent a trade request to 'Wisp'." - the trade invite reached its target
+23:39:17.980 <- [Wisp#215] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 10 byte body 03000000d60000000000
+23:39:17.980    trade: character 215 ACCEPTED ticket 214 and took slot 1; mode 4 sent to both sides (["Tester2", "Wisp"]).
+23:39:17.981 -> [Wisp#215] 0x0575 UNKNOWN MiniroomResult mode 4 to character 215 (slot 1): the trade window, 2 seat(s) - ["Tester2", "Wisp"]
+23:39:18.014 -> [Tester2#214] 0x0575 UNKNOWN MiniroomResult mode 4 to character 214 (slot 0): the trade window, 2 seat(s) - ["Tester2", "Wisp"]
+23:39:22.412 <- [Wisp#215] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 14 byte body 1000000000000000021200e80301
+23:39:22.422    trade: character 215 put 1000 x 2060000 from Use slot 18 (0 left there) into trade slot 1 - out of the bag and held until the trade ends. Partner 214 was told.
+23:39:22.423 -> [Wisp#215] 0x0575 UNKNOWN MiniroomResult 0x10/0 to character 215: own 1000 x 2060000 drawn in trade slot 1 (seat 0)
+23:39:22.447 -> [Tester2#214] 0x0575 UNKNOWN MiniroomResult 0x10/0 to character 214: their partner put 1000 x 2060000 in trade slot 1 (seat 1)
+23:39:25.453 <- [Wisp#215] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 14 byte body 1000000000000000021300010002
+23:39:25.462    trade: character 215 put 1 x 2048000 from Use slot 19 (0 left there) into trade slot 2 - out of the bag and held until the trade ends. Partner 214 was told.
+23:39:25.462 -> [Wisp#215] 0x0575 UNKNOWN MiniroomResult 0x10/0 to character 215: own 1 x 2048000 drawn in trade slot 2 (seat 0)
+23:39:25.487 -> [Tester2#214] 0x0575 UNKNOWN MiniroomResult 0x10/0 to character 214: their partner put 1 x 2048000 in trade slot 2 (seat 1)
+23:39:29.303 <- [Wisp#215] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 16 byte body 1000000001000000e803000000000000
+23:39:29.314    trade: character 215 has 1000 mesos on the table now; the wallet holds 901510. Partner 214 was told.
+23:39:29.315 -> [Wisp#215] 0x0575 UNKNOWN MiniroomResult 0x10/1 to character 215: own offer of 1000 mesos (seat 0)
+23:39:29.394 -> [Tester2#214] 0x0575 UNKNOWN MiniroomResult 0x10/1 to character 214: their partner offers 1000 mesos (seat 1)
+23:39:32.443 <- [Wisp#215] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 16 byte body 1000000001000000d007000000000000
+23:39:32.444    trade: character 215 has 2000 mesos on the table now; the wallet holds 900510. Partner 214 was told.
+23:39:32.445 -> [Wisp#215] 0x0575 UNKNOWN MiniroomResult 0x10/1 to character 215: own offer of 2000 mesos (seat 0)
+23:39:32.535 -> [Tester2#214] 0x0575 UNKNOWN MiniroomResult 0x10/1 to character 214: their partner offers 2000 mesos (seat 1)
+23:39:52.238 <- [Tester2#214] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 16 byte body 10000000010000000100000000000000
+23:39:52.246    trade: character 214 has 1 mesos on the table now; the wallet holds 3955. Partner 215 was told.
+23:39:52.246 -> [Tester2#214] 0x0575 UNKNOWN MiniroomResult 0x10/1 to character 214: own offer of 1 mesos (seat 0)
+23:39:52.262 -> [Wisp#215] 0x0575 UNKNOWN MiniroomResult 0x10/1 to character 215: their partner offers 1 mesos (seat 1)
+23:39:55.528 <- [Tester2#214] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 9 byte body 100000000200000000
+23:39:55.528    trade: character 214 sent trade action 2 (mode 0x10), which is not handled yet - nothing moved. 0 is an item and 1 is mesos; the Trade button is the likely sender of this one.
+23:39:55.529    0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch) is not answered yet - see crates/world/src/session/
+23:40:01.169 <- [Wisp#215] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 25 byte body 100000000200000002e06e1f00abdedade00401f00833814d9
+23:40:01.169    trade: character 215 sent trade action 2 (mode 0x10), which is not handled yet - nothing moved. 0 is an item and 1 is mesos; the Trade button is the likely sender of this one.
+23:40:01.170    0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch) is not answered yet - see crates/world/src/session/
+23:40:28.345    trade: character 215 left the channel; room 214 closed. Partner 214 (Tester2) told: cancelled by the other character.
+23:40:28.347    trade: character 215 left the channel: 2 line(s) and 2000 mesos given back.
+23:40:28.395    trade: character 214 had the trade cancelled by the other character: 0 line(s) and 1 mesos given back.
+23:40:28.396 -> [Tester2#214] 0x0575 UNKNOWN MiniroomResult mode 0x0C to character 214 (slot 0): their trade window closes, reason 3
+23:40:28.405 <- [Tester2#214] 0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch), 4 byte body 0c000000
+23:40:28.405    trade: character 214 closed the trade window, but was in no trade room here.
+23:40:28.405    0x017E CLIENT_MINIROOM (trade invite and the rest of the miniroom ops; does NOT latch) is not answered yet - see crates/world/src/session/

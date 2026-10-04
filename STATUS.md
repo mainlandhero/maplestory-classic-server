@@ -571,6 +571,26 @@ which the launcher delivers once the server is repackaged. And the collaboration
 each style in its **default** colour (`ab39b6a`, `crate::cosmetics`): Fern Hair -> Violet 42576,
 Übel Hair -> Green 42604, Übel Face -> Violet 22639. Plan TP 8/9.
 
+**2026-10-03: trade, third pass - the Trade button completes the trade, with the 5% fee.** The
+owner: *"when I click both trade button, the other player does not have an indication that the trade
+has been accepted by the player. When both players clicked the trade, the trade does not
+happen."* The button is `0x017E` 0x10/2, `u8 count` then `(itemId, checksum)` per item the
+presser put in - captured. The first press is checked against the escrow, fixes the
+presser's own side, and sends the partner `0x0575` 0x10/2: their client marks the
+presser ready (the indicator) and answers by itself with 0x10/5, the items it sees on the
+presser's side, which is checked too - a mismatch stops the trade ("There was a problem
+trading the item."). The second press runs `Store::complete_trade`: both escrows cross in one
+transaction, mesos less 5% to the receiver, and both windows close with reason 9 ("Trade
+successful.") after the packets that show what arrived; a bag that cannot take its side
+fails it for both ("Trade unsuccessful.") with everything given back. **A change by the other
+side cancels a press** (the owner: the player who accepted *"needs to reconfirm the contents"*):
+the presser is told in red to press again. UNMEASURED whether this client lets them - nothing
+found clears its pressed flag (`room+0x500`) once set; step 43 (h) settles it, and if the button
+stays greyed the fallback is to lock the table at the first press. The owner expected a separate
+"execute" packet once both accept; the capture shows only the second 0x10/2, but that run never
+relayed the first press, so (h) also watches for one. Tests only - plan step 43 (f)-(h). Also
+measured in that run: both windows drew every offer on the right side.
+
 **2026-10-03: trade, second pass - puts LEAVE the bag, cancels give them back, chat, the invite's
 red line, and the 5% fee (built, waiting on the Trade button).** Never on a screen beyond
 what is said here. Measured in the owner's run: an offer draws on the putter's OWN side of their
@@ -591,8 +611,7 @@ inviter the client's own `0x0575` mode 6 result 2, *"'<name>' is doing something
 now."* **Trade chat** (mode 8) is relayed to both windows as mode 8 sub 0 with the chat-info
 block party chat already proved. **The 5% fee** (the window's own notice) is
 `store::tradeescrow::mesos_after_fee`, taken from the receiver, inside `complete_trade`, which
-swaps both escrows in one transaction - **NOT WIRED**: the Trade button's packet has never been
-captured. `research/trade-2026-09-09.md` section 5, plan step 43.
+swaps both escrows in one transaction - wired by the third pass above. `research/trade-2026-09-09.md` section 5, plan step 43.
 
 **2026-10-03: trade - mesos and items go INTO the window; leaving closes the partner's. Built,
 never on a screen.** The owner's run put in 3000 mesos on one side and 21 eggs on the other, and neither
