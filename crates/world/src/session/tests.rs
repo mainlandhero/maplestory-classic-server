@@ -16049,13 +16049,17 @@ fn accepting_a_trade_opens_a_window_on_both_screens() {
         "both sides are told about both seats"
     );
 
-    // A second accept of the same ticket finds the room full and sends nothing, rather than
-    // opening a third window into a two-seat room.
-    assert!(guest.handle(&miniroom(3, &[ticket])).is_empty());
+    // A second accept of the same ticket finds the room full: no third window into a two-seat
+    // room, and the client's own "You can't enter the room due to full capacity." (mode 4
+    // notice 0x15) instead of silence.
+    let again: Vec<Vec<u8>> = guest.handle(&miniroom(3, &[ticket])).into_iter().filter(|r| r.opcode == net::trade::MINIROOM_RESULT).map(|r| r.body).collect();
+    assert_eq!(again, vec![net::trade::room_notice(net::trade::ROOM_NOTICE_FULL)]);
 }
 
-/// A ticket nobody opened a room for is answered with nothing - and a declined room is gone,
-/// so accepting it afterwards is that same case.
+/// A ticket nobody opened a room for opens nothing and says so in the client's own words -
+/// "The room is already closed." (mode 4 notice 0x16) - and a declined room is gone, so
+/// accepting it afterwards is that same case. The decline itself reaches the inviter:
+/// "'Wisp' has denied the invitation." (mode 6 result 3).
 #[test]
 fn a_trade_accept_without_a_room_opens_nothing() {
     let (store, config, fields, account) = shared_channel(0, 30);
@@ -16067,14 +16071,24 @@ fn a_trade_accept_without_a_room_opens_nothing() {
     host.collect_mail();
     guest.collect_mail();
 
-    // No create: the accept has nothing to join.
-    assert!(guest.handle(&miniroom(3, &[host_id])).is_empty());
+    let trade_results = |out: Vec<Reply>| -> Vec<Vec<u8>> {
+        out.into_iter().filter(|r| r.opcode == net::trade::MINIROOM_RESULT).map(|r| r.body).collect()
+    };
+    let closed = vec![net::trade::room_notice(net::trade::ROOM_NOTICE_CLOSED)];
 
-    // Create, invite, decline - then the same ticket accepted is still nothing.
+    // No create: the accept has nothing to join.
+    assert_eq!(trade_results(guest.handle(&miniroom(3, &[host_id]))), closed);
+
+    // Create, invite, decline - then the same ticket accepted is the same case.
     host.handle(&miniroom(0, &[net::trade::ROOM_TYPE_TRADE]));
     host.handle(&miniroom(5, &[guest_id]));
     guest.collect_mail();
+    host.collect_mail(); // the "You have sent a trade request" line
     guest.handle(&miniroom(6, &[host_id, 4]));
-    assert!(guest.handle(&miniroom(3, &[host_id])).is_empty(), "a declined room is gone");
-    assert!(host.collect_mail().iter().all(|r| r.opcode != net::trade::MINIROOM_RESULT));
+    assert_eq!(trade_results(guest.handle(&miniroom(3, &[host_id]))), closed, "a declined room is gone");
+    assert_eq!(
+        trade_results(host.collect_mail()),
+        vec![net::trade::invite_result(net::trade::INVITE_DENIED, "Wisp")],
+        "the inviter is told, and no window opens"
+    );
 }

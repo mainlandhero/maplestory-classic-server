@@ -255,6 +255,22 @@ pub const ROOM_OPEN_MODE: u32 = 4;
 /// `A` for "open a room". Any other value makes the client draw a notice and read no further.
 pub const ROOM_OPEN_CREATE: u32 = 0;
 
+/// Mode 4 `A` notice codes - `FUN_141C3D980`'s switch, strings from `tools/dump_stringids.py`
+/// (`research/msexe-trade-dialog.c`) [L]. With `A != 0` the body is just `u32 4, u32 A, u32 B`.
+/// `0x1782` "The room is already closed." (also `0x1C`).
+pub const ROOM_NOTICE_CLOSED: u32 = 0x16;
+/// `0x1783` "You can't enter the room due to full capacity."
+pub const ROOM_NOTICE_FULL: u32 = 0x15;
+
+/// `0x0575` mode 4 with a notice instead of a room: 12 bytes, nothing opens.
+pub fn room_notice(code: u32) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(ROOM_OPEN_MODE);
+    w.u32(code);
+    w.u32(ROOM_TYPE_TRADE);
+    w.into_vec()
+}
+
 /// A trade has two seats. This is the `capacity` byte, and the loop bound the client walks.
 pub const TRADE_CAPACITY: u8 = 2;
 
@@ -376,6 +392,18 @@ pub const TRADE_CONFIRM: u32 = 2;
 /// [`TRADE_CONFIRM`].
 pub const TRADE_VERIFY: u32 = 5;
 
+/// Sub-action 6, inbound only: `FUN_14214B3B0` reads nothing and shows the client's own
+/// dialog `0x10F7` "This item temporarily can't be traded." [L]
+pub const TRADE_ITEM_REFUSED: u32 = 6;
+
+/// `0x0575` mode `0x10` sub 6: the "can't be traded" dialog. 8 bytes.
+pub fn item_refused() -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(TRADE_ACTION);
+    w.u32(TRADE_ITEM_REFUSED);
+    w.into_vec()
+}
+
 /// `0x0575` mode `0x10` sub 2: **your partner pressed Trade.** 8 bytes.
 pub fn partner_confirmed() -> Vec<u8> {
     let mut w = PacketWriter::new();
@@ -493,6 +521,8 @@ pub const LEAVE_DIFFERENT_MAP: u32 = 11;
 pub const LEAVE_PROBLEM: u32 = 12;
 /// `0x01D0` "Trade unsuccessful."
 pub const LEAVE_UNSUCCESSFUL: u32 = 13;
+/// `0x01D5` "You have exceeded the Meso limit and cannot trade."
+pub const LEAVE_MESO_LIMIT: u32 = 15;
 
 /// `0x0575` mode `0x0C`: member `slot` left, for `reason`. **9 bytes.**
 pub fn room_leave(slot: u8, reason: u32) -> Vec<u8> {
@@ -539,6 +569,8 @@ mod tests {
         );
         assert_eq!(parse_request(&two[..24]), None, "a pair one byte short does not decode");
         assert_eq!(partner_confirmed(), vec![0x10, 0, 0, 0, 2, 0, 0, 0]);
+        assert_eq!(item_refused(), vec![0x10, 0, 0, 0, 6, 0, 0, 0]);
+        assert_eq!(room_notice(ROOM_NOTICE_CLOSED), vec![4, 0, 0, 0, 0x16, 0, 0, 0, 1, 0, 0, 0]);
         assert_eq!(parse_request(&eggs[..13]), None, "a put one byte short does not decode");
     }
 

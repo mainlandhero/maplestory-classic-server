@@ -571,6 +571,16 @@ which the launcher delivers once the server is repackaged. And the collaboration
 each style in its **default** colour (`ab39b6a`, `crate::cosmetics`): Fern Hair -> Violet 42576,
 Übel Hair -> Green 42604, Übel Face -> Violet 22639. Plan TP 8/9.
 
+**2026-10-03: trade - the whole trade dialog decompiled and checked against the server.** The
+owner asked for it. `research/msexe-trade-dialog.c` is all 28 functions of the trade class plus the
+14 shared miniroom handlers it uses; `research/trade-2026-09-09.md` 5.8 is the review. It
+confirmed the press lock (only the constructor ever clears `room+0x500`/`+0x504`) and found
+four gaps, now closed: a decline tells the inviter (mode 6 result 3, "'<name>' has denied the
+invitation."); an accept of a closed or full room gets the client's own notice instead of
+silence (mode 4 `A` 0x16 / 0x15); an untradeable item gets the client's own dialog (0x10/6);
+a wallet past the meso cap at completion gets its own message (reason 15). Tests only - plan
+step 43 (i).
+
 **2026-10-03: trade, third pass - the Trade button completes the trade, with the 5% fee.** The
 owner: *"when I click both trade button, the other player does not have an indication that the trade
 has been accepted by the player. When both players clicked the trade, the trade does not

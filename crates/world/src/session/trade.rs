@@ -171,6 +171,19 @@ impl Session {
                     chr.id,
                     if dropped { "dropped" } else { "was not open here" }
                 ));
+                // **The inviter is told**, in the client's own words (`0x0575` mode 6): a plain
+                // refusal is "'<name>' has denied the invitation.", a decline because a miniroom
+                // was already open is "'<name>' is doing something else right now." The ticket is
+                // the inviter's character id.
+                let result = if reason == 0xB { net::trade::INVITE_BUSY } else { net::trade::INVITE_DENIED };
+                self.bus().publish_to_character_anywhere(
+                    ticket,
+                    Reply {
+                        opcode: net::trade::MINIROOM_RESULT,
+                        body: net::trade::invite_result(result, &chr.name),
+                        what: format!("MiniroomResult mode 6 result {result} to character {ticket}: {} declined the trade invite (reason {reason})", chr.name),
+                    },
+                );
             }
             net::trade::Request::PutItem { inv_type, bag_slot, quantity, trade_slot } => {
                 return self.trade_put_item(&chr, inv_type, bag_slot, quantity, trade_slot)
@@ -211,19 +224,32 @@ impl Session {
             confirmed: false,
         };
         let room = self.with_rooms(|rooms| {
-            let slot = rooms.iter().position(|(t, _)| *t == ticket)?;
+            let Some(slot) = rooms.iter().position(|(t, _)| *t == ticket) else {
+                return Err(net::trade::ROOM_NOTICE_CLOSED);
+            };
             if rooms[slot].1[1].is_some() {
-                return None; // already full: a second accept of one ticket
+                return Err(net::trade::ROOM_NOTICE_FULL); // a second accept of one ticket
             }
             rooms[slot].1[1] = Some(me);
-            Some(rooms[slot].1.clone())
+            Ok(rooms[slot].1.clone())
         });
-        let Some(seats) = room else {
-            crate::server::log(&format!(
-                "   trade: character {} accepted ticket {ticket}, which this channel has no open room for (the inviter left, declined, or changed channel), or which already has two players. Nothing sent.",
-                chr.id
-            ));
-            return Vec::new();
+        let seats = match room {
+            Ok(seats) => seats,
+            // The client's own notice (mode 4 with `A != 0`): "The room is already closed." when
+            // the inviter left, declined or changed channel; "You can't enter the room due to
+            // full capacity." for a second accept. It used to be silence.
+            Err(code) => {
+                crate::server::log(&format!(
+                    "   trade: character {} accepted ticket {ticket}, which {} - told so (mode 4 notice {code:#x}).",
+                    chr.id,
+                    if code == net::trade::ROOM_NOTICE_FULL { "already has two players" } else { "has no open room here (the inviter left, declined, or changed channel)" }
+                ));
+                return vec![Reply {
+                    opcode: net::trade::MINIROOM_RESULT,
+                    body: net::trade::room_notice(code),
+                    what: format!("MiniroomResult mode 4 notice {code:#x} to character {}: the trade room cannot be entered", chr.id),
+                }];
+            }
         };
         let members: Vec<net::trade::RoomMember> = seats
             .iter()
@@ -360,7 +386,15 @@ impl Session {
             return self.trade_refused(chr, &format!("Your {inv:?} slot {bag_slot} is empty"));
         };
         if store::ItemRules::trade_blocked(held.item_id) {
-            return self.trade_refused(chr, "That item cannot be traded");
+            // The client's own dialog for it (0x10/6), plus the empty 0x007C that releases the
+            // drag latch - the dialog alone would leave the window dead.
+            let mut out = vec![Reply {
+                opcode: net::trade::MINIROOM_RESULT,
+                body: net::trade::item_refused(),
+                what: format!("MiniroomResult 0x10/6 to character {}: \"This item temporarily can't be traded.\" ({})", chr.id, held.item_id),
+            }];
+            out.extend(self.trade_refused(chr, "That item cannot be traded"));
+            return out;
         }
         let have = held.kind.quantity();
         let count = match held.kind {
@@ -733,6 +767,11 @@ impl Session {
                     what: format!("MiniroomResult mode 0x0C to character {} (slot {seat}): trade window closes, reason 9 - Trade successful", chr.id),
                 });
                 out
+            }
+            // A wallet past the cap has the client's own message; anything else (a bag that
+            // cannot take its side) is the generic "Trade unsuccessful."
+            Err(e @ store::StoreError::NotEnoughMesos { .. }) => {
+                self.trade_fail(chr, seat, partner, net::trade::LEAVE_MESO_LIMIT, &format!("a wallet would pass the meso cap ({e})"))
             }
             Err(e) => self.trade_fail(chr, seat, partner, net::trade::LEAVE_UNSUCCESSFUL, &format!("the exchange could not be made ({e})")),
         }
@@ -1294,5 +1333,21 @@ mod tests {
         assert_eq!(results(&out), vec![net::trade::room_leave(1, net::trade::LEAVE_TRADE_DONE)], "the trade as Tester2 accepted it");
         assert_eq!(store.mesos(guest_id).unwrap(), 1000 + 95);
         assert_eq!(store.mesos(host_id).unwrap(), 900);
+    }
+
+    /// An untradeable item gets the client's OWN dialog (0x10/6, "This item temporarily can't
+    /// be traded."), the empty 0x007C that keeps the window usable, and stays in the bag.
+    #[test]
+    fn an_untradeable_item_gets_the_clients_own_dialog() {
+        let (store, config, fields) = channel();
+        let (mut host, host_id, mut guest, _) = trading(&store, &config, &fields);
+        assert!(store::ItemRules::trade_blocked(2_010_000), "the fixture item is on the list");
+        store.add_item(host_id, store::InventoryType::Use, &store::Item::bundle(2_010_000, 3), 100).unwrap();
+        let slot = store.bag_items(host_id, store::InventoryType::Use).unwrap()[0].slot;
+        let out = host.handle(&miniroom(&eggs_body(1, slot, 3)));
+        assert_eq!(results(&out), vec![net::trade::item_refused()]);
+        assert!(has(&out, net::stats::STAT_CHANGED), "the latch is released");
+        assert_eq!(store.bag_items(host_id, store::InventoryType::Use).unwrap()[0].item.kind.quantity(), 3);
+        assert!(results(&guest.collect_mail()).is_empty(), "the partner sees nothing");
     }
 }
