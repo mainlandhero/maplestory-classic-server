@@ -590,8 +590,8 @@ pigtails - lifting that layer's mean to the target pushed the pigtails nearly bl
 lightness mapping per hair, pooled over its layers (`hair_stats`, `hairShade` excluded and still
 mapped alone), so layers keep the art's relative shading; every collaboration hair with the layer
 draws it darker (Frieren 0.63 against 0.86). A contact sheet of the rebuilt Hazel matches the back
-view. Built and parsed (113 variants); **not installed yet** - the client was running. Needs
-`python tools/backport_install.py --install` with the client closed, and a repackage for players.
+view. Installed (`--check` passes, 29 archives) and **CONFIRMED ON SCREEN** - the owner: *"The hair
+looks good now."* Players get it with the next client repackage.
 
 **2026-10-03: trade-request cooldown.** The owner: *"add a cooldown for trade requests so that
 players can't spam people if they already have a current request waiting acceptance, or they
