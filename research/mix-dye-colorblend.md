@@ -172,7 +172,7 @@ mix either way round (its swapped twin is 49%).
 A Confirm on the look already worn still draws that warning, and should: it is the client
 refusing to spend a coupon on nothing.
 
-## 8. The colour name flickers on hover - client-side, unfixed
+## 8. The colour name flickers on hover - client-side, a hook patch built
 
 The owner, after the fix in §7: the window works, but hovering a swatch makes its name label
 ("Violet") fade in and out repeatedly. **The server sends nothing while the window is open**, so
@@ -193,6 +193,28 @@ this is the client's own UI. Dumps: `msexe-mix-palette.c`, `msexe-mix-window-bui
   the window the cursor is not on it. The flag cannot simply go back to `1`, because then the
   label sits on top of the swatch and keeps its clicks.
 
-Any fix is a client patch, which means a Windows and Mac client release. The options are in the
-owner's hands.
+Any fix is a client patch, which means a Windows and Mac client release. The owner chose
+*"Keep names, no flicker"*.
+
+**Read further, for the mechanism.** The forwarded move lands in the label's `FUN_14170f560`. With
+no show delay set (`+0x11a4 == 0`) it calls `FUN_14170f990` -> `FUN_142645c50` at once, and that
+**rebuilds the tooltip's whole canvas** (`FUN_1426974b0`, `FUN_1426a6b20`) on every call.
+`FUN_14170f510` is the label's hover enter/leave, and on leave it clears the tooltip.
+
+**[I], the run's question:** the window hit-tests its controls every frame, so a pass-through
+label rebuilds - and re-fades - its tooltip every frame while the cursor rests on it.
+
+**The patch, `grap_stub::mixtooltip`:** the hit-test's vtable slot `0x1433fa330` is wrapped.
+* A label with the flag on (every other tooltip in the client) and any point outside are passed
+  to the original unchanged.
+* A pass-through label with the cursor inside at the point it last forwarded answers "not hit"
+  without forwarding. That is what the original answers there, minus the rebuild.
+
+The module counts inside hit-tests, forwards and holds, and logs `MIXTOOLTIP:` summary lines.
+Thousands held at a still cursor confirms the reading.
+
+**What failure would look like:** if the hide comes from a per-frame leave instead, the name would
+now vanish and stay gone until the mouse moves. The counts plus the screen tell those two apart.
+
+`mixtooltip=off` in the marker leaves the slot alone.
 

@@ -32,6 +32,7 @@ pub mod lookgate;
 pub mod identity;
 pub mod instance;
 pub mod minidump;
+pub mod mixtooltip;
 pub mod netwatch;
 pub mod poolsentry;
 pub mod probe;

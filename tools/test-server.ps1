@@ -2658,6 +2658,13 @@
              both eye colours drawn -> fixed
           e. open the box and pick the look you already wear: the CLIENT warns and nothing is
              spent
+          f. (2026-10-03, hook patch MIXTOOLTIP) rest the cursor on a swatch: its name ("Violet")
+             fades in ONCE and stays -> fixed
+               still flickers -> paste the MIXTOOLTIP lines from client-patched\maplecw-hook.log
+               (no line at all = the patch did not install; "refusing" names why)
+               the name shows, then vanishes until the mouse moves -> the hide is a per-frame
+               leave, not the rebuild; paste the MIXTOOLTIP lines too
+             clicking a swatch still picks it (the label must not eat the click)
 
     43. TRADE, THIRD PASS (2026-10-03). Two clients on one map. What you put in LEAVES your bag
         or wallet and comes back if the trade is cancelled; the Trade button now completes it.
@@ -6503,6 +6510,8 @@ function Show-TestPlan {
         Write-Host '       BOTH colours drawn, coupon gone, still drawn after map change + relog -> fixed' -ForegroundColor Green
         Write-Host '       blank head / client dies on the HAIR bit -> paste client-exit.log' -ForegroundColor Yellow
         Write-Host '       Dr. Feeble, "blend two eye colours": the same for the eyes' -ForegroundColor Cyan
+        Write-Host '       HOVER (hook patch): rest on a swatch - the name fades in ONCE and stays -> fixed;' -ForegroundColor Cyan
+        Write-Host '       still flickers, or shows then vanishes -> paste MIXTOOLTIP lines from the hook log' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  43. TRADE, 3RD PASS (2026-10-03): the Trade button completes it now.' -ForegroundColor White
         Write-Host '       Puts LEAVE the bag/wallet; a cancel gives them back.' -ForegroundColor Cyan
