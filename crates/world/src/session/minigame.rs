@@ -45,22 +45,55 @@ pub(crate) struct GameSeat {
     look: Vec<u8>,
     account_id: u32,
     world: u8,
+    /// Their record at this room's game, as of sitting down; updated when a game ends.
+    record: net::minigame::Record,
 }
 
-/// A game in progress.
+/// A game in progress - the part both games share, and the board.
 #[derive(Debug, Clone)]
-pub(crate) struct Omok {
-    /// `board[y][x]`: 0 empty, else the stone type.
-    board: [[u8; BOARD]; BOARD],
-    /// The stone each seat plays: the first mover's is [`net::minigame::STONE_FIRST`].
-    stones: [u8; 2],
+pub(crate) struct Game {
     /// The seat that moves now.
     turn: usize,
-    /// Every stone in order, `(x, y, seat)` - the client keeps the same stack and pops from it
-    /// on an undo (`FUN_141E9B690`).
-    moves: Vec<(usize, usize, usize)>,
+    /// The seat that moved first this game.
+    first: usize,
     tie_asked_by: Option<usize>,
     undo_asked_by: Option<usize>,
+    board: Board,
+}
+
+#[derive(Debug, Clone)]
+enum Board {
+    Omok {
+        /// `cells[y][x]`: 0 empty, else the stone type.
+        cells: [[u8; BOARD]; BOARD],
+        /// The stone each seat plays: the first mover's is [`net::minigame::STONE_FIRST`].
+        stones: [u8; 2],
+        /// Every stone in order, `(x, y, seat)` - the client keeps the same stack and pops
+        /// from it on an undo (`FUN_141E9B690`).
+        moves: Vec<(usize, usize, usize)>,
+    },
+    Cards {
+        /// The dealt face of every card in board order; `None` once its pair is found.
+        faces: Vec<Option<u32>>,
+        /// The first card of the pair being turned.
+        turned: Option<usize>,
+        /// Pairs found, per seat.
+        pairs: [u32; 2],
+    },
+}
+
+/// A fresh Match Cards deal: `count / 2` faces drawn from the client's 15 without repeats, each
+/// twice, shuffled. `next` is a random source.
+pub(crate) fn deal_cards(count: usize, mut next: impl FnMut() -> u64) -> Vec<u32> {
+    let mut pool: Vec<u32> = (0..net::minigame::CARD_FACES).collect();
+    for i in (1..pool.len()).rev() {
+        pool.swap(i, (next() % (i as u64 + 1)) as usize);
+    }
+    let mut faces: Vec<u32> = pool.into_iter().take(count / 2).flat_map(|f| [f, f]).collect();
+    for i in (1..faces.len()).rev() {
+        faces.swap(i, (next() % (i as u64 + 1)) as usize);
+    }
+    faces
 }
 
 /// One open game room.
@@ -71,12 +104,13 @@ pub(crate) struct GameRoom {
     room_type: u32,
     title: String,
     password: Option<String>,
-    /// The Omok set, item id % 100 - echoed to the room open and the balloon.
+    /// Omok: the set, item id % 100. Match Cards: the board size, 0 / 1 / 2. Echoed to the
+    /// room open and the balloon.
     spec: u8,
     map: crate::fields::FieldKey,
     seats: [Option<GameSeat>; 2],
     visitor_ready: bool,
-    game: Option<Omok>,
+    game: Option<Game>,
     /// Who moves first next game: the owner first, then the loser of the last game.
     first_next: usize,
     /// "Leave after this game" (modes 0x17 / 0x18).
@@ -114,6 +148,11 @@ impl GameRoom {
             owner_account: owner.account_id,
             world: owner.world,
         })
+    }
+
+    /// Each member's record, in [`GameRoom::members`]'s order.
+    fn records(&self) -> Vec<net::minigame::Record> {
+        self.seats.iter().flatten().map(|s| s.record).collect()
     }
 
     fn occupant(&self, seat: usize) -> Option<u32> {
@@ -273,6 +312,18 @@ impl Session {
         }
     }
 
+    /// `character`'s record at `game` (3 Omok, 4 Match Cards), as the panel draws it. A store
+    /// error shows a fresh record rather than refusing the seat.
+    fn record_of(&self, character: u32, game: u32) -> net::minigame::Record {
+        match self.store.minigame_record(character, game) {
+            Ok(r) => to_net(r),
+            Err(e) => {
+                crate::server::log(&format!("   minigame: character {character}'s record at game {game} did not load ({e}); showing a fresh one."));
+                to_net(store::minigame::MiniGameRecord::default())
+            }
+        }
+    }
+
     /// Rebuild this player's cached `0x0224`, which carries their balloon.
     pub(super) fn refresh_own_spawn(&mut self) {
         let Some(chr) = self.claimed_character() else { return };
@@ -287,14 +338,6 @@ impl Session {
 
     /// **Mode 0, room type 3: open an Omok room.**
     pub(super) fn game_create(&mut self, chr: &net::opcode::Character, room_type: u32, title: String, password: Option<String>, spec: u8) -> Vec<Reply> {
-        if room_type != net::minigame::ROOM_TYPE_OMOK {
-            crate::server::log(&format!("   omok: character {} asked for a Match Cards room (type {room_type}); not hosted.", chr.id));
-            return vec![Reply {
-                opcode: net::message::MESSAGE,
-                body: net::message::chat_line_system("Match Cards is not available yet."),
-                what: "Message chat line: Match Cards rooms are not hosted".into(),
-            }];
-        }
         if let Some(why) = self.busy_for_trade() {
             crate::server::log(&format!("   omok: character {} is busy ({why}); create ignored.", chr.id));
             return Vec::new();
@@ -309,7 +352,14 @@ impl Session {
             spec,
             map,
             seats: [
-                Some(GameSeat { character_id: chr.id, name: chr.name.clone(), look: net::opcode::avatar_look(chr), account_id, world }),
+                Some(GameSeat {
+                    character_id: chr.id,
+                    name: chr.name.clone(),
+                    look: net::opcode::avatar_look(chr),
+                    account_id,
+                    world,
+                    record: self.record_of(chr.id, room_type),
+                }),
                 None,
             ],
             visitor_ready: false,
@@ -317,7 +367,7 @@ impl Session {
             first_next: 0,
             leave_after: [false; 2],
         };
-        let open = net::minigame::room_open(0, &room.members(), &room.title, room.spec);
+        let open = net::minigame::room_open_game(room.room_type, 0, &room.members(), &room.records(), &room.title, room.spec);
         let balloon = room.balloon();
         let private = room.password.is_some();
         self.with_games(|g| {
@@ -325,8 +375,9 @@ impl Session {
             g.push(room);
         });
         crate::server::log(&format!(
-            "   omok: character {} opened Omok room {:?} (set {spec}{}). Window open, balloon up.",
+            "   minigame: character {} opened {} room {:?} (spec {spec}{}). Window open, balloon up.",
             chr.id,
+            game_name(room_type),
             title,
             if private { ", private" } else { "" }
         ));
@@ -334,7 +385,7 @@ impl Session {
         self.refresh_own_spawn();
         vec![Reply {
             opcode: net::trade::MINIROOM_RESULT,
-            what: format!("MiniroomResult mode 4: Omok room {:?} opens for its owner, character {} ({} bytes)", title, chr.id, open.len()),
+            what: format!("MiniroomResult mode 4: {} room {:?} opens for its owner, character {} ({} bytes)", game_name(room_type), title, chr.id, open.len()),
             body: open,
         }]
     }
@@ -354,7 +405,17 @@ impl Session {
         }
         let (account_id, world) = self.speaker_of(chr);
         let map = self.field_of(chr);
-        let me = GameSeat { character_id: chr.id, name: chr.name.clone(), look: net::opcode::avatar_look(chr), account_id, world };
+        let Some(game) = self.with_games(|g| g.iter().find(|r| r.id == room_id).map(|r| r.room_type)) else {
+            return notice(net::trade::ROOM_NOTICE_CLOSED, "the room is gone");
+        };
+        let me = GameSeat {
+            character_id: chr.id,
+            name: chr.name.clone(),
+            look: net::opcode::avatar_look(chr),
+            account_id,
+            world,
+            record: self.record_of(chr.id, game),
+        };
         let joined = self.with_games(|g| {
             let Some(r) = g.iter_mut().find(|r| r.id == room_id) else { return Err((net::trade::ROOM_NOTICE_CLOSED, "the room is gone")) };
             if r.map != map {
@@ -384,12 +445,12 @@ impl Session {
             vec![
                 Send {
                     to: owner,
-                    body: net::minigame::visitor_entered(&visitor),
+                    body: net::minigame::visitor_entered(&visitor, &room.seats[1].as_ref().expect("just seated").record),
                     what: format!("MiniroomResult mode 3: {} sat down in the owner's Omok room", chr.name),
                 },
                 Send {
                     to: chr.id,
-                    body: net::minigame::room_open(1, &members, &room.title, room.spec),
+                    body: net::minigame::room_open_game(room.room_type, 1, &members, &room.records(), &room.title, room.spec),
                     what: format!("MiniroomResult mode 4: Omok room {:?} opens for the visitor, character {}", room.title, chr.id),
                 },
             ],
@@ -416,11 +477,12 @@ impl Session {
     /// **Mode 0x0C**, or the connection going: out of the room. Mid-game it forfeits first.
     pub(super) fn game_leave(&mut self, chr: &net::opcode::Character, why: &str) -> Vec<Reply> {
         let Some((room_id, seat)) = self.game_seat_of(chr.id) else { return Vec::new() };
+        let store = self.store.clone();
         let mut sends = self.with_games(|g| {
             let r = g.iter_mut().find(|r| r.id == room_id).expect("seated");
             let mut sends = Vec::new();
             if r.game.is_some() {
-                sends.extend(finish(r, Some(1 - seat), &format!("{} left mid-game", chr.name)));
+                sends.extend(finish(r, Some(1 - seat), &format!("{} left mid-game", chr.name), &store));
             }
             sends
         });
@@ -502,10 +564,12 @@ impl Session {
             self.refresh_own_spawn();
             return out;
         }
+        let seed = self.rng.next();
+        let store = self.store.clone();
         let (sends, balloon, leavers) = self.with_games(|g| {
             let r = g.iter_mut().find(|r| r.id == room_id).expect("seated");
             let before = r.game.is_some();
-            let sends = step(r, seat, other, &name, &action);
+            let sends = step(r, seat, other, &name, &action, seed, &store);
             let changed = before != r.game.is_some();
             let leavers: Vec<usize> = if before && r.game.is_none() { (0..2).filter(|&s| r.leave_after[s] && r.seats[s].is_some()).collect() } else { Vec::new() };
             (sends, changed.then(|| (r.map, r.balloon())), leavers)
@@ -537,6 +601,14 @@ impl Session {
     }
 }
 
+fn game_name(room_type: u32) -> &'static str {
+    if room_type == net::minigame::ROOM_TYPE_MATCH_CARDS {
+        "Match Cards"
+    } else {
+        "Omok"
+    }
+}
+
 /// Both seats of `r`, each with `body`.
 fn both(r: &GameRoom, body: Vec<u8>, what: &str) -> Vec<Send> {
     r.seats.iter().flatten().map(|s| Send { to: s.character_id, body: body.clone(), what: what.to_string() }).collect()
@@ -546,19 +618,42 @@ fn one(r: &GameRoom, seat: usize, body: Vec<u8>, what: &str) -> Vec<Send> {
     r.occupant(seat).map(|to| Send { to, body, what: what.to_string() }).into_iter().collect()
 }
 
-/// The game ends: the result to both, and the next game's first mover is the loser.
-fn finish(r: &mut GameRoom, winner: Option<usize>, why: &str) -> Vec<Send> {
+fn to_net(r: store::minigame::MiniGameRecord) -> net::minigame::Record {
+    net::minigame::Record { wins: r.wins, ties: r.ties, losses: r.losses, points: r.points }
+}
+
+/// The game ends: both records counted and stored (per game - an Omok result never touches the
+/// Match Cards record), the result to both with the records after it, and the next game's
+/// first mover is the loser.
+fn finish(r: &mut GameRoom, winner: Option<usize>, why: &str, store: &store::Store) -> Vec<Send> {
     let Some(game) = r.game.take() else { return Vec::new() };
+    for seat in 0..2 {
+        let outcome = match winner {
+            None => store::minigame::Outcome::Tie,
+            Some(w) if w == seat => store::minigame::Outcome::Win,
+            Some(_) => store::minigame::Outcome::Loss,
+        };
+        let room_type = r.room_type;
+        if let Some(s) = r.seats[seat].as_mut() {
+            match store.record_minigame_result(s.character_id, room_type, outcome) {
+                Ok(rec) => s.record = to_net(rec),
+                Err(e) => crate::server::log(&format!("   minigame: {}'s {outcome:?} at game {room_type} was not stored ({e}).", s.name)),
+            }
+        }
+    }
+    let records = [r.seats[0].as_ref().map(|s| s.record).unwrap_or_default(), r.seats[1].as_ref().map(|s| s.record).unwrap_or_default()];
     r.visitor_ready = false;
-    let first = if game.stones[0] == net::minigame::STONE_FIRST { 0 } else { 1 };
     r.first_next = match winner {
         Some(w) => 1 - w,
-        None => 1 - first,
+        None => 1 - game.first,
+    };
+    let played = match &game.board {
+        Board::Omok { moves, .. } => format!("{} stone(s)", moves.len()),
+        Board::Cards { pairs, .. } => format!("{} - {} pairs", pairs[0], pairs[1]),
     };
     crate::server::log(&format!(
-        "   omok: room {} game over after {} stone(s) - {}. {}",
+        "   minigame: room {} game over after {played} - {}. {}",
         r.id,
-        game.moves.len(),
         match winner {
             Some(w) => format!("seat {w} wins"),
             None => "a draw".into(),
@@ -566,18 +661,18 @@ fn finish(r: &mut GameRoom, winner: Option<usize>, why: &str) -> Vec<Send> {
         why
     ));
     match winner {
-        Some(w) => both(r, net::minigame::result_win(w as u8), &format!("MiniroomResult 0x1D: seat {w} wins ({why})")),
-        None => both(r, net::minigame::result_draw(), &format!("MiniroomResult 0x1D: a draw ({why})")),
+        Some(w) => both(r, net::minigame::result_win(w as u8, records), &format!("MiniroomResult 0x1D: seat {w} wins ({why}); records {records:?}")),
+        None => both(r, net::minigame::result_draw(records), &format!("MiniroomResult 0x1D: a draw ({why}); records {records:?}")),
     }
 }
 
-/// One action from `seat` in room `r`.
-fn step(r: &mut GameRoom, seat: usize, other: usize, name: &str, action: &net::minigame::Action) -> Vec<Send> {
+/// One action from `seat` in room `r`. `seed` is fresh randomness, for a deal.
+fn step(r: &mut GameRoom, seat: usize, other: usize, name: &str, action: &net::minigame::Action, seed: u64, store: &store::Store) -> Vec<Send> {
     use net::minigame::Action;
     let playing = r.game.is_some();
     match *action {
         Action::OwnerOpen => {
-            crate::server::log(&format!("   omok: room {} owner sent mode 0x0A (u8 1) from the room open - noted.", r.id));
+            crate::server::log(&format!("   minigame: room {} owner sent mode 0x0A (u8 1) from the room open - noted.", r.id));
             Vec::new()
         }
         Action::Ready { on } => {
@@ -593,17 +688,38 @@ fn step(r: &mut GameRoom, seat: usize, other: usize, name: &str, action: &net::m
         }
         Action::Start => {
             if seat != 0 || playing || r.seats[1].is_none() || !r.visitor_ready {
-                crate::server::log(&format!("   omok: room {} start refused - owner {}, visitor {}, ready {}.", r.id, seat == 0, r.seats[1].is_some(), r.visitor_ready));
+                crate::server::log(&format!("   minigame: room {} start refused - owner {}, visitor {}, ready {}.", r.id, seat == 0, r.seats[1].is_some(), r.visitor_ready));
                 return Vec::new();
             }
             let first = r.first_next;
             let second = 1 - first;
+            r.visitor_ready = false;
+            if r.room_type == net::minigame::ROOM_TYPE_MATCH_CARDS {
+                let count = net::minigame::CARD_COUNTS.get(usize::from(r.spec)).copied().unwrap_or(net::minigame::CARD_COUNTS[0]);
+                let mut state = seed;
+                let faces = deal_cards(usize::from(count), || crate::config::splitmix64(&mut state));
+                let body = net::minigame::deal(second as u8, &faces);
+                r.game = Some(Game {
+                    turn: first,
+                    first,
+                    tie_asked_by: None,
+                    undo_asked_by: None,
+                    board: Board::Cards { faces: faces.into_iter().map(Some).collect(), turned: None, pairs: [0; 2] },
+                });
+                crate::server::log(&format!("   minigame: room {} Match Cards starts with {count} cards; seat {first} turns first.", r.id));
+                return both(r, body, &format!("MiniroomResult 0x1C: Match Cards dealt, {count} cards, seat {first} first"));
+            }
             let mut stones = [0u8; 2];
             stones[first] = net::minigame::STONE_FIRST;
             stones[second] = net::minigame::STONE_SECOND;
-            r.game = Some(Omok { board: [[0; BOARD]; BOARD], stones, turn: first, moves: Vec::new(), tie_asked_by: None, undo_asked_by: None });
-            r.visitor_ready = false;
-            crate::server::log(&format!("   omok: room {} game starts; seat {first} moves first.", r.id));
+            r.game = Some(Game {
+                turn: first,
+                first,
+                tie_asked_by: None,
+                undo_asked_by: None,
+                board: Board::Omok { cells: [[0; BOARD]; BOARD], stones, moves: Vec::new() },
+            });
+            crate::server::log(&format!("   minigame: room {} Omok starts; seat {first} moves first.", r.id));
             both(r, net::minigame::start(second as u8), &format!("MiniroomResult 0x1C: the game starts, seat {first} first (the byte names seat {second}, who moves second)"))
         }
         Action::Move { x, y, .. } => {
@@ -612,36 +728,92 @@ fn step(r: &mut GameRoom, seat: usize, other: usize, name: &str, action: &net::m
                 crate::server::log(&format!("   omok: room {} seat {seat} moved out of turn; ignored.", r.id));
                 return Vec::new();
             }
+            let Board::Omok { cells, stones, moves } = &mut g.board else { return Vec::new() };
             let (xu, yu) = (x as usize, y as usize);
-            if xu >= BOARD || yu >= BOARD || g.board[yu][xu] != 0 {
+            if xu >= BOARD || yu >= BOARD || cells[yu][xu] != 0 {
                 return one(r, seat, net::minigame::bad_move(net::minigame::BAD_MOVE_OCCUPIED), &format!("MiniroomResult 0x20: ({x}, {y}) cannot take a stone"));
             }
-            let stone = g.stones[seat];
-            g.board[yu][xu] = stone;
-            let five = makes_five(&g.board, xu, yu, stone);
-            if !five && makes_double_three(&g.board, xu, yu, stone) {
-                g.board[yu][xu] = 0;
+            let stone = stones[seat];
+            cells[yu][xu] = stone;
+            let five = makes_five(cells, xu, yu, stone);
+            if !five && makes_double_three(cells, xu, yu, stone) {
+                cells[yu][xu] = 0;
                 return one(r, seat, net::minigame::bad_move(net::minigame::BAD_MOVE_DOUBLE_THREE), &format!("MiniroomResult 0x20: ({x}, {y}) is a double three"));
             }
-            g.moves.push((xu, yu, seat));
+            moves.push((xu, yu, seat));
+            let full = moves.len() == BOARD * BOARD;
             g.tie_asked_by = None;
             g.undo_asked_by = None;
-            let full = g.moves.len() == BOARD * BOARD;
             g.turn = other;
             let mut sends = both(r, net::minigame::stone(x, y, stone), &format!("MiniroomResult 0x1F: {name} put stone {stone} at ({x}, {y})"));
             if five {
-                sends.extend(finish(r, Some(seat), &format!("{name} made five")));
+                sends.extend(finish(r, Some(seat), &format!("{name} made five"), store));
             } else if full {
-                sends.extend(finish(r, None, "the board is full"));
+                sends.extend(finish(r, None, "the board is full", store));
             }
             sends
         }
+        Action::Card { first, index } => {
+            let Some(g) = r.game.as_mut() else { return Vec::new() };
+            if g.turn != seat {
+                crate::server::log(&format!("   cards: room {} seat {seat} turned a card out of turn; ignored.", r.id));
+                return Vec::new();
+            }
+            let Board::Cards { faces, turned, pairs } = &mut g.board else { return Vec::new() };
+            let i = usize::from(index);
+            if faces.get(i).copied().flatten().is_none() {
+                crate::server::log(&format!("   cards: room {} seat {seat} turned card {i}, which is gone or off the board; ignored.", r.id));
+                return Vec::new();
+            }
+            if first {
+                *turned = Some(i);
+                // The clicker's client turned it already; only the opponent needs telling.
+                return one(r, other, net::minigame::card_first(index), &format!("MiniroomResult 0x23: {name} turned card {i}"));
+            }
+            let Some(a) = turned.take().filter(|&a| a != i) else {
+                crate::server::log(&format!("   cards: room {} seat {seat} sent a second card {i} with no first; ignored.", r.id));
+                return Vec::new();
+            };
+            g.tie_asked_by = None;
+            if faces[a] == faces[i] {
+                faces[a] = None;
+                faces[i] = None;
+                pairs[seat] += 1;
+                let done = faces.iter().all(Option::is_none);
+                let score = *pairs;
+                let mut sends = both(
+                    r,
+                    net::minigame::card_second(index, a as u8, net::minigame::card_match(seat as u8)),
+                    &format!("MiniroomResult 0x23: {name} matched cards {a} and {i} ({} - {})", score[0], score[1]),
+                );
+                if done {
+                    let winner = match score[0].cmp(&score[1]) {
+                        std::cmp::Ordering::Greater => Some(0),
+                        std::cmp::Ordering::Less => Some(1),
+                        std::cmp::Ordering::Equal => None,
+                    };
+                    sends.extend(finish(r, winner, &format!("every pair found, {} - {}", score[0], score[1]), store));
+                }
+                sends
+            } else {
+                g.turn = other;
+                both(
+                    r,
+                    net::minigame::card_second(index, a as u8, net::minigame::card_miss(seat as u8)),
+                    &format!("MiniroomResult 0x23: {name} missed with cards {a} and {i}; seat {other}'s turn"),
+                )
+            }
+        }
         Action::TimeUp => {
             let Some(g) = r.game.as_mut() else { return Vec::new() };
+            // Both clients count the clock down and both report it; only the mover's counts.
             if g.turn != seat {
                 return Vec::new();
             }
             g.turn = other;
+            if let Board::Cards { turned, .. } = &mut g.board {
+                *turned = None;
+            }
             both(r, net::minigame::turn(other as u8), &format!("MiniroomResult 0x1E: {name}'s clock ran out; seat {other}'s turn"))
         }
         Action::TieRequest => {
@@ -656,7 +828,7 @@ fn step(r: &mut GameRoom, seat: usize, other: usize, name: &str, action: &net::m
             }
             g.tie_asked_by = None;
             if yes {
-                finish(r, None, "a tie was agreed")
+                finish(r, None, "a tie was agreed", store)
             } else {
                 one(r, other, net::minigame::tie_refused(), &format!("MiniroomResult 0x12: {name} refused the tie"))
             }
@@ -665,11 +837,12 @@ fn step(r: &mut GameRoom, seat: usize, other: usize, name: &str, action: &net::m
             if !playing {
                 return Vec::new();
             }
-            finish(r, Some(other), &format!("{name} gave up"))
+            finish(r, Some(other), &format!("{name} gave up"), store)
         }
         Action::UndoRequest => {
             let Some(g) = r.game.as_mut() else { return Vec::new() };
-            if !g.moves.iter().any(|m| m.2 == seat) {
+            let Board::Omok { moves, .. } = &g.board else { return Vec::new() };
+            if !moves.iter().any(|m| m.2 == seat) {
                 return Vec::new();
             }
             g.undo_asked_by = Some(seat);
@@ -684,11 +857,12 @@ fn step(r: &mut GameRoom, seat: usize, other: usize, name: &str, action: &net::m
             if !yes {
                 return one(r, other, net::minigame::undo_denied(), &format!("MiniroomResult 0x16: {name} refused the take-back"));
             }
+            let Board::Omok { cells, moves, .. } = &mut g.board else { return Vec::new() };
             // Off the top until the asker's last stone is gone: one stone if it was the last
             // move, two if the answerer has moved since.
             let mut count = 0u8;
-            while let Some((x, y, s)) = g.moves.pop() {
-                g.board[y][x] = 0;
+            while let Some((x, y, s)) = moves.pop() {
+                cells[y][x] = 0;
                 count += 1;
                 if s == other {
                     break;
@@ -763,6 +937,19 @@ mod tests {
         of(out, net::trade::MINIROOM_RESULT)
     }
 
+    /// A first game's records: `winner` at 1 win, the other at 1 loss.
+    fn after_first_game(winner: usize) -> [net::minigame::Record; 2] {
+        let start = store::minigame::POINTS_START;
+        let step = store::minigame::POINTS_STEP;
+        let won = net::minigame::Record { wins: 1, ties: 0, losses: 0, points: start + step };
+        let lost = net::minigame::Record { wins: 0, ties: 0, losses: 1, points: start - step };
+        if winner == 0 {
+            [won, lost]
+        } else {
+            [lost, won]
+        }
+    }
+
     /// Owner and visitor seated, the visitor ready and the game started.
     fn playing(store: &Arc<store::Store>, config: &Arc<crate::config::Config>, fields: &Arc<crate::fields::Fields>) -> (Session, u32, Session, u32) {
         let (mut host, host_id) = join(store, config, fields, "Tester2");
@@ -811,7 +998,10 @@ mod tests {
         let entered = results(&host_mail);
         assert_eq!(entered.len(), 1);
         assert_eq!(&entered[0][..5], &[3, 0, 0, 0, 1], "mode 3, seat 1");
-        assert!(entered[0].ends_with(&[0u8; 22]), "the u16 then the 20-byte record");
+        let mut w = net::PacketWriter::new();
+        w.u16(0);
+        net::minigame::Record { points: store::minigame::POINTS_START, ..Default::default() }.write(&mut w);
+        assert!(entered[0].ends_with(&w.into_vec()), "the u16 then the visitor's 20-byte record: 1, 0 W, 0 D, 0 L, 2000 PTS");
         assert_eq!(of(&host_mail, net::minigame::USER_MINIROOM_BALLOON).len(), 1, "the balloon now says 2/2");
     }
 
@@ -861,8 +1051,9 @@ mod tests {
         // An occupied square is refused to the mover only.
         assert_eq!(results(&host.handle(&mv(0, 7))), vec![net::minigame::bad_move(net::minigame::BAD_MOVE_OCCUPIED)]);
         let out = host.handle(&mv(4, 7));
-        assert_eq!(results(&out), vec![net::minigame::stone(4, 7, 1), net::minigame::result_win(0)]);
-        assert_eq!(results(&guest.collect_mail()), vec![net::minigame::stone(4, 7, 1), net::minigame::result_win(0)]);
+        let result = net::minigame::result_win(0, after_first_game(0));
+        assert_eq!(results(&out), vec![net::minigame::stone(4, 7, 1), result.clone()], "the result carries both records after the game");
+        assert_eq!(results(&guest.collect_mail()), vec![net::minigame::stone(4, 7, 1), result]);
     }
 
     #[test]
@@ -890,11 +1081,124 @@ mod tests {
         let mail = guest.collect_mail();
         assert_eq!(
             results(&mail),
-            vec![net::minigame::result_win(1), net::trade::room_leave(1, net::minigame::LEAVE_ROOM_CLOSED)],
+            vec![net::minigame::result_win(1, after_first_game(1)), net::trade::room_leave(1, net::minigame::LEAVE_ROOM_CLOSED)],
             "the visitor wins, then is told the room is closed"
         );
         assert_eq!(of(&mail, net::minigame::USER_MINIROOM_BALLOON).last().unwrap(), &net::minigame::balloon(host_id, None), "the balloon comes down");
         assert!(!guest.in_game_room(guest_id) && !host.in_game_room(host_id));
+    }
+
+    #[test]
+    fn a_deal_is_pairs_of_the_clients_faces() {
+        let mut state = 7u64;
+        for count in [12usize, 20, 30] {
+            let faces = deal_cards(count, || crate::config::splitmix64(&mut state));
+            assert_eq!(faces.len(), count);
+            let mut sorted = faces.clone();
+            sorted.sort_unstable();
+            for pair in sorted.chunks(2) {
+                assert_eq!(pair[0], pair[1], "every face twice: {faces:?}");
+            }
+            assert!(faces.iter().all(|&f| f < net::minigame::CARD_FACES), "only faces the client has art for");
+        }
+    }
+
+    fn card(first: bool, index: u8) -> Vec<u8> {
+        let mut b = net::minigame::MC_CARD.to_le_bytes().to_vec();
+        b.extend_from_slice(&[u8::from(first), index]);
+        miniroom(&b)
+    }
+
+    /// Match Cards seated, ready and dealt (12 cards): `(owner, visitor, faces)`.
+    fn dealt(store: &Arc<store::Store>, config: &Arc<crate::config::Config>, fields: &Arc<crate::fields::Fields>) -> (Session, Session, Vec<u32>) {
+        let (mut host, host_id) = join(store, config, fields, "Tester2");
+        let (mut guest, _) = join(store, config, fields, "Wisp");
+        // Match Cards, "cards", no password, board size 0 = 12 cards.
+        let open = results(&host.handle(&miniroom(&[0, 0, 0, 0, 4, 0, 0, 0, 5, 0, b'c', b'a', b'r', b'd', b's', 0, 0])));
+        assert_eq!(&open[0][8..12], &4u32.to_le_bytes(), "a Match Cards window");
+        guest.handle(&visit(host_id));
+        guest.handle(&mode(net::minigame::MG_READY));
+        let out = host.handle(&mode(net::minigame::MG_START));
+        let deal = results(&out).into_iter().find(|b| b[..4] == [0x1C, 0, 0, 0]).expect("the deal");
+        assert_eq!(deal.len(), 54, "u32 mode, u8 second, u8 count, 12 faces");
+        assert_eq!(deal[4], 1, "the owner turns first, so the byte names seat 1");
+        let faces: Vec<u32> = deal[6..].chunks(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
+        assert_eq!(results(&guest.collect_mail()).last(), Some(&deal), "both get the same deal");
+        host.collect_mail();
+        (host, guest, faces)
+    }
+
+    #[test]
+    fn a_miss_passes_the_turn_and_a_match_keeps_it() {
+        let (store, config, fields) = channel();
+        let (mut host, mut guest, faces) = dealt(&store, &config, &fields);
+        let partner = |i: usize| (0..faces.len()).find(|&j| j != i && faces[j] == faces[i]).unwrap();
+        let other = |i: usize| (0..faces.len()).find(|&j| faces[j] != faces[i]).unwrap();
+        assert!(results(&guest.handle(&card(true, 0))).is_empty(), "not the visitor's turn");
+        // The owner's first card goes to the visitor only; their own client turned it.
+        assert!(results(&host.handle(&card(true, 0))).is_empty());
+        assert_eq!(results(&guest.collect_mail()), vec![net::minigame::card_first(0)]);
+        // A miss: both see it, the turn passes.
+        let miss = other(0) as u8;
+        let want = net::minigame::card_second(miss, 0, net::minigame::card_miss(0));
+        assert_eq!(results(&host.handle(&card(false, miss))), vec![want.clone()]);
+        assert_eq!(results(&guest.collect_mail()), vec![want]);
+        assert!(results(&host.handle(&card(true, 1))).is_empty() && guest.collect_mail().is_empty(), "the owner's turn is over");
+        // The visitor finds a pair and keeps the turn.
+        let (a, b) = (2usize, partner(2));
+        guest.handle(&card(true, a as u8));
+        let want = net::minigame::card_second(b as u8, a as u8, net::minigame::card_match(1));
+        assert_eq!(results(&guest.handle(&card(false, b as u8))), vec![want.clone()]);
+        assert_eq!(results(&host.collect_mail()), vec![net::minigame::card_first(a as u8), want]);
+        assert!(results(&guest.handle(&card(true, a as u8))).is_empty() && host.collect_mail().is_empty(), "a found card cannot be turned again");
+    }
+
+    #[test]
+    fn clearing_the_board_ends_the_game_for_whoever_found_more() {
+        let (store, config, fields) = channel();
+        let (mut host, mut guest, faces) = dealt(&store, &config, &fields);
+        // The owner finds every pair.
+        let mut done = vec![false; faces.len()];
+        let mut last = Vec::new();
+        for i in 0..faces.len() {
+            if done[i] {
+                continue;
+            }
+            let j = (i + 1..faces.len()).find(|&j| faces[j] == faces[i]).unwrap();
+            done[i] = true;
+            done[j] = true;
+            host.handle(&card(true, i as u8));
+            last = results(&host.handle(&card(false, j as u8)));
+        }
+        let result = net::minigame::result_win(0, after_first_game(0));
+        assert_eq!(last.last(), Some(&result), "six pairs to none");
+        assert_eq!(results(&guest.collect_mail()).last(), Some(&result));
+    }
+
+    /// The owner, 2026-10-04: the record is kept per game. A won Omok game shows in the next
+    /// Omok room's panel and not in a Match Cards room's.
+    #[test]
+    fn the_record_is_stored_and_kept_per_game() {
+        let (store, config, fields) = channel();
+        let (mut host, host_id, mut guest, guest_id) = playing(&store, &config, &fields);
+        host.handle(&mode(net::minigame::MG_FORFEIT));
+        guest.collect_mail();
+        assert_eq!(store.minigame_record(guest_id, 3).unwrap().wins, 1, "the forfeit is the visitor's win");
+        assert_eq!(store.minigame_record(host_id, 3).unwrap().losses, 1);
+        assert_eq!(store.minigame_record(guest_id, 4).unwrap(), store::minigame::MiniGameRecord::default(), "Match Cards untouched");
+        host.handle(&mode(net::trade::ROOM_LEAVE));
+        guest.collect_mail();
+        // The visitor opens a new Omok room: its panel shows the win.
+        let open = results(&guest.handle(&create()));
+        let won = after_first_game(1)[1];
+        let mut w = net::PacketWriter::new();
+        won.write(&mut w);
+        let bytes = w.into_vec();
+        assert!(open[0].windows(20).any(|x| x == bytes.as_slice()), "the Omok room opens with 1 win");
+        guest.handle(&mode(net::trade::ROOM_LEAVE));
+        // And a Match Cards room with a fresh record.
+        let open = results(&guest.handle(&miniroom(&[0, 0, 0, 0, 4, 0, 0, 0, 1, 0, b'c', 0, 0])));
+        assert!(!open[0].windows(20).any(|x| x == bytes.as_slice()), "not in Match Cards");
     }
 
     #[test]
