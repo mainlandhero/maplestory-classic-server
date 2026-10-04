@@ -591,6 +591,15 @@ which the launcher delivers once the server is repackaged. And the collaboration
 each style in its **default** colour (`ab39b6a`, `crate::cosmetics`): Fern Hair -> Violet 42576,
 Übel Hair -> Green 42604, Übel Face -> Violet 22639. Plan TP 8/9.
 
+**2026-10-04, second Omok run: joining, Ready, Start and stones WORK on two screens; the
+time-out did not.** Both clients report a clock running out (~20 ms apart); the server passed
+the turn on the first report and straight back on the second, and the next stones were refused
+as out of turn. Now the first report counts and a duplicate within 3 s is ignored, and - the
+owner: *"Whenever the user times out on a turn, the server should automatically make a move for
+them"* - Omok places a legal stone next to the others for the late player, which hands the turn
+over on both clients. Match Cards passes the turn. `research/omok-room-2026-10-04.md` §11, fixture
+`omok-time-up-reported-twice-turn-flipped-back-world.log`. Plan step 45 i.
+
 **2026-10-04, first run of the Omok room: the window opened and the balloon showed; a
 double-click on it sent nothing.** The balloon's third field (`user+0x111c`) had gone out as 0
 because the drawing only reads it for shops; the click's user lookup (`FUN_1429B60D0`) also

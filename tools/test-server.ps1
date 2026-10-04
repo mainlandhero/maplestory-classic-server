@@ -2668,6 +2668,10 @@
              2000. After a game the winner shows W 1, PTS 2010 and the loser L 1, PTS 1990, on
              BOTH screens, and the next room shows the same -> fixed. The game ENDS cleanly (the
              result carries both records; a short one would have frozen it) -> say if not
+          i. THE TIME-OUT (second run: both clients report it, and the turn bounced back): let
+             a clock run out. Omok: a stone appears for the late player and it is the other's
+             turn on BOTH screens, and their next stone is accepted -> fixed. Match Cards: the
+             turn passes, a half-turned pair goes face down
           h. MATCH CARDS: !item 4080100 1 (a card set), same steps a-e. Every card shows for a
              moment at the start, then turns down. Your first card turns at once; the second
              shows on both screens; a miss turns both down by itself and passes the turn, a
@@ -6557,6 +6561,8 @@ function Show-TestPlan {
         Write-Host '       f. password room: wrong pw -> "password is incorrect"; late arrival sees balloon' -ForegroundColor Cyan
         Write-Host '       g. RECORD (W/L/D + PTS), per game: winner W 1 PTS 2010, loser L 1 PTS 1990,' -ForegroundColor Cyan
         Write-Host '          both screens, kept into the next room -> fixed. Game must END cleanly' -ForegroundColor Green
+        Write-Host '       i. TIME-OUT: let the clock run out - Omok: a stone is placed for you, the other' -ForegroundColor Cyan
+        Write-Host '          player moves next on both screens and their stone is accepted -> fixed' -ForegroundColor Green
         Write-Host '       h. MATCH CARDS (!item 4080100 1): a-e again; miss = both turn down + turn' -ForegroundColor Cyan
         Write-Host '          passes, pair = stays up + go again; its record is separate' -ForegroundColor Cyan
         Write-Host '       client dies at any step -> paste client-exit.log and say which step' -ForegroundColor Yellow

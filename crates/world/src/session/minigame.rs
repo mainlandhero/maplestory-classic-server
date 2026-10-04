@@ -33,7 +33,16 @@
 //! gets is rebuilt when the OWNER's state changes (create, close), so its player count and
 //! "game running" flag can lag; the live `0x0233` everyone on the map gets is always current.
 
+use std::time::{Duration, Instant};
+
 use super::{Reply, Session};
+
+/// **Both clients report a turn clock running out**, about 20 ms apart (the owner's run of
+/// 2026-10-04: 05:01:48.974 and .993). Before this guard the second report, arriving after the
+/// first had already passed the turn, passed it straight back - and the next stone was refused
+/// as out of turn. A report this soon after the clock last restarted is that duplicate. Every
+/// real time-out is at least 10 s after a restart (Match Cards' clock; Omok's is 30 s).
+const DUPLICATE_TIME_UP: Duration = Duration::from_secs(3);
 
 const BOARD: usize = net::minigame::BOARD;
 
@@ -56,6 +65,9 @@ pub(crate) struct Game {
     turn: usize,
     /// The seat that moved first this game.
     first: usize,
+    /// When the clients' turn clock last restarted - every packet that restarts it on the
+    /// client (the start, a stone, a card pair, a time-out, an undo) restarts this.
+    clock: Instant,
     tie_asked_by: Option<usize>,
     undo_asked_by: Option<usize>,
     board: Board,
@@ -622,6 +634,51 @@ fn to_net(r: store::minigame::MiniGameRecord) -> net::minigame::Record {
     net::minigame::Record { wins: r.wins, ties: r.ties, losses: r.losses, points: r.points }
 }
 
+/// Whether `stone` may go on the empty `(x, y)`: anything that makes five, and anything else
+/// that is not a double three.
+fn legal(cells: &[[u8; BOARD]; BOARD], x: usize, y: usize, stone: u8) -> bool {
+    let mut b = *cells;
+    b[y][x] = stone;
+    makes_five(&b, x, y, stone) || !makes_double_three(&b, x, y, stone)
+}
+
+/// **The stone the server plays for a player whose clock ran out**: a legal empty square
+/// next to a stone already on the board (any legal one if none is), picked with `seed`. `None`
+/// only when no square is legal.
+pub(crate) fn auto_stone(cells: &[[u8; BOARD]; BOARD], stone: u8, seed: u64) -> Option<(usize, usize)> {
+    let near = |x: usize, y: usize| {
+        (-1i32..=1).any(|dy| (-1i32..=1).any(|dx| at(cells, x as i32 + dx, y as i32 + dy).is_some_and(|c| c != 0)))
+    };
+    let empty: Vec<(usize, usize)> = (0..BOARD).flat_map(|y| (0..BOARD).map(move |x| (x, y))).filter(|&(x, y)| cells[y][x] == 0 && legal(cells, x, y, stone)).collect();
+    let close: Vec<(usize, usize)> = empty.iter().copied().filter(|&(x, y)| near(x, y)).collect();
+    let pool = if close.is_empty() { &empty } else { &close };
+    let mut state = seed;
+    (!pool.is_empty()).then(|| pool[(crate::config::splitmix64(&mut state) % pool.len() as u64) as usize])
+}
+
+/// Put `seat`'s stone on the legal, empty `(x, y)`: to both clients (which hand the turn over
+/// by themselves on it), then five in a row or a full board ends the game.
+fn place(r: &mut GameRoom, seat: usize, x: usize, y: usize, who: &str, store: &store::Store) -> Vec<Send> {
+    let g = r.game.as_mut().expect("a game");
+    let Board::Omok { cells, stones, moves } = &mut g.board else { return Vec::new() };
+    let stone = stones[seat];
+    cells[y][x] = stone;
+    let five = makes_five(cells, x, y, stone);
+    moves.push((x, y, seat));
+    let full = moves.len() == BOARD * BOARD;
+    g.tie_asked_by = None;
+    g.undo_asked_by = None;
+    g.turn = 1 - seat;
+    g.clock = Instant::now();
+    let mut sends = both(r, net::minigame::stone(x as u32, y as u32, stone), &format!("MiniroomResult 0x1F: {who} put stone {stone} at ({x}, {y})"));
+    if five {
+        sends.extend(finish(r, Some(seat), &format!("{who} made five"), store));
+    } else if full {
+        sends.extend(finish(r, None, "the board is full", store));
+    }
+    sends
+}
+
 /// The game ends: both records counted and stored (per game - an Omok result never touches the
 /// Match Cards record), the result to both with the records after it, and the next game's
 /// first mover is the loser.
@@ -702,6 +759,7 @@ fn step(r: &mut GameRoom, seat: usize, other: usize, name: &str, action: &net::m
                 r.game = Some(Game {
                     turn: first,
                     first,
+                    clock: Instant::now(),
                     tie_asked_by: None,
                     undo_asked_by: None,
                     board: Board::Cards { faces: faces.into_iter().map(Some).collect(), turned: None, pairs: [0; 2] },
@@ -715,6 +773,7 @@ fn step(r: &mut GameRoom, seat: usize, other: usize, name: &str, action: &net::m
             r.game = Some(Game {
                 turn: first,
                 first,
+                clock: Instant::now(),
                 tie_asked_by: None,
                 undo_asked_by: None,
                 board: Board::Omok { cells: [[0; BOARD]; BOARD], stones, moves: Vec::new() },
@@ -728,30 +787,15 @@ fn step(r: &mut GameRoom, seat: usize, other: usize, name: &str, action: &net::m
                 crate::server::log(&format!("   omok: room {} seat {seat} moved out of turn; ignored.", r.id));
                 return Vec::new();
             }
-            let Board::Omok { cells, stones, moves } = &mut g.board else { return Vec::new() };
+            let Board::Omok { cells, stones, .. } = &g.board else { return Vec::new() };
             let (xu, yu) = (x as usize, y as usize);
             if xu >= BOARD || yu >= BOARD || cells[yu][xu] != 0 {
                 return one(r, seat, net::minigame::bad_move(net::minigame::BAD_MOVE_OCCUPIED), &format!("MiniroomResult 0x20: ({x}, {y}) cannot take a stone"));
             }
-            let stone = stones[seat];
-            cells[yu][xu] = stone;
-            let five = makes_five(cells, xu, yu, stone);
-            if !five && makes_double_three(cells, xu, yu, stone) {
-                cells[yu][xu] = 0;
+            if !legal(cells, xu, yu, stones[seat]) {
                 return one(r, seat, net::minigame::bad_move(net::minigame::BAD_MOVE_DOUBLE_THREE), &format!("MiniroomResult 0x20: ({x}, {y}) is a double three"));
             }
-            moves.push((xu, yu, seat));
-            let full = moves.len() == BOARD * BOARD;
-            g.tie_asked_by = None;
-            g.undo_asked_by = None;
-            g.turn = other;
-            let mut sends = both(r, net::minigame::stone(x, y, stone), &format!("MiniroomResult 0x1F: {name} put stone {stone} at ({x}, {y})"));
-            if five {
-                sends.extend(finish(r, Some(seat), &format!("{name} made five"), store));
-            } else if full {
-                sends.extend(finish(r, None, "the board is full", store));
-            }
-            sends
+            place(r, seat, xu, yu, name, store)
         }
         Action::Card { first, index } => {
             let Some(g) = r.game.as_mut() else { return Vec::new() };
@@ -775,6 +819,7 @@ fn step(r: &mut GameRoom, seat: usize, other: usize, name: &str, action: &net::m
                 return Vec::new();
             };
             g.tie_asked_by = None;
+            g.clock = Instant::now();
             if faces[a] == faces[i] {
                 faces[a] = None;
                 faces[i] = None;
@@ -806,15 +851,33 @@ fn step(r: &mut GameRoom, seat: usize, other: usize, name: &str, action: &net::m
         }
         Action::TimeUp => {
             let Some(g) = r.game.as_mut() else { return Vec::new() };
-            // Both clients count the clock down and both report it; only the mover's counts.
-            if g.turn != seat {
+            // Both clients report it: the first report counts, whoever sends it, and the
+            // second is a duplicate (`DUPLICATE_TIME_UP`).
+            if g.clock.elapsed() < DUPLICATE_TIME_UP {
+                crate::server::log(&format!("   minigame: room {} seat {seat}'s time-up report came {} ms after the clock restarted - the other client's copy; ignored.", r.id, g.clock.elapsed().as_millis()));
                 return Vec::new();
             }
-            g.turn = other;
-            if let Board::Cards { turned, .. } = &mut g.board {
-                *turned = None;
+            let late = g.turn;
+            let next = 1 - late;
+            let late_name = r.seats[late].as_ref().map(|s| s.name.clone()).unwrap_or_default();
+            let g = r.game.as_mut().expect("checked");
+            match &mut g.board {
+                // The owner, 2026-10-04: "Whenever the user times out on a turn, the server should
+                // automatically make a move for them and skip that timed out user's turn." A
+                // stone for them, which also hands the turn over on both clients.
+                Board::Omok { cells, stones, .. } => {
+                    if let Some((x, y)) = auto_stone(cells, stones[late], seed) {
+                        crate::server::log(&format!("   omok: room {} {late_name}'s clock ran out - the server plays ({x}, {y}) for them.", r.id));
+                        return place(r, late, x, y, &format!("{late_name} (timed out; placed by the server)"), store);
+                    }
+                }
+                Board::Cards { turned, .. } => *turned = None,
             }
-            both(r, net::minigame::turn(other as u8), &format!("MiniroomResult 0x1E: {name}'s clock ran out; seat {other}'s turn"))
+            // Match Cards (or a board with no legal square left): the turn passes. A first
+            // card already turned goes face down again on 0x1E.
+            g.turn = next;
+            g.clock = Instant::now();
+            both(r, net::minigame::turn(next as u8), &format!("MiniroomResult 0x1E: {late_name}'s clock ran out; seat {next}'s turn"))
         }
         Action::TieRequest => {
             let Some(g) = r.game.as_mut() else { return Vec::new() };
@@ -869,6 +932,7 @@ fn step(r: &mut GameRoom, seat: usize, other: usize, name: &str, action: &net::m
                 }
             }
             g.turn = other;
+            g.clock = Instant::now();
             both(r, net::minigame::undo_accepted(count, other as u8), &format!("MiniroomResult 0x16: take-back granted, {count} stone(s) off, seat {other}'s turn"))
         }
         Action::Expel => Vec::new(),
@@ -1199,6 +1263,54 @@ mod tests {
         // And a Match Cards room with a fresh record.
         let open = results(&guest.handle(&miniroom(&[0, 0, 0, 0, 4, 0, 0, 0, 1, 0, b'c', 0, 0])));
         assert!(!open[0].windows(20).any(|x| x == bytes.as_slice()), "not in Match Cards");
+    }
+
+    /// Move the room's turn clock into the past, as a real time-out would find it.
+    fn age_clock(fields: &Arc<crate::fields::Fields>, by: Duration) {
+        for r in fields.trades().games.iter_mut() {
+            if let Some(g) = r.game.as_mut() {
+                g.clock -= by;
+            }
+        }
+    }
+
+    /// The owner's run, 2026-10-04 05:01:48: both clients report the time-out ~20 ms apart.
+    /// One stone is placed for the player who ran out, the duplicate does nothing, and the
+    /// other player's next stone is accepted - before this, the second report passed the turn
+    /// back and that stone was refused as out of turn.
+    #[test]
+    fn a_time_out_plays_a_stone_once_and_hands_the_turn_over() {
+        let (store, config, fields) = channel();
+        let (mut host, _, mut guest, _) = playing(&store, &config, &fields);
+        host.handle(&mv(7, 7));
+        guest.collect_mail();
+        // The visitor's turn; their clock runs out on both screens.
+        age_clock(&fields, Duration::from_secs(31));
+        let first = results(&guest.handle(&mode(net::minigame::MG_TURN)));
+        let second = results(&host.handle(&mode(net::minigame::MG_TURN)));
+        assert_eq!(first.len(), 1, "one stone for the visitor: {first:?}");
+        assert_eq!(&first[0][..4], &[0x1F, 0, 0, 0]);
+        assert_eq!(*first[0].last().unwrap(), net::minigame::STONE_SECOND, "the visitor's stone, not the owner's");
+        let (x, y) = (u32::from_le_bytes(first[0][4..8].try_into().unwrap()), u32::from_le_bytes(first[0][8..12].try_into().unwrap()));
+        assert!(x.abs_diff(7) <= 1 && y.abs_diff(7) <= 1 && (x, y) != (7, 7), "next to the stone on the board: ({x}, {y})");
+        assert_eq!(second, vec![first[0].clone()], "the owner gets the same stone, and their duplicate report adds nothing");
+        guest.collect_mail();
+        assert_eq!(results(&host.handle(&mv(0, 0))), vec![net::minigame::stone(0, 0, 1)], "and it is the owner's turn");
+    }
+
+    #[test]
+    fn an_auto_stone_is_legal_and_wins_when_it_can() {
+        let mut b = [[0u8; BOARD]; BOARD];
+        // The only empty squares next to anything are a double three for stone 1.
+        for (x, y) in [(5, 7), (6, 7), (7, 5), (7, 6)] {
+            b[y][x] = 1;
+        }
+        for seed in 0..50 {
+            let (x, y) = auto_stone(&b, 1, seed).unwrap();
+            assert_ne!((x, y), (7, 7), "never the double three");
+            assert_eq!(b[y][x], 0);
+        }
+        assert_eq!(auto_stone(&[[1; BOARD]; BOARD], 1, 0), None, "a full board has no square");
     }
 
     #[test]
