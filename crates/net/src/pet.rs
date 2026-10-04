@@ -248,7 +248,7 @@ pub fn pet_activated(character_id: u32, pet: &FieldPet) -> Vec<u8> {
     w.u8(1); //                     1429d617b  activated
     w.u8(1); //                     1429d6187  init
     w.u32(pet.item_id); //          141eb99ad
-    w.str(&pet.name); //            141eb99bf
+    w.str(&tag_name(&pet.name)); // 141eb99bf  the name tag - see tag_name
     w.u64(pet.serial); //           141eb9a63  raw8
     w.i16(pet.x); //                141eba3ac
     w.i16(pet.y); //                141eba594
@@ -493,8 +493,18 @@ pub fn pet_name_changed(character_id: u32, name: &str) -> Vec<u8> {
     let mut w = PacketWriter::new();
     w.u32(character_id);
     w.u32(PET_INDEX);
-    w.str(name);
+    w.str(&tag_name(name));
     w.into_vec()
+}
+
+/// **The name drawn on the tag under a summoned pet is folded to ASCII.** The owner, 2026-10-04:
+/// Lil Übel's tag read `Lil □bel` in the field while the Cash Shop and the inventory drew
+/// the `Ü` - those take the name from the client's own WZ strings, and the tag takes it from
+/// this packet. `PacketWriter::str` sends `Ü` as the one byte `0xDC`, and the tag's font has no
+/// glyph there: the chat notices' fault of 2026-09-11 (`crate::notice::ascii_fold`) on
+/// another layer. The stored name keeps its accent; only the wire copy is folded.
+fn tag_name(name: &str) -> String {
+    crate::notice::ascii_fold(name)
 }
 
 /// A stable, non-zero serial for one of a character's pets: the character id in the high
@@ -581,6 +591,9 @@ mod tests {
         };
         let b = pet_activated(215, &pet);
         assert_eq!(b.len(), pet_activated_len(5));
+        let ubel = pet_activated(215, &FieldPet { item_id: 5_000_475, name: "Lil Übel".to_string(), ..pet.clone() });
+        assert_eq!(&ubel[14..24], b"\x08\x00Lil Ubel", "the tag's name goes out as ASCII - 0xDC drew a box");
+        assert_eq!(&pet_name_changed(215, "Übel")[8..], b"\x04\x00Ubel");
         assert_eq!(&b[0..4], &215u32.to_le_bytes(), "the user pool's charId");
         assert_eq!(&b[4..8], &0u32.to_le_bytes(), "petIdx 0 - the only one accepted");
         assert_eq!(b[8], 1, "activated");
