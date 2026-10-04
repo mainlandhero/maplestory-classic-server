@@ -429,6 +429,23 @@ the ammo's attack - this client names it **`incWAT`** (Ilbi 27), and the first d
 never been compared with a night of real hits; a suspects line naming an honest character is
 the model being low, and log-only is the fix until it is corrected.
 
+**2026-10-04: a scrolled pet equip redraws at once; a pet equip that does not fit the pet is left
+out of Character Info - built, tests only.** The owner: *"whenever a pet equip is scrolled, the
+enhancement in the equipment info is not updated immediately unlike all non-cash equipment
+items."* The scroll's re-send said `0x0070` ADD **type 1** at `-114`; the client's SetItem
+`FUN_1402e4c20` files type 1 only for worn slots 1..31 and **drops** anything else, while type 6
+takes 101..131 (`research/msexe-set-item.c`, **[L]**). Every worn cash slot now goes out as type 6
+(`net::inventory::worn_slot_tab`), in both scroll paths and the Lucky Day mark. Found beside it: a
+pet equip scrolled **in the Deco tab** was looked up in the Equip tab at the same slot number
+(`dstInvType` was ignored) - it now names the tab. And, the owner with a Lil Frieren in a Blue
+Top Hat: *"If a pet equipment is invalid for the current pet, it should not show in pet info"*.
+`tools/dump_petequips.py` -> `gm-handbook/petequips.txt` lists the pets each equip has art for
+(each `Character/PetEquip/<id>.img` child is a pet item id; the Blue Top Hat has the eleven
+classic pets, not 5002828); Character Info leaves an unlisted pairing out of the pet panel. **[I]**
+that the client's red cell tests the same thing. **Regenerate the handbook** (`python
+tools/dump_petequips.py`) before packaging - without the file every pet equip counts as fitting,
+as before. Plan step 47.
+
 **2026-10-04: another player's Character Info shows their CITIZENSHIP - built, tests only.** The
 owner, with Tester2 looking at a Henesys citizen: *"Citizenship data cannot be viewed by other
 players"* - the button was greyed. The `0x00A2` reply's row 17 had always said **0 records**. The

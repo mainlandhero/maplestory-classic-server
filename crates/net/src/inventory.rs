@@ -70,8 +70,28 @@ pub const INV_EQUIP: i8 = 1;
 ///
 /// It matters only to [`move_changes_the_avatar`]: the client's `avatarChanged` test names
 /// **1 or 6**, not 1 alone, so a move on this type with a negative side also earns the
-/// trailing byte. Nothing in this server puts an item there yet.
+/// trailing byte. Cash equips live there, and so do their WORN slots - see [`worn_slot_tab`].
 pub const INV_DECO: i8 = 6;
+
+/// **The `invType` a worn slot answers to.** Worn slots 1..31 are type 1; worn slots
+/// 101..131 - every cash equip, the pet's equip at 114 among them - are type **6**.
+///
+/// Read off the client's slot resolver `FUN_1402e3770` and its setter `FUN_1402e4c20`
+/// (`research/msexe-equip-apply.c`, `research/msexe-set-item.c`), **[L]**: type 1 with a
+/// negative position takes `charData + 0x1a8 + slot*0x10` behind `0x1e < pos + 0x1f`, so
+/// **only 1..31**, and anything else is dropped (`return 0`); type 6 with a negative position
+/// takes `charData + 0x3a8 + (-100 - pos)*0x10` behind `0x1e < pos + 0x83`, so 101..131.
+///
+/// The owner, 2026-10-04: *"whenever a pet equip is scrolled, the enhancement in the equipment
+/// info is not updated immediately unlike all non-cash equipment items."* The scroll's
+/// re-send went out as type 1 at `-114`, which the client's setter drops without a word.
+pub fn worn_slot_tab(worn_slot: u8) -> i8 {
+    if worn_slot > 100 {
+        INV_DECO
+    } else {
+        INV_EQUIP
+    }
+}
 
 /// A parsed [`CLIENT_INVENTORY_MOVE`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -555,6 +575,15 @@ mod pet_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The client's resolver: type 1 takes worn slots 1..31, type 6 takes 101..131.
+    #[test]
+    fn a_worn_cash_slot_answers_to_the_deco_tab() {
+        assert_eq!(worn_slot_tab(5), INV_EQUIP, "the owner's topwear");
+        assert_eq!(worn_slot_tab(31), INV_EQUIP);
+        assert_eq!(worn_slot_tab(101), INV_DECO, "a cash hat");
+        assert_eq!(worn_slot_tab(114), INV_DECO, "the pet's equip");
+    }
 
     /// The real capture, byte for byte.
     #[test]

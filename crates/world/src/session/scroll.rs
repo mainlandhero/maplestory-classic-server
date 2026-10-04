@@ -527,8 +527,9 @@ impl Session {
         let blob = self.item_blob(&refreshed);
         out.push(Reply {
             opcode: net::inventory::INVENTORY_OPERATION,
+            // Type 6 for a worn cash equip (the pet's at 114): `net::inventory::worn_slot_tab`.
             body: net::inventory::inventory_added(
-                store::InventoryType::Equip.as_u8() as i8,
+                net::inventory::worn_slot_tab(equip_slot),
                 -i16::from(equip_slot),
                 &blob,
             ),

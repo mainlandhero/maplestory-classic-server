@@ -32,6 +32,7 @@ TOOLS = [
     "dump_scrolls.py",
     "dump_summon_sacks.py",
     "dump_chairs.py",
+    "dump_petequips.py",    # which pets each pet equip fits
     "dump_craftrecipe.py",
     "dump_beauty.py",       # hair and face ids
     "dump_npcstrings.py",

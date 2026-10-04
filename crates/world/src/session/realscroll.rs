@@ -55,19 +55,37 @@ use net::upgrade::{
 enum Target {
     /// A worn item. `dstSlot` was negative and this is its magnitude.
     Worn(u8),
-    /// An equip sitting in the Equip tab. `dstSlot` was positive.
-    Bagged(u16),
+    /// An equip sitting in a bag: the Equip tab, or the Deco tab for a cash equip (a pet's
+    /// hat). `dstSlot` was positive; `dstInvType` named the tab.
+    Bagged(store::InventoryType, u16),
 }
 
 impl Target {
-    /// **The sign of `dstSlot` is the whole discriminator.** Read unsigned, the owner's `-5` is
-    /// 65531 and every worn-item scroll would refuse - and wearing it is the usual way to
-    /// scroll something.
-    fn from_dst_slot(dst_slot: i16) -> Option<Self> {
+    /// **The sign of `dstSlot` is the whole discriminator** between worn and bagged. Read
+    /// unsigned, the owner's `-5` is 65531 and every worn-item scroll would refuse - and
+    /// wearing it is the usual way to scroll something. A bagged equip is in the tab
+    /// `dstInvType` names: 1 the Equip tab, 6 the Deco tab (`ItemUpgradeRequest`).
+    fn from_dst_slot(dst_inv_type: u16, dst_slot: i16) -> Option<Self> {
         match dst_slot {
             0 => None,
             n if n < 0 => u8::try_from(-i32::from(n)).ok().map(Target::Worn),
-            n => Some(Target::Bagged(n as u16)),
+            n => {
+                let tab = if dst_inv_type == net::inventory::INV_DECO as u16 {
+                    store::InventoryType::Deco
+                } else {
+                    store::InventoryType::Equip
+                };
+                Some(Target::Bagged(tab, n as u16))
+            }
+        }
+    }
+
+    /// The `invType` and position a `0x0070` must name for this equip. A worn cash equip -
+    /// the pet's at 114 - is type **6**, not 1: `net::inventory::worn_slot_tab`.
+    fn wire(self) -> (i8, i16) {
+        match self {
+            Target::Worn(slot) => (net::inventory::worn_slot_tab(slot), -i16::from(slot)),
+            Target::Bagged(tab, slot) => (tab.as_u8() as i8, slot as i16),
         }
     }
 }
@@ -123,7 +141,7 @@ impl Session {
         };
 
         // ---- the equip --------------------------------------------------------------
-        let Some(target) = Target::from_dst_slot(req.dst_slot) else {
+        let Some(target) = Target::from_dst_slot(req.dst_inv_type, req.dst_slot) else {
             return self.upgrade_refused(character_id, map, scroll_id, 0, "dstSlot names no slot");
         };
         let Some((equip_id, stored, failed_slots, rolled_base)) = self.read_target(character_id, target) else {
@@ -265,7 +283,7 @@ impl Session {
             Target::Worn(slot) if applied.destroyed => Reply {
                 opcode: net::inventory::INVENTORY_OPERATION,
                 body: net::inventory::inventory_removed(
-                    store::InventoryType::Equip.as_u8() as i8,
+                    net::inventory::worn_slot_tab(slot),
                     -i16::from(slot),
                 ),
                 what: format!(
@@ -275,14 +293,11 @@ impl Session {
                     cursed_pct
                 ),
             },
-            Target::Bagged(slot) if applied.destroyed => Reply {
+            Target::Bagged(tab, slot) if applied.destroyed => Reply {
                 opcode: net::inventory::INVENTORY_OPERATION,
-                body: net::inventory::inventory_removed(
-                    store::InventoryType::Equip.as_u8() as i8,
-                    slot as i16,
-                ),
+                body: net::inventory::inventory_removed(tab.as_u8() as i8, slot as i16),
                 what: format!(
-                    "InventoryOperation REMOVE: {equip_id} in Equip slot {slot} was DESTROYED \
+                    "InventoryOperation REMOVE: {equip_id} in {tab:?} slot {slot} was DESTROYED \
                      by scroll {scroll_id}."
                 ),
             },
@@ -316,15 +331,12 @@ impl Session {
             rolled_base: None, // server-only; this copy is only drawn
         };
         let blob = self.item_blob(&refreshed);
-        let pos = match target {
-            Target::Worn(slot) => -i16::from(slot),
-            Target::Bagged(slot) => slot as i16,
-        };
+        let (inv, pos) = target.wire();
         Reply {
             opcode: net::inventory::INVENTORY_OPERATION,
-            body: net::inventory::inventory_added(store::InventoryType::Equip.as_u8() as i8, pos, &blob),
+            body: net::inventory::inventory_added(inv, pos, &blob),
             what: format!(
-                "InventoryOperation ADD: re-sending {equip_id} at position {pos} so the tooltip shows \
+                "InventoryOperation ADD: re-sending {equip_id} at type {inv} position {pos} so the tooltip shows \
                  the new stats, {} enhancement slot(s), attribute {:#06x}",
                 stats.options.remaining_enhancements, stats.options.attribute
             ),
@@ -351,7 +363,7 @@ impl Session {
                 "the only enhancer scroll this server knows is the Lucky Day Scroll (2530000)",
             );
         }
-        let Some(target) = Target::from_dst_slot(req.dst_slot) else {
+        let Some(target) = Target::from_dst_slot(req.dst_inv_type, req.dst_slot) else {
             return self.upgrade_refused(character_id, map, scrolls::LUCKY_DAY, 0, "dstSlot names no slot");
         };
         let Some((equip_id, stored, failed_slots, _)) = self.read_target(character_id, target) else {
@@ -466,8 +478,8 @@ impl Session {
     ) -> Option<(u32, Option<net::opcode::EquipStats>, u8, Option<net::opcode::EquipStatSet>)> {
         match target {
             Target::Worn(slot) => self.store.worn_item(character_id, slot).ok().flatten(),
-            Target::Bagged(slot) => {
-                let item = self.bag_slot_item(character_id, store::InventoryType::Equip, slot)?;
+            Target::Bagged(tab, slot) => {
+                let item = self.bag_slot_item(character_id, tab, slot)?;
                 match item.kind {
                     store::ItemKind::Equip(stats) => {
                         Some((item.item_id, stats, item.failed_slots, item.rolled_base))
@@ -492,10 +504,10 @@ impl Session {
             Target::Worn(slot) => {
                 matches!(self.store.set_worn_equip(character_id, slot, stats, failed_slots), Ok(true))
             }
-            Target::Bagged(slot) => {
+            Target::Bagged(tab, slot) => {
                 // The rolled base is the ROW's and a scroll does not change it - carried over,
                 // or a scrolled drop would lose what Innocence reverts to (`Item::rolled_base`).
-                let rolled_base = self.bag_slot_item(character_id, store::InventoryType::Equip, slot).and_then(|i| i.rolled_base);
+                let rolled_base = self.bag_slot_item(character_id, tab, slot).and_then(|i| i.rolled_base);
                 let item = store::Item {
                     item_id: equip_id,
                     kind: store::ItemKind::Equip(Some(*stats)),
@@ -503,9 +515,7 @@ impl Session {
                     pet_id: None,
                     rolled_base,
                 };
-                self.store
-                    .set_inventory_slot(character_id, store::InventoryType::Equip, slot, &item)
-                    .is_ok()
+                self.store.set_inventory_slot(character_id, tab, slot, &item).is_ok()
             }
         }
     }
@@ -515,10 +525,7 @@ impl Session {
             Target::Worn(slot) => {
                 matches!(self.store.destroy_worn_equip(character_id, slot), Ok(true))
             }
-            Target::Bagged(slot) => self
-                .store
-                .remove_item(character_id, store::InventoryType::Equip, slot, None)
-                .is_ok(),
+            Target::Bagged(tab, slot) => self.store.remove_item(character_id, tab, slot, None).is_ok(),
         }
     }
 
@@ -589,14 +596,21 @@ mod tests {
     /// **The sign of `dstSlot` decides where to look**, and the owner's capture is the fixture.
     #[test]
     fn a_negative_destination_is_a_worn_slot_and_a_positive_one_is_a_bag_slot() {
-        assert_eq!(Target::from_dst_slot(-5), Some(Target::Worn(5)), "the owner's topwear");
-        assert_eq!(Target::from_dst_slot(-11), Some(Target::Worn(11)), "a weapon");
-        assert_eq!(Target::from_dst_slot(7), Some(Target::Bagged(7)));
+        assert_eq!(Target::from_dst_slot(1, -5), Some(Target::Worn(5)), "the owner's topwear");
+        assert_eq!(Target::from_dst_slot(1, -11), Some(Target::Worn(11)), "a weapon");
+        assert_eq!(Target::from_dst_slot(1, 7), Some(Target::Bagged(store::InventoryType::Equip, 7)));
+        // A pet's hat in the Deco tab: dstInvType 6 names the tab.
+        assert_eq!(Target::from_dst_slot(6, 3), Some(Target::Bagged(store::InventoryType::Deco, 3)));
         // Zero names nothing - it is the drop destination in the *other* inventory packet,
         // and treating it as slot 0 would scroll whatever the 0-hole holds.
-        assert_eq!(Target::from_dst_slot(0), None);
+        assert_eq!(Target::from_dst_slot(1, 0), None);
         // And the magnitude cannot overflow a u8 into a wrong slot.
-        assert_eq!(Target::from_dst_slot(-300), None);
+        assert_eq!(Target::from_dst_slot(1, -300), None);
+        // **And the re-send names the tab the client files the slot under**: a worn pet equip
+        // (114) is type 6 - type 1 at -114 is dropped by the client's setter.
+        assert_eq!(Target::Worn(5).wire(), (1, -5));
+        assert_eq!(Target::Worn(114).wire(), (6, -114));
+        assert_eq!(Target::Bagged(store::InventoryType::Deco, 3).wire(), (6, 3));
     }
 
     use crate::config::{Config, EquipTemplate};
@@ -607,12 +621,20 @@ mod tests {
     /// A hat scroll at 10% (category 100, `ScrollTemplate::fits`), +1 DEF.
     const HAT_SCROLL_10: u32 = 2_040_002;
     const PET_HAT: u32 = 1_802_000;
+    /// A Blue Top Hat with five slots, and the 100% Pet Equip Speed Scroll (category 180).
+    const TOP_HAT: u32 = 1_802_006;
+    const PET_SPEED_100: u32 = 2_048_000;
 
     /// A claimed character wearing a 7-slot hat, with `use_items` in the Use tab.
     fn wearing_a_hat(use_items: &[(u32, u16)]) -> (Arc<Store>, Session, u32) {
         let mut config = Config::default();
         config.equips.insert(HAT, EquipTemplate { tuc: 7, inc_pdd: 10, ..EquipTemplate::default() });
         config.equips.insert(PET_HAT, EquipTemplate { tuc: 0, ..EquipTemplate::default() });
+        config.equips.insert(TOP_HAT, EquipTemplate { tuc: 5, ..EquipTemplate::default() });
+        config.scrolls.insert(
+            PET_SPEED_100,
+            ScrollTemplate { success: 100, cursed: 0, increments: net::opcode::EquipStatSet { inc_speed: 1, ..Default::default() } },
+        );
         config.scrolls.insert(
             HAT_SCROLL_10,
             ScrollTemplate { success: 10, cursed: 0, increments: net::opcode::EquipStatSet { inc_pdd: 1, ..Default::default() } },
@@ -648,6 +670,48 @@ mod tests {
         b.extend_from_slice(&dst.to_le_bytes());
         b.push(0);
         b
+    }
+
+    /// **A scrolled pet equip is redrawn where the client keeps it.** The owner, 2026-10-04:
+    /// *"whenever a pet equip is scrolled, the enhancement in the equipment info is not updated
+    /// immediately unlike all non-cash equipment items."* The re-send named type 1 at `-114`,
+    /// which the client's setter drops (`net::inventory::worn_slot_tab`). Worn: type 6 at
+    /// `-114`. In the Deco tab: the scroll lands on the Deco item (`dstInvType` 6), not on
+    /// whatever the Equip tab holds at that number, and the re-send is type 6 there too.
+    #[test]
+    fn a_scrolled_pet_equip_is_redrawn_under_the_deco_tab() {
+        let (store, mut s, id) = wearing_a_hat(&[(PET_SPEED_100, 2)]);
+        let add_at = |out: &[Reply]| -> Vec<(u8, i16)> {
+            out.iter()
+                .filter(|r| r.opcode == net::inventory::INVENTORY_OPERATION && r.body.get(7) == Some(&net::inventory::MODE_ADD))
+                .map(|r| (r.body[8], i16::from_le_bytes([r.body[9], r.body[10]])))
+                .collect()
+        };
+
+        // Worn on the pet: slot 114.
+        let deco = store.add_item(id, store::InventoryType::Deco, &store::Item::equip(TOP_HAT), 1).unwrap()[0].slot;
+        store.equip_from_tab(id, store::InventoryType::Deco, deco, 114).unwrap();
+        let out = s.on_item_upgrade(&drag(use_slot(&store, id, PET_SPEED_100), -114));
+        assert_eq!(effect_result(&out), ItemUpgradeResult::Succeeded as u8, "{out:?}");
+        let worn = store.worn_item(id, 114).unwrap().unwrap().1.expect("stats written");
+        assert_eq!((worn.stats.inc_speed, worn.options.remaining_enhancements), (1, 4));
+        assert_eq!(add_at(&out), vec![(6, -114)], "type 6 - type 1 at -114 is dropped by the client");
+
+        // In the Deco tab, at a slot number the Equip tab also uses.
+        let bagged = store.add_item(id, store::InventoryType::Deco, &store::Item::equip(TOP_HAT), 1).unwrap()[0].slot;
+        store.set_inventory_slot(id, store::InventoryType::Equip, bagged, &store::Item::equip(HAT)).unwrap();
+        let mut body = drag(use_slot(&store, id, PET_SPEED_100), bagged as i16);
+        body[6..8].copy_from_slice(&6u16.to_le_bytes()); // dstInvType 6: the Deco tab
+        let out = s.on_item_upgrade(&body);
+        assert_eq!(effect_result(&out), ItemUpgradeResult::Succeeded as u8, "{out:?}");
+        let row = store.bag_items(id, store::InventoryType::Deco).unwrap().into_iter().find(|r| r.slot == bagged).unwrap();
+        match row.item.kind {
+            store::ItemKind::Equip(Some(st)) => assert_eq!(st.stats.inc_speed, 1, "the Deco hat took it"),
+            other => panic!("the Deco hat has no stats: {other:?}"),
+        }
+        let equip_tab = store.bag_items(id, store::InventoryType::Equip).unwrap().into_iter().find(|r| r.slot == bagged).unwrap();
+        assert_eq!(equip_tab.item.kind, store::ItemKind::Equip(None), "the Equip tab's item at the same number is untouched");
+        assert_eq!(add_at(&out), vec![(6, bagged as i16)]);
     }
 
     /// The `0x0236`'s result byte: `u32 charId`, then the result.

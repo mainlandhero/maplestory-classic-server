@@ -78,10 +78,27 @@ impl Session {
                 .name
                 .clone()
                 .unwrap_or_else(|| self.config.item_names.get(&row.item_id).cloned().unwrap_or_default());
-            let wear = worn.iter().find(|e| e.slot == super::pet::PET_EQUIP_WORN_SLOT).map(|e| {
-                let stats = e.stats.unwrap_or_else(|| self.template_stats(e.item_id));
-                (e.item_id, net::opcode::equipped_item(e.item_id, &stats))
-            });
+            // **Only an equip that fits this pet.** The owner, 2026-10-04: *"If a pet equipment is
+            // invalid for the current pet, it should not show in pet info"* - a Blue Top Hat
+            // on Lil Frieren, which the hat has no art for (`world::petequips`). The hat stays
+            // worn; the panel just shows the empty cell the client shows for no hat.
+            let wear = worn
+                .iter()
+                .find(|e| e.slot == super::pet::PET_EQUIP_WORN_SLOT)
+                .filter(|e| {
+                    let fits = crate::petequips::fits(&self.config.pet_equips, e.item_id, row.item_id);
+                    if !fits {
+                        crate::server::log(&format!(
+                            "   character info: pet equip {} does not fit pet {} (no art for it in Character/PetEquip) - left out of the pet panel",
+                            e.item_id, row.item_id
+                        ));
+                    }
+                    fits
+                })
+                .map(|e| {
+                    let stats = e.stats.unwrap_or_else(|| self.template_stats(e.item_id));
+                    (e.item_id, net::opcode::equipped_item(e.item_id, &stats))
+                });
             net::charinfo::PetPanel {
                 item_id: row.item_id,
                 name,

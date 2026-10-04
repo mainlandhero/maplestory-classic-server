@@ -132,6 +132,7 @@ fn main() -> ExitCode {
     let mut scrolls_path = PathBuf::from("gm-handbook/scrolls.txt");
     let mut sacks_path = PathBuf::from("gm-handbook/summonsacks.txt");
     let mut chairs_path = PathBuf::from("gm-handbook/chairs.txt");
+    let mut pet_equips_path = PathBuf::from("gm-handbook/petequips.txt");
     let mut recipes_path = PathBuf::from("gm-handbook/craftrecipes.txt");
     let mut mob_templates_path = PathBuf::from("gm-handbook/mobtemplates.txt");
     let mut mob_skills_path = PathBuf::from("gm-handbook/mobskills.txt");
@@ -303,6 +304,7 @@ fn main() -> ExitCode {
             "--scrolls" => value().map(|v| scrolls_path = PathBuf::from(v)),
             "--summon-sacks" => value().map(|v| sacks_path = PathBuf::from(v)),
             "--chairs" => value().map(|v| chairs_path = PathBuf::from(v)),
+            "--pet-equips" => value().map(|v| pet_equips_path = PathBuf::from(v)),
             "--craftrecipes" => value().map(|v| recipes_path = PathBuf::from(v)),
             "--mob-templates" => value().map(|v| mob_templates_path = PathBuf::from(v)),
             "--mob-skills" => value().map(|v| mob_skills_path = PathBuf::from(v)),
@@ -577,6 +579,16 @@ fn main() -> ExitCode {
         eprintln!(
             "maplecw-world: no chair table from {} - sitting will not change idle recovery. Regenerate with: python tools/dump_chairs.py",
             chairs_path.display()
+        );
+    }
+
+    // Which pets each pet equip fits. Empty is legal: every pet equip then counts as fitting,
+    // so Character Info shows a hat on a pet it has no art for, as it did before the table.
+    config.pet_equips = world::petequips::load_pet_equips(&pet_equips_path);
+    if config.pet_equips.is_empty() {
+        eprintln!(
+            "maplecw-world: no pet-equip table from {} - Character Info will show any pet equip on any pet. Regenerate with: python tools/dump_petequips.py",
+            pet_equips_path.display()
         );
     }
 

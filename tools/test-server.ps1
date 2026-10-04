@@ -2635,6 +2635,17 @@
              works without a map change. Still needs a map change -> the second 0x007C did not
              apply; world-ch0.log shows "skill points now [...]" right after the LEVEL line
 
+    47. PET EQUIPS (2026-10-04). Regenerate first: python "C:\MapleCW\tools\dump_petequips.py"
+          a. a Pet Equip scroll (e.g. !item 2048000 1) on the hat your pet WEARS: the hat's
+             tooltip shows the new Speed and one fewer enhancement AT ONCE -> fixed
+               only after a map change -> paste the "re-sending" line from world-ch0.log (it
+               names "type 6 position -114"; type 1 there is the old bug)
+          b. the same scroll on a pet hat sitting in the Deco tab: THAT hat changes, at once
+          c. Tester2 opens Show Pet Info on a Lil Frieren wearing a Blue Top Hat: the hat cell
+             is EMPTY -> fixed. The same hat on a classic pet (a Husky): it shows
+               hat still shown on Lil Frieren -> paste the "pet equip ... does not fit" line,
+               or say there is none (the table is missing: the server prints so at start)
+
     46. ANOTHER PLAYER'S CITIZENSHIP (2026-10-04). Two clients on one map; the owner a citizen
         (Henesys, as in the screenshot), Tester2 never signed.
           a. Tester2 double-clicks the owner: CITIZENSHIP is lit; open it: TOWN Henesys, the same
@@ -6545,6 +6556,12 @@ function Show-TestPlan {
         Write-Host ''
         Write-Host '  38. SP ON LEVEL-UP (2026-10-02): skill window open, level up - SP rises at once,' -ForegroundColor White
         Write-Host '       + works with no map change / channel change' -ForegroundColor Cyan
+        Write-Host ''
+        Write-Host '  47. PET EQUIPS (2026-10-04): run tools\dump_petequips.py first.' -ForegroundColor White
+        Write-Host '       Pet Equip scroll (!item 2048000 1) on the WORN pet hat: tooltip updates AT ONCE -> fixed' -ForegroundColor Green
+        Write-Host '       only after a map change -> paste the "re-sending" line (type 6 -114 expected)' -ForegroundColor Yellow
+        Write-Host '       same on a pet hat in the Deco tab: that hat changes at once' -ForegroundColor Cyan
+        Write-Host '       Tester2: Show Pet Info on Lil Frieren in a Blue Top Hat -> hat cell EMPTY; on a Husky it shows' -ForegroundColor Cyan
         Write-Host ''
         Write-Host '  46. OTHER PLAYER CITIZENSHIP (2026-10-04): Tester2 double-clicks the owner (a citizen).' -ForegroundColor White
         Write-Host '       CITIZENSHIP lit; town, grade, contribution as on the owner own window -> fixed' -ForegroundColor Green

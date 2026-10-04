@@ -373,6 +373,9 @@ pub struct Config {
     /// stays at its flat base. `gm-handbook/` is generated and gitignored, so a clean checkout
     /// has no table until `python tools/dump_chairs.py` runs. `world::chairs`.
     pub chairs: HashMap<u32, crate::chairs::Chair>,
+    /// Which pets each pet equip fits, from `gm-handbook/petequips.txt` (`world::petequips`).
+    /// Empty is legal: every pet equip then counts as fitting, as before the table existed.
+    pub pet_equips: crate::petequips::PetEquips,
     /// Every crafting recipe, keyed by the client's own recipe key, from
     /// `gm-handbook/craftrecipes.txt`.
     ///
@@ -2665,6 +2668,7 @@ impl Default for Config {
             look_change_reenter: false,
             charinfo_look_items: true,
             chairs: HashMap::new(),
+            pet_equips: HashMap::new(),
             recipes: crate::crafting::Recipes::new(),
             portals: HashMap::new(),
             portal_index: HashMap::new(),

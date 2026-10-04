@@ -10462,6 +10462,48 @@ fn double_clicking_another_player_answers_with_their_character_info() {
     assert_eq!(u32::from_le_bytes(out[0].body[4..8].try_into().unwrap()), their_id, "resolved by name");
 }
 
+/// **A pet equip that does not fit the pet is left out of the pet panel.** The owner,
+/// 2026-10-04, with Tester2 looking at a Lil Frieren wearing a Blue Top Hat: *"If a pet
+/// equipment is invalid for the current pet, it should not show in pet info"*. The table says
+/// which pets the hat has art for (`world::petequips`); a hat that fits shows as before.
+#[test]
+fn a_pet_equip_that_does_not_fit_the_pet_is_left_out_of_character_info() {
+    let (store, config, fields, account) = shared_channel(0, 30);
+    let husky = 5_000_006u32;
+    let hat = 1_802_006u32;
+    let with_table = |pets: Vec<u32>| {
+        let mut pet_equips = std::collections::HashMap::new();
+        pet_equips.insert(hat, pets);
+        Arc::new(Config { pet_equips, ..(*config).clone() })
+    };
+    let fits = with_table(vec![5_000_000, husky]);
+    let (mut me, _my_id) = join_channel(&store, &fits, &fields, account, "Wisp");
+    me.on_field_entered();
+    let (mut them, their_id) = join_channel(&store, &fits, &fields, account, "Tester2");
+    them.on_field_entered();
+    store.add_item(their_id, store::InventoryType::Cash, &store::Item::bundle(husky, 1), 1).unwrap();
+    them.last_position = Some((0, 0));
+    them.on_pet_activate(&hex("509a18140100"));
+    let hat_slot = store.add_item(their_id, store::InventoryType::Deco, &store::Item::equip(hat), 1).unwrap()[0].slot;
+    them.on_inventory_move(&inventory_move(net::inventory::INV_DECO, hat_slot as i16, -114, -1));
+    me.collect_mail();
+
+    let info = |s: &mut Session| {
+        let out = s.handle(&character_info_request(their_id, true));
+        out.into_iter().find(|r| r.opcode == net::charinfo::CHARACTER_INFO).expect("a 0x00A2")
+    };
+    let shown = info(&mut me);
+    assert!(shown.what.contains(&format!("wearing {hat}")), "the hat fits the Husky: {}", shown.what);
+
+    // The same hat, the same pet, a table that does not list the Husky: the cell is empty.
+    let (mut other, _) = join_channel(&store, &with_table(vec![5_000_000]), &fields, account, "Cobalt");
+    other.on_field_entered();
+    let hidden = info(&mut other);
+    assert!(hidden.what.contains("wearing nothing"), "{}", hidden.what);
+    assert!(hidden.body.len() < shown.body.len(), "no equip slot behind the flag");
+    assert!(store.worn_item(their_id, 114).unwrap().is_some(), "the hat is still worn - only the panel leaves it out");
+}
+
 /// **Another player's Character Info carries their citizenship.** The owner, 2026-10-04, with
 /// Tester2 looking at a Henesys citizen: *"Citizenship data cannot be viewed by other
 /// players"* - the button was greyed because row 17 always said 0 records. Now it carries

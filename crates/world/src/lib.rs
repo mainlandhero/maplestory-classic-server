@@ -71,6 +71,7 @@ pub mod mobattack;
 pub mod mobshare;
 pub mod party;
 pub mod petcommands;
+pub mod petequips;
 pub mod petlevel;
 pub mod questitems;
 pub mod questroom;
