@@ -1,5 +1,5 @@
-//! **Omok rooms** - the game half of the miniroom protocol (`0x017E` out, `0x0575` in), and
-//! the balloon that advertises a room over its owner's head (`0x0233`).
+//! **Omok and Match Cards rooms** - the game half of the miniroom protocol (`0x017E` out,
+//! `0x0575` in), and the balloon that advertises a room over its owner's head (`0x0233`).
 //!
 //! The owner, 2026-10-04: *"I just tried opening up a minigame room for omok, it did not open,
 //! and it did not advertise the minigame room in the map."* The create had been arriving all
@@ -29,8 +29,17 @@ use crate::PacketWriter;
 
 /// `roomType` for Omok - `FUN_141C3D980` builds the `0x1B40` class for it [L].
 pub const ROOM_TYPE_OMOK: u32 = 3;
-/// `roomType` for Match Cards. Not hosted: a create of it is refused.
+/// `roomType` for Match Cards - the `0x1860` class, `FUN_141C145F0` [L].
 pub const ROOM_TYPE_MATCH_CARDS: u32 = 4;
+/// Match Cards board sizes by the create's spec byte: `FUN_141C1B080` maps 0 / 1 / 2 to 12 /
+/// 20 / 30 cards (4 / 5 / 6 wide) [L].
+pub const CARD_COUNTS: [u8; 3] = [12, 20, 30];
+/// Card faces the client has art for: `UI/Minigame.img/MatchCards/card/0` .. `/14`, picked by
+/// formatting the dealt value with `"%d"` (`FUN_141C262D0`) [L]. 15 faces, 15 pairs at most.
+pub const CARD_FACES: u32 = 15;
+/// Both ways: a card turned. Out `u8 isFirst, u8 index`; in, see [`card_first`] /
+/// [`card_second`].
+pub const MC_CARD: u32 = 0x23;
 /// Two seats; the room's `capacity` byte and the balloon's max.
 pub const OMOK_CAPACITY: u8 = 2;
 /// The board is 15 x 15 (`FUN_141E95590`'s hit test) [L].
@@ -108,22 +117,51 @@ pub const LEAVE_EXPELLED: u32 = 6;
 /// Mode 4 notice `0x14`: "The password is incorrect." (`FUN_141C3D980`, string `0x205`) [L].
 pub const ROOM_NOTICE_BAD_PASSWORD: u32 = 0x14;
 
-/// One player's record in the room: five `u32`, **20 bytes**, copied whole by
-/// `FUN_1402d1b50`. Four are drawn in the record panel (`+0x10, +0x04, +0x0C, +0x08`) and which
-/// is which is not read off the client; nothing keeps a record yet, so it is zeros.
+/// One player's record: five `u32`, **20 bytes**, copied whole by `FUN_1402d1b50`.
 pub const RECORD_LEN: usize = 20;
 
-/// The room-open body for a game room. `my_slot` is the reader's own seat.
-pub fn room_open(my_slot: u8, members: &[RoomMember], title: &str, spec: u8) -> Vec<u8> {
+/// **A player's record at one game**, as the side panel draws it. `FUN_141C17290` formats
+/// `+0x10` into the top box and `+0x04`, `+0x0C`, `+0x08` into rows at y `0xa9`, `0xba`,
+/// `0xcb`; the panel's baked labels (`UI/Minigame.img/Common/score`) read **PTS** over
+/// **W / L / D** [L]. So: `+0x04` wins, `+0x08` ties, `+0x0C` losses, `+0x10` points. `+0x00`
+/// is not drawn; the v214 reference writes 1 there [I], and so does this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Record {
+    pub wins: u32,
+    pub ties: u32,
+    pub losses: u32,
+    pub points: u32,
+}
+
+impl Record {
+    pub fn write(&self, w: &mut PacketWriter) {
+        w.u32(1);
+        w.u32(self.wins);
+        w.u32(self.ties);
+        w.u32(self.losses);
+        w.u32(self.points);
+    }
+}
+
+/// The room-open body for an Omok room. `my_slot` is the reader's own seat; `records[i]` is
+/// `members[i]`'s.
+pub fn room_open(my_slot: u8, members: &[RoomMember], records: &[Record], title: &str, spec: u8) -> Vec<u8> {
+    room_open_game(ROOM_TYPE_OMOK, my_slot, members, records, title, spec)
+}
+
+/// The room-open body for either game: Omok (`FUN_141E99C40`) and Match Cards
+/// (`FUN_141C1B080`) read the same tail. For Match Cards `spec` is the board size, 0 / 1 / 2.
+pub fn room_open_game(room_type: u32, my_slot: u8, members: &[RoomMember], records: &[Record], title: &str, spec: u8) -> Vec<u8> {
+    debug_assert_eq!(members.len(), records.len());
     let mut tail = PacketWriter::new();
-    for m in members {
+    for (m, r) in members.iter().zip(records) {
         tail.u8(m.slot);
-        tail.zeros(RECORD_LEN);
+        r.write(&mut tail);
     }
     tail.u8(crate::trade::MEMBER_LIST_END);
     tail.str(title);
-    tail.u8(spec); // FUN_141E99C40 stores it at room+0x1b28; the Omok set, item id % 100
-    crate::trade::room_open_with(ROOM_TYPE_OMOK, my_slot, OMOK_CAPACITY, members, &tail.into_vec())
+    tail.u8(spec); // Omok: room+0x1b28, the set (item id % 100). Match Cards: the board size
+    crate::trade::room_open_with(room_type, my_slot, OMOK_CAPACITY, members, &tail.into_vec())
 }
 
 /// `0x0575` mode 3: **somebody sat down** - sent to the players already in the room.
@@ -132,7 +170,7 @@ pub fn room_open(my_slot: u8, members: &[RoomMember], title: &str, spec: u8) -> 
 /// `u16`, then `vt+0x180`. For Omok that is `FUN_141E9A2B0`, and it **reads the 20-byte record**
 /// through `FUN_1402d1b50` - `research/minigames-2026-09-09.md` §5.2 said it read nothing,
 /// which is `reads.py`'s `.pdata` blind spot again. Without the 20 bytes the body is short.
-pub fn visitor_entered(m: &RoomMember) -> Vec<u8> {
+pub fn visitor_entered(m: &RoomMember, record: &Record) -> Vec<u8> {
     let mut w = PacketWriter::new();
     w.u32(3);
     w.u8(m.slot);
@@ -140,7 +178,7 @@ pub fn visitor_entered(m: &RoomMember) -> Vec<u8> {
     w.u32(m.character_id);
     w.str(&m.name);
     w.u16(0);
-    w.zeros(RECORD_LEN);
+    record.write(&mut w);
     w.into_vec()
 }
 
@@ -169,6 +207,56 @@ pub fn start(second_slot: u8) -> Vec<u8> {
     mode_u8(MG_START, second_slot)
 }
 
+/// **Match Cards starts: the deal.** `FUN_141C1CA70`: `u8` the seat that moves SECOND (the same
+/// polarity as [`start`]), `u8 count`, then `count` `u32` faces in board order, read raw [L].
+/// The client never shuffles; it shows every card for `count * 200 + 0x2cec` ms and turns them
+/// down by itself.
+pub fn deal(second_slot: u8, faces: &[u32]) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(MG_START);
+    w.u8(second_slot);
+    w.u8(faces.len() as u8);
+    for f in faces {
+        w.u32(*f);
+    }
+    w.into_vec()
+}
+
+/// The opponent turned the first card of a pair - to the opponent only: the clicker's own
+/// client turned it already (`FUN_141C16CD0`) [L].
+pub fn card_first(index: u8) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(MC_CARD);
+    w.u8(1);
+    w.u8(index);
+    w.into_vec()
+}
+
+/// The second card of a pair, to both seats (the clicker's client waits for it).
+/// `result` (`FUN_141C1C4B0`), against the room's capacity of 2 [L]:
+/// below it, no match and the turn passes - the value is the seat that moved; at or above it, a
+/// match scored by seat `result - 2`, who keeps the turn. A miss turns both cards face down by
+/// itself 900 ms later (`room+0x17c4` / `+0x17bc`, the tick in `FUN_141C1BF70`).
+pub fn card_second(second: u8, first: u8, result: u8) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(MC_CARD);
+    w.u8(0);
+    w.u8(second);
+    w.u8(first);
+    w.u8(result);
+    w.into_vec()
+}
+
+/// [`card_second`]'s `result` for a miss by `seat`.
+pub fn card_miss(seat: u8) -> u8 {
+    seat
+}
+
+/// [`card_second`]'s `result` for a pair found by `seat`.
+pub fn card_match(seat: u8) -> u8 {
+    OMOK_CAPACITY + seat
+}
+
 /// Whose turn it is now - the slot that moves. 5 bytes.
 pub fn turn(slot: u8) -> Vec<u8> {
     mode_u8(MG_TURN, slot)
@@ -192,15 +280,28 @@ pub fn bad_move(reason: u32) -> Vec<u8> {
     w.into_vec()
 }
 
-pub fn result_draw() -> Vec<u8> {
-    mode_u8(MG_RESULT, RESULT_DRAW)
+/// **The game is over: a draw**, then both seats' records AFTER it, seat 0 first.
+///
+/// `FUN_141E9BB10` (Omok) and `FUN_141C1C7E0` (Match Cards) end by reading seat 0's and seat
+/// 1's 20-byte records through `FUN_1402d1b50` [L] - the `.pdata`-less thunk again, so
+/// `research/minigames-2026-09-09.md` §3.6 counted 5 / 6 bytes where the body is 45 / 46.
+pub fn result_draw(records: [Record; 2]) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(MG_RESULT);
+    w.u8(RESULT_DRAW);
+    records[0].write(&mut w);
+    records[1].write(&mut w);
+    w.into_vec()
 }
 
-pub fn result_win(winner_slot: u8) -> Vec<u8> {
+/// **The game is over: `winner_slot` won**, then both records, as [`result_draw`].
+pub fn result_win(winner_slot: u8, records: [Record; 2]) -> Vec<u8> {
     let mut w = PacketWriter::new();
     w.u32(MG_RESULT);
     w.u8(RESULT_WIN);
     w.u8(winner_slot);
+    records[0].write(&mut w);
+    records[1].write(&mut w);
     w.into_vec()
 }
 
@@ -321,6 +422,8 @@ pub enum Action {
     Start,
     TimeUp,
     Move { x: u32, y: u32, stone: u8 },
+    /// Match Cards: a card turned, the first or second of a pair.
+    Card { first: bool, index: u8 },
 }
 
 /// The game modes of `0x017E`, after the mode word. `None` for any other mode.
@@ -340,6 +443,7 @@ pub fn parse_action(mode: u32, c: &mut crate::PacketReader) -> Option<Action> {
         MG_START => Action::Start,
         MG_TURN => Action::TimeUp,
         OMOK_MOVE => Action::Move { x: c.u32().ok()?, y: c.u32().ok()?, stone: c.u8().ok()? },
+        MC_CARD => Action::Card { first: c.u8().ok()? == 1, index: c.u8().ok()? },
         _ => return None,
     })
 }
@@ -354,13 +458,14 @@ mod tests {
 
     #[test]
     fn the_room_open_ends_with_the_game_tail() {
-        let body = room_open(0, &[member(0)], "hello", 0);
+        let body = room_open(0, &[member(0)], &[Record::default()], "hello", 0);
         let base = crate::trade::room_open_len(&[member(0)]);
         // B is the room type, at bytes 8..12.
         assert_eq!(&body[8..12], &ROOM_TYPE_OMOK.to_le_bytes());
         // slot, 20 record bytes, terminator, title, spec.
         assert_eq!(body.len(), base + 1 + RECORD_LEN + 1 + 2 + 5 + 1);
         assert_eq!(body[base], 0, "the record's slot");
+        assert_eq!(&body[base + 1..base + 5], &[1, 0, 0, 0], "the record's first u32");
         assert_eq!(body[base + 21], 0xFF);
         assert_eq!(&body[base + 22..base + 24], &[5, 0]);
         assert_eq!(&body[base + 24..base + 29], b"hello");
@@ -368,9 +473,10 @@ mod tests {
 
     #[test]
     fn a_visitor_carries_their_record() {
-        let body = visitor_entered(&member(1));
+        let body = visitor_entered(&member(1), &Record { wins: 3, ties: 2, losses: 1, points: 2020 });
         assert_eq!(body.len(), 4 + 1 + 195 + 4 + 2 + 4 + 2 + RECORD_LEN);
         assert_eq!(&body[..5], &[3, 0, 0, 0, 1]);
+        assert_eq!(&body[body.len() - 20..], &[1, 0, 0, 0, 3, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 0xE4, 7, 0, 0], "1, W, D, L, PTS");
     }
 
     #[test]
@@ -379,8 +485,10 @@ mod tests {
         assert_eq!(bad_move(BAD_MOVE_DOUBLE_THREE).len(), 8);
         assert_eq!(start(1), vec![0x1C, 0, 0, 0, 1]);
         assert_eq!(turn(0), vec![0x1E, 0, 0, 0, 0]);
-        assert_eq!(result_draw(), vec![0x1D, 0, 0, 0, 1]);
-        assert_eq!(result_win(1), vec![0x1D, 0, 0, 0, 0, 1]);
+        let both = [Record::default(); 2];
+        assert_eq!(result_draw(both).len(), 5 + 2 * RECORD_LEN);
+        assert_eq!(result_win(1, both).len(), 6 + 2 * RECORD_LEN);
+        assert_eq!(&result_win(1, both)[..6], &[0x1D, 0, 0, 0, 0, 1]);
         assert_eq!(undo_accepted(2, 0), vec![0x16, 0, 0, 0, 1, 2, 0]);
         assert_eq!(undo_denied(), vec![0x16, 0, 0, 0, 0]);
         assert_eq!(ready(true), vec![0x19, 0, 0, 0]);
@@ -421,6 +529,19 @@ mod tests {
         assert_eq!(parse_action(OMOK_MOVE, &mut crate::PacketReader::new(&mv)), Some(Action::Move { x: 7, y: 8, stone: 1 }));
         assert_eq!(parse_action(MG_TIE_ANSWER, &mut crate::PacketReader::new(&[1])), Some(Action::TieAnswer { yes: true }));
         assert_eq!(parse_action(MG_TURN, &mut crate::PacketReader::new(&[])), Some(Action::TimeUp));
-        assert_eq!(parse_action(0x23, &mut crate::PacketReader::new(&[])), None, "Match Cards is not hosted");
+        assert_eq!(parse_action(MC_CARD, &mut crate::PacketReader::new(&[1, 4])), Some(Action::Card { first: true, index: 4 }));
+        assert_eq!(parse_action(0x24, &mut crate::PacketReader::new(&[])), None);
+    }
+
+    #[test]
+    fn the_match_cards_bodies_have_their_lengths() {
+        assert_eq!(deal(1, &[0; 12]).len(), 54, "research/minigames-2026-09-09.md: 54 / 86 / 126");
+        assert_eq!(deal(1, &[0; 30]).len(), 126);
+        assert_eq!(card_first(3), vec![0x23, 0, 0, 0, 1, 3]);
+        assert_eq!(card_second(5, 3, card_match(1)), vec![0x23, 0, 0, 0, 0, 5, 3, 3]);
+        assert_eq!(card_miss(0), 0);
+        let open = room_open_game(ROOM_TYPE_MATCH_CARDS, 0, &[member(0)], &[Record::default()], "cards", 2);
+        assert_eq!(&open[8..12], &4u32.to_le_bytes());
+        assert_eq!(*open.last().unwrap(), 2, "the board size closes the tail");
     }
 }
