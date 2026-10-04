@@ -2635,7 +2635,7 @@
              works without a map change. Still needs a map change -> the second 0x007C did not
              apply; world-ch0.log shows "skill points now [...]" right after the LEVEL line
 
-    45. OMOK ROOMS (2026-10-04). Two clients on one map; the owner and Tester2 each !item 4080000 1
+    45. OMOK AND MATCH CARDS ROOMS (2026-10-04). Two clients on one map; the owner and Tester2 each !item 4080000 1
         (an Omok set). Never on a screen before - every line is a first.
           a. the owner double-clicks the set, title "hello", no password: the Omok window opens
              with the owner seated, and a balloon "hello 1/2" floats over their head - on BOTH
@@ -2653,6 +2653,15 @@
           f. a private room (password set): a wrong password says "The password is
              incorrect."; the right one opens it. A player who walks onto the map AFTER a room
              opened sees its balloon too
+          g. THE RECORD (W / L / D and PTS in the side panel), per game: both start at 0/0/0,
+             2000. After a game the winner shows W 1, PTS 2010 and the loser L 1, PTS 1990, on
+             BOTH screens, and the next room shows the same -> fixed. The game ENDS cleanly (the
+             result carries both records; a short one would have frozen it) -> say if not
+          h. MATCH CARDS: !item 4080100 1 (a card set), same steps a-e. Every card shows for a
+             moment at the start, then turns down. Your first card turns at once; the second
+             shows on both screens; a miss turns both down by itself and passes the turn, a
+             pair stays up and you go again. All pairs found -> the result. The Match Cards
+             record is separate from the Omok one
 
     44. MIX DYE AND COLORBLEND (2026-10-03). The first look id above 9 999 999 this client is
         ever sent. !item 5151200 1 and !item 5152300 1 (neither is sold in the Cash Shop).
@@ -6522,7 +6531,7 @@ function Show-TestPlan {
         Write-Host '  38. SP ON LEVEL-UP (2026-10-02): skill window open, level up - SP rises at once,' -ForegroundColor White
         Write-Host '       + works with no map change / channel change' -ForegroundColor Cyan
         Write-Host ''
-        Write-Host '  45. OMOK ROOMS (2026-10-04, NEVER ON A SCREEN): both !item 4080000 1, same map.' -ForegroundColor White
+        Write-Host '  45. OMOK + MATCH CARDS (2026-10-04, NEVER ON A SCREEN): both !item 4080000 1, same map.' -ForegroundColor White
         Write-Host '       a. owner opens "hello": window opens + balloon over the head on BOTH screens' -ForegroundColor Cyan
         Write-Host '          + a [Miniroom] chat line -> fixed. No window -> "omok:" lines in world-ch0.log' -ForegroundColor Green
         Write-Host '       b. Tester2 clicks the balloon: both seated in both windows, balloon 2/2' -ForegroundColor Cyan
@@ -6530,6 +6539,10 @@ function Show-TestPlan {
         Write-Host '       d. 2nd game: loser first. Take-back, tie, give up, expel' -ForegroundColor Cyan
         Write-Host '       e. owner closes: Tester2 gets "The room is closed.", balloon gone' -ForegroundColor Cyan
         Write-Host '       f. password room: wrong pw -> "password is incorrect"; late arrival sees balloon' -ForegroundColor Cyan
+        Write-Host '       g. RECORD (W/L/D + PTS), per game: winner W 1 PTS 2010, loser L 1 PTS 1990,' -ForegroundColor Cyan
+        Write-Host '          both screens, kept into the next room -> fixed. Game must END cleanly' -ForegroundColor Green
+        Write-Host '       h. MATCH CARDS (!item 4080100 1): a-e again; miss = both turn down + turn' -ForegroundColor Cyan
+        Write-Host '          passes, pair = stays up + go again; its record is separate' -ForegroundColor Cyan
         Write-Host '       client dies at any step -> paste client-exit.log and say which step' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  44. MIX DYE / COLORBLEND (2026-10-03): !item 5151200 1, !item 5152300 1.' -ForegroundColor White

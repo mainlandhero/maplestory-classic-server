@@ -582,6 +582,21 @@ which the launcher delivers once the server is repackaged. And the collaboration
 each style in its **default** colour (`ab39b6a`, `crate::cosmetics`): Fern Hair -> Violet 42576,
 Übel Hair -> Green 42604, Übel Face -> Violet 22639. Plan TP 8/9.
 
+**2026-10-04, later: Match Cards rooms, and the win / tie / loss record, per game.** The owner:
+*"Can you also do the same for Monster Card Matching minigame"*, and *"the minigame UI keeps
+track of how many win/lose/ties the player has ... The win/lose/tie record is stored per game."*
+Match Cards now runs beside Omok in `session/minigame.rs`: the server deals (`count / 2` of the
+client's 15 faces, each twice, shuffled), relays a first card to the opponent only (the clicker's
+client turned it already) and the second to both, a pair keeps the turn, a miss passes it (the
+client turns the cards down itself after 900 ms), and the last pair ends the game. The record is
+`store::minigame` (one row per character and game) and goes in the room open, the visitor's
+arrival, and **every result - which reads both seats' 20-byte records after the winner byte**:
+the 2026-09-09 notes counted 5 / 6 bytes, the `.pdata` blind spot a third time, and every game
+would have ended on a short packet. Field order from the panel (`FUN_141C17290`) and its baked
+labels (PTS over W / L / D): `+4` wins, `+8` ties, `+0xC` losses, `+0x10` points. Points are
+this server's rule: 2000, +10 a win, -10 a loss. `research/omok-room-2026-10-04.md` §8-9.
+Tests only (`net` + `store` + `world` 2590 passing) - plan step 45 g, h.
+
 **2026-10-04: Omok rooms - the window, the balloon over the owner's head, and the game.** The
 owner: *"I just tried opening up a minigame room for omok, it did not open, and it did not
 advertise the minigame room in the map."* The create arrived and the server only knew trade.
