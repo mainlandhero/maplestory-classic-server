@@ -68,6 +68,7 @@ pub mod skills;
 pub mod skillpoints;
 pub mod storage;
 pub mod tradeescrow;
+pub mod playershop;
 pub mod minigame;
 
 pub use abilityspend::ApSpend;

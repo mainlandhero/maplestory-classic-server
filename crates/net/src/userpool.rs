@@ -707,6 +707,19 @@ pub fn user_enter_field(chr: &crate::opcode::Character, at: RemoteAt) -> Vec<u8>
 /// the balloon the players already there were sent as `0x0233`. Everything after it shifts by
 /// the block's length.
 pub fn user_enter_field_with_room(chr: &crate::opcode::Character, at: RemoteAt, room: Option<&crate::minigame::Balloon>) -> Vec<u8> {
+    user_enter_field_with_rooms(chr, at, room, None)
+}
+
+/// [`user_enter_field_with_room`] for a player who may also have a store open: the store block at
+/// 455 (`crate::playershop::sign_block`) carries its sign, so somebody arriving on the map sees the
+/// store the players already there were sent as `0x0234`. Everything after it shifts by the
+/// title's bytes.
+pub fn user_enter_field_with_rooms(
+    chr: &crate::opcode::Character,
+    at: RemoteAt,
+    room: Option<&crate::minigame::Balloon>,
+    store: Option<&crate::playershop::Sign>,
+) -> Vec<u8> {
     debug_assert_ne!(chr.id, 0, "a zero character id takes the four-u32 header branch");
     // Everything after the name shifts by its bytes; everything after the look shifts by
     // its equips. Both are folded into the offset assertions below.
@@ -891,12 +904,10 @@ pub fn user_enter_field_with_room(chr: &crate::opcode::Character, at: RemoteAt, 
     let room_at = w.len();
     crate::minigame::miniroom_block(&mut w, room); //  451  four zero bytes unless a room is open
     let room_extra = w.len() - room_at - 4;
-    // 455, FUN_14073a7b0, unconditional: raw4, u32, raw4, str, u32 = 18 bytes.
-    w.zeros(4);
-    w.u32(0);
-    w.zeros(4);
-    w.str("");
-    w.u32(0);
+    // 455, FUN_14073a7b0, unconditional: raw4, u32, raw4, str, u32 = 18 bytes and the title.
+    let store_at = w.len();
+    crate::playershop::sign_block(&mut w, store);
+    let room_extra = room_extra + (w.len() - store_at - 18);
     w.u8(0); //                   473
     w.u8(0); //                   474  couple ring
     w.u8(0); //                   475  friendship ring

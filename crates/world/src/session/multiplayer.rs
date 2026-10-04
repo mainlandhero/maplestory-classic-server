@@ -368,7 +368,12 @@ impl Session {
             map: self.field_of(chr),
             spawn: Reply {
                 opcode: net::userpool::USER_ENTER_FIELD,
-                body: net::userpool::user_enter_field_with_room(chr, self.remote_at(), self.own_balloon(chr.id).as_ref()),
+                body: net::userpool::user_enter_field_with_rooms(
+                    chr,
+                    self.remote_at(),
+                    self.own_balloon(chr.id).as_ref(),
+                    self.own_store_sign(chr.id).as_ref(),
+                ),
                 what: format!(
                     "UserEnterField: {} ({}) on map {} at ({}, {}) - {} bytes. \
                      research/user-enter-field.md; nothing here authenticates anybody.",

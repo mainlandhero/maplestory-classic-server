@@ -91,6 +91,11 @@ impl Session {
                 ),
             }));
 
+        // Hired merchants standing here - the employee pool is rebuilt on every field entry too.
+        // session/playershop.rs.
+        let here = self.field_of(&chr);
+        out.extend(self.merchants_on_entry(here));
+
         // **The field clock, for the maps that have one.** The owner, 2026-09-09, in Ellinia
         // Station: *"the server clock does not seem to work. It just stays on 00:00."* The
         // client builds the widget itself from the map's `clock` node at field entry and

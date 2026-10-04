@@ -966,7 +966,7 @@ pub const ITEM_ID_RENAMES: &[(u32, u32)] = &[
 /// (worn items) is here because the invariant is "every table with the column", not
 /// "every table a box could be in" - the test below derives the list from the schema and
 /// fails the moment a fifth table appears without being added.
-pub const ITEM_ID_TABLES: &[&str] = &["inventory", "equipment", "cash_locker", "storage_item", "pets", "gifts", "effect_item", "trade_escrow"];
+pub const ITEM_ID_TABLES: &[&str] = &["inventory", "equipment", "cash_locker", "storage_item", "pets", "gifts", "effect_item", "trade_escrow", "shop_escrow"];
 
 /// Apply [`ITEM_ID_RENAMES`] to every table in [`ITEM_ID_TABLES`]. Runs on every open.
 pub(crate) fn rename_item_ids(conn: &Connection) -> Result<()> {

@@ -575,6 +575,8 @@ impl Drop for Session {
         // a trade room belongs to the channel. session/trade.rs.
         self.leave_trade_on_disconnect();
         self.leave_game_on_disconnect();
+        // An owner leaving closes their store and the shelf comes home. session/playershop.rs.
+        self.leave_shop_on_disconnect();
         // The hub's directory: this character no longer plays on this channel. Before
         // `part`, which is the local equivalent. `session/worldlink.rs`.
         self.announce_offline_to_link();
@@ -671,6 +673,7 @@ mod summonsack;
 mod shop;
 mod storage;
 pub(crate) mod minigame;
+pub(crate) mod playershop;
 pub(crate) mod trade;
 mod skills;
 #[cfg(test)]
@@ -852,6 +855,8 @@ impl Session {
         out.extend(self.party_quest_timer_tick());
         // The ships to Orbis: sail what is due, land what has arrived. session/boat.rs.
         out.extend(self.boat_tick());
+        // Hired merchants that have stood their 24 hours close. session/playershop.rs.
+        out.extend(self.merchant_tick());
         // Buffs whose time is up. After regen so a `0x007C` and a `0x007E` in the same
         // tick arrive in the order the client draws them.
         out.extend(self.buff_tick(now_ms));
@@ -1067,6 +1072,17 @@ impl Session {
             // nothing elsewhere - see session/trade.rs; 0x017E does not latch.
             net::trade::CLIENT_MINIROOM => {
                 return self.on_miniroom(body.get(2..).unwrap_or(&[]))
+            }
+            // Player stores: the room and the shelf. Both latch, and every answer releases the
+            // latch - see session/playershop.rs.
+            net::playershop::CLIENT_SHOP_ROOM => {
+                return self.on_shop_room(body.get(2..).unwrap_or(&[]))
+            }
+            net::playershop::CLIENT_SHOP_SHELF => {
+                return self.on_shop_shelf(body.get(2..).unwrap_or(&[]))
+            }
+            net::playershop::CLIENT_HIRED_CHECK => {
+                return self.on_hired_check(body.get(2..).unwrap_or(&[]))
             }
             net::chair::CLIENT_CHAIR_SIT => {
                 return self.on_chair_sit(body.get(2..).unwrap_or(&[]))
@@ -1660,6 +1676,8 @@ impl Session {
         // **A trade a crash interrupted gives its offer back** - into the bag, before the
         // login record that draws the bag is built. session/trade.rs.
         self.return_trade_escrow_at_login();
+        // **And a store's shelf** - the same, for a store a crash left open. session/playershop.rs.
+        self.return_shop_escrow_at_login();
         // **A crafting quest finished before this server read `Act.1.skill` still counts.**
         // Here for the same reason the pet is: after the claim, before the login `SetField`,
         // so the record that builds the Crafting Journal's tabs already carries the skill.

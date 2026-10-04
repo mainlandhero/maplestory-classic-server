@@ -429,6 +429,28 @@ the ammo's attack - this client names it **`incWAT`** (Ilbi 27), and the first d
 never been compared with a night of real hits; a suspects line naming an honest character is
 the model being low, and log-only is the fix until it is corrected.
 
+**2026-10-04: player stores - the whole protocol decoded, built, tests only.** The owner: *"I just
+tried to open a player store, but nothing happened. Might need to decompile everything and make it
+work."* The create had arrived (`0x017F`, title "garbage", permit 5140001) and no handler knew the
+opcode. A store is **not** the trade/Omok miniroom: `0x017F` / `0x0180` out, `0x0576`..`0x0579` in,
+its own window class (`FUN_140D984D0`), and its sign is `0x0234` plus the block `0x0224` already
+sent zeroed at 455. All of it is in `research/player-store-2026-10-04.md`. Built: create (the permit
+must be in the Cash slot named), list / take back in setup, open, visit by double-clicking the sign,
+buy, chat, ban, close. Listed items leave the bag for `store::playershop`'s `shop_escrow` table and
+come back on close, on disconnect, or at the next login after a crash; a sale is one transaction and
+the owner gets the price less **3%**, the figure the client's own window states. Hired
+merchants (later the same day, *"double clicking the elf hired merchant ... doesn't do anything"*):
+the double-click is a check, `0x0181`, answered by `0x00A1` `0, 0`, after which the client prompts
+for a title and creates a type-4 store. *"We need to make it stay behind ... setup every 24 hours"*:
+the merchant on the map is an employee (`0x0622` / `0x0623`, research §5), a `hired_merchants` row
+keeps it standing through logouts and restarts, sales pay the absent owner, the owner's double-click
+is maintenance, and it closes 24 hours after setup with the shelf going home. Not built: Fredrick,
+the "sold" log. **First run, same evening** (`research/fixtures/store-open-left-ui-locked-sold-out-world.log`):
+open, list, visit, chat and buy worked on two screens; the owner's UI then froze because Open Store
+takes a client-side UI lock only a `0x0579` lifts (research §6) - fixed; sold-out lines now stay as
+SOLD OUT rows and a store with nothing left closes itself. Hired merchants not yet on a screen - plan
+step 49.
+
 **2026-10-04: a scrolled pet equip redraws at once; a pet equip that does not fit the pet is left
 out of Character Info - built, tests only.** The owner: *"whenever a pet equip is scrolled, the
 enhancement in the equipment info is not updated immediately unlike all non-cash equipment

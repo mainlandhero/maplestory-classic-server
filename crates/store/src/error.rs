@@ -94,6 +94,25 @@ pub enum StoreError {
     /// than from our own code.
     #[error("{value} is not one of the six inventories (1..=6)")]
     InvalidInventoryType { value: i16 },
+
+    // -----------------------------------------------------------------------------------
+    // Player stores (`crate::playershop`).
+    // -----------------------------------------------------------------------------------
+    /// The store already lists as many lines as its window holds.
+    #[error("the store already lists {lines} items")]
+    ShopFull { lines: u16 },
+
+    /// A row number with no line behind it - sold out, or taken back, since the window drew it.
+    #[error("the store has no item at row {index}")]
+    ShopLineGone { index: u16 },
+
+    /// More bundles asked for than the line still has.
+    #[error("the store has {have} bundle(s) of that, not {want}")]
+    ShopStock { have: u32, want: u32 },
+
+    /// A payment that would take a wallet past what it can hold.
+    #[error("a wallet of {have} mesos cannot take {incoming} more")]
+    WalletCap { have: u32, incoming: u64 },
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;

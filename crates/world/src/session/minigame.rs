@@ -343,7 +343,7 @@ impl Session {
         self.fields.bus().refresh_spawn(self.subscriber, spawn);
     }
 
-    fn speaker_of(&self, _chr: &net::opcode::Character) -> (u32, u8) {
+    pub(super) fn speaker_of(&self, _chr: &net::opcode::Character) -> (u32, u8) {
         let (account_id, world) = self.claimed.as_ref().map(|c| (c.account_id, c.world_id)).unwrap_or_default();
         (u32::try_from(account_id).unwrap_or(0), u8::try_from(world).unwrap_or(0))
     }

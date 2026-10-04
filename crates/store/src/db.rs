@@ -278,6 +278,8 @@ impl Store {
         crate::storage::create_tables(&conn)?;
         // Items and mesos on a trade table, out of the bag until the trade ends. store::tradeescrow.
         crate::tradeescrow::create_tables(&conn)?;
+        // Items listed in a player store, out of the bag until sold or taken back. store::playershop.
+        crate::playershop::create_tables(&conn)?;
         // Omok and Match Cards win / tie / loss / points, per character and game. store::minigame.
         crate::minigame::create_tables(&conn)?;
         crate::cash::create_tables(&conn)?;

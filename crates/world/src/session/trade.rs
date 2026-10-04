@@ -63,6 +63,12 @@ pub(crate) struct Rooms {
     open: Vec<(u32, [Option<Seat>; 2])>,
     /// Omok rooms - `session/minigame.rs`. On the same lock so one busy check sees both kinds.
     pub(super) games: Vec<super::minigame::GameRoom>,
+    /// Player stores - `session/playershop.rs`. On the same lock for the same reason.
+    pub(super) shops: Vec<super::playershop::ShopRoom>,
+    /// Hired merchants are read from the store once per channel process. `session/playershop.rs`.
+    pub(super) merchants_loaded: bool,
+    /// When a session last looked for hired merchants whose 24 hours are up.
+    pub(super) merchant_checked_at: Option<Instant>,
     /// Invites on somebody's screen and not answered yet: `(from, to, when)`.
     pending: Vec<(u32, u32, Instant)>,
     /// Invites declined: `(from, to, when)`.
@@ -941,6 +947,9 @@ impl Session {
         };
         if trading {
             return Some("in another trade");
+        }
+        if self.in_shop(me) {
+            return Some("in a player store");
         }
         self.in_game_room(me).then_some("in a minigame room")
     }

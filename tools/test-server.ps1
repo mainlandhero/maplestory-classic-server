@@ -2635,6 +2635,44 @@
              works without a map change. Still needs a map change -> the second 0x007C did not
              apply; world-ch0.log shows "skill points now [...]" right after the LEVEL line
 
+    49. PLAYER STORE (2026-10-04). Two clients on one map; the owner holds a Store Permit
+        (5140001) in the Cash tab. Nothing of it has been on a screen yet.
+          a. owner: use the permit, type a title -> the store window opens, owner in the first
+             seat, and a sign with the title goes up over their head ("cannot enter").
+             nothing opens -> paste the 0x017F and 0x0577 lines from world-ch0.log
+          b. owner: put an item on the shelf (bundles and a price) -> it leaves the bag and a row
+             reads "N for P mesos". Row missing or bag unchanged -> paste the 0x0180 / 0x0579 lines
+          c. owner: Open Store -> the sign turns to "can enter"
+          d. visitor: double-click the sign -> their window opens; the owner's chat says
+             they entered. No window -> paste the visitor's 0x017F line
+          e. visitor: buy one bundle -> it lands in their bag, their mesos drop by the price, the
+             owner's rise by the price less 3%, and both windows show one bundle fewer
+          f. a chat line from each side shows in both windows
+          g. owner: Close Store -> the visitor's window closes with "The shop has been closed.",
+             the unsold rest is back in the owner's bag, the sign is gone
+          (first run 2026-10-04: a-f WORKED; the owner's whole UI then froze after Open Store - fixed)
+          g2. after Open Store the owner can still click everything (Close Store, the bag) -> fixed.
+              Still frozen -> paste the 0x0579 line right after the owner's 4-byte 0x0180
+          g3. buy one line out while another remains -> that row reads SOLD OUT with its price;
+              buy the last -> the store closes itself for everybody ("The shop has been closed.")
+          g4. a second store (or elf) right beside an open store or elf -> "You can't open a store
+              here"; a step or two further away (120 px) -> it opens
+          h. HIRED MERCHANT, in the Free Market: double-click the Hired Merchant (5030000) in the
+             Cash tab -> a title prompt, then the window; the elf appears where the owner stands.
+             Nothing again -> paste the 0x0181 line and what followed (0x00A1)
+          i. list an item, Open Store, close the window, log out -> the elf STAYS (check from the
+             second client). The visitor double-clicks it, buys -> the owner's mesos rose at next login
+             no elf on the second client -> paste the 0x0622 line it was sent
+          j. owner double-clicks their own elf -> maintenance window; Close Store -> elf gone, rest home
+          k. 24 hours after setup it closes by itself; the rest of the shelf comes home
+        Any store button going dead = a request left unanswered: paste the last 0x017F / 0x0180
+        and what the server sent after it.
+
+    48. LIL UBEL'S NAME TAG (2026-10-04). Summon Lil Ubel (the accented U). The tag under it
+        reads "Lil Ubel" with a plain U -> fixed (the U-umlaut was sent as byte 0xDC, which the
+        tag's font draws as a box; the name is now folded to ASCII on the wire, as chat is).
+          still a box -> the tag is not drawn from 0x0277's name; paste the 0x0277 line
+
     47. PET EQUIPS (2026-10-04). Regenerate first: python "C:\MapleCW\tools\dump_petequips.py"
           a. a Pet Equip scroll (e.g. !item 2048000 1) on the hat your pet WEARS: the hat's
              tooltip shows the new Speed and one fewer enhancement AT ONCE -> fixed
@@ -6556,6 +6594,22 @@ function Show-TestPlan {
         Write-Host ''
         Write-Host '  38. SP ON LEVEL-UP (2026-10-02): skill window open, level up - SP rises at once,' -ForegroundColor White
         Write-Host '       + works with no map change / channel change' -ForegroundColor Cyan
+        Write-Host ''
+        Write-Host '  49. PLAYER STORE (2026-10-04): two clients, owner has a Store Permit (5140001) in the Cash tab' -ForegroundColor White
+        Write-Host '       a. use the permit: window opens + sign over the head   b. list an item: it leaves the bag, a row appears' -ForegroundColor Cyan
+        Write-Host '       c. Open Store: sign says can enter   d. visitor double-clicks the sign: their window opens' -ForegroundColor Cyan
+        Write-Host '       e. visitor buys: item + mesos move, owner gets the price less 3%   f. chat shows both sides' -ForegroundColor Cyan
+        Write-Host '       g. Close Store: visitor told "The shop has been closed.", unsold items back, sign gone' -ForegroundColor Cyan
+        Write-Host '       (first run: a-f worked; owner UI froze after Open Store - FIXED: owner can still click everything)' -ForegroundColor Green
+        Write-Host '       g3. a line bought out reads SOLD OUT with its price; the last one sold closes the store itself' -ForegroundColor Cyan
+        Write-Host '       g4. a store or elf right beside another -> "You can''t open a store here"; 120 px away -> it opens' -ForegroundColor Cyan
+        Write-Host '       h. Free Market: double-click the Hired Merchant in the Cash tab -> title prompt, window, the elf appears' -ForegroundColor Cyan
+        Write-Host '       i. list, Open Store, close the window, log out -> the elf STAYS; a visitor can buy from it' -ForegroundColor Cyan
+        Write-Host '       j. owner double-clicks own elf -> maintenance; Close Store -> elf gone, items home   k. gone after 24 h' -ForegroundColor Cyan
+        Write-Host '       anything fails or a button goes dead -> paste the 0x017F / 0x0180 / 0x0181 lines and what followed' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  48. LIL UBEL NAME TAG (2026-10-04): summon Lil Ubel - the tag reads "Lil Ubel" with a plain U -> fixed' -ForegroundColor White
+        Write-Host '       still a box -> paste the 0x0277 line from world-ch0.log' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  47. PET EQUIPS (2026-10-04): run tools\dump_petequips.py first.' -ForegroundColor White
         Write-Host '       Pet Equip scroll (!item 2048000 1) on the WORN pet hat: tooltip updates AT ONCE -> fixed' -ForegroundColor Green
