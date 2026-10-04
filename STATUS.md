@@ -429,6 +429,15 @@ the ammo's attack - this client names it **`incWAT`** (Ilbi 27), and the first d
 never been compared with a night of real hits; a suspects line naming an honest character is
 the model being low, and log-only is the fix until it is corrected.
 
+**2026-10-04: another player's Character Info shows their CITIZENSHIP - built, tests only.** The
+owner, with Tester2 looking at a Henesys citizen: *"Citizenship data cannot be viewed by other
+players"* - the button was greyed. The `0x00A2` reply's row 17 had always said **0 records**. The
+client's own window is the control (`research/character-info-2026-09-18.md` §6, **[L]**): opened on
+yourself it pushes, for town 1 then town 2, `{st, gr, ct}` read out of quest 510000 into the same
+vector the reply fills, and a non-zero `st` un-greys the button. The reply now sends exactly that,
+from the same `citizenship` rows. **[I], the run's question:** that the panel then draws the town
+name, grade and contribution as it does for the citizen - plan step 46.
+
 **2026-10-03: Custom Mix Dye and Custom Colorblend at the assistants - built, tests only.** The
 owner: mix dye hair colour and colorblend eye colour should work *"similar to how players can choose
 to color their hair and eye using the choice coupon"*. Decoded today, all **[L]**

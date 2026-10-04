@@ -15,6 +15,11 @@
 //! with its numbers. Fame is `characters.fame` (`store::fame`, since 2026-09-18 - it was a
 //! literal 0 before that). Guild is `""`: there are no guilds.
 //!
+//! **The CITIZENSHIP tab** carries the character's two towns exactly as their own window
+//! builds them from quest 510000 - `net::charinfo::TownRecord`. The owner, 2026-10-04:
+//! *"Citizenship data cannot be viewed by other players"*; until then the reply sent no
+//! records and the button was greyed for everyone but the citizen.
+//!
 //! **The ITEM tab** (the "Item List" panel) is what the character is wearing: the hair, the
 //! face, then every row of `equipment` - the regular slots and the cash covers above 100 -
 //! as whole equip slots. The owner, 2026-09-18: *"This item list should include the hair, face,
@@ -111,9 +116,18 @@ impl Session {
             pet: pet.clone(),
             show_pet_panel: req.pet_info,
             items,
+            towns: self.charinfo_towns(id),
         };
+        let towns = info
+            .towns
+            .iter()
+            .zip(["Henesys", "Kerning City"])
+            .filter(|(t, _)| t.state != 0)
+            .map(|(t, name)| format!("{name} st {} grade {} contribution {}", t.state, t.grade, t.contribution))
+            .collect::<Vec<_>>();
+        let towns = if towns.is_empty() { "none (the button stays greyed)".to_string() } else { towns.join(", ") };
         crate::server::log(&format!(
-            "   character info: {} ({id}) asked for by {:?}: level {}, job {}, fame {fame}, {} worn item(s) in the list, pet {}",
+            "   character info: {} ({id}) asked for by {:?}: level {}, job {}, fame {fame}, {} worn item(s) in the list, citizenship {towns}, pet {}",
             brief.name,
             self.claimed.as_ref().map(|c| c.character_id),
             brief.level,
@@ -125,7 +139,7 @@ impl Session {
             opcode: net::charinfo::CHARACTER_INFO,
             body: net::charinfo::character_info(&info),
             what: format!(
-                "CharacterInfo: {} ({id}) - level {}, job {}, fame {fame}, no guild, {} worn item(s) in the ITEM tab, pet {}{}. Opens the Character Info window for another player; clears the request latch.",
+                "CharacterInfo: {} ({id}) - level {}, job {}, fame {fame}, no guild, {} worn item(s) in the ITEM tab, citizenship {towns}, pet {}{}. Opens the Character Info window for another player; clears the request latch.",
                 brief.name,
                 brief.level,
                 brief.job,

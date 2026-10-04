@@ -106,9 +106,9 @@ Names corroborated by `data/shops.txt`'s tags; levels now [D] (§2.1); the rest 
   42 MDEF, +2% crit damage, +2 avoid, 5 slots, untradeable - **all [L]**, `equips.txt` rows 1032021/1032022
   match the site field for field.
 * Double-click a player -> their grade and progress: the Character Info packet already has a
-  CITIZENSHIP section - `{u32 kind, u32 value, u32}` x 0..2, `kind == 1 -> value` drawn, any
-  non-zero kind hides the `showCitizenship` button (`research/character-info-2026-09-18.md` row
-  17a). What value 2 is and how grade/progress are drawn was not read.
+  CITIZENSHIP section - `{st, gr, ct}` for town 1 then town 2; a non-zero `st` ENABLES the
+  `showCitizenship` button (this line said "hides" until 2026-10-04 - backwards). Read off the
+  client's own fill and sent since 2026-10-04 (`research/character-info-2026-09-18.md` §6).
 * Ten NPCs per town greet differently by grade - the idle-chatter machinery keyed on grade.
 * Housing / the estate agents (Tommy, Jack): the site has no details yet.
 
@@ -117,7 +117,7 @@ Names corroborated by `data/shops.txt`'s tags; levels now [D] (§2.1); the rest 
 | | where | today |
 |---|---|---|
 | shop row: required citizenship **town** and **grade** | `net::classicshop` item record `+0x104`, `+0x108` | sent as 0 - the client never shows a row as locked, and the server does not refuse it either (`min_grade` is parsed, never read) |
-| Character Info CITIZENSHIP section | `net::charinfo` row 17 | count 0 |
+| Character Info CITIZENSHIP section | `net::charinfo` row 17 | ~~count 0~~ two records `{st, gr, ct}`, 2026-10-04 |
 | effects 83 CitizenshipGet / 84 CitizenshipGradeUp | `net::questeffect` | never sent |
 | GM command | the string `/citizenship <townID> <state|grade|contr> <val>` | not handled |
 | contract window | `UI/Citizenship.img/contract` (code: `FUN_1411A2DA0` loads it) | never opened |
@@ -311,8 +311,9 @@ chosen."* The mechanism, read 2026-09-28:
 
 **Built 2026-09-28** (`crates/{net,store,world}/src/citizenship.rs`, `session/citizenship.rs`) -
 items 1-5 and the GM command. Not built: shop/storage/taxi **discounts** (which items are tagged
-is [S] and not in `data/shops.txt`), Character Info's CITIZENSHIP section (what `kind`/`value`
-mean was never read), and item 7. The original list:
+is [S] and not in `data/shops.txt`), and item 7. Character Info's CITIZENSHIP section was
+built 2026-10-04: `{st, gr, ct}` for town 1 then town 2, read off the client's own fill
+(`research/character-info-2026-09-18.md` §6). The original list:
 
 1. `store`: per character, per town `(active, grade, contribution)`; the active town. Sent as
    quest 510000 `st1=..;gr1=..;ct1=..;st2=..;gr2=..;ct2=..` - in the character record (presence 16)

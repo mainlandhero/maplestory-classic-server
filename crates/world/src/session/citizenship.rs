@@ -60,6 +60,25 @@ impl Session {
         self.store.citizenship(character_id).unwrap_or_default()
     }
 
+    /// Character Info's CITIZENSHIP records for `character_id`: town 1, then town 2, each the
+    /// same `st/gr/ct` the character's own quest 510000 carries (`citizenship::record_value`),
+    /// zero for a town never signed. `net::charinfo::TownRecord` says why these three.
+    pub(super) fn charinfo_towns(&self, character_id: u32) -> [net::charinfo::TownRecord; net::charinfo::CHARACTER_INFO_TOWNS] {
+        let standings = self.standings(character_id);
+        std::array::from_fn(|i| {
+            let town = i as u8 + 1;
+            standings
+                .iter()
+                .find(|t| t.town == town)
+                .map(|t| net::charinfo::TownRecord {
+                    state: u32::from(t.state),
+                    grade: u32::from(t.grade),
+                    contribution: t.contribution,
+                })
+                .unwrap_or_default()
+        })
+    }
+
     /// Block #28's entries for a `SetField`: quest 510000 (when the character ever signed) and
     /// the four board postings. Remembers the postings, so [`Session::board_tick`] can tell
     /// when a day turns under a player who has not changed map.

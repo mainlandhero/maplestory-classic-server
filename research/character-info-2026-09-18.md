@@ -84,7 +84,7 @@ are into `s`; the window offset is `s + 0x300`.
 | 16 | `u32` | `1401cef5d` | - | count | **item count, 0..32**. `> 0x20` -> the decoder **returns early** (`jg 1401cf0bf`), leaving #17/#18 unread and the cursor mid-body; `<= 0` -> empty. | [L] |
 | 16a | item x n | `1401cef88` -> `FUN_140303530` | per entry | `s+0x60` vector -> `w+0x388` | whole `GW_ItemSlot`s. `FUN_14119a960` walks `w+0x388` and builds one 0x11d8-byte icon widget per entry - the **ITEM tab**. Which items belong there is not established (§5). | [L] shape, [I] tab |
 | 17 | `u32` | `1401cf03f` | - | count | **record count, 0..2**. `> 2` -> early return as above. | [L] |
-| 17a | `{u32,u32,u32}` x n | `1401cf063/6f/7b` | per entry | `s+0x78` vector -> `w+0x3a0` | `{kind, value, u32}`. `kind == 1` -> `w+0x3c8 = value`; any non-zero `kind` -> `w+0x3c4 = 0` (`1411970a1..1411970bd`), and `w+0x3c4` gates the `showCitizenship` button (`141195fc2`). The **CITIZENSHIP tab**'s data. | [L] mechanism, [I] tab |
+| 17a | `{u32,u32,u32}` x n | `1401cf063/6f/7b` | per entry | `s+0x78` vector -> `w+0x3a0` | **`{st, gr, ct}` per town, town 1 then town 2** (§6). `st == 1` -> `w+0x3c8 = gr` (the badge, `FUN_1411a2da0`); any non-zero `st` -> `w+0x3c4 = 0` (`1411970a1..1411970bd`), and `w+0x3c4` gates the `showCitizenship` button (`141195fc2`). The **CITIZENSHIP tab**'s data. | [L] |
 | 18 | `u8` | `142cd8885` | - | bool | **showPetPanel**. `FUN_141198f20(window, b)` (`142cd8a0d`): `b != 0` **and** #8 `!= 0` and no panel open -> allocate the 0x338-byte pet panel (`FUN_14119aec0`); `b == 0` -> close any open panel. | [L] |
 
 Order is the listing order; every read is unconditional except 15a (flag) and the two
@@ -195,9 +195,8 @@ blocks every one of those senders until the next field entry or one of those pac
   icon widgets; which items the server is meant to put there (equips? medals? a showcase?) was
   not derived. The v214 reference sends a full character record here and is no help. Sending
   count 0 is safe.
-* **The two 12-byte CITIZENSHIP records** (row 17a): only `kind == 1 -> w+0x3c8` and
-  `kind != 0 -> hides the button` were read. What `value` is drawn as, and what kind 2 is,
-  were not. Count 0 is safe.
+* ~~**The two 12-byte CITIZENSHIP records** (row 17a)~~ - settled 2026-10-04, §6. (This bullet
+  also had the button backwards: a non-zero first word clears `w+0x3c4`, which ENABLES it.)
 * **Row 13** (`s+0x44`): reaches the frame loader's fourth parameter; 0 is what `CPet` passes in
   the common case. Name unknown.
 * **Row 14** (`s+0x48`): the override mechanism is measured; that it is v95's
@@ -210,3 +209,31 @@ blocks every one of those senders until the next field entry or one of those pac
   or the `WATCH` on `0x142cd8895` never fires.
 * **`0x00BE`**: beyond "an id list handed to the NPC pool" its purpose was not pursued. It is
   not the character-info reply and should not be sent as one.
+
+## 6. The CITIZENSHIP records: the client's own fill is the control (2026-10-04)
+
+The owner, with a screenshot of Tester2 viewing a Henesys citizen: *"Citizenship data cannot be viewed
+by other players"* - the CITIZENSHIP button was greyed, because the reply sent row 17 = 0.
+Decompiled into `research/msexe-charinfo-citizenship.c`. All **[L]**:
+
+* **The self path builds the same vector.** On the viewer's own character the window fills from
+  local data, `FUN_141197a40`. At its end (`141198891..`) it empties `w+0x3a0` and, for town
+  `t = 1, 2`, pushes `{FUN_1402c90f0(t), FUN_1402c9150(t), FUN_1402c92a0(t)}` - and applies the
+  same two rules the remote fill applies (`st == 1` -> `w+0x3c8 = gr`; `st != 0` -> `w+0x3c4 = 0`).
+* **The three getters are quest 510000's keys.** Each is `FUN_1402c8870(key, kind, t)` then
+  `FUN_140729fb0(510000, key, 0)`, with kinds **0, 1, 2** = `st`, `gr`, `ct`
+  (`research/citizenship-2026-09-27.md` §5).
+* **The button.** `FUN_141195060`: `showCitizenship` is enabled when `w+0x310 != 0` or
+  `w+0x3c4 == 0`. A remote fill with no record with a non-zero first word leaves `w+0x3c4` set -
+  greyed, which is the screenshot.
+
+So the reply carries **exactly two records, town 1 then town 2, `{st, gr, ct}` from the same
+`citizenship` rows that make the character's own quest-510000 string** (`net::charinfo::TownRecord`,
+`Session::charinfo_towns`). A town never signed is all zero, as the self path's getters return
+for an absent key.
+
+**Not walked:** how the citizenship panel lays the vector out. `FUN_1411a00d0` (the only other
+reader of `w+0x3a0`) iterates it and refreshes; the drawing is behind a vtable call. It does not
+change the answer - the remote reply now fills the same vector, in the same order, with the
+same words, as the window the citizen sees for themself - but the "town names come from the
+position, not a field" reading is [I] until a run shows a Kerning-only citizen.

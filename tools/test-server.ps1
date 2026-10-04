@@ -2635,6 +2635,17 @@
              works without a map change. Still needs a map change -> the second 0x007C did not
              apply; world-ch0.log shows "skill points now [...]" right after the LEVEL line
 
+    46. ANOTHER PLAYER'S CITIZENSHIP (2026-10-04). Two clients on one map; the owner a citizen
+        (Henesys, as in the screenshot), Tester2 never signed.
+          a. Tester2 double-clicks the owner: CITIZENSHIP is lit; open it: TOWN Henesys, the same
+             GRADE and CONTRIBUTION the owner sees on their own window -> fixed
+               still greyed -> paste the "character info:" line from world-ch0.log (it lists
+               what was sent as "citizenship ...")
+               lit but the panel is blank or names the wrong town -> the panel does not read
+               the records the way the owner's own window does; paste a screenshot of both
+          b. the owner double-clicks Tester2: CITIZENSHIP stays greyed (never signed), as on
+             Tester2's own window
+
     45. OMOK AND MATCH CARDS ROOMS (2026-10-04). Two clients on one map; the owner and Tester2 each !item 4080000 1
         (an Omok set). Never on a screen before - every line is a first.
           a. the owner double-clicks the set, title "hello", no password: the Omok window opens
@@ -6530,6 +6541,11 @@ function Show-TestPlan {
         Write-Host ''
         Write-Host '  38. SP ON LEVEL-UP (2026-10-02): skill window open, level up - SP rises at once,' -ForegroundColor White
         Write-Host '       + works with no map change / channel change' -ForegroundColor Cyan
+        Write-Host ''
+        Write-Host '  46. OTHER PLAYER CITIZENSHIP (2026-10-04): Tester2 double-clicks the owner (a citizen).' -ForegroundColor White
+        Write-Host '       CITIZENSHIP lit; town, grade, contribution as on the owner own window -> fixed' -ForegroundColor Green
+        Write-Host '       greyed -> paste the "character info:" line; wrong town / blank -> screenshot both' -ForegroundColor Yellow
+        Write-Host '       Tester2 (never signed): the owner sees it greyed, as Tester2 does' -ForegroundColor Cyan
         Write-Host ''
         Write-Host '  45. OMOK + MATCH CARDS (2026-10-04, NEVER ON A SCREEN): both !item 4080000 1, same map.' -ForegroundColor White
         Write-Host '       a. owner opens "hello": window opens + balloon over the head on BOTH screens' -ForegroundColor Cyan

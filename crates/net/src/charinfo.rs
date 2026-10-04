@@ -77,6 +77,36 @@ pub struct PetPanel {
     pub wear: Option<(u32, Vec<u8>)>,
 }
 
+/// One town's line of the **CITIZENSHIP tab** - row 17a's `{u32, u32, u32}`.
+///
+/// The owner, 2026-10-04, with a screenshot of Tester2 looking at a citizen of Henesys:
+/// *"Citizenship data cannot be viewed by other players"* - the tab was greyed, because this
+/// reply always sent no records.
+///
+/// **The three words are what the client builds for ITSELF.** Opened on the viewer's own
+/// character, the window fills from local data (`FUN_141197a40`) and, for town 1 then town 2,
+/// pushes `{FUN_1402c90f0(t), FUN_1402c9150(t), FUN_1402c92a0(t)}` into the same `w+0x3a0`
+/// vector this reply fills (`1411988c0..141198960`) - and those three getters read quest
+/// 510000's `st<t>`, `gr<t>` and `ct<t>` (`FUN_1402c8870` kinds 0, 1, 2). **[L]** Both paths
+/// then apply the same rule to each record: `state == 1` -> `w+0x3c8 = grade` (the badge,
+/// `FUN_1411a2da0`), `state != 0` -> `w+0x3c4 = 0`, which un-greys the CITIZENSHIP button
+/// (`141195fc2`). So a record built from the same three keys draws what the citizen sees for
+/// themself. How the panel lays the vector out was not walked; it is the same vector either
+/// way, in the same town order, which is why [`CharacterInfo::towns`] is a fixed pair.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TownRecord {
+    /// `st<town>`: 1 active; 0 never signed; anything else signed but not active.
+    pub state: u32,
+    /// `gr<town>`, 1..10.
+    pub grade: u32,
+    /// `ct<town>`, the running total.
+    pub contribution: u32,
+}
+
+/// Row 17's count: the decoder gives up mid-body above 2, and the client's own fill always
+/// pushes exactly 2 - town 1 (Henesys), then town 2 (Kerning City).
+pub const CHARACTER_INFO_TOWNS: usize = 2;
+
 /// What the window draws for a character who is not the viewer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CharacterInfo {
@@ -98,18 +128,22 @@ pub struct CharacterInfo {
     /// cash shop cover items that the player is wearing."* - hair and face are not items in
     /// this client's data, so they have no slot to send; see `session/charinfo.rs`).
     pub items: Vec<Vec<u8>>,
+    /// **The CITIZENSHIP tab**: town 1, then town 2, as [`TownRecord`]. All zero for a
+    /// character who never signed - the button stays greyed, as it does on their own window.
+    pub towns: [TownRecord; CHARACTER_INFO_TOWNS],
 }
 
 /// Row 16 of the reply: an item count above this makes the decoder give up mid-body.
 pub const CHARACTER_INFO_MAX_ITEMS: usize = 32;
 
-/// Length of a [`character_info`] body with no pet, empty guild and a name of `n` bytes.
-pub const CHARACTER_INFO_BASE_LEN: usize = 60;
+/// Length of a [`character_info`] body with no pet, empty guild and a name of `n` bytes:
+/// the 60 of `research/character-info-2026-09-18.md` §3 plus the two 12-byte town records.
+pub const CHARACTER_INFO_BASE_LEN: usize = 60 + CHARACTER_INFO_TOWNS * 12;
 
 /// Build a [`CHARACTER_INFO`] body. Field order is the decoder's, read at the addresses in
 /// `research/character-info-2026-09-18.md` §2, and every field is unconditional except the
-/// pet item behind its flag and the two vectors behind their counts (both sent empty: the
-/// ITEM and CITIZENSHIP tabs' data, whose contents are not established).
+/// pet item behind its flag and the two vectors behind their counts: the ITEM tab's worn
+/// items and the CITIZENSHIP tab's two town records.
 pub fn character_info(info: &CharacterInfo) -> Vec<u8> {
     let mut w = PacketWriter::new();
     w.u32(0); // result: show it
@@ -155,7 +189,12 @@ pub fn character_info(info: &CharacterInfo) -> Vec<u8> {
     for item in items {
         w.bytes(item);
     }
-    w.u32(0); // record count (CITIZENSHIP tab), 0..2
+    w.u32(CHARACTER_INFO_TOWNS as u32); // record count (CITIZENSHIP tab), 0..2
+    for t in &info.towns {
+        w.u32(t.state);
+        w.u32(t.grade);
+        w.u32(t.contribution);
+    }
     w.u8(u8::from(info.show_pet_panel && info.pet.is_some()));
     w.into_vec()
 }
@@ -196,6 +235,7 @@ mod tests {
             guild: String::new(),
             pet: None,
             show_pet_panel: false,
+            towns: Default::default(),
         };
         let b = character_info(&info);
         assert_eq!(b.len(), CHARACTER_INFO_BASE_LEN + "Tester2".len());
@@ -209,6 +249,9 @@ mod tests {
         assert_eq!(&b[29..31], &[0, 0], "empty guild");
         assert_eq!(u32::from_le_bytes(b[31..35].try_into().unwrap()), 0, "no pet");
         assert_eq!(b[b.len() - 1], 0, "pet panel closed");
+        let records = b.len() - 1 - 4 - 24;
+        assert_eq!(&b[records..records + 4], &[2, 0, 0, 0], "two town records, as the client's own fill pushes");
+        assert!(b[records + 4..b.len() - 1].iter().all(|&x| x == 0), "never signed: both all zero, the button stays greyed");
         assert_eq!(character_info_refused(), vec![1, 0, 0, 0]);
     }
 
@@ -228,6 +271,7 @@ mod tests {
             guild: String::new(),
             pet: Some(PetPanel { item_id: 5_000_006, name: "Husky".into(), level: 3, closeness: 250, fullness: 90, wear: Some((1_802_006, hat.clone())) }),
             show_pet_panel: true,
+            towns: Default::default(),
         };
         let b = character_info(&info);
         let at = 4 + 4 + 2 + 4 + 4 + 4 + 4 + 2; // through the empty guild
@@ -238,12 +282,43 @@ mod tests {
         let flag = after_name + 20;
         assert_eq!(b[flag], 1, "an equip slot follows");
         assert_eq!(&b[flag + 1..flag + 1 + hat.len()], &hat[..], "the hat's whole equip slot, type byte first");
-        assert_eq!(b[flag + 1 + hat.len()..], [0, 0, 0, 0, 0, 0, 0, 0, 1], "no items, no records, panel open");
+        let tail = &b[flag + 1 + hat.len()..];
+        assert_eq!(&tail[..8], &[0, 0, 0, 0, 2, 0, 0, 0], "no items, two town records");
+        assert_eq!(tail.len(), 8 + 24 + 1);
+        assert_eq!(*tail.last().unwrap(), 1, "panel open");
 
         let bare = character_info(&CharacterInfo { pet: Some(PetPanel { wear: None, ..info.pet.clone().unwrap() }), ..info.clone() });
         assert_eq!(&bare[after_name + 16..after_name + 21], &[0, 0, 0, 0, 0], "no hat: id 0, no slot");
 
         let closed = character_info(&CharacterInfo { show_pet_panel: true, pet: None, ..info });
         assert_eq!(*closed.last().unwrap(), 0, "no pet: the panel flag is not echoed, the client would refuse it anyway");
+    }
+
+    /// A Henesys citizen of grade 5 with 4150 contribution who once signed in Kerning City
+    /// (frozen, state 2): row 17 carries exactly `st1 gr1 ct1`, then `st2 gr2 ct2`, the words
+    /// the client's own fill reads out of quest 510000 for town 1 then town 2.
+    #[test]
+    fn the_citizenship_tab_carries_both_towns_in_the_clients_own_order() {
+        let info = CharacterInfo {
+            character_id: 214,
+            name: "Tester2".into(),
+            level: 30,
+            job: 200,
+            fame: 1,
+            items: Vec::new(),
+            guild: String::new(),
+            pet: None,
+            show_pet_panel: false,
+            towns: [
+                TownRecord { state: 1, grade: 5, contribution: 4150 },
+                TownRecord { state: 2, grade: 3, contribution: 900 },
+            ],
+        };
+        let b = character_info(&info);
+        assert_eq!(b.len(), CHARACTER_INFO_BASE_LEN + "Tester2".len());
+        let at = b.len() - 1 - 24 - 4;
+        let words: Vec<u32> = (0..7).map(|i| u32::from_le_bytes(b[at + i * 4..at + i * 4 + 4].try_into().unwrap())).collect();
+        assert_eq!(words, vec![2, 1, 5, 4150, 2, 3, 900], "count, then town 1, then town 2");
+        assert_eq!(&b[at - 4..at], &[0, 0, 0, 0], "the item count before it");
     }
 }

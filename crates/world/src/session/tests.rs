@@ -10462,6 +10462,47 @@ fn double_clicking_another_player_answers_with_their_character_info() {
     assert_eq!(u32::from_le_bytes(out[0].body[4..8].try_into().unwrap()), their_id, "resolved by name");
 }
 
+/// **Another player's Character Info carries their citizenship.** The owner, 2026-10-04, with
+/// Tester2 looking at a Henesys citizen: *"Citizenship data cannot be viewed by other
+/// players"* - the button was greyed because row 17 always said 0 records. Now it carries
+/// town 1 then town 2 as `{st, gr, ct}`, the words the citizen's own quest 510000 holds and
+/// their own window reads; a character who never signed gets two zero records, which keeps
+/// the button greyed exactly as on their own window.
+#[test]
+fn another_players_character_info_carries_their_citizenship() {
+    let (store, config, fields, account) = shared_channel(0, 30);
+    let (mut me, _my_id) = join_channel(&store, &config, &fields, account, "Wisp");
+    me.on_field_entered();
+    let (mut them, their_id) = join_channel(&store, &config, &fields, account, "Tester2");
+    them.on_field_entered();
+    me.collect_mail();
+
+    let records = |b: &[u8]| -> Vec<u32> {
+        let at = b.len() - 1 - 24 - 4;
+        (0..7).map(|i| u32::from_le_bytes(b[at + i * 4..at + i * 4 + 4].try_into().unwrap())).collect()
+    };
+    let out = me.handle(&character_info_request(their_id, false));
+    assert_eq!(records(&out[0].body), vec![2, 0, 0, 0, 0, 0, 0], "never signed: two zero records");
+    assert!(out[0].what.contains("citizenship none"), "{}", out[0].what);
+
+    let henesys = store::citizenship::TownStanding { town: 1, state: 1, grade: 5, contribution: 4150, certified_grade: 5 };
+    let kerning = store::citizenship::TownStanding { town: 2, state: 2, grade: 3, contribution: 900, certified_grade: 3 };
+    store.set_citizenship(their_id, &[kerning, henesys]).unwrap();
+    let out = me.handle(&character_info_request(their_id, false));
+    assert_eq!(out[0].opcode, net::charinfo::CHARACTER_INFO);
+    assert_eq!(
+        records(&out[0].body),
+        vec![2, 1, 5, 4150, 2, 3, 900],
+        "town 1 then town 2, whatever order the store keeps them in"
+    );
+    assert_eq!(
+        crate::citizenship::record_value(&store.citizenship(their_id).unwrap()),
+        "st1=1;gr1=5;ct1=4150;st2=2;gr2=3;ct2=900",
+        "the same words their own quest 510000 carries"
+    );
+    assert!(out[0].what.contains("Henesys st 1 grade 5 contribution 4150, Kerning City st 2 grade 3"), "{}", out[0].what);
+}
+
 // ---------------------------------------------------------------------------------------
 // Gift Drops - session/giftdrop.rs, crate::giftdrop, store::gifts.
 
@@ -11870,8 +11911,9 @@ fn fame_reaches_both_players_once_a_day_and_the_window_lists_what_they_wear() {
     let total: usize = entries.iter().map(|e| e.len()).sum();
     let base = net::charinfo::CHARACTER_INFO_BASE_LEN + "Tester2".len();
     assert_eq!(b.len(), base + total, "three whole equip slots behind the count");
-    // The count sits 9 bytes before the end of the base: count, record count, flag.
-    let count_at = base - 9;
+    // The count sits 33 bytes before the end of the base: count, record count, the two
+    // 12-byte town records, flag.
+    let count_at = base - 33;
     assert_eq!(u32::from_le_bytes(b[count_at..count_at + 4].try_into().unwrap()), 3, "hair, face, hat");
     let mut at = count_at + 4;
     for (what, e) in ["hair 30030", "face 20000", "the hat"].iter().zip(&entries) {
