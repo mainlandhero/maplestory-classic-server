@@ -40,9 +40,9 @@ Black and Blue at 30 on Frieren Hair 42540 is `42540530`. Eye colours 2 and 7 at
 is `22235760`. The avatar look, `SetField`, `0x0224` and the `0x007C` HAIR/FACE bit already
 carry a `u32`. **[D]**: no packet layout changes.
 
-**Which colour the percent belongs to is not settled.** `FUN_14041a2a0` treats `(a, b, p)` and
-`(b, a, 100 - p)` as the same look, so either reading draws the same picture. The server never
-needs to know, because the client composes the id.
+**The percent is the MIX colour's share** (settled the same day, §7): the window labels
+`/AddProb` with it beside `/AddColor`, and `/BaseProb` with `100 - percent` beside `/BaseColor`
+(`FUN_142a93ac0`). `FUN_14041a2a0` treats `(a, b, p)` and `(b, a, 100 - p)` as the same look.
 
 ## 2. The box: `0x055B` type `0x2a`
 
@@ -54,7 +54,7 @@ decompile agree:
 14127e0f6  u32  coupon
 14127e105  str  text
 14127e117  raw1 mode     0 = the player's own look; 'd' = an android's
-14127e128  u32  (stored as list element 0; nothing reads it back)
+14127e128  u32  the STARTING percent - list element 0, read by the setup (§7). 0 breaks it
 ```
 
 **The coupon picks the dialog** (`FUN_1401a8170` -> `FUN_140417ed0`):
@@ -112,7 +112,7 @@ then look the `u32` up in a template pool (`FUN_141e768f0`). That is a different
   the mix when the new style draws both colours, and drops to the first colour when it does not.
   A Signature or Mystery dye gives a plain colour, which clears the mix.
 
-## 6. Still open
+## 6. Still open (see §7 for the first run)
 
 * **[I], the one a client run settles: whether this client DRAWS a mixed id.** The dialogs, the
   arithmetic and the strings are all here, and the composer feeds the result straight back as
@@ -125,3 +125,50 @@ then look the `u32` up in a template pool (`FUN_141e768f0`). That is a different
 * The `_New` and `_KR` windows (`FUN_142a8e830`, `FUN_142a8de60`) are dialog kinds `0x18`,
   `0x1a` and `0x1b`. They are reached from types `0x2b` and `0x3b`, which this server does not
   send.
+
+## 7. 2026-10-03, the first run: the window opened and no colour could be picked
+
+The owner, with a screenshot: the MixHair window opened on the character at Brittany, *"but I cannot
+select any of the colors for preview"*. That was this file's own mistake. §2 said the box's last
+`u32` was "stored as list element 0; nothing reads it back". The handler was the only function
+read. **The window's setup reads it.** In `FUN_142a91f30` (`research/msexe-mix-hair-window.c`),
+case `0x17`/`0x19`:
+
+```c
+uVar8 = *puVar10;                        // list element 0: the u32 we sent
+if (param_3 - 0x1cU < 2) uVar8 = 0x32;   // the client's own kinds 0x1c/0x1d force 50
+FUN_14041a250(state, rnd & 7, (rnd & 7) + 1 & 7, uVar8);   // base, mix, PERCENT
+```
+
+`FUN_14041a250` stores the three bytes as they are. Every part of the window is then gated on
+`FUN_14041a270` (`research/msexe-mix-window-state.c`):
+
+* `FUN_142a91c70` marks both palettes `-1`, nothing selected, when the state is invalid;
+* `FUN_142a93870` builds the ratio slider only when it is valid;
+* `FUN_142a93ac0` draws the two percent labels only when it is valid.
+
+We sent 0, which is outside `1..99`, so the window opened dead. **The fix:** send 50, the value
+the client forces for its other two kinds (`net::script::MIX_START_PERCENT`).
+
+The habit this breaks again is `CLAUDE.md`'s *"a table row written from a quick read is a
+claim"*. "Nothing reads it back" was checked against the handler alone. The value went into a
+list, and the list went to another function that was never read.
+
+**The same zero made Cancel draw a warning.** In the owner's second screenshot, Cancel brought up
+*"This cannot be used. Hair with the same color is already equipped."* That is the client's
+string `0x479`, and §3 already had the cause without seeing it. After the window closes,
+`FUN_14127e090` reads the window's value (`FUN_142a8a7d0`) and composes it with the current hair
+(`FUN_1401a8660`). It then runs the same-look check (`FUN_1401a8500`) **before** looking at
+which button was pressed; the confirm flag `uVar13` only matters when the reply is written.
+
+With an invalid state the value is 0. `FUN_14041a8d0` refuses a percent of 0 and returns the hair
+unchanged, so the check found a match and warned on every Cancel. With a valid start, Cancel
+composes the random starting mix, and that is not the worn look.
+
+One coincidence was left: a player already wearing a 50% mix whose random starting colours match
+it. `salon::mix_start_percent` opens such a player at 51 instead. A 51% start cannot match a 50%
+mix either way round (its swapped twin is 49%).
+
+A Confirm on the look already worn still draws that warning, and should: it is the client
+refusing to spend a coupon on nothing.
+

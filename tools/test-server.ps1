@@ -2640,6 +2640,13 @@
           a. Brittany (Henesys salon), menu line "mix two hair colours": the client's own
              UtilDlgEx_MixHair window opens on your character -> the box is right
                a plain dialog, or nothing -> paste the "ScriptMessage MIX" line
+             The swatches are LIVE now (2026-10-03: the first run opened with every colour
+             dead - the box sent a starting ratio of 0). Click a Base and a Mix colour: the
+             preview recolours and a ratio slider shows 50/50 -> fixed
+               still dead -> the setup gates on more than the ratio; say whether a slider
+               appears at all
+             Press CANCEL: the window closes with NO "same color is already equipped" box
+             (the first run drew it on every Cancel - same cause) -> fixed
           b. pick two colours and a ratio, OK: hair shows BOTH colours, the coupon is gone,
              world-ch0.log "HAIR bit -> 4xxxxxxx" (8 digits) -> fixed
                head blank, or the client dies on the HAIR bit -> this client cannot draw a
@@ -6490,7 +6497,9 @@ function Show-TestPlan {
         Write-Host '       + works with no map change / channel change' -ForegroundColor Cyan
         Write-Host ''
         Write-Host '  44. MIX DYE / COLORBLEND (2026-10-03): !item 5151200 1, !item 5152300 1.' -ForegroundColor White
-        Write-Host '       Brittany, "mix two hair colours": the MixHair window opens; pick, OK:' -ForegroundColor Cyan
+        Write-Host '       Brittany, "mix two hair colours": the colours are clickable now (first run: all dead,' -ForegroundColor Cyan
+        Write-Host '       starting ratio 0); the preview recolours and a 50/50 slider shows. CANCEL: no' -ForegroundColor Cyan
+        Write-Host '       "same color is already equipped" box (first run: every Cancel). Then pick, OK:' -ForegroundColor Cyan
         Write-Host '       BOTH colours drawn, coupon gone, still drawn after map change + relog -> fixed' -ForegroundColor Green
         Write-Host '       blank head / client dies on the HAIR bit -> paste client-exit.log' -ForegroundColor Yellow
         Write-Host '       Dr. Feeble, "blend two eye colours": the same for the eyes' -ForegroundColor Cyan

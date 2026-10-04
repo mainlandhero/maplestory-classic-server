@@ -435,7 +435,7 @@ to color their hair and eye using the choice coupon"*. Decoded today, all **[L]*
 (`research/mix-dye-colorblend.md`). A mixed look is NOT a new field: it is `plain id * 1000 + mix
 * 100 + percent` in the same `hair` / `face` u32, and every client look helper divides an id above
 9 999 999 by 1000 first. The box is `0x055B` type **`0x2a`** (`FUN_14127e090`, also types `0x29`
-and `0x40`): `u32 coupon, str, u8 mode 0, u32`. The coupon picks `UtilDlgEx_MixHair` (5151200) or
+and `0x40`): `u32 coupon, str, u8 mode 0, u32 starting percent`. The coupon picks `UtilDlgEx_MixHair` (5151200) or
 `UtilDlgEx_MixLens` (5152300). The client draws the player's own look and answers `0x00F3` type
 `0x2a` (hair) / `0x40` (lens) with `(base*10+mix)*1000+percent`. Brittany and Andre take the Mix
 Dye coupon and Dr. Feeble and Riza the Colorblend coupon, on a fourth menu line (`#L3`). The answer
@@ -444,7 +444,13 @@ not the look already worn (the client's own swapped-twin rule). Every salon help
 plain id under a mixed one, so a style change keeps the mix and a Signature dye clears it. **[I], the
 client run's question: whether this client DRAWS an id above 9 999 999** - plan step 44. **Neither
 coupon can be bought**: no `Commodity.img` row, so the no-coupon line now says so, and `!item` is the
-only source until the owner decides otherwise.
+only source until the owner decides otherwise. **First run, same day:** the window opened at Brittany,
+but no colour could be selected. The last `u32` is the window's STARTING percent (the setup
+`FUN_142a91f30` reads it); 0 is invalid, so every swatch and the slider stayed dead. It now sends 50.
+The same zero made **Cancel** draw the client's "Hair with the same color is already equipped": the
+client runs its same-look check on Cancel too, and value 0 composes back to the worn hair. A valid
+start ends that, and a player already in a 50% mix opens at 51 (`salon::mix_start_percent`). The
+research note §7 has the details. The percent is the mix colour's share (`/AddProb`).
 
 **2026-10-03: a star stack is one item everywhere - built, tests only.** The owner: separate star
 items must not *"stack into 1 item"*, and a dropped star should go down *"along with its ammo

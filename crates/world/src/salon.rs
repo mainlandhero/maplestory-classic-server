@@ -577,8 +577,9 @@ pub struct Blend {
     pub base: u8,
     /// The second colour.
     pub mix: u8,
-    /// `1..=99`. The client treats `(a, b, p)` and `(b, a, 100 - p)` as the same look
-    /// (`FUN_14041a2a0`), so which colour it is the share of only matters for wording.
+    /// `1..=99`, the MIX colour's share: the window labels `/AddProb` with it beside
+    /// `/AddColor` and `/BaseProb` with `100 - percent` beside `/BaseColor` (`FUN_142a93ac0`).
+    /// The client treats `(a, b, p)` and `(b, a, 100 - p)` as the same look (`FUN_14041a2a0`).
     pub percent: u8,
 }
 
@@ -642,11 +643,24 @@ pub fn same_look(current: u32, new: u32) -> bool {
     }
 }
 
-/// The two colour names of a mixed hair, for a notice: "Black and Red".
+/// The ratio the mix box opens at: 50, or 51 when the player already wears a 50% mix.
+///
+/// **This is what keeps Cancel quiet.** The client opens on random colours `(c, c + 1)` at this
+/// percent and, even on Cancel, compares that with the worn look; a match draws its "same color
+/// is already equipped" warning (`net::script::SCRIPT_TYPE_MIX`). Only a worn 50% mix can match
+/// a 50% start (its swapped twin is 50% too); 51 cannot match it either way round.
+pub fn mix_start_percent(current: u32) -> u32 {
+    match blend_of(current) {
+        Some(b) if b.percent == 50 => 51,
+        _ => net::script::MIX_START_PERCENT,
+    }
+}
+
+/// The two colours of a mixed hair and their shares, for a notice: "70% Black and 30% Blue".
 pub fn hair_blend_name(hair: u32) -> Option<String> {
     let b = blend_of(hair)?;
     let name = |c: u8| COLOURS.get(usize::from(c)).copied().unwrap_or("?");
-    Some(format!("{} and {}", name(b.base), name(b.mix)))
+    Some(format!("{}% {} and {}% {}", 100 - u32::from(b.percent), name(b.base), b.percent, name(b.mix)))
 }
 
 /// The skin's name for a notice.
@@ -907,7 +921,7 @@ mod tests {
         assert_eq!(mixed, 42_540_530, "the style kept, colour 0, then mix 5 at 30");
         assert_eq!((unmixed(mixed), base_of(mixed), colour_name(mixed)), (42_540, 42_540, "Black"));
         assert_eq!(blend_of(mixed), Some(blue));
-        assert_eq!(hair_blend_name(mixed).as_deref(), Some("Black and Blue"));
+        assert_eq!(hair_blend_name(mixed).as_deref(), Some("70% Black and 30% Blue"));
         assert_eq!(mixed_hair(42_540, Blend { base: 0, mix: 8, percent: 30 }, &config), None, "colour 8 is not a hair colour");
         assert_eq!(mixed_hair(31_000, blue, &config), None, "no art for that style");
 
@@ -928,5 +942,10 @@ mod tests {
         let bare = Config { hair_ids: only_black, ..Config::default() };
         assert_eq!(with_current_colour(30_030, mixed, &bare), 30_030, "no blue art: the plain colour");
         assert_eq!(face_with_current_eye_colour(22_035, eyes, &config), 22_235_760);
+
+        // The mix box never opens on the look already worn.
+        assert_eq!(mix_start_percent(42_542), 50);
+        assert_eq!(mix_start_percent(mixed), 50, "a 30% mix cannot match a 50% start");
+        assert_eq!(mix_start_percent(42_540_550), 51, "a worn 50% mix could");
     }
 }

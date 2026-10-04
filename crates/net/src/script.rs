@@ -621,8 +621,22 @@ pub fn parse_avatar_reply(body: &[u8]) -> Option<AvatarReply> {
 /// str  text     the prompt
 /// u8   mode     0 = the player's own look (FUN_1401a6ee0 reads hair +0x23 / face +0x1f);
 ///               'd' (0x64) would be an android's. Echoed in the reply
-/// u32  unused   stored as element 0 of a list nothing reads back
+/// u32  percent  the window's STARTING ratio - the mix colour's share, 1..=99 ([`MIX_START_PERCENT`])
 /// ```
+///
+/// **The last `u32` is not unused, and 0 breaks the window.** The setup `FUN_142a91f30` (kind
+/// `0x17`/`0x19`) seeds the state with `FUN_14041a250(random base, base + 1, this)`, and every
+/// part of the window is gated on `FUN_14041a270` (colours under 10, percent `1..=99`): with 0
+/// no swatch can be selected (`FUN_142a91c70` marks both palettes -1) and the ratio slider is
+/// never built (`FUN_142a93870`). The owner saw exactly that on 2026-10-03, with the window open
+/// and every colour dead.
+///
+/// **It also decides what CANCEL says.** After the window closes, `FUN_14127e090` composes the
+/// window's value with the current look and runs the same-look check (`FUN_1401a8500`) whether
+/// the player confirmed or not, then shows string `0x479` ("Hair with the same color is already
+/// equipped") on a match. With 0 the composer refuses the value and returns the current hair, so
+/// every Cancel drew that warning - the owner's second screenshot. A valid start that is not the
+/// worn look keeps Cancel silent; see `crate::salon::mix_start_percent` on the server side.
 ///
 /// The CLIENT decides which reply type comes back, from the coupon, not from the type we
 /// sent: `0x2a` for a hair coupon and `0x40` for a lens coupon. See [`parse_mix_reply`].
@@ -630,8 +644,13 @@ pub const SCRIPT_TYPE_MIX: u8 = 0x2a;
 /// The reply type the client writes for a Colorblend (lens) box.
 pub const SCRIPT_TYPE_MIX_LENS_REPLY: u8 = 0x40;
 
-/// A mix box for `coupon` - see [`SCRIPT_TYPE_MIX`].
-pub fn npc_mix(speaker_template: u32, coupon: u32, text: &str) -> Vec<u8> {
+/// The mix box's starting ratio: half and half - the value the client forces itself for its
+/// other two mix kinds (`0x1c`/`0x1d`, `uVar8 = 0x32` in `FUN_142a91f30`).
+pub const MIX_START_PERCENT: u32 = 50;
+
+/// A mix box for `coupon`, opening at `start_percent` (`1..=99`; see [`SCRIPT_TYPE_MIX`] for
+/// why 0 breaks both the window and its Cancel).
+pub fn npc_mix(speaker_template: u32, coupon: u32, text: &str, start_percent: u32) -> Vec<u8> {
     let mut w = PacketWriter::new();
     w.u32(0); //                     handle
     w.u8(0); //                      head field 2
@@ -643,7 +662,7 @@ pub fn npc_mix(speaker_template: u32, coupon: u32, text: &str) -> Vec<u8> {
     w.u32(coupon); //                14127e0f6  the coupon: picks the dialog
     w.str(text); //                  14127e105
     w.u8(0); //                      14127e117  mode: the player's own look
-    w.u32(0); //                     14127e128  unused
+    w.u32(start_percent.clamp(1, 99)); // 14127e128  the starting ratio - 0 disables every swatch
     w.into_vec()
 }
 
@@ -1007,15 +1026,18 @@ mod avatar_tests {
     /// The mix box's body is exactly the four reads `FUN_14127e090` makes - `u32 coupon, str,
     /// u8 mode, u32` - and the mode is 0, the player's own look.
     #[test]
-    fn the_mix_box_carries_the_coupon_the_text_mode_zero_and_one_u32() {
-        let b = npc_mix(1001, 5_151_200, "Mix!");
+    fn the_mix_box_carries_the_coupon_the_text_mode_zero_and_a_starting_ratio() {
+        let b = npc_mix(1001, 5_151_200, "Mix!", MIX_START_PERCENT);
         assert_eq!(b[10], SCRIPT_TYPE_MIX);
         let body = &b[SCRIPT_HEAD_LEN..];
         assert_eq!(u32::from_le_bytes(body[..4].try_into().unwrap()), 5_151_200);
         assert_eq!(&body[4..6], &4u16.to_le_bytes());
         assert_eq!(&body[6..10], b"Mix!");
         assert_eq!(body[10], 0, "mode 0: the player's own hair/face, not an android's");
+        assert_eq!(&body[11..15], &50u32.to_le_bytes(), "a starting ratio of 0 disables every swatch");
         assert_eq!(body.len(), 4 + 2 + 4 + 1 + 4);
+        let zero = npc_mix(1001, 5_151_200, "Mix!", 0);
+        assert_eq!(&zero[SCRIPT_HEAD_LEN + 11..], &1u32.to_le_bytes(), "never a dead window");
     }
 
     /// OK carries the dialog's value last, after the mode, a zero and a u32; cancel is one

@@ -141,7 +141,12 @@ impl Session {
             });
             return Some(vec![Reply {
                 opcode: net::script::SCRIPT_MESSAGE,
-                body: net::script::npc_mix(template, coupon, salon::mix_prompt(desk)),
+                body: net::script::npc_mix(
+                    template,
+                    coupon,
+                    salon::mix_prompt(desk),
+                    salon::mix_start_percent(if desk == Desk::Colours { chr.hair } else { chr.face }),
+                ),
                 what: format!(
                     "ScriptMessage MIX (type 0x2a) from NPC {template}: coupon {coupon} - the client opens {} on the player's own {} ({}) and answers 0x2a/0x40 with (base*10+mix)*1000+percent",
                     if desk == Desk::Colours { "UtilDlgEx_MixHair" } else { "UtilDlgEx_MixLens" },
@@ -634,7 +639,7 @@ mod tests {
         assert_eq!(stat.len(), 1, "{:?}", names(&out));
         assert!(stat[0].what.contains("HAIR bit -> 42540530"), "{}", stat[0].what);
         assert!(!holds(&store, id, salon::CUSTOM_MIX_DYE_COUPON), "the coupon is spent");
-        assert!(names(&out).iter().any(|w| w.contains("Black and Blue")), "{:?}", names(&out));
+        assert!(names(&out).iter().any(|w| w.contains("70% Black and 30% Blue")), "{:?}", names(&out));
 
         // The same look again - here its swapped twin - is refused and costs nothing.
         give(&store, id, salon::CUSTOM_MIX_DYE_COUPON);
