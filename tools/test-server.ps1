@@ -2635,6 +2635,31 @@
              works without a map change. Still needs a map change -> the second 0x007C did not
              apply; world-ch0.log shows "skill points now [...]" right after the LEVEL line
 
+    50. JUMP QUESTS (2026-10-04). Forest of Patience, Deep Forest of Patience, Construction
+        Site B1-B3. None of it has been on a screen yet. Every step logs a "jump quest:" line.
+          a. Ellinia, Shane (top of the tree), on a character that never took Sabitrama's errand
+             (quest 10509): his own "I can't let some stranger like you enter" -> right.
+             With 10509 taken: a menu, Pink Anthurium (Steps 1-2) / Double-Rooted Red Ginseng
+             (Steps 3-5), no mesos taken -> lands on step 1 / step 3
+          b. Louis at the bottom of any step: No stays; Yes -> Ellinia, standing beside Shane
+          c. the pile of flowers at the top of step 2: a box lists a Use prize and a Scroll (and
+             the Pink Anthurium while 10509 is in progress). OK -> grey chat lines, the items in
+             the bag, back in Ellinia beside Shane. No box, or nothing given -> paste the
+             "jump quest:" lines from world-ch0.log
+          d. Sleepywood, the Mysterious Statue: a menu of three flowers -> Deep Forest step 1 / 3
+             / 5. The Crumbling Statue at the bottom: Yes -> Sleepywood beside the statue. With
+             John's quest 10006 in progress the pink pile (top of step 2) gives 10 Pink Violas
+          e. Subway Ticketing Booth: Jake sells B1/B2/B3 tickets (Lv 20/30/40, 500/1200/2000
+             mesos); the Ticket Gate lists only the tickets held, takes one -> that floor's
+             Area 1. An Exit: Yes -> back at the booth beside the gate
+          f. B1 Area 1 has press-up portals that lead elsewhere on the same map. Using one moves
+             you -> fine. The client hangs on one -> paste the last world-ch0.log lines: nobody
+             knows yet whether the client sends anything for a same-map portal
+          g. the B1 depot's chest: with Shumi's quest 10312 in progress -> Shumi's Coin; without
+             -> "The treasure chest is empty."; either way back at the booth
+          h. the drops page: "Jump Quest Reward" (badge JQ) lists the use and scroll slots;
+             after c its "finished" count reads 1 within 30 minutes
+
     49. PLAYER STORE (2026-10-04). Two clients on one map; the owner holds a Store Permit
         (5140001) in the Cash tab. Nothing of it has been on a screen yet.
           a. owner: use the permit, type a title -> the store window opens, owner in the first
@@ -6594,6 +6619,16 @@ function Show-TestPlan {
         Write-Host ''
         Write-Host '  38. SP ON LEVEL-UP (2026-10-02): skill window open, level up - SP rises at once,' -ForegroundColor White
         Write-Host '       + works with no map change / channel change' -ForegroundColor Cyan
+        Write-Host ''
+        Write-Host '  50. JUMP QUESTS (2026-10-04, NEVER ON A SCREEN): every step logs a "jump quest:" line' -ForegroundColor White
+        Write-Host '       a. Shane (Ellinia, top): stranger to quest 10509 -> his refusal; with 10509 -> free menu, step 1 or step 3' -ForegroundColor Cyan
+        Write-Host '       b. Louis: Yes -> Ellinia beside Shane   c. pile of flowers (top of step 2): box lists a Use + a Scroll' -ForegroundColor Cyan
+        Write-Host '          (+ Pink Anthurium on 10509); OK -> items + chat lines, back beside Shane' -ForegroundColor Cyan
+        Write-Host '       d. Sleepywood statue: 3 flowers -> Deep Forest step 1/3/5; Crumbling Statue -> back; 10006 -> 10 Pink Violas' -ForegroundColor Cyan
+        Write-Host '       e. Booth: Jake sells B1/B2/B3 (Lv 20/30/40, 500/1200/2000); the gate takes one -> Area 1; Exit -> booth' -ForegroundColor Cyan
+        Write-Host '       f. B1 press-up portals within the map move you -> fine; a hang -> paste the last world-ch0.log lines' -ForegroundColor Yellow
+        Write-Host '       g. B1 depot chest: 10312 -> Shumi''s Coin, else "empty"; back at the booth   h. drops page: Jump Quest Reward (JQ)' -ForegroundColor Cyan
+        Write-Host '       no box / nothing given / no warp -> paste the "jump quest:" lines' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  49. PLAYER STORE (2026-10-04): two clients, owner has a Store Permit (5140001) in the Cash tab' -ForegroundColor White
         Write-Host '       a. use the permit: window opens + sign over the head   b. list an item: it leaves the bag, a row appears' -ForegroundColor Cyan

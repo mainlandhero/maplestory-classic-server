@@ -179,10 +179,10 @@ body { margin: 0; }
   <section class="global" id="scrollstats" hidden></section>
 
   <footer>
-    <p>The <b>Companion's Magic Box</b> from First Time Together is listed with the monsters. Every box gives one equip, one use item, one scroll and one etc item; its "1 in N" is the chance of that prize within its slot, counted in boxes, not kills.</p>
+    <p>The <b>Companion's Magic Box</b> from First Time Together is listed with the monsters. Every box gives one equip, one use item, one scroll and one etc item; its "1 in N" is the chance of that prize within its slot, counted in boxes, not kills. The <b>Jump Quest Reward</b> is listed the same way: every finished Forest of Patience or Deep Forest of Patience course gives one use item and one scroll.</p>
     <p>Only monsters you can meet are listed. <b>Found on</b> names every map that spawns the monster, with how many spawn points it has there, most first. A monster that only appears another way, such as the ship invasion or a summoning sack, says so.</p>
     <p>"1 in N" is the average number of kills per drop, rounded. Expected drops per kill add up the chances of every equipment or scroll row. Rows marked <b>quest</b> drop only for a player who has that quest in progress. Mesos marked <b>by level</b> are the server's default for a monster with no meso row: always dropped, and not affected by the drop rate. Rows marked <b>instanced</b> give every party member their own copy, which only they can see and pick up.</p>
-    <p id="livenote" hidden><b>Seen</b> counts what actually dropped on this server over the last 7 days, with the share of kills it dropped from (for the Companion's Magic Box, the share of boxes opened). The counts update at most every 30 minutes, and anything older than 7 days is deleted.</p>
+    <p id="livenote" hidden><b>Seen</b> counts what actually dropped on this server over the last 7 days, with the share of kills it dropped from (for the Companion's Magic Box, the share of boxes opened; for the Jump Quest Reward, of courses finished). The counts update at most every 30 minutes, and anything older than 7 days is deleted.</p>
     <p>Search matches every word you type, in any order, against monster and item names, and allows one typo per word of four letters or more.</p>
     <p>No source has Nexon's official per-monster rates. The v83 numbers come from Cosmic, the maintained OdinMS/HeavenMS server, and are the closest classic calibration there is.</p>
   </footer>
@@ -328,7 +328,7 @@ function seenEverywhere(item) {
   let n = 0;
   if (!LIVE) return 0;
   // Kills only: a box's prizes are not drops from a monster, and the share is of kills.
-  for (const t in LIVE.drops) if (t !== "box" && LIVE.drops[t][item]) n += LIVE.drops[t][item][0];
+  for (const t in LIVE.drops) if (t !== "box" && t !== "jq" && LIVE.drops[t][item]) n += LIVE.drops[t][item][0];
   return n;
 }
 function seenCell(seen, kills) {
@@ -397,13 +397,13 @@ function renderMobs() {
     const eq = expected(m.rows, "equip"), sc = expected(m.rows, "scroll");
     const kills = mobKills(m);
     // For the box a "kill" is one box opened (`killstats::note_box_opened`).
-    const live = LIVE ? `<span>${num(kills)} ${m.kind ? "opened" : "kills"} &middot; ${num(mobPlayers(m))} players</span>` : "";
+    const live = LIVE ? `<span>${num(kills)} ${m.kind ? (m.per === "course" ? "finished" : "opened") : "kills"} &middot; ${num(mobPlayers(m))} players</span>` : "";
     const nMaps = (m.maps || []).length;
     const mapsTag = m.kind ? "" : `<span>${nMaps ? nMaps + (nMaps === 1 ? " map" : " maps") : "no map"}</span>`;
     parts.push(`<details class="mob"${anyRow && !nameHit ? " open" : ""}><summary>` +
-      (m.kind ? `<span class="lv pq">PQ</span><span class="mname">${esc(m.name)}<small>${esc(m.kind)}</small></span>`
+      (m.kind ? `<span class="lv pq">${esc(m.tag || "PQ")}</span><span class="mname">${esc(m.name)}<small>${esc(m.kind)}</small></span>`
               : `<span class="lv">Lv ${m.level || "?"}</span><span class="mname">${esc(m.name)}<small>#${m.id}</small></span>`) +
-      (m.slots ? `<span class="odds">${live}${m.slots.map(([k]) => `<span>1 <b class="c-${k}">${k}</b></span>`).join("")}<span>per box, from ${m.rows.length} prizes</span></span>`
+      (m.slots ? `<span class="odds">${live}${m.slots.map(([k]) => `<span>1 <b class="c-${k}">${k}</b></span>`).join("")}<span>per ${esc(m.per || "box")}, from ${m.rows.length} prizes</span></span>`
                : `<span class="odds">${live}${mapsTag}<span>equips <b class="c-equip">${perKill(eq)}</b></span><span>scrolls <b class="c-scroll">${perKill(sc)}</b></span><span>${m.rows.length} ${m.kind ? "prizes" : "drops"}</span></span>`) +
       `</summary>` + whereHtml(m) + (m.slots ? boxNote(m) : "") +
       `<div class="tbl"><table>${head()}<tbody>${rows.map((r) => rowHtml(m, r, true, !nameHit && rowMatches(m, r), kills)).join("")}</tbody></table></div></details>`);
@@ -416,7 +416,8 @@ function renderMobs() {
 // The box gives one prize from every slot, so it says so and gives each slot's odds.
 function boxNote(m) {
   const per = m.slots.map(([k, n]) => `${k === "use" || k === "etc" ? "one " + k + " item" : "one " + k} (each 1 in ${n})`);
-  return `<p class="boxnote">Every member gets one box when the last stage clears. Opening it always gives <b>four</b> things, one from each slot: ` +
+  const count = ["no", "one", "two", "three", "four", "five"][m.slots.length] || String(m.slots.length);
+  return `<p class="boxnote">${esc(m.note)} <b>${count}</b> things, one from each slot: ` +
     `${per.slice(0, -1).join(", ")} and ${per[per.length - 1]}. Within a slot every prize is equally likely. The drop rate does not change it.</p>`;
 }
 

@@ -154,22 +154,28 @@ impl Store {
 
     /// The last seven days before `now_unix`, summed.
     pub fn kill_stats(&self, now_unix: i64) -> Result<KillStats> {
-        self.kill_stats_apart(now_unix, None)
+        self.kill_stats_apart(now_unix, &[])
     }
 
-    /// [`Store::kill_stats`], with `apart` - a source counted in the same tables that is not a
-    /// monster, such as an opened reward box - left out of the two totals, `kills` and
-    /// `players`. Its own row in `mobs` and `drops` is still there.
-    pub fn kill_stats_apart(&self, now_unix: i64, apart: Option<u32>) -> Result<KillStats> {
+    /// [`Store::kill_stats`], with `apart` - sources counted in the same tables that are not
+    /// monsters, such as an opened reward box or a finished jump quest - left out of the two
+    /// totals, `kills` and `players`. Their own rows in `mobs` and `drops` are still there.
+    pub fn kill_stats_apart(&self, now_unix: i64, apart: &[u32]) -> Result<KillStats> {
         let since = window_start(now_unix);
-        let apart = apart.map_or(-1, i64::from);
+        // Integers only, so the list is written into the statement rather than bound.
+        let apart_sql = if apart.is_empty() {
+            "-1".to_string()
+        } else {
+            apart.iter().map(u32::to_string).collect::<Vec<_>>().join(",")
+        };
+        let apart: Vec<i64> = apart.iter().copied().map(i64::from).collect();
         let conn = self.conn();
         let mut out = KillStats::default();
         let mut stmt = conn.prepare("SELECT template, SUM(kills) FROM kill_hours WHERE hour >= ?1 GROUP BY template")?;
         for row in stmt.query_map(params![since], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))? {
             let (t, k) = row?;
             out.mobs.entry(t as u32).or_default().0 = k as u64;
-            if t != apart {
+            if !apart.contains(&t) {
                 out.kills += k as u64;
             }
         }
@@ -181,8 +187,8 @@ impl Store {
             out.mobs.entry(t as u32).or_default().1 = p as u64;
         }
         out.players = conn.query_row(
-            "SELECT COUNT(DISTINCT character) FROM kill_players WHERE hour >= ?1 AND template != ?2",
-            params![since, apart],
+            &format!("SELECT COUNT(DISTINCT character) FROM kill_players WHERE hour >= ?1 AND template NOT IN ({apart_sql})"),
+            params![since],
             |r| r.get::<_, i64>(0),
         )? as u64;
         let mut stmt = conn.prepare(
@@ -238,7 +244,8 @@ mod tests {
         assert_eq!(store.kill_stats(now + 7 * DAY).unwrap().kills, 0, "a week later, nothing");
     }
 
-    /// A source set apart (an opened box) keeps its own row but is not a kill or a killer.
+    /// Sources set apart (an opened box, a finished jump quest) keep their own rows but are not
+    /// kills or killers.
     #[test]
     fn a_source_set_apart_is_out_of_the_totals_only() {
         let store = Store::open_in_memory().unwrap();
@@ -247,12 +254,16 @@ mod tests {
         b.note(now, 2, 200, &[]);
         b.note(now, 2_430_000, 200, &[(1_002_007, 1)]);
         b.note(now, 2_430_000, 201, &[(2_000_000, 50)]);
+        b.note(now, 999_000_001, 202, &[(2_000_001, 100)]);
         store.flush_kill_stats(&b).unwrap();
-        let s = store.kill_stats_apart(now, Some(2_430_000)).unwrap();
-        assert_eq!((s.kills, s.players), (1, 1), "201 only opened a box");
+        let s = store.kill_stats_apart(now, &[2_430_000, 999_000_001]).unwrap();
+        assert_eq!((s.kills, s.players), (1, 1), "201 only opened a box, 202 only finished a course");
+        assert_eq!(s.mobs[&999_000_001], (1, 1));
+        let one = store.kill_stats_apart(now, &[2_430_000]).unwrap();
+        assert_eq!((one.kills, one.players), (2, 2), "only what is named is set apart");
         assert_eq!(s.mobs[&2_430_000], (2, 2), "the box's own row is whole");
         assert_eq!(s.drops[&(2_430_000, 2_000_000)], (1, 50));
-        assert_eq!(store.kill_stats(now).unwrap().kills, 3, "without it, everything counts");
+        assert_eq!(store.kill_stats(now).unwrap().kills, 4, "without it, everything counts");
     }
 
     #[test]

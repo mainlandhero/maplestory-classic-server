@@ -1029,6 +1029,11 @@ impl Session {
         if let Some(replies) = self.open_hotel_receptionist(template) {
             return replies;
         }
+        // The jump quests' doors, wardens and goals - Shane, the Statues, Jake, the Ticket
+        // Gate, Louis, the Exits, the piles and the chests. session/jumpquest.rs.
+        if let Some(replies) = self.open_jump_quest_npc(template) {
+            return replies;
+        }
 
         if let Some(replies) = self.open_taxi_for(template) {
             return replies;
@@ -2508,6 +2513,9 @@ impl Session {
         if let Some(replies) = self.hotel_menu_answer(body) {
             return replies;
         }
+        if let Some(replies) = self.jump_quest_menu_answer(body) {
+            return replies;
+        }
         if let Some(replies) = self.salon_menu_answer(body) {
             return replies;
         }
@@ -2556,6 +2564,12 @@ impl Session {
         // closed-box early return. See `shanks_announce_dismissed`.
         if convo.path == crate::shanks::ANNOUNCE_PATH {
             return self.shanks_announce_dismissed();
+        }
+
+        // A jump quest's found box hands over on Close as well as OK, so it is answered before
+        // a closed box is dropped. `jumpquest.` paths. session/jumpquest.rs.
+        if let Some(replies) = self.jump_quest_script_answer(&convo.path, reply.action) {
+            return replies;
         }
 
         if reply.action == net::script::SCRIPT_ACTION_CLOSED {

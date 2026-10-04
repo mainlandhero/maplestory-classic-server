@@ -58,6 +58,7 @@ pub mod freemarket;
 pub mod itemrecovery;
 pub mod jobguide;
 pub mod jobs;
+pub mod jumpquest;
 pub mod leafcoupons;
 pub mod logprune;
 pub mod magicbox;

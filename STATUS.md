@@ -429,6 +429,40 @@ the ammo's attack - this client names it **`incWAT`** (Ilbi 27), and the first d
 never been compared with a night of real hits; a suspects line naming an honest character is
 the model being low, and log-only is the fix until it is corrected.
 
+**2026-10-04: the jump quests - Forest of Patience, Deep Forest of Patience, Construction Site
+B1-B3 - built, tests only.** The owner: *"research on how [they are] suppose to flow, and then
+we're going to implement them."* `research/jump-quests-2026-10-04.md`.
+
+* **What the client gives.** Every NPC in the three courses names a server-side script and no
+  portal leads into any of the 22 maps **[L]**, so none of them could be entered except by
+  `!warp`.
+* **The ways in** (`world::jumpquest`, `session/jumpquest.rs`):
+  * Shane (Ellinia) takes anyone who has taken Sabitrama's quest 10509, **free**. A stranger
+    hears his own `d0` refusal.
+  * The Mysterious Statue (Sleepywood) takes anyone.
+  * Both offer a **menu of the courses**: the Forest is steps 1-2 and 3-5, the Deep Forest
+    1-2, 3-4 and 5-7. Steps 2, 4 and 7 have no exit **[L]**.
+  * Jake sells the B1/B2/B3 tickets (Lv 20/30/40, 500/1 200/2 000 mesos), and the Ticket
+    Gate takes one and opens that floor.
+* **The ways out:**
+  * Louis, the Crumbling Statue and the Exits ask, then put the player on the target-less
+    portal beside the door they came in by: Ellinia `herb`, Sleepywood `forest00`, the
+    Booth's `out01`.
+  * The goal at the top - a pile or a chest - shows a box of what was found. **Dismissing it**
+    hands everything over and warps the player out.
+* **The rewards** (the owner's call):
+  * every finished Forest or Deep Forest course gives one prize from each of the
+    **Companion's Magic Box's use and scroll slots**;
+  * plus the course's quest item while its quest is in progress, topped up to the count -
+    John's 10/20/30 at once;
+  * the chests give Shumi's items only.
+* **The drops page** lists the reward as **Jump Quest Reward** (badge JQ), counted like the
+  box (`killstats::note_jump_quest`, row `"jq"`).
+* **Guards.** A goal clicked from more than 600 px across or 300 px up or down gives nothing.
+  A full bag gives nothing and leaves the player at the top.
+* **Unmeasured:** whether a same-map press-up portal (B1 Area 1 has thirteen) sends the server
+  anything at all. Plan step 50.
+
 **2026-10-04: player stores - the whole protocol decoded, built, tests only.** The owner: *"I just
 tried to open a player store, but nothing happened. Might need to decompile everything and make it
 work."* The create had arrived (`0x017F`, title "garbage", permit 5140001) and no handler knew the

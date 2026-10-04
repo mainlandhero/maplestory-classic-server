@@ -141,8 +141,13 @@ pub fn live_json(store: &store::Store, now: i64) -> String {
     let rate = store.rates().map(|r| r.get(store::rates::RateKind::Drop)).unwrap_or(store::rates::Rate::NORMAL);
     // Opened Companion's Magic Boxes are counted beside the kills (`killstats::note_box_opened`),
     // under the page's own name for the box, `"box"`, and are not kills or killers in the totals.
-    let stats = store.kill_stats_apart(now, Some(crate::magicbox::BOX)).unwrap_or_default();
-    let key = |t: u32| if t == crate::magicbox::BOX { "box".to_string() } else { t.to_string() };
+    // Finished jump quests the same way, under `"jq"` (`killstats::note_jump_quest`).
+    let stats = store.kill_stats_apart(now, &[crate::magicbox::BOX, crate::jumpquest::STATS_ROW]).unwrap_or_default();
+    let key = |t: u32| match t {
+        crate::magicbox::BOX => "box".to_string(),
+        crate::jumpquest::STATS_ROW => "jq".to_string(),
+        _ => t.to_string(),
+    };
     let mut s = String::with_capacity(64 * 1024);
     let _ = write!(
         s,
@@ -421,25 +426,53 @@ pub fn tables_json(config: &Config, mob_names: &HashMap<u32, String>, descs: &Ha
         }
         s.push_str("]}");
     }
-    // The party quest's reward box: one prize from EACH slot, so a line's odds are within its
-    // slot (`1 / slot length`), untouched by the rate. `slots` names them for the page.
-    let _ = write!(
-        s,
-        ",{{\"id\":\"box\",\"name\":\"Companion's Magic Box\",\"level\":0,\"kind\":\"First Time Together reward\",\"slots\":["
-    );
-    for (i, slot) in crate::magicbox::SLOTS.iter().enumerate() {
-        let _ = write!(s, "{}[\"{}\",{}]", if i > 0 { "," } else { "" }, slot.name, slot.prizes.len());
-    }
-    s.push_str("],\"rows\":[");
-    let mut first = true;
-    for slot in &crate::magicbox::SLOTS {
-        let share = crate::droptables::PER_MILLION / slot.prizes.len() as u32;
-        for &(item, q) in slot.prizes {
-            row(&mut s, &mut first, item, share, u32::from(q), u32::from(q), true, false);
-            items.insert(item, ());
+    // The reward sources: one prize from EACH slot, so a line's odds are within its slot
+    // (`1 / slot length`), untouched by the rate. `slots` names them for the page, `tag` is the
+    // badge, `per` what one of them is called, and `note` the sentence before the slot list.
+    let sources: [(&str, &str, &str, &str, &str, &str, &[crate::magicbox::Slot]); 2] = [
+        (
+            "box",
+            "Companion's Magic Box",
+            "First Time Together reward",
+            "PQ",
+            "box",
+            "Every member gets one box when the last stage clears. Opening it always gives",
+            &crate::magicbox::SLOTS,
+        ),
+        (
+            "jq",
+            "Jump Quest Reward",
+            "Forest and Deep Forest of Patience",
+            "JQ",
+            "course",
+            "The pile of flowers or herbs at the top of every Forest of Patience and Deep Forest of Patience course \
+             gives it, with the course's quest item for a player on that quest. Finishing a course always gives",
+            &crate::jumpquest::SLOTS,
+        ),
+    ];
+    for (id, name, kind, tag, per, note, slots) in sources {
+        let _ = write!(
+            s,
+            ",{{\"id\":\"{id}\",\"name\":\"{}\",\"level\":0,\"kind\":\"{}\",\"tag\":\"{tag}\",\"per\":\"{per}\",\"note\":\"{}\",\"slots\":[",
+            esc(name),
+            esc(kind),
+            esc(note)
+        );
+        for (i, slot) in slots.iter().enumerate() {
+            let _ = write!(s, "{}[\"{}\",{}]", if i > 0 { "," } else { "" }, slot.name, slot.prizes.len());
         }
+        s.push_str("],\"rows\":[");
+        let mut first = true;
+        for slot in slots {
+            let share = crate::droptables::PER_MILLION / slot.prizes.len() as u32;
+            for &(item, q) in slot.prizes {
+                row(&mut s, &mut first, item, share, u32::from(q), u32::from(q), true, false);
+                items.insert(item, ());
+            }
+        }
+        s.push_str("]}");
     }
-    s.push_str("]}],\"global\":[");
+    s.push_str("],\"global\":[");
     let mut first = true;
     for e in config.drops.global() {
         row(&mut s, &mut first, e.item_id, e.chance_ppm, e.min_qty, e.max_qty, false, false);
@@ -508,6 +541,11 @@ mod tests {
         assert!(j.contains("\"global\":[[4031065,5000,1,1,0]]"));
         assert!(j.contains("\"kind\":\"First Time Together reward\""));
         assert!(j.contains("\"slots\":[[\"equip\",7],[\"use\",20],[\"scroll\",36],[\"etc\",14]]"), "one prize per slot: {j}");
+        assert!(
+            j.contains("{\"id\":\"jq\",\"name\":\"Jump Quest Reward\",\"level\":0,\"kind\":\"Forest and Deep Forest of Patience\",\"tag\":\"JQ\",\"per\":\"course\","),
+            "{j}"
+        );
+        assert!(j.contains("\"slots\":[[\"use\",20],[\"scroll\",36]]"), "the jump quest's two slots: {j}");
         assert!(j.contains(&format!("[2043701,{},1,1,1]", 1_000_000 / crate::magicbox::SCROLLS.len() as u32)), "the Wand scroll, 1 in 36 of the scroll slot");
         assert!(j.contains(&format!("[2020011,{},50,50,1]", 1_000_000 / crate::magicbox::USE.len() as u32)), "50 W Ramen, 1 in 20 of the use slot");
         assert!(j.contains("\"4000004\":[\"Squishy \\\"Liquid\\\"\",\"etc\",0,\"\",[]]"), "{j}");
@@ -611,6 +649,22 @@ mod tests {
         assert!(j.contains("\"box\":[1,1]"), "{j}");
         assert!(j.contains("\"box\":{\"2020011\":[1,50],\"2043701\":[1,1]}"), "{j}");
         assert!(!j.contains(&format!("\"{}\"", crate::magicbox::BOX)), "never under its item id: {j}");
+    }
+
+    /// **A finished jump quest feeds the page** under `"jq"`, and is not a kill or a killer.
+    #[test]
+    fn finished_jump_quests_are_the_jq_row_and_not_kills() {
+        let store = store::Store::open_in_memory().unwrap();
+        let now = 1_800_000_000;
+        let mut b = store::killstats::KillBatch::default();
+        b.note(now, 2, 200, &[]);
+        b.note(now, crate::jumpquest::STATS_ROW, 202, &[(2_000_001, 100), (2_043_701, 1)]);
+        store.flush_kill_stats(&b).unwrap();
+        let j = live_json(&store, now);
+        assert!(j.contains("\"players\":1,\"kills\":1,"), "{j}");
+        assert!(j.contains("\"jq\":[1,1]"), "{j}");
+        assert!(j.contains("\"jq\":{\"2000001\":[1,100],\"2043701\":[1,1]}"), "{j}");
+        assert!(!j.contains(&crate::jumpquest::STATS_ROW.to_string()), "never under its number: {j}");
     }
 
     /// **The cache is the owner's "at worst 30 or 60 minutes out of date"**: kills written after

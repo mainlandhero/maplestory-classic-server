@@ -624,6 +624,7 @@ pub(crate) mod damageguard;
 pub(crate) mod mobdebuff;
 mod boat;
 mod hotel;
+mod jumpquest;
 mod megaphone;
 mod weather;
 mod firsttime;
