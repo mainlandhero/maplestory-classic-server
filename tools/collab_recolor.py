@@ -161,7 +161,48 @@ def iris_mask(rgba, w, h, art_hue, window=22.0):
     return out
 
 
-def recolor(rgba, w, h, target, mask=None, spread=None):
+def _opaque_hls(rgba, w, h, mask=None):
+    """`{pixel index: (h, l, s)}` for the pixels a recolour touches."""
+    out = {}
+    for i in range(w * h):
+        if rgba[i * 4 + 3] >= 16 and (mask is None or mask[i]):
+            r, g, b = rgba[i * 4:i * 4 + 3]
+            out[i] = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
+    return out
+
+
+def _stats(values):
+    """`(mean lightness, mean saturation, lightness standard deviation)` of `(h, l, s)` triples."""
+    n = len(values)
+    mean_l = sum(v[1] for v in values) / n
+    mean_s = sum(v[2] for v in values) / n
+    std_l = math.sqrt(sum((v[1] - mean_l) ** 2 for v in values) / n)
+    return mean_l, mean_s, std_l
+
+
+def hair_stats(layers):
+    """**One set of statistics for a whole hair**, pooled over its layers: `{node: (rgba, w, h,
+    ...)}` in, `(mean lightness, mean saturation, lightness spread)` out.
+
+    The owner, 2026-10-03: *"the hair looks fine from behind, but all of the color edits made the
+    front facing bottom hair way lighter"*. Each layer used to be normalised on its own, and the
+    artists draw `hairBelowBody` - the hair that hangs in front - darker than the rest (Frieren
+    0.63 lightness against 0.86 for `hair`, Ubel 0.21..0.28 against 0.35; every collaboration hair
+    that has the layer). Normalising it separately lifted it to the same mean as the top. One
+    mapping for every layer keeps those differences. `hairShade` is left out of the pool: it is
+    a flat shadow cast on the face (one value, 0.30, in every hair), not the hair's art, and
+    `backport_install.recolor_looks` keeps mapping it on its own as before - against the pooled
+    statistics that one value would come out near black."""
+    values = []
+    for node, layer in layers.items():
+        if "hairShade" in node:
+            continue
+        rgba, w, h = layer[0], layer[1], layer[2]
+        values.extend(_opaque_hls(rgba, w, h).values())
+    return _stats(values) if values else None
+
+
+def recolor(rgba, w, h, target, mask=None, spread=None, stats=None):
     """`rgba` with the masked pixels (all opaque ones when `mask` is None) moved to `target`
     `(hue, saturation, mean lightness)`: the hue replaced, saturation scaled so the masked mean
     lands on the target's, lightness remapped around its mean. Alpha untouched. New bytes.
@@ -169,18 +210,15 @@ def recolor(rgba, w, h, target, mask=None, spread=None):
     `spread`: when given, lightness is re-normalised to that standard deviation around the
     target instead of the piecewise map - for an art whose shading is squeezed into a narrow
     band. Frieren's white hair averages 0.86 lightness with little spread; the piecewise map
-    kept it pastel in every colour (the 2026-10-02 contact sheet)."""
+    kept it pastel in every colour (the 2026-10-02 contact sheet).
+
+    `stats`: `(mean lightness, mean saturation, lightness spread)` to map from instead of this
+    layer's own - [`hair_stats`], so every layer of one hair moves by the same mapping."""
     hue_t, sat_t, light_t = target
-    idx = [i for i in range(w * h) if rgba[i * 4 + 3] >= 16 and (mask is None or mask[i])]
-    if not idx:
+    hls = _opaque_hls(rgba, w, h, mask)
+    if not hls:
         return bytes(rgba)
-    hls = {}
-    for i in idx:
-        r, g, b = rgba[i * 4:i * 4 + 3]
-        hls[i] = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
-    mean_l = sum(v[1] for v in hls.values()) / len(hls)
-    mean_s = sum(v[2] for v in hls.values()) / len(hls)
-    std_l = math.sqrt(sum((v[1] - mean_l) ** 2 for v in hls.values()) / len(hls))
+    mean_l, mean_s, std_l = stats if stats is not None else _stats(list(hls.values()))
     out = bytearray(rgba)
     for i, (hh, ll, ss) in hls.items():
         if spread is None:
@@ -215,10 +253,12 @@ def art_eye_hue(rgba, w, h, art_slot):
     return math.degrees(math.atan2(y, x)) % 360
 
 
-def recolor_layer(rgba, w, h, kind, target, art_slot, eye_hue=None):
-    """One layer of a variant: the whole hair, or a face's irises only."""
+def recolor_layer(rgba, w, h, kind, target, art_slot, eye_hue=None, stats=None):
+    """One layer of a variant: the whole hair, or a face's irises only. For a hair, `stats` is
+    [`hair_stats`] of all its layers - without it the layer is normalised on its own, which
+    lightens a layer the art draws darker."""
     if kind == "Hair":
-        return recolor(rgba, w, h, target, spread=HAIR_SPREAD)
+        return recolor(rgba, w, h, target, spread=HAIR_SPREAD, stats=stats)
     hue = eye_hue if eye_hue is not None else art_eye_hue(rgba, w, h, art_slot)
     return recolor(rgba, w, h, target, iris_mask(rgba, w, h, hue))
 
@@ -232,6 +272,18 @@ def _self_test():
     assert _hue_dist(h0[0] * 360, 358) < 3 and _hue_dist(h1[0] * 360, 358) < 3, (h0, h1)
     assert h0[1] < h1[1], "the darker pixel stays darker"
     assert out[3] == 255 and out[7] == 255
+    # Two layers, one drawn darker (the hair hanging in front): with the hair's pooled
+    # statistics the darker layer stays darker after the recolour; normalised alone it would
+    # land on the same mean as the light one.
+    top = bytes([230, 230, 230, 255, 250, 250, 250, 255])
+    below = bytes([150, 150, 150, 255, 170, 170, 170, 255])
+    pooled = hair_stats({"default/hair": (top, 2, 1), "default/hairBelowBody": (below, 2, 1)})
+    lt = [colorsys.rgb_to_hls(*(v / 255 for v in recolor_layer(top, 2, 1, "Hair", HAIR_TARGET[7], 3, stats=pooled)[k:k + 3]))[1] for k in (0, 4)]
+    lb = [colorsys.rgb_to_hls(*(v / 255 for v in recolor_layer(below, 2, 1, "Hair", HAIR_TARGET[7], 3, stats=pooled)[k:k + 3]))[1] for k in (0, 4)]
+    assert sum(lb) / 2 < sum(lt) / 2 - 0.1, (lt, lb)
+    alone = [colorsys.rgb_to_hls(*(v / 255 for v in recolor_layer(below, 2, 1, "Hair", HAIR_TARGET[7], 3)[k:k + 3]))[1] for k in (0, 4)]
+    assert abs(sum(alone) / 2 - HAIR_TARGET[7][2]) < 0.02, "the control: alone, it is lifted to the target mean"
+    assert hair_stats({"default/hairShade/0": (below, 2, 1)}) is None, "the shade is not in the pool"
     # The slots: art keeps pixels, others get a target, defaults follow the owner.
     assert plan(42576, "Hair")[3] is None, "Fern's violet IS the art"
     assert plan(42570, "Hair")[3] == HAIR_TARGET[0], "Fern in Black is a recolour"

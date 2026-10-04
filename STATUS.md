@@ -450,7 +450,12 @@ but no colour could be selected. The last `u32` is the window's STARTING percent
 The same zero made **Cancel** draw the client's "Hair with the same color is already equipped": the
 client runs its same-look check on Cancel too, and value 0 composes back to the worn hair. A valid
 start ends that, and a player already in a 50% mix opens at 51 (`salon::mix_start_percent`). The
-research note §7 has the details. The percent is the mix colour's share (`/AddProb`).
+research note §7 has the details. The percent is the mix colour's share (`/AddProb`). **Then the
+colour names flickered on hover** - the client's own UI: each swatch carries a pass-through tooltip
+label (`+0x11cc = 0`) whose hit-test forwards a mouse move and so rebuilds the tooltip, **[I]** every
+frame. The owner chose to keep the names, so the hook now wraps that hit-test's vtable slot
+(`grap_stub::mixtooltip`, `mixtooltip=off` to disable) and forwards only real moves. That is a CLIENT
+change: it reaches players with the next Windows + Mac client release. Plan step 44f; §8.
 
 **2026-10-03: a star stack is one item everywhere - built, tests only.** The owner: separate star
 items must not *"stack into 1 item"*, and a dropped star should go down *"along with its ammo
@@ -576,6 +581,17 @@ eight visibly different hairs and nine visibly different eyes - players need the
 which the launcher delivers once the server is repackaged. And the collaboration coupons now give
 each style in its **default** colour (`ab39b6a`, `crate::cosmetics`): Fern Hair -> Violet 42576,
 Übel Hair -> Green 42604, Übel Face -> Violet 22639. Plan TP 8/9.
+
+**2026-10-03: recoloured collaboration hair - the hair hanging in front is no longer lighter.** The
+owner, on Frieren Hair mixed Green/Hazel: *"the hair looks fine from behind, but all of the color edits
+made the front facing bottom hair way lighter"*. `tools/collab_recolor.py` normalised every layer on
+its own, and `default/hairBelowBody` is mostly a flat darker disc (the back of the head) under the
+pigtails - lifting that layer's mean to the target pushed the pigtails nearly blond. Now one
+lightness mapping per hair, pooled over its layers (`hair_stats`, `hairShade` excluded and still
+mapped alone), so layers keep the art's relative shading; every collaboration hair with the layer
+draws it darker (Frieren 0.63 against 0.86). A contact sheet of the rebuilt Hazel matches the back
+view. Built and parsed (113 variants); **not installed yet** - the client was running. Needs
+`python tools/backport_install.py --install` with the client closed, and a repackage for players.
 
 **2026-10-03: trade-request cooldown.** The owner: *"add a cooldown for trade requests so that
 players can't spam people if they already have a current request waiting acceptance, or they

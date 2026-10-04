@@ -624,6 +624,7 @@ def recolor_looks(build_dir, source, manifest, add):
     out_root = os.path.join(build_dir, "recolor")
     base_layers = {}  # (kind, base) -> {node: (rgba, w, h, fmt)}
     eye_hue = {}
+    hair_stats = {}  # base -> one lightness mapping for every layer of that hair
     done = 0
     for items in manifest["sets"].values():
         for it in items:
@@ -652,6 +653,8 @@ def recolor_looks(build_dir, source, manifest, add):
                     payload = open(os.path.join(exp, e["file"]), "rb").read()
                     layers[e["node"].lstrip("/")] = (wz_png.to_rgba(wz_png.inflate(payload), w, h, fmt), w, h, fmt)
                 base_layers[key] = layers
+                if kind == "Hair":
+                    hair_stats[base] = cr.hair_stats(layers)
                 if kind == "Face" and "default/face" in layers:
                     rgba, w, h, _ = layers["default/face"]
                     eye_hue[base] = cr.art_eye_hue(rgba, w, h, art)
@@ -673,7 +676,8 @@ def recolor_looks(build_dir, source, manifest, add):
             for prop_path, node in links:
                 if node not in written:
                     rgba, w, h, fmt = layers[node]
-                    px = cr.recolor_layer(rgba, w, h, kind, target, art, eye_hue.get(base))
+                    px = cr.recolor_layer(rgba, w, h, kind, target, art, eye_hue.get(base),
+                                            None if "hairShade" in node else hair_stats.get(base))
                     raw = to_bgra4444(px, w, h) if fmt == 1 else bytes(
                         v for i in range(w * h) for v in (px[i * 4 + 2], px[i * 4 + 1], px[i * 4], px[i * 4 + 3]))
                     pay = os.path.join(out_dir, node.replace("/", ".") + ".bin")
