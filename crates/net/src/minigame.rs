@@ -368,7 +368,9 @@ pub struct Balloon {
 /// ```text
 /// raw 4  room type       -> user+0x1118   0 = no balloon, and nothing else is read
 /// u32    room id         -> user+0x1120
-/// raw 4  canEnter        -> user+0x111c   a shop's; 0 here
+/// raw 4  enterable       -> user+0x111c   1 = a double-click may enter. NOT only a shop's:
+///                                         the click's user lookup (FUN_1429b60d0) takes a user
+///                                         only when +0x1118 != 0 AND +0x111c == 1 [L]
 /// str    title           -> user+0x1128
 /// u32    game kind       -> user+0x113c
 /// u8     private         -> user+0x1130
@@ -388,7 +390,9 @@ pub fn miniroom_block(w: &mut PacketWriter, b: Option<&Balloon>) {
     };
     w.u32(b.room_type);
     w.u32(b.room_id);
-    w.u32(0);
+    // The owner, 2026-10-04: Tester2 saw the balloon and could not double-click into it - the
+    // click sent nothing, because this was 0. A full room says 0, so a click does nothing.
+    w.u32(u32::from(b.cur < b.max));
     w.str(&b.title);
     w.u32(b.game_kind);
     w.u8(u8::from(b.private));
@@ -514,7 +518,7 @@ mod tests {
         assert_eq!(r.u32().unwrap(), 215, "the dispatcher's character id");
         assert_eq!(r.u32().unwrap(), ROOM_TYPE_OMOK);
         assert_eq!(r.u32().unwrap(), 215, "room id");
-        assert_eq!(r.u32().unwrap(), 0);
+        assert_eq!(r.u32().unwrap(), 1, "enterable: without it a double-click sends nothing");
         assert_eq!(r.str().unwrap(), "hello");
         assert_eq!(r.u32().unwrap(), 0);
         assert_eq!([r.u8().unwrap(), r.u8().unwrap(), r.u8().unwrap(), r.u8().unwrap()], [0, 1, 2, 0]);

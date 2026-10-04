@@ -582,6 +582,12 @@ which the launcher delivers once the server is repackaged. And the collaboration
 each style in its **default** colour (`ab39b6a`, `crate::cosmetics`): Fern Hair -> Violet 42576,
 Übel Hair -> Green 42604, Übel Face -> Violet 22639. Plan TP 8/9.
 
+**2026-10-04, first run of the Omok room: the window opened and the balloon showed; a
+double-click on it sent nothing.** The balloon's third field (`user+0x111c`) had gone out as 0
+because the drawing only reads it for shops; the click's user lookup (`FUN_1429B60D0`) also
+requires it to be 1. Now 1 while a seat is free. `research/omok-room-2026-10-04.md` §10,
+fixture `omok-balloon-shown-click-sent-nothing-world.log`. Plan step 45 b is the re-test.
+
 **2026-10-04, later: Match Cards rooms, and the win / tie / loss record, per game.** The owner:
 *"Can you also do the same for Monster Card Matching minigame"*, and *"the minigame UI keeps
 track of how many win/lose/ties the player has ... The win/lose/tie record is stored per game."*
