@@ -172,3 +172,27 @@ mix either way round (its swapped twin is 49%).
 A Confirm on the look already worn still draws that warning, and should: it is the client
 refusing to spend a coupon on nothing.
 
+## 8. The colour name flickers on hover - client-side, unfixed
+
+The owner, after the fix in §7: the window works, but hovering a swatch makes its name label
+("Violet") fade in and out repeatedly. **The server sends nothing while the window is open**, so
+this is the client's own UI. Dumps: `msexe-mix-palette.c`, `msexe-mix-window-builder.c`,
+`msexe-mix-label-control.c`, `msexe-mix-label-flag.c`.
+
+* **[L]** The palette builder `FUN_142a92890` lays one LABEL control over each swatch:
+  `FUN_141aaae90(layout, id = swatch id + 10000, the swatch's own x/y/width/height, name, 2)`.
+  The name comes from `FUN_1401a8a90(colour)` for hair and `FUN_1401a88a0` for lens. The builder
+  then writes `0` to the label's `+0x11cc`:
+  `142a92cde  89 b0 cc 11 00 00  mov [rax+0x11cc], esi` (esi = 0). The class constructor
+  `FUN_141aeed80` sets that field to `1`.
+* **[L]** `+0x11cc` is read only by the label's mouse hit-test, `FUN_14170f740` (vtable data at
+  `1433fa330`). When the cursor is inside and the flag is `0`, it forwards the event to its
+  child and returns "not hit". With the flag `1` it returns "hit" and keeps the mouse. When the
+  cursor is outside it resets `+0x78` (`FUN_142645170`) and zeroes `+0x11b0` - the label's fade.
+* **[I]** The flicker is the fade being reset over and over: the pass-through label keeps telling
+  the window the cursor is not on it. The flag cannot simply go back to `1`, because then the
+  label sits on top of the swatch and keeps its clicks.
+
+Any fix is a client patch, which means a Windows and Mac client release. The options are in the
+owner's hands.
+
