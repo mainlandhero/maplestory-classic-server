@@ -574,6 +574,7 @@ impl Drop for Session {
         // Out of any trade window, so the partner's closes too. A channel change included:
         // a trade room belongs to the channel. session/trade.rs.
         self.leave_trade_on_disconnect();
+        self.leave_game_on_disconnect();
         // The hub's directory: this character no longer plays on this channel. Before
         // `part`, which is the local equivalent. `session/worldlink.rs`.
         self.announce_offline_to_link();
@@ -669,6 +670,7 @@ mod scroll;
 mod summonsack;
 mod shop;
 mod storage;
+pub(crate) mod minigame;
 pub(crate) mod trade;
 mod skills;
 #[cfg(test)]

@@ -61,6 +61,8 @@ pub(crate) struct Seat {
 #[derive(Debug, Default)]
 pub(crate) struct Rooms {
     open: Vec<(u32, [Option<Seat>; 2])>,
+    /// Omok rooms - `session/minigame.rs`. On the same lock so one busy check sees both kinds.
+    pub(super) games: Vec<super::minigame::GameRoom>,
     /// Invites on somebody's screen and not answered yet: `(from, to, when)`.
     pending: Vec<(u32, u32, Instant)>,
     /// Invites declined: `(from, to, when)`.
@@ -240,7 +242,16 @@ impl Session {
             }
             // Both are answered with NOTHING on purpose - see the module docs. `0x017E` does
             // not latch, so this does not freeze anything; it just does not open a window.
-            net::trade::Request::Accept { ticket } => return self.trade_accept(&chr, ticket),
+            net::trade::Request::Accept { ticket, password } => {
+                if self.is_game_room(ticket) {
+                    return self.game_join(&chr, ticket, password);
+                }
+                return self.trade_accept(&chr, ticket);
+            }
+            net::trade::Request::GameCreate { room_type, title, password, spec } => {
+                return self.game_create(&chr, room_type, title, password, spec)
+            }
+            net::trade::Request::Game(action) => return self.game_action(&chr, action),
             net::trade::Request::Decline { ticket, reason } => {
                 // The room goes with the refusal: leaving it open would let a later accept of
                 // the same ticket open a window nobody asked for.
@@ -281,7 +292,9 @@ impl Session {
                 return self.trade_put_item(&chr, inv_type, bag_slot, quantity, trade_slot)
             }
             net::trade::Request::PutMesos { amount } => return self.trade_put_mesos(&chr, amount),
+            net::trade::Request::Leave if self.in_game_room(chr.id) => return self.game_leave(&chr, "closed the Omok window"),
             net::trade::Request::Leave => return self.trade_leave(&chr, "closed the trade window"),
+            net::trade::Request::Chat { text } if self.in_game_room(chr.id) => return self.game_chat(&chr, &text),
             net::trade::Request::Chat { text } => return self.trade_chat(&chr, &text),
             net::trade::Request::TradeConfirm { items } => return self.trade_confirm(&chr, &items),
             net::trade::Request::TradeVerify { items } => return self.trade_verify(&chr, &items),
@@ -908,7 +921,7 @@ impl Session {
     /// are free. The owner, 2026-10-03: a player *"in a state where they cannot accept a trade
     /// request (such as in NPC shop, in dialogue, or in storage)"*. Plus the Cash Shop, and a
     /// trade window already open - the client itself declines with `0xB` in that case.
-    fn busy_for_trade(&self) -> Option<&'static str> {
+    pub(super) fn busy_for_trade(&self) -> Option<&'static str> {
         if self.open_shop.is_some() {
             return Some("in an NPC shop");
         }
@@ -926,7 +939,10 @@ impl Session {
             let rooms = self.fields.trades();
             rooms.seat_of(me).is_some_and(|(room, _)| rooms[room].1.iter().all(Option::is_some))
         };
-        trading.then_some("in another trade")
+        if trading {
+            return Some("in another trade");
+        }
+        self.in_game_room(me).then_some("in a minigame room")
     }
 
     /// **A trade request reached this player** ([`crate::broadcast::Event::TradeInvite`]).

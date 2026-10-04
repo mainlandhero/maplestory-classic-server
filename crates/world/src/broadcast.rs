@@ -242,6 +242,11 @@ pub enum Event {
     /// and wallet, for their session to draw before the window closes.
     TradeEnded { slot: u8, reason: u32, received: Option<store::tradeescrow::Received> },
 
+    /// **This character's Omok room changed** - somebody sat down, left, or a game started or
+    /// ended - in another player's session. Their own session rebuilds the `0x0224` it keeps
+    /// for players who arrive later, which carries the room's balloon. `session/minigame.rs`.
+    MiniRoomChanged,
+
     /// **A stage-clear EXP award**, as a percent of the recipient's OWN next level - which is
     /// why it crosses as a percent and not as an amount: only their session knows their
     /// level. `crate::firsttime::stage_exp_percent`.
@@ -1251,6 +1256,7 @@ mod tests {
             Event::FriendRequest => panic!("not an EXP share: a friend request"),
                 Event::TradeInvite { from, .. } => panic!("not an EXP share: a trade invite from {from}"),
                 Event::TradeEnded { reason, .. } => panic!("not an EXP share: a trade ended, reason {reason}"),
+                Event::MiniRoomChanged => panic!("not an EXP share: a miniroom change"),
             })
             .collect()
     }

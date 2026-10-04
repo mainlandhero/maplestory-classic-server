@@ -135,6 +135,7 @@ impl Session {
                 crate::broadcast::Event::TradeInvite { from, name, ticket, field } => {
                     out.extend(self.receive_trade_invite(from, &name, ticket, field));
                 }
+                crate::broadcast::Event::MiniRoomChanged => self.refresh_own_spawn(),
                 crate::broadcast::Event::PartyQuestExp { percent, why } => {
                     out.extend(self.receive_party_quest_exp(percent, &why));
                 }
@@ -367,7 +368,7 @@ impl Session {
             map: self.field_of(chr),
             spawn: Reply {
                 opcode: net::userpool::USER_ENTER_FIELD,
-                body: net::userpool::user_enter_field(chr, self.remote_at()),
+                body: net::userpool::user_enter_field_with_room(chr, self.remote_at(), self.own_balloon(chr.id).as_ref()),
                 what: format!(
                     "UserEnterField: {} ({}) on map {} at ({}, {}) - {} bytes. \
                      research/user-enter-field.md; nothing here authenticates anybody.",
