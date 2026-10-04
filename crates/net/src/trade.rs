@@ -333,9 +333,14 @@ pub fn room_open_len(members: &[RoomMember]) -> usize {
 ///   3   0x1C9  "'%s' has denied the invitation."           str name (and closes an open
 ///                                                            miniroom dialog, vt+0x138)
 ///   4   0x1CA  "'%s' is currently not accepting any invitation."   str name
+///   11  0x1C8  "'%s' is doing something else right now." again    str name
+///   12  0x1C7  "Please invite later."                             no further read
 ///   15  0x1CB  "'%s' is a character that cannot trade cash items." str name
-///   5..12, 14  the Rock-Paper-Scissors challenge strings; 13 nothing
+///   5..10, 14  the Rock-Paper-Scissors challenge strings (7, 9, 14 read a name); 13 nothing
 /// ```
+///
+/// 11 and 12 were first written down as Rock-Paper-Scissors strings from a quick read of the
+/// table; the listing (`mov edx,0x1c7` at `141c3e6d4`, the result-12 target) says otherwise.
 pub const INVITE_RESULT: u32 = 6;
 /// "Unable to find the character." - reads no name.
 pub const INVITE_NOT_FOUND: u32 = 1;
@@ -343,15 +348,22 @@ pub const INVITE_NOT_FOUND: u32 = 1;
 pub const INVITE_BUSY: u32 = 2;
 /// "'%s' has denied the invitation."
 pub const INVITE_DENIED: u32 = 3;
+/// "Please invite later." - reads no name.
+pub const INVITE_LATER: u32 = 12;
 
-/// `0x0575` mode 6. `name` goes on the wire for every result but
-/// [`INVITE_NOT_FOUND`], which reads none - a name there would be bytes the client never
-/// reads, harmless, but not what it expects.
+/// Whether result `result` reads a name after itself - the arms above that call the string
+/// reader. Sending a name to one that does not is bytes it never reads.
+pub fn invite_result_reads_name(result: u32) -> bool {
+    matches!(result, 2 | 3 | 4 | 7 | 9 | 11 | 14 | 15)
+}
+
+/// `0x0575` mode 6. `name` goes on the wire only for a result that reads one
+/// ([`invite_result_reads_name`]).
 pub fn invite_result(result: u32, name: &str) -> Vec<u8> {
     let mut w = PacketWriter::new();
     w.u32(INVITE_RESULT);
     w.u32(result);
-    if result != INVITE_NOT_FOUND {
+    if invite_result_reads_name(result) {
         w.str(name);
     }
     w.into_vec()
@@ -542,6 +554,7 @@ mod tests {
     fn the_invite_result_carries_a_name_except_not_found() {
         assert_eq!(invite_result(INVITE_BUSY, "Wisp"), vec![6, 0, 0, 0, 2, 0, 0, 0, 4, 0, b'W', b'i', b's', b'p']);
         assert_eq!(invite_result(INVITE_NOT_FOUND, "Wisp"), vec![6, 0, 0, 0, 1, 0, 0, 0]);
+        assert_eq!(invite_result(INVITE_LATER, "Wisp"), vec![6, 0, 0, 0, 12, 0, 0, 0], "Please invite later. reads no name");
     }
 
     /// The two puts captured 2026-10-03, byte for byte.

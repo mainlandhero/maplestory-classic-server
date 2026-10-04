@@ -571,6 +571,17 @@ which the launcher delivers once the server is repackaged. And the collaboration
 each style in its **default** colour (`ab39b6a`, `crate::cosmetics`): Fern Hair -> Violet 42576,
 Übel Hair -> Green 42604, Übel Face -> Violet 22639. Plan TP 8/9.
 
+**2026-10-03: trade-request cooldown.** The owner: *"add a cooldown for trade requests so that
+players can't spam people if they already have a current request waiting acceptance, or they
+have recently (1 min) declined their trade request."* A request on someone's screen blocks every
+new request from that inviter until it is answered or 60 s pass (`INVITE_WAIT`, so an ignored
+popup cannot block forever); a decline blocks the same inviter asking the same player for 60 s
+(`DECLINE_COOLDOWN`). Refused with the client's own "Please invite later." - `0x0575` mode 6
+**result 12**, which reads no name (results 11 and 12 had been mislabelled as
+Rock-Paper-Scissors strings; the listing corrects it). The client's own decline for an open
+miniroom (reason 0xB) starts no cooldown. State lives on `Fields` beside the rooms
+(`session/trade.rs` `Rooms`). Tests only - plan step 43 (j).
+
 **2026-10-03: trade - the whole trade dialog decompiled and checked against the server.** The
 owner asked for it. `research/msexe-trade-dialog.c` is all 28 functions of the trade class plus the
 14 shared miniroom handlers it uses; `research/trade-2026-09-09.md` 5.8 is the review. It

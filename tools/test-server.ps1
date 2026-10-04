@@ -2688,6 +2688,10 @@
              inviter has left -> "The room is already closed."; drag an untradeable item (the
              beginner's weapon) -> a "This item temporarily can't be traded." dialog and the
              window still works -> fixed
+          j. THE REQUEST COOLDOWN (2026-10-03). Tester2 invites the owner and the owner does NOT
+             answer; Tester2 invites again -> Tester2 sees "Please invite later." and the owner
+             gets no second popup -> fixed. The owner declines; Tester2 invites again within a
+             minute -> "Please invite later." again; after a minute it goes through -> fixed
 
     42. DISORDER'S DEBUFF (2026-10-02) - the first mob status ever sent (0x03E6). A thief with
         Disorder: hit a mob with it and look ABOVE the mob.
@@ -6509,6 +6513,8 @@ function Show-TestPlan {
         Write-Host '          B''s bag, B can still drag after -> fixed. B presses: done as A accepted it' -ForegroundColor Green
         Write-Host '       i. decline -> inviter sees "has denied the invitation"; accept after the' -ForegroundColor Green
         Write-Host '          inviter left -> "room is already closed"; untradeable item -> a dialog' -ForegroundColor Green
+        Write-Host '       j. COOLDOWN: invite twice while unanswered, or again within 1 min of a' -ForegroundColor Green
+        Write-Host '          decline -> "Please invite later.", no popup -> fixed' -ForegroundColor Green
         Write-Host ''
         Write-Host '  42. DISORDER DEBUFF (2026-10-02, FIRST 0x03E6 EVER): hit a mob with Disorder,' -ForegroundColor White
         Write-Host '       look ABOVE it: debuff icon for 10-30 s -> fixed' -ForegroundColor Cyan

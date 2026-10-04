@@ -37,6 +37,8 @@
 //! undecoded, which is why **both** sides get a mode 4 rather than the creator getting an
 //! enter notice.
 
+use std::time::{Duration, Instant};
+
 use super::{Reply, Session};
 
 /// One seat of an open trade room.
@@ -57,27 +59,95 @@ pub(crate) struct Seat {
 /// A `Vec` rather than a map for the reason `session/messenger.rs` gives: there are never
 /// many, and a vector keeps a log line's order stable.
 #[derive(Debug, Default)]
-pub(crate) struct Rooms(Vec<(u32, [Option<Seat>; 2])>);
+pub(crate) struct Rooms {
+    open: Vec<(u32, [Option<Seat>; 2])>,
+    /// Invites on somebody's screen and not answered yet: `(from, to, when)`.
+    pending: Vec<(u32, u32, Instant)>,
+    /// Invites declined: `(from, to, when)`.
+    declined: Vec<(u32, u32, Instant)>,
+}
+
+/// **The trade-request cooldown.** The owner, 2026-10-03: *"add a cooldown for trade requests so
+/// that players can't spam people if they already have a current request waiting acceptance,
+/// or they have recently (1 min) declined their trade request."* A request on someone's screen
+/// blocks every new one from the same inviter until it is answered - or until this long has
+/// passed, so an ignored popup cannot block the inviter forever.
+pub const INVITE_WAIT: Duration = Duration::from_secs(60);
+/// After a decline, the same inviter may not ask the same player again for this long.
+pub const DECLINE_COOLDOWN: Duration = Duration::from_secs(60);
 
 impl std::ops::Deref for Rooms {
     type Target = Vec<(u32, [Option<Seat>; 2])>;
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.open
     }
 }
 
 impl std::ops::DerefMut for Rooms {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        &mut self.open
     }
 }
 
 impl Rooms {
     /// The room `character` sits in: `(index into the table, their seat)`.
     fn seat_of(&self, character: u32) -> Option<(usize, usize)> {
-        self.0.iter().enumerate().find_map(|(i, (_, seats))| {
+        self.open.iter().enumerate().find_map(|(i, (_, seats))| {
             seats.iter().position(|s| s.as_ref().is_some_and(|s| s.character_id == character)).map(|seat| (i, seat))
         })
+    }
+
+    /// Why `from` may not ask `to` to trade at `now`, or `None` when they may.
+    fn invite_blocked(&mut self, from: u32, to: u32, now: Instant) -> Option<String> {
+        self.pending.retain(|p| now.saturating_duration_since(p.2) < INVITE_WAIT);
+        self.declined.retain(|d| now.saturating_duration_since(d.2) < DECLINE_COOLDOWN);
+        if let Some(p) = self.pending.iter().find(|p| p.0 == from) {
+            return Some(format!(
+                "their request to character {} is still waiting for an answer ({} s of {} s)",
+                p.1,
+                now.saturating_duration_since(p.2).as_secs(),
+                INVITE_WAIT.as_secs()
+            ));
+        }
+        self.declined.iter().find(|d| d.0 == from && d.1 == to).map(|d| {
+            format!(
+                "character {to} declined them {} s ago (cooldown {} s)",
+                now.saturating_duration_since(d.2).as_secs(),
+                DECLINE_COOLDOWN.as_secs()
+            )
+        })
+    }
+
+    /// `from`'s request is on `to`'s screen now.
+    fn note_pending(&mut self, from: u32, to: u32, now: Instant) {
+        self.pending.retain(|p| p.0 != from);
+        self.pending.push((from, to, now));
+    }
+
+    /// `to` answered `from`'s request - an accept, or a decline that starts no cooldown.
+    fn answered(&mut self, from: u32, to: u32) {
+        self.pending.retain(|p| !(p.0 == from && p.1 == to));
+    }
+
+    /// `to` declined `from`'s request: the cooldown starts.
+    fn note_declined(&mut self, from: u32, to: u32, now: Instant) {
+        self.answered(from, to);
+        self.declined.retain(|d| !(d.0 == from && d.1 == to));
+        self.declined.push((from, to, now));
+    }
+
+    /// A character who leaves the channel takes their waiting requests with them, both ways.
+    /// Their declines stand - leaving and coming back is not a way round the minute.
+    fn forget_pending(&mut self, character: u32) {
+        self.pending.retain(|p| p.0 != character && p.1 != character);
+    }
+
+    /// Move every request and decline `by` into the past - for tests, which cannot wait a minute.
+    #[cfg(test)]
+    fn age_requests(&mut self, by: Duration) {
+        for (_, _, at) in self.pending.iter_mut().chain(self.declined.iter_mut()) {
+            *at = at.checked_sub(by).expect("a clock that old");
+        }
     }
 }
 
@@ -127,6 +197,19 @@ impl Session {
                 ));
             }
             net::trade::Request::Invite { target } => {
+                // **The cooldown first** (`INVITE_WAIT`, `DECLINE_COOLDOWN`): the client's own
+                // "Please invite later." (mode 6 result 12), and nothing reaches the target.
+                if let Some(why) = self.with_rooms(|rooms| rooms.invite_blocked(chr.id, target, Instant::now())) {
+                    crate::server::log(&format!(
+                        "   trade: character {} asked character {target} to trade, refused - {why}. Told \"Please invite later.\"",
+                        chr.id
+                    ));
+                    return vec![Reply {
+                        opcode: net::trade::MINIROOM_RESULT,
+                        body: net::trade::invite_result(net::trade::INVITE_LATER, ""),
+                        what: format!("MiniroomResult mode 6 result 12 to character {}: \"Please invite later.\" ({why})", chr.id),
+                    }];
+                }
                 // **The target's own session decides** whether the popup goes up or the
                 // inviter is told they are busy - only it knows whether it has a shop, a
                 // conversation or storage open. `receive_trade_invite`. The ticket is the
@@ -161,7 +244,16 @@ impl Session {
             net::trade::Request::Decline { ticket, reason } => {
                 // The room goes with the refusal: leaving it open would let a later accept of
                 // the same ticket open a window nobody asked for.
+                // A refusal (reason 4) starts the one-minute cooldown on this inviter asking
+                // this player again; 0xB - a miniroom already open - is the client's own answer,
+                // not the player's, and only ends the wait.
+                let me_id = chr.id;
                 let dropped = self.with_rooms(|rooms| {
+                    if reason == 0xB {
+                        rooms.answered(ticket, me_id);
+                    } else {
+                        rooms.note_declined(ticket, me_id, Instant::now());
+                    }
                     let before = rooms.len();
                     rooms.retain(|(t, _)| *t != ticket);
                     before != rooms.len()
@@ -223,7 +315,9 @@ impl Session {
             map_id: self.field_of(&chr),
             confirmed: false,
         };
+        let me_id = chr.id;
         let room = self.with_rooms(|rooms| {
+            rooms.answered(ticket, me_id);
             let Some(slot) = rooms.iter().position(|(t, _)| *t == ticket) else {
                 return Err(net::trade::ROOM_NOTICE_CLOSED);
             };
@@ -880,6 +974,8 @@ impl Session {
             ));
             return Vec::new();
         }
+        let me_id = me.id;
+        self.with_rooms(|rooms| rooms.note_pending(from, me_id, Instant::now()));
         let text = format!("You have sent a trade request to '{}'.", me.name);
         self.bus().publish_to_character_anywhere(
             from,
@@ -906,6 +1002,8 @@ impl Session {
     /// From `Drop`: a trade does not outlive its player's connection.
     pub(super) fn leave_trade_on_disconnect(&mut self) {
         if let Some(chr) = self.claimed_character() {
+            let id = chr.id;
+            self.with_rooms(|rooms| rooms.forget_pending(id));
             if self.fields.trades().seat_of(chr.id).is_some() {
                 let _ = self.trade_leave(&chr, "left the channel");
             }
@@ -1155,7 +1253,7 @@ mod tests {
         host.collect_mail();
         drop(guest);
         assert_eq!(results(&host.collect_mail()), vec![net::trade::room_leave(0, net::trade::LEAVE_CANCELLED_BY_PARTNER)], "the host sits in slot 0");
-        assert!(fields.trades().0.is_empty(), "and the room is gone");
+        assert!(fields.trades().is_empty(), "and the room is gone");
         assert_eq!(store.mesos(guest_id).unwrap(), 900, "the leaver's mesos are back in the database");
     }
 
@@ -1196,7 +1294,9 @@ mod tests {
         let sent = told.iter().find(|r| r.opcode == net::message::MESSAGE).expect("a chat line");
         assert_eq!(sent.body, net::message::chat_line_system("You have sent a trade request to 'Wisp'."));
 
-        // Busy: Wisp has an NPC shop open.
+        // Busy: Wisp has an NPC shop open. (The first request is still waiting, so it is aged
+        // out first - a_waiting_request_blocks_the_next_one covers that rule.)
+        fields.trades().age_requests(INVITE_WAIT);
         guest.open_shop = Some((1012000, Vec::new()));
         host.handle(&miniroom(&u32s(&[0, net::trade::ROOM_TYPE_TRADE])));
         host.handle(&miniroom(&u32s(&[5, guest_id])));
@@ -1349,5 +1449,79 @@ mod tests {
         assert!(has(&out, net::stats::STAT_CHANGED), "the latch is released");
         assert_eq!(store.bag_items(host_id, store::InventoryType::Use).unwrap()[0].item.kind.quantity(), 3);
         assert!(results(&guest.collect_mail()).is_empty(), "the partner sees nothing");
+    }
+
+    /// Create then invite, as the client sends them; what the inviter is sent back.
+    fn invite(host: &mut Session, target: u32) -> Vec<Vec<u8>> {
+        let mut out = results(&host.handle(&miniroom(&u32s(&[0, net::trade::ROOM_TYPE_TRADE]))));
+        out.extend(results(&host.handle(&miniroom(&u32s(&[5, target])))));
+        out
+    }
+
+    fn popups(s: &mut Session) -> usize {
+        results(&s.collect_mail()).iter().filter(|b| b[0..4] == [5, 0, 0, 0]).count()
+    }
+
+    /// **A request still waiting blocks the next one** (the owner, 2026-10-03: *"so that players
+    /// can't spam people if they already have a current request waiting acceptance"*) - to the
+    /// same player or anyone else: "Please invite later." and nothing reaches them. A request
+    /// ignored for [`INVITE_WAIT`] stops blocking.
+    #[test]
+    fn a_waiting_request_blocks_the_next_one() {
+        let (store, config, fields) = channel();
+        let (mut host, _) = join(&store, &config, &fields, "Tester2");
+        let (mut guest, guest_id) = join(&store, &config, &fields, "Wisp");
+        let (mut third, third_id) = join(&store, &config, &fields, "Pebble");
+        let later = vec![net::trade::invite_result(net::trade::INVITE_LATER, "")];
+
+        assert!(invite(&mut host, guest_id).is_empty());
+        assert_eq!(popups(&mut guest), 1, "the first request is shown");
+        assert_eq!(invite(&mut host, guest_id), later, "again, while it waits");
+        assert_eq!(invite(&mut host, third_id), later, "or anyone else");
+        assert_eq!(popups(&mut guest) + popups(&mut third), 0, "neither of those reached anybody");
+
+        fields.trades().age_requests(INVITE_WAIT);
+        assert!(invite(&mut host, third_id).is_empty(), "an ignored request stops blocking after a minute");
+        assert_eq!(popups(&mut third), 1);
+    }
+
+    /// **A decline means a minute before the same inviter may ask the same player again**
+    /// (*"or they have recently (1 min) declined their trade request"*). Asking someone else is
+    /// fine; the client's own decline for "a miniroom is already open" (reason 0xB) starts no
+    /// cooldown; an accept answers the request, so a finished trade blocks nothing.
+    #[test]
+    fn a_decline_starts_a_minute_for_that_pair() {
+        let (store, config, fields) = channel();
+        let (mut host, host_id) = join(&store, &config, &fields, "Tester2");
+        let (mut guest, guest_id) = join(&store, &config, &fields, "Wisp");
+        let (mut third, third_id) = join(&store, &config, &fields, "Pebble");
+        let later = vec![net::trade::invite_result(net::trade::INVITE_LATER, "")];
+        let decline = |s: &mut Session, reason: u32| s.handle(&miniroom(&u32s(&[6, host_id, reason])));
+
+        invite(&mut host, guest_id);
+        guest.collect_mail();
+        decline(&mut guest, 4);
+        host.collect_mail();
+        assert_eq!(invite(&mut host, guest_id), later, "Wisp declined a moment ago");
+        assert!(invite(&mut host, third_id).is_empty(), "asking Pebble is fine");
+        third.collect_mail(); // the popup reaches Pebble before Pebble can answer it
+        decline(&mut third, 0xB);
+        third.collect_mail();
+        host.collect_mail();
+        assert!(invite(&mut host, third_id).is_empty(), "a decline for an open miniroom starts no cooldown");
+        third.collect_mail();
+        decline(&mut third, 4);
+        host.collect_mail();
+
+        fields.trades().age_requests(DECLINE_COOLDOWN);
+        assert!(invite(&mut host, guest_id).is_empty(), "a minute later Wisp may be asked again");
+        guest.collect_mail();
+        let mut accept = u32s(&[3, host_id]);
+        accept.extend_from_slice(&[0, 0]);
+        guest.handle(&miniroom(&accept));
+        host.collect_mail();
+        host.handle(&miniroom(&u32s(&[net::trade::ROOM_LEAVE])));
+        guest.collect_mail();
+        assert!(invite(&mut host, guest_id).is_empty(), "an accepted request is answered - no wait after the trade");
     }
 }
