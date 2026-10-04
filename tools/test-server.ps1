@@ -2635,6 +2635,25 @@
              works without a map change. Still needs a map change -> the second 0x007C did not
              apply; world-ch0.log shows "skill points now [...]" right after the LEVEL line
 
+    45. OMOK ROOMS (2026-10-04). Two clients on one map; the owner and Tester2 each !item 4080000 1
+        (an Omok set). Never on a screen before - every line is a first.
+          a. the owner double-clicks the set, title "hello", no password: the Omok window opens
+             with the owner seated, and a balloon "hello 1/2" floats over their head - on BOTH
+             screens - with a "[Miniroom]" line in chat -> fixed. No window -> world-ch0.log
+             "omok:" lines; client dies -> client-exit.log
+          b. Tester2 clicks the balloon: Tester2's window opens with both seated, the owner's
+             shows Tester2 sit down, the balloon says 2/2 -> fixed
+          c. Tester2 presses Ready (both see it), the owner presses Start: the owner moves first.
+             Alternate stones; an occupied square says "You can't put it there."; five in a row
+             -> "You win." / "You lost." on the right screens
+          d. a second game: the loser of the first moves first. Try take-back (both stones
+             come off when the other has moved since), tie, give up, and expel
+          e. the owner closes the window: Tester2 sees "The room is closed." and the balloon
+             goes on both screens -> fixed
+          f. a private room (password set): a wrong password says "The password is
+             incorrect."; the right one opens it. A player who walks onto the map AFTER a room
+             opened sees its balloon too
+
     44. MIX DYE AND COLORBLEND (2026-10-03). The first look id above 9 999 999 this client is
         ever sent. !item 5151200 1 and !item 5152300 1 (neither is sold in the Cash Shop).
           a. Brittany (Henesys salon), menu line "mix two hair colours": the client's own
@@ -6502,6 +6521,16 @@ function Show-TestPlan {
         Write-Host ''
         Write-Host '  38. SP ON LEVEL-UP (2026-10-02): skill window open, level up - SP rises at once,' -ForegroundColor White
         Write-Host '       + works with no map change / channel change' -ForegroundColor Cyan
+        Write-Host ''
+        Write-Host '  45. OMOK ROOMS (2026-10-04, NEVER ON A SCREEN): both !item 4080000 1, same map.' -ForegroundColor White
+        Write-Host '       a. owner opens "hello": window opens + balloon over the head on BOTH screens' -ForegroundColor Cyan
+        Write-Host '          + a [Miniroom] chat line -> fixed. No window -> "omok:" lines in world-ch0.log' -ForegroundColor Green
+        Write-Host '       b. Tester2 clicks the balloon: both seated in both windows, balloon 2/2' -ForegroundColor Cyan
+        Write-Host '       c. Ready, Start: owner moves first; 5 in a row -> You win / You lost' -ForegroundColor Cyan
+        Write-Host '       d. 2nd game: loser first. Take-back, tie, give up, expel' -ForegroundColor Cyan
+        Write-Host '       e. owner closes: Tester2 gets "The room is closed.", balloon gone' -ForegroundColor Cyan
+        Write-Host '       f. password room: wrong pw -> "password is incorrect"; late arrival sees balloon' -ForegroundColor Cyan
+        Write-Host '       client dies at any step -> paste client-exit.log and say which step' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  44. MIX DYE / COLORBLEND (2026-10-03): !item 5151200 1, !item 5152300 1.' -ForegroundColor White
         Write-Host '       Brittany, "mix two hair colours": the colours are clickable now (first run: all dead,' -ForegroundColor Cyan

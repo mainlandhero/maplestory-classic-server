@@ -582,6 +582,20 @@ which the launcher delivers once the server is repackaged. And the collaboration
 each style in its **default** colour (`ab39b6a`, `crate::cosmetics`): Fern Hair -> Violet 42576,
 Übel Hair -> Green 42604, Übel Face -> Violet 22639. Plan TP 8/9.
 
+**2026-10-04: Omok rooms - the window, the balloon over the owner's head, and the game.** The
+owner: *"I just tried opening up a minigame room for omok, it did not open, and it did not
+advertise the minigame room in the map."* The create arrived and the server only knew trade.
+Now `net::minigame` + `session/minigame.rs`: the create opens the owner's window (mode 4, room
+type 3, with the game tail); the balloon is **`0x0233`** (`FUN_1427956b0`), sent to the whole
+map and carried in the owner's `0x0224` for late arrivals; a click on it is mode 3 with the room
+id (= the owner's id) and the password; Ready is echoed (the client never sets its own flag),
+Start, stones, turn clock, five in a row, the double-three rule, tie, undo, forfeit, expel,
+leave-after-game, chat, and leaving (the owner's closes the room). The server referees
+everything; the 20-byte record goes as zeros. `research/omok-room-2026-10-04.md` - which also
+**corrects** `minigames-2026-09-09.md` §5.2: Omok's visitor-entered tail reads a 20-byte record
+through the `.pdata`-less thunk `reads.py` cannot see. Match Cards is refused with a chat line.
+Tests only (`net` + `world` 2176 passing) - plan step 45.
+
 **2026-10-03: recoloured collaboration hair - the hair hanging in front is no longer lighter.** The
 owner, on Frieren Hair mixed Green/Hazel: *"the hair looks fine from behind, but all of the color edits
 made the front facing bottom hair way lighter"*. `tools/collab_recolor.py` normalised every layer on
