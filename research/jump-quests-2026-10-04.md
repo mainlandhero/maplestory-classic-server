@@ -264,3 +264,13 @@ The client enforces these itself. `session::summonsack` already relies on bit `0
   `job_test_exit_for` already does a warden.
 * **The quests themselves** (start, hand-in, rewards) are data-driven and need nothing
   course-specific.
+
+## 8. Decided by the owner, 2026-10-04
+
+* **Shane's fee:** none. A stranger to quest 10509 is still refused.
+* **Shane's door:** a menu of the two Forest courses; the Statue's, of the three Deep Forest ones.
+* **What a goal gives:** the **Jump Quest Reward** at every goal, the chests included, with
+  the quest item added while the quest is in progress. The reward is one prize each from the
+  Companion's Magic Box's use and scroll slots. *"the chest also gives jump quest rewards in
+  addition to the quest item."*
+* **Jake:** B1/B2/B3 at level 20/30/40 for 500/1 200/2 000 mesos.

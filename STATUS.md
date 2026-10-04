@@ -451,11 +451,11 @@ we're going to implement them."* `research/jump-quests-2026-10-04.md`.
   * The goal at the top - a pile or a chest - shows a box of what was found. **Dismissing it**
     hands everything over and warps the player out.
 * **The rewards** (the owner's call):
-  * every finished Forest or Deep Forest course gives one prize from each of the
-    **Companion's Magic Box's use and scroll slots**;
+  * every finished course gives one prize from each of the **Companion's Magic Box's use and
+    scroll slots** - the Construction Site's chests too (the owner: *"the chest also gives jump
+    quest rewards in addition to the quest item"*);
   * plus the course's quest item while its quest is in progress, topped up to the count -
-    John's 10/20/30 at once;
-  * the chests give Shumi's items only.
+    John's 10/20/30 at once, Shumi's coin, roll and sack.
 * **The drops page** lists the reward as **Jump Quest Reward** (badge JQ), counted like the
   box (`killstats::note_jump_quest`, row `"jq"`).
 * **Guards.** A goal clicked from more than 600 px across or 300 px up or down gives nothing.

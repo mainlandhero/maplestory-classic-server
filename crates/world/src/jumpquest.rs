@@ -25,10 +25,11 @@
 //!   function similar to the Companion PQ box, and should be exposed on the drops webpage as
 //!   'Jump Quest Reward' in addition to completing the quest by either giving the required
 //!   item"*.
-//!   * Each finished Forest or Deep Forest course gives one prize from each of [`SLOTS`]. Those
-//!     are the Companion's Magic Box's own **use** and **scroll** slots.
+//!   * Every finished course gives one prize from each of [`SLOTS`]. Those are the Companion's
+//!     Magic Box's own **use** and **scroll** slots.
 //!   * The course's quest item is added when that quest is in progress.
-//!   * The Construction Site's chests give their quest item only. The owner named the forests.
+//!   * The Construction Site's chests included - the owner, the same day: *"the chest also
+//!     gives jump quest rewards in addition to the quest item."*
 //! * **Tickets.** Jake: B1 at level 20 for 500 mesos, B2 at 30 for 1 200, B3 at 40 for 2 000
 //!   (the old GMS script, as recalled - accepted by the owner).
 //!
@@ -172,9 +173,9 @@ pub const GOALS: [Goal; 8] = [
     Goal { npc: PINK_PILE, map: 10_005_041, quest: 10_006, item: 4_031_042, count: 10, prize: true, noun: "pile of pink flowers" },
     Goal { npc: BLUE_PILE, map: 10_005_043, quest: 10_007, item: 4_031_043, count: 20, prize: true, noun: "pile of blue flowers" },
     Goal { npc: WHITE_PILE, map: 10_005_046, quest: 10_008, item: 4_031_044, count: 30, prize: true, noun: "pile of white flowers" },
-    Goal { npc: CHEST_B1, map: 10_003_102, quest: 10_312, item: 4_031_039, count: 1, prize: false, noun: "treasure chest" },
-    Goal { npc: CHEST_B2, map: 10_003_105, quest: 10_313, item: 4_031_040, count: 1, prize: false, noun: "treasure chest" },
-    Goal { npc: CHEST_B3, map: 10_003_109, quest: 10_314, item: 4_031_041, count: 1, prize: false, noun: "treasure chest" },
+    Goal { npc: CHEST_B1, map: 10_003_102, quest: 10_312, item: 4_031_039, count: 1, prize: true, noun: "treasure chest" },
+    Goal { npc: CHEST_B2, map: 10_003_105, quest: 10_313, item: 4_031_040, count: 1, prize: true, noun: "treasure chest" },
+    Goal { npc: CHEST_B3, map: 10_003_109, quest: 10_314, item: 4_031_041, count: 1, prize: true, noun: "treasure chest" },
 ];
 
 pub fn goal_for(npc: u32) -> Option<&'static Goal> {
@@ -204,8 +205,8 @@ pub const TICKETS: [Ticket; 3] = [
     Ticket { line: 2, floor: "Construction Site B3", item: 4_031_038, min_level: 40, price: 2_000, area_one: 10_003_106 },
 ];
 
-/// **The Jump Quest Reward**: one prize from each slot, every finished Forest or Deep Forest
-/// course. The Companion's Magic Box's own use and scroll slots, so the two tables cannot drift.
+/// **The Jump Quest Reward**: one prize from each slot, every finished course - the piles and
+/// the chests alike. The Companion's Magic Box's own use and scroll slots, so the two tables cannot drift.
 pub const SLOTS: [Slot; 2] = [
     Slot { name: "use", prizes: &crate::magicbox::USE },
     Slot { name: "scroll", prizes: &crate::magicbox::SCROLLS },
@@ -270,7 +271,7 @@ pub fn found_text(goal: &Goal, quest_item: Option<(u32, u16)>, prizes: &[(&str, 
     if quest_item.is_none() && prizes.is_empty() {
         return format!(r"The {} is empty.\n\n(You will be taken back to {town}.)", goal.noun);
     }
-    let verb = if goal.prize { "search" } else { "open" };
+    let verb = if goal.noun.ends_with("chest") { "open" } else { "search" };
     let mut text = format!("You {verb} the {} and find:", goal.noun);
     let amount = |q: u16| if q > 1 { format!(" x{q}") } else { String::new() };
     if let Some((id, q)) = quest_item {
@@ -320,7 +321,7 @@ mod tests {
                 _ => Area::ConstructionSite,
             };
             assert_eq!(area, want, "{}", g.npc);
-            assert_eq!(g.prize, area != Area::ConstructionSite, "the owner: forests give a prize, chests their quest item");
+            assert!(g.prize, "the owner: every goal gives the reward, the chests included");
         }
         assert!(FOREST_COURSES.iter().all(|c| area_of(c.start_map) == Some(Area::Forest)));
         assert!(DEEP_FOREST_COURSES.iter().all(|c| area_of(c.start_map) == Some(Area::DeepForest)));
@@ -355,7 +356,7 @@ mod tests {
             );
         }
         let course_items: Vec<u32> = FOREST_COURSES.iter().chain(&DEEP_FOREST_COURSES).map(|c| c.item).collect();
-        let goal_items: Vec<u32> = GOALS.iter().filter(|g| g.prize).map(|g| g.item).collect();
+        let goal_items: Vec<u32> = GOALS.iter().filter(|g| area_of(g.map) != Some(Area::ConstructionSite)).map(|g| g.item).collect();
         assert_eq!(course_items, goal_items, "each course is hunted for its goal's item");
     }
 
@@ -390,7 +391,7 @@ mod tests {
     }
 
     /// The box names the quest item and every prize, with the escape the client renders and no
-    /// real newline bytes; a chest with nothing for the player says it is empty.
+    /// real newline bytes; a goal with nothing at all for the player says it is empty.
     #[test]
     fn the_found_box_says_what_was_found() {
         let g = goal_for(PINK_PILE).unwrap();

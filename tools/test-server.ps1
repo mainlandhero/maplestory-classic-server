@@ -2655,8 +2655,8 @@
           f. B1 Area 1 has press-up portals that lead elsewhere on the same map. Using one moves
              you -> fine. The client hangs on one -> paste the last world-ch0.log lines: nobody
              knows yet whether the client sends anything for a same-map portal
-          g. the B1 depot's chest: with Shumi's quest 10312 in progress -> Shumi's Coin; without
-             -> "The treasure chest is empty."; either way back at the booth
+          g. the B1 depot's chest: a box lists a Use prize and a Scroll, plus Shumi's Coin while
+             quest 10312 is in progress; OK -> all of it in the bag, back at the booth
           h. the drops page: "Jump Quest Reward" (badge JQ) lists the use and scroll slots;
              after c its "finished" count reads 1 within 30 minutes
 
@@ -6627,7 +6627,7 @@ function Show-TestPlan {
         Write-Host '       d. Sleepywood statue: 3 flowers -> Deep Forest step 1/3/5; Crumbling Statue -> back; 10006 -> 10 Pink Violas' -ForegroundColor Cyan
         Write-Host '       e. Booth: Jake sells B1/B2/B3 (Lv 20/30/40, 500/1200/2000); the gate takes one -> Area 1; Exit -> booth' -ForegroundColor Cyan
         Write-Host '       f. B1 press-up portals within the map move you -> fine; a hang -> paste the last world-ch0.log lines' -ForegroundColor Yellow
-        Write-Host '       g. B1 depot chest: 10312 -> Shumi''s Coin, else "empty"; back at the booth   h. drops page: Jump Quest Reward (JQ)' -ForegroundColor Cyan
+        Write-Host '       g. B1 depot chest: a Use + a Scroll (+ Shumi''s Coin on 10312); back at the booth   h. drops page: Jump Quest Reward (JQ)' -ForegroundColor Cyan
         Write-Host '       no box / nothing given / no warp -> paste the "jump quest:" lines' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  49. PLAYER STORE (2026-10-04): two clients, owner has a Store Permit (5140001) in the Cash tab' -ForegroundColor White

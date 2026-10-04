@@ -538,8 +538,9 @@ mod tests {
         assert!(s.conversation.is_none());
     }
 
-    /// Without the quest a pile still gives its prizes and no quest item; a finished quest the
-    /// same. A chest without the quest is empty, and still shows the way out.
+    /// Without the quest a pile still gives its prizes and no quest item; so does a chest (the
+    /// owner, 2026-10-04: *"the chest also gives jump quest rewards in addition to the quest
+    /// item"*). Either way the box closes onto the way out.
     #[test]
     fn without_the_quest_a_pile_gives_prizes_only_and_a_chest_nothing() {
         let goal = jq::goal_for(jq::HERB_PILE).unwrap();
@@ -553,7 +554,9 @@ mod tests {
         let chest = jq::goal_for(jq::CHEST_B2).unwrap();
         let (store, mut s, id) = standing(chest.map, chest.npc, (107, 547), 40);
         let out = s.handle(&click());
-        assert!(said(&out).contains("The treasure chest is empty."), "{}", said(&out));
+        let box_text = said(&out);
+        assert!(box_text.contains("You open the treasure chest") && box_text.contains("#bUse#k") && box_text.contains("#bScroll#k"), "{box_text}");
+        assert!(!box_text.contains(&format!("#t{}#", chest.item)), "no quest, no roll of cash: {box_text}");
         let _ = s.handle(&answer(0, net::script::SCRIPT_ACTION_YES));
         assert_eq!(map_of(&s), jq::TICKET_BOOTH);
         assert_eq!(held(&store, id, chest.item), 0);
@@ -561,9 +564,14 @@ mod tests {
         let (store, mut s, id) = standing(chest.map, chest.npc, (107, 547), 40);
         store.start_quest(id, chest.quest).unwrap();
         let out = s.handle(&click());
-        assert!(said(&out).contains(&format!("#t{}#", chest.item)), "{}", said(&out));
+        assert!(said(&out).contains(&format!("#t{}#", chest.item)) && said(&out).contains("#bScroll#k"), "{}", said(&out));
+        let path = s.conversation.as_ref().unwrap().path.clone();
+        let (_, prizes) = jq::parse_found_path(&path).unwrap();
         let _ = s.handle(&answer(0, net::script::SCRIPT_ACTION_YES));
         assert_eq!(held(&store, id, chest.item), 1, "Shumi's Roll of Cash");
+        for (item, q) in prizes {
+            assert!(held(&store, id, item) >= u32::from(q), "the reward beside it: {item}");
+        }
     }
 
     /// **A click from the bottom of the step reaches nothing**, and gives nothing.

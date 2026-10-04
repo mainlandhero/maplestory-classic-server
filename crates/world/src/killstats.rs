@@ -40,7 +40,7 @@ pub fn note_box_opened(character: u32, prizes: &[(u32, u16)]) {
     pending().lock().unwrap_or_else(|e| e.into_inner()).note(store::Store::unix_now(), crate::magicbox::BOX, character, &items);
 }
 
-/// One finished Forest or Deep Forest course by `character`, and the prizes its goal gave -
+/// One finished jump-quest course by `character`, and the prizes its goal gave -
 /// counted like a box, under [`crate::jumpquest::STATS_ROW`]; `crate::dropweb::live_json` names
 /// that row `"jq"`. The quest item is not a prize and is not counted.
 pub fn note_jump_quest(character: u32, prizes: &[(u32, u16)]) {
