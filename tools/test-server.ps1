@@ -2677,17 +2677,12 @@
                the receiver's message says "Received 1900 mesos after fees" or just "Trade
                successful" - say which; either is fine
                "There was a problem trading the item." -> paste the 0x10/2 and 0x10/5 lines
-          h. THE ONE UNKNOWN. Tester2 presses Trade; the owner then puts in more mesos INSTEAD of
-             pressing. Tester2 gets a red "<name> changed the trade. Press Trade again ..." -
-             Tester2's press no longer counts. Now:
-               Tester2 CAN press Trade again, then the owner presses: done -> fixed
-               Tester2's button stays greyed -> this client never un-presses a button (nothing
-                          found that clears it). Close the window - both sides get everything
-                          back - and SAY SO: the fix is then to lock the table at the first
-                          press instead
-             Also say whether, after that change, the owner's window still shows Tester2 as
-             ready. And watch for any 0x017E line that is NOT 0x10/2 or 0x10/5 around the
-             second press - a separate "execute" packet would show up there.
+          h. MEASURED 2026-10-03: this client never un-presses Trade, so a change after a press
+             left the presser stuck. Now a press FIXES THE TABLE: Tester2 presses, then the
+             owner tries to put something in -> refused in red ("Tester2 has pressed Trade -
+             press Trade to accept, or close the window to cancel"), nothing leaves the owner's
+             bag, and the owner can still drag again afterwards -> fixed. The owner presses:
+             done, with the table as Tester2 accepted it.
 
     42. DISORDER'S DEBUFF (2026-10-02) - the first mob status ever sent (0x03E6). A thief with
         Disorder: hit a mob with it and look ABOVE the mob.
@@ -6505,9 +6500,8 @@ function Show-TestPlan {
         Write-Host '       f. Trade on ONE side: the other window shows them ready -> fixed' -ForegroundColor Green
         Write-Host '       g. Trade on both: "Trade successful.", items cross, mesos arrive LESS 5%' -ForegroundColor Green
         Write-Host '          (2000 -> 1900) -> fixed. "problem trading the item" -> paste 0x10/2 + 0x10/5' -ForegroundColor Yellow
-        Write-Host '       h. UNKNOWN: A presses Trade, B changes mesos instead. A is told in red to press' -ForegroundColor Cyan
-        Write-Host '          again. A CAN press again, then B: done -> fixed. A greyed out -> close the' -ForegroundColor Green
-        Write-Host '          window (all comes back) and SAY SO - then the fix is locking at first press' -ForegroundColor Yellow
+        Write-Host '       h. A presses Trade, B tries to put more in: refused in red, nothing leaves' -ForegroundColor Green
+        Write-Host '          B''s bag, B can still drag after -> fixed. B presses: done as A accepted it' -ForegroundColor Green
         Write-Host ''
         Write-Host '  42. DISORDER DEBUFF (2026-10-02, FIRST 0x03E6 EVER): hit a mob with Disorder,' -ForegroundColor White
         Write-Host '       look ABOVE it: debuff icon for 10-30 s -> fixed' -ForegroundColor Cyan

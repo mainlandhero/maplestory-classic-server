@@ -582,14 +582,16 @@ presser's side, which is checked too - a mismatch stops the trade ("There was a 
 trading the item."). The second press runs `Store::complete_trade`: both escrows cross in one
 transaction, mesos less 5% to the receiver, and both windows close with reason 9 ("Trade
 successful.") after the packets that show what arrived; a bag that cannot take its side
-fails it for both ("Trade unsuccessful.") with everything given back. **A change by the other
-side cancels a press** (the owner: the player who accepted *"needs to reconfirm the contents"*):
-the presser is told in red to press again. UNMEASURED whether this client lets them - nothing
-found clears its pressed flag (`room+0x500`) once set; step 43 (h) settles it, and if the button
-stays greyed the fallback is to lock the table at the first press. The owner expected a separate
-"execute" packet once both accept; the capture shows only the second 0x10/2, but that run never
-relayed the first press, so (h) also watches for one. Tests only - plan step 43 (f)-(h). Also
-measured in that run: both windows drew every offer on the right side.
+fails it for both ("Trade unsuccessful.") with everything given back. **A press fixes the whole
+table** - measured, not chosen first: the owner asked that a change by the other side cancel the
+press (*"needs to reconfirm the contents"*), and that was built and run. The presser's button
+stayed greyed and the window faded, so they could never press again - nothing in this client
+clears its pressed flag (`room+0x500`) or the partner-ready flag (`room+0x504`). So now the
+other side may press Trade or close the window, not change the offer (refused in red, still
+answered). Also measured in that run: the indicator shows, the partner's client checks the
+presser's side by itself (0x10/5), and **there is no separate "execute" packet** - the second
+0x10/2 is the trigger. Fixture `research/fixtures/trade-press-cannot-be-undone-world.log`. Plan
+step 43 (f)-(h).
 
 **2026-10-03: trade, second pass - puts LEAVE the bag, cancels give them back, chat, the invite's
 red line, and the 5% fee (built, waiting on the Trade button).** Never on a screen beyond
