@@ -55,6 +55,7 @@ pub mod groupmessage;
 pub mod whisper;
 pub mod megaphone;
 pub mod messenger;
+pub mod minigame;
 pub mod mob;
 pub mod mobdamage;
 pub mod mobmove;

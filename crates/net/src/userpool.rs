@@ -699,6 +699,14 @@ pub fn user_enter_field_len(chr: &crate::opcode::Character) -> usize {
 /// own* id clears a dword and returns. **[L]** for both. To move a remote player, use
 /// the remote family at `0x293..0x2C4`; to redress one, leave then enter.
 pub fn user_enter_field(chr: &crate::opcode::Character, at: RemoteAt) -> Vec<u8> {
+    user_enter_field_with_room(chr, at, None)
+}
+
+/// [`user_enter_field`] for a player with an open game room: the miniroom dword at 451 becomes
+/// the room's block (`crate::minigame::miniroom_block`), so somebody arriving on the map sees
+/// the balloon the players already there were sent as `0x0233`. Everything after it shifts by
+/// the block's length.
+pub fn user_enter_field_with_room(chr: &crate::opcode::Character, at: RemoteAt, room: Option<&crate::minigame::Balloon>) -> Vec<u8> {
     debug_assert_ne!(chr.id, 0, "a zero character id takes the four-u32 header branch");
     // Everything after the name shifts by its bytes; everything after the look shifts by
     // its equips. Both are folded into the offset assertions below.
@@ -880,7 +888,9 @@ pub fn user_enter_field(chr: &crate::opcode::Character, at: RemoteAt) -> Vec<u8>
     w.u32(0); //                  442  taming-mob exp
     w.u32(0); //                  446  taming-mob fatigue
     w.u8(0); //                   450
-    w.zeros(4); //                451  NO MINIROOM - see the doc block
+    let room_at = w.len();
+    crate::minigame::miniroom_block(&mut w, room); //  451  four zero bytes unless a room is open
+    let room_extra = w.len() - room_at - 4;
     // 455, FUN_14073a7b0, unconditional: raw4, u32, raw4, str, u32 = 18 bytes.
     w.zeros(4);
     w.u32(0);
@@ -902,7 +912,7 @@ pub fn user_enter_field(chr: &crate::opcode::Character, at: RemoteAt) -> Vec<u8>
     w.u32(0); //                  500  count
     w.u32(0); //                  504  count
 
-    debug_assert_eq!(w.len(), user_enter_field_len(chr), "the body length is wrong");
+    debug_assert_eq!(w.len(), user_enter_field_len(chr) + room_extra, "the body length is wrong");
     w.into_vec()
 }
 

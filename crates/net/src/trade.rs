@@ -56,10 +56,17 @@ pub const INVITE_CASH_TRADE: u32 = 2;
 pub enum Request {
     /// Mode 0: open a room. `room_type` 1 is a trade.
     Create { room_type: u32 },
+    /// Mode 0 for a game room (`room_type` 3 Omok, 4 Match Cards): `FUN_142D4ABC0` adds `str
+    /// title, u8 hasPassword, [str password], u8 spec` - for Omok the spec is the Omok set,
+    /// item id % 100. Captured 2026-10-04: `00000000 03000000 0500 68656c6c6f 00 00` [L].
+    GameCreate { room_type: u32, title: String, password: Option<String>, spec: u8 },
     /// Mode 5: invite `target` (a character id) into the room just created.
     Invite { target: u32 },
-    /// Mode 3: accept an invite, echoing the `ticket` the invite carried.
-    Accept { ticket: u32 },
+    /// Mode 3: accept an invite, echoing the `ticket` the invite carried - or enter a room by
+    /// clicking its balloon, where the ticket is the balloon's room id and `password` is what
+    /// was typed for a private one (`FUN_1428B7600`: `u32 3, u32 id, u8 has, [str], u8 0`) [L].
+    /// An invite's accept sends `u8 0, u8 0` there, so it parses as no password.
+    Accept { ticket: u32, password: Option<String> },
     /// Mode 6: decline. The client sends `reason` 4 normally, and `0xB` when it already has
     /// a miniroom open [L].
     Decline { ticket: u32, reason: u32 },
@@ -92,6 +99,8 @@ pub enum Request {
     /// (`FUN_142147160`, the trade dialog's `vt+0x138`, sends it on close result 2, then closes
     /// its own window) [L].
     Leave,
+    /// A game-room action, `crate::minigame`.
+    Game(crate::minigame::Action),
     /// One of the other modes. Carried rather than dropped so a handler can log which.
     Other { mode: u32 },
 }
@@ -101,8 +110,22 @@ pub fn parse_request(body: &[u8]) -> Option<Request> {
     let mut c = PacketReader::new(body);
     let mode = c.u32().ok()?;
     Some(match mode {
-        0 => Request::Create { room_type: c.u32().ok()? },
-        3 => Request::Accept { ticket: c.u32().ok()? },
+        0 => match c.u32().ok()? {
+            room_type @ (crate::minigame::ROOM_TYPE_OMOK | crate::minigame::ROOM_TYPE_MATCH_CARDS) => {
+                let title = c.str().ok()?;
+                let password = if c.u8().ok()? != 0 { Some(c.str().ok()?) } else { None };
+                Request::GameCreate { room_type, title, password, spec: c.u8().ok()? }
+            }
+            room_type => Request::Create { room_type },
+        },
+        3 => {
+            let ticket = c.u32().ok()?;
+            let password = match c.u8() {
+                Ok(1) => Some(c.str().ok()?),
+                _ => None,
+            };
+            Request::Accept { ticket, password }
+        }
         5 => Request::Invite { target: c.u32().ok()? },
         6 => {
             let ticket = c.u32().ok()?;
@@ -135,7 +158,10 @@ pub fn parse_request(body: &[u8]) -> Option<Request> {
             }
             sub => Request::TradeOther { sub },
         },
-        other => Request::Other { mode: other },
+        other => match crate::minigame::parse_action(other, &mut c) {
+            Some(action) => Request::Game(action),
+            None => Request::Other { mode: other },
+        },
     })
 }
 
@@ -291,10 +317,16 @@ pub struct RoomMember {
 /// Build the room-open body. `my_slot` is **the slot of the player this copy is sent to**,
 /// so the two sides of one trade get two different packets.
 pub fn room_open(my_slot: u8, capacity: u8, members: &[RoomMember]) -> Vec<u8> {
+    room_open_with(ROOM_TYPE_TRADE, my_slot, capacity, members, &[])
+}
+
+/// The room-open for any room type: the shared base, then `tail` - what that type's
+/// `vt+0x188` reads (nothing for a trade; `crate::minigame::room_open` for a game).
+pub fn room_open_with(room_type: u32, my_slot: u8, capacity: u8, members: &[RoomMember], tail: &[u8]) -> Vec<u8> {
     let mut w = PacketWriter::new();
     w.u32(ROOM_OPEN_MODE);
     w.u32(ROOM_OPEN_CREATE);
-    w.u32(ROOM_TYPE_TRADE);
+    w.u32(room_type);
     w.u32(0); //            -> room+0x308; nothing this server sends is read back out of it
     w.u8(capacity); //      -> room+0x2fc
     w.u8(my_slot); //       -> room+0x2f8
@@ -306,6 +338,7 @@ pub fn room_open(my_slot: u8, capacity: u8, members: &[RoomMember]) -> Vec<u8> {
         w.u16(0); //        -> member+0x10, whose reader is not identified
     }
     w.u8(MEMBER_LIST_END);
+    w.bytes(tail);
     w.into_vec()
 }
 
@@ -619,7 +652,18 @@ mod tests {
     fn accept_and_decline_decode() {
         assert_eq!(
             parse_request(&[3, 0, 0, 0, 9, 0, 0, 0, 0, 0]),
-            Some(Request::Accept { ticket: 9 })
+            Some(Request::Accept { ticket: 9, password: None })
+        );
+        // From a balloon, with the password typed for a private room.
+        assert_eq!(
+            parse_request(&[3, 0, 0, 0, 9, 0, 0, 0, 1, 2, 0, b'p', b'w', 0]),
+            Some(Request::Accept { ticket: 9, password: Some("pw".into()) })
+        );
+        // The 2026-10-04 Omok create.
+        let omok = [0, 0, 0, 0, 3, 0, 0, 0, 5, 0, b'h', b'e', b'l', b'l', b'o', 0, 0];
+        assert_eq!(
+            parse_request(&omok),
+            Some(Request::GameCreate { room_type: 3, title: "hello".into(), password: None, spec: 0 })
         );
         assert_eq!(
             parse_request(&[6, 0, 0, 0, 9, 0, 0, 0, 4, 0, 0, 0]),

@@ -106,6 +106,7 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         0x00DC => "CLIENT_FIELD_ENTERED (once per SetField, ~420 ms after; empty body)",
         0x00E7 => "CLIENT_CHAT (u32 tick, u16-length text, u8 tab)",
         0x0231 => "USER_CHAT (balloon over the head, and the chat log line)",
+        0x0233 => "USER_MINIROOM_BALLOON (the omok/shop sign over a player's head)",
         0x0147 => "CLIENT_PET_ACTIVATE (u32 tick, u16 Cash-tab slot) - a double-click on a pet; a second one puts it away",
         0x0148 => "CLIENT_PET_0148 (u32, u32, u32, u8; builders FUN_142d4d340 / FUN_142d4d470; a pet request not yet decoded)",
         0x0149 => "CLIENT_PET_0149 (empty; builder FUN_142d993d0; a pet request not yet decoded)",
