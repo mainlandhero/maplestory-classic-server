@@ -371,10 +371,14 @@ pub const TICKETS: [Ticket; 3] = [
 ];
 
 /// **The Jump Quest Reward**: one prize from each slot, every finished course - the piles and
-/// the chests alike. The Companion's Magic Box's own use and scroll slots, so the two tables cannot drift.
-pub const SLOTS: [Slot; 2] = [
+/// the chests alike. The Companion's Magic Box's own use, scroll and etc slots, so the tables
+/// cannot drift. The etc slot - the box's thirteen ores (eight each) and the Screw (ten) - joined
+/// on 2026-10-05 (the owner: *"add the random ore rewards present in the PQ's companion box also
+/// into the jump quest reward pool"*). The box's equip slot is still its own.
+pub const SLOTS: [Slot; 3] = [
     Slot { name: "use", prizes: &crate::magicbox::USE },
     Slot { name: "scroll", prizes: &crate::magicbox::SCROLLS },
+    Slot { name: "etc", prizes: &crate::magicbox::ETC },
 ];
 
 /// **Jump Quest Rewards per character per UTC day.** The owner, 2026-10-04: *"Introduce a jump
@@ -669,9 +673,10 @@ mod tests {
     fn the_tickets_and_the_reward_are_the_owners() {
         assert_eq!(TICKETS.map(|t| (t.min_level, t.price)), [(20, 500), (30, 1_200), (40, 2_000)]);
         assert_eq!(TICKETS.map(|t| t.item), [4_031_036, 4_031_037, 4_031_038]);
-        assert_eq!(SLOTS.map(|s| s.name), ["use", "scroll"]);
+        assert_eq!(SLOTS.map(|s| s.name), ["use", "scroll", "etc"]);
         assert_eq!(SLOTS[0].prizes, &crate::magicbox::USE[..]);
         assert_eq!(SLOTS[1].prizes, &crate::magicbox::SCROLLS[..]);
+        assert_eq!(SLOTS[2].prizes, &crate::magicbox::ETC[..], "the box's ores and Screw");
         assert_ne!(STATS_ROW, crate::magicbox::BOX);
     }
 }

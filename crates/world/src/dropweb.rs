@@ -546,7 +546,7 @@ mod tests {
             j.contains("{\"id\":\"jq\",\"name\":\"Jump Quest Reward\",\"level\":0,\"kind\":\"Forest of Patience, Deep Forest of Patience, Construction Site, Pet-Walking Road\",\"tag\":\"JQ\",\"per\":\"course\","),
             "{j}"
         );
-        assert!(j.contains("\"slots\":[[\"use\",20],[\"scroll\",36]]"), "the jump quest's two slots: {j}");
+        assert!(j.contains("\"slots\":[[\"use\",20],[\"scroll\",36],[\"etc\",14]]"), "the jump quest's three slots: {j}");
         assert!(j.contains(&format!("[2043701,{},1,1,1]", 1_000_000 / crate::magicbox::SCROLLS.len() as u32)), "the Wand scroll, 1 in 36 of the scroll slot");
         assert!(j.contains(&format!("[2020011,{},50,50,1]", 1_000_000 / crate::magicbox::USE.len() as u32)), "50 W Ramen, 1 in 20 of the use slot");
         assert!(j.contains("\"4000004\":[\"Squishy \\\"Liquid\\\"\",\"etc\",0,\"\",[]]"), "{j}");

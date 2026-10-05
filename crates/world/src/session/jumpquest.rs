@@ -1248,11 +1248,11 @@ mod tests {
         let out = s.handle(&click());
         let box_text = said(&out);
         assert!(box_text.contains(&format!("#t{}##k x6", goal.item)), "4 held, 6 owed: {box_text}");
-        assert!(box_text.contains("#bUse#k") && box_text.contains("#bScroll#k"), "{box_text}");
+        assert!(box_text.contains("#bUse#k") && box_text.contains("#bScroll#k") && box_text.contains("#bEtc#k"), "{box_text}");
         assert_eq!(held(&store, id, goal.item), 4, "nothing moves while the box is open");
         let path = s.conversation.as_ref().unwrap().path.clone();
         let (_, prizes) = jq::parse_found_path(&path).unwrap();
-        assert_eq!(prizes.len(), 2);
+        assert_eq!(prizes.len(), 3, "use, scroll and an ore (or the Screw)");
 
         let out = s.handle(&answer(0, net::script::SCRIPT_ACTION_CLOSED));
         assert_eq!(held(&store, id, goal.item), 10, "Close hands over as OK does");
