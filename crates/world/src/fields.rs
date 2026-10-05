@@ -228,6 +228,9 @@ struct FieldState {
     skill_ready_at: HashMap<(u32, u32), u64>,
     /// Each live mob's MP, for the mobs `crate::mobskills` has a kit for.
     mob_mp: HashMap<u32, crate::mobskills::MobMp>,
+    /// **What each summoner's LAST cast put on the field**: `summoner object id -> the object
+    /// ids it summoned`. [`Fields::summons_cleared`] reads it; `crate::mobskills::RECAST_CLEARED_PERCENT`.
+    last_summons: HashMap<u32, Vec<u32>>,
     /// The next object id [`Fields::summon_mob`] will hand out on this map.
     ///
     /// `0` means "not started"; the first call begins at [`SUMMON_OBJECT_ID_BASE`]. A summoned
@@ -562,6 +565,27 @@ impl Fields {
         true
     }
 
+    /// **Has enough of this summoner's last cast been defeated for it to cast again?**
+    /// `true` when it has never summoned (or its record is gone), or when at least
+    /// [`crate::mobskills::RECAST_CLEARED_PERCENT`] of the mobs its last cast put down are no
+    /// longer alive. The owner, 2026-10-04: Mano and King Slime *"should not be allowed to use
+    /// the skill to spawn additional monsters until at least 70% of what was spawned has been
+    /// defeated"*.
+    pub fn summons_cleared(&self, key: FieldKey, summoner: u32) -> bool {
+        let maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(field) = maps.get(&key) else { return true };
+        let Some(cast) = field.last_summons.get(&summoner) else { return true };
+        let gone = cast.iter().filter(|id| !field.mobs.contains_key(id)).count();
+        crate::mobskills::cast_cleared(gone, cast.len())
+    }
+
+    /// Remember what `summoner` just put on the field - the cast [`Fields::summons_cleared`]
+    /// measures the next one against. Replaces the previous cast's record.
+    pub fn record_summons(&self, key: FieldKey, summoner: u32, summoned: Vec<u32>) {
+        let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
+        maps.entry(key).or_default().last_summons.insert(summoner, summoned);
+    }
+
     /// **Run `f` against this mob's MP**, creating it full on first sight. `None` for a mob
     /// that is not alive on the field - a corpse has no MP to keep.
     pub fn with_mob_mp<T>(
@@ -858,6 +882,7 @@ impl Fields {
         // start full and ready, not inherit a corpse's.
         field.mob_mp.remove(&object_id);
         field.skill_ready_at.retain(|(id, _), _| *id != object_id);
+        field.last_summons.remove(&object_id);
         // **Only a spawn point's death books a refill.** A summoned mob (`summon_mob`) has no
         // point behind it and stays dead; before refills could land anywhere, its stray
         // booking was harmless because `due_respawns` could not find it - now it would put a

@@ -32,7 +32,9 @@
 //!
 //! * **200 - summon.** King Slime (3 Slimes, at or below 50% HP, every 15 s, at most 15),
 //!   Mano (4 Snails + 2 Blue Snails, below 90%, every 10 s, at most 30), Lycanthrope (1
-//!   Werewolf, below 75%, every 45 s, at most 5). **Applied here.**
+//!   Werewolf, below 75%, every 45 s, at most 5). **Applied here** - and on top of that data,
+//!   **no new cast until 70% of the last one is defeated** ([`RECAST_CLEARED_PERCENT`], the
+//!   owner, 2026-10-04).
 //! * **120..126** - `prop`, `time`: debuffs on players (Fairies, Jr. Boogies, Thanatos,
 //!   Gatekeeper, Mano's 126). **Not offered**: the player status packet they need is not built.
 //! * **160..167** - `x 25`, `time 30`: buffs on the mob itself (Golems, Yetis, Pixies, Iron Hog,
@@ -62,6 +64,22 @@ pub const MP_REGEN_DEFAULT: u32 = 10;
 pub const MIN_CHARGE_WINDOW_MS: u64 = 1_000;
 /// The summon skill.
 pub const SUMMON: u32 = 200;
+/// **How much of a summoner's last cast must be defeated before it may summon again**, in
+/// percent of the mobs that cast put down. The owner, 2026-10-04: *"They should not be allowed
+/// to use the skill to spawn additional monsters until at least 70% of what was spawned has
+/// been defeated"* - Mano and King Slime by name, every summoner by rule. On top of the data's
+/// own interval, HP threshold and `limit`, never instead of them.
+///
+/// "At least 70%" is read exactly: King Slime's 3 Slimes need all 3 down (2 is 66%), Mano's 6
+/// need 5 (4 is 66%), Lycanthrope's 1 Werewolf needs 1.
+pub const RECAST_CLEARED_PERCENT: usize = 70;
+
+/// Whether `gone` defeated out of a cast of `cast` is [`RECAST_CLEARED_PERCENT`] or more. An
+/// empty cast is cleared.
+pub fn cast_cleared(gone: usize, cast: usize) -> bool {
+    gone.saturating_mul(100) >= cast.saturating_mul(RECAST_CLEARED_PERCENT)
+}
+
 /// Wire action of `attack1`; `attackN` is this plus `N - 1` (`crate::mobattack::ACTION_NAMES`).
 pub const ATTACK1_ACTION: u8 = 13;
 
@@ -306,6 +324,18 @@ level, 160, 1, 5, 40, 0, 0,
 
     /// The summon's own conditions: HP threshold, cooldown, MP, and the limit - each alone
     /// refuses; a cast near the limit is trimmed.
+    /// **70% of the last cast down, exactly**: King Slime's 3 need 3, Mano's 6 need 5.
+    #[test]
+    fn a_cast_is_cleared_at_seventy_percent_defeated() {
+        assert!(!cast_cleared(2, 3), "two of three Slimes is 66%");
+        assert!(cast_cleared(3, 3));
+        assert!(!cast_cleared(4, 6), "four of Mano's six is 66%");
+        assert!(cast_cleared(5, 6));
+        assert!(!cast_cleared(0, 1) && cast_cleared(1, 1), "Lycanthrope's one Werewolf");
+        assert!(cast_cleared(0, 0), "nothing summoned, nothing to wait for");
+        assert!(!cast_cleared(6, 10) && cast_cleared(7, 10));
+    }
+
     #[test]
     fn a_summon_follows_its_own_data() {
         let t = MobSkillTable::parse(KING);

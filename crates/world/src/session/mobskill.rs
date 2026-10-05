@@ -54,6 +54,17 @@ impl Session {
         if used.0 != 0 {
             let level = self.config.mob_skills.level(used.0, used.1).cloned();
             match level {
+                // A summon whose last cast is still mostly standing is refused here too, not
+                // only left un-offered: a report can arrive for an offer made before the cast
+                // it would follow, or from a client that casts without one.
+                Some(_) if used.0 == crate::mobskills::SUMMON && !self.fields.summons_cleared(map, object_id) => {
+                    crate::server::log(&format!(
+                        "   mob skill: mob {object_id} (template {template}) reported summon {} level {} - fewer than {}% of its last summons are defeated; nothing summoned, nothing charged",
+                        used.0,
+                        used.1,
+                        crate::mobskills::RECAST_CLEARED_PERCENT
+                    ));
+                }
                 Some(level) if kit.skills.contains(&used) && level.applicable(used.0) => {
                     let n = level.how_many(alive_of(self, &level.summons));
                     if n > 0 && self.fields.take_skill(map, object_id, used.0, now, level.interval_ms) {
@@ -67,7 +78,9 @@ impl Session {
                             used.0, used.1
                         ));
                         let why = format!("skill {} of mob {object_id}", used.0);
-                        out.extend(self.summon_mobs_at(map, &level.summons[..n], at, &why));
+                        let (replies, summoned) = self.summon_mobs_listed(map, &level.summons[..n], at, &why);
+                        self.fields.record_summons(map, object_id, summoned);
+                        out.extend(replies);
                     }
                 }
                 _ => crate::server::log(&format!(
@@ -95,6 +108,8 @@ impl Session {
             .filter(|&(skill, lv)| {
                 self.config.mob_skills.level(skill, lv).is_some_and(|l| {
                     l.applicable(skill)
+                        // The owner, 2026-10-04: no new summons until 70% of the last are down.
+                        && (skill != crate::mobskills::SUMMON || self.fields.summons_cleared(map, object_id))
                         && l.may_offer(mp, hp, max_hp, self.fields.skill_ready(map, object_id, skill, now), alive_of(self, &l.summons))
                 })
             })
@@ -117,16 +132,30 @@ impl Session {
         at: (i16, i16),
         why: &str,
     ) -> Vec<Reply> {
+        self.summon_mobs_listed(key, templates, at, why).0
+    }
+
+    /// [`Session::summon_mobs_at`], and the object ids it put down - what a mob skill's cast
+    /// records so its next cast can wait for them (`Fields::summons_cleared`).
+    pub(super) fn summon_mobs_listed(
+        &mut self,
+        key: crate::fields::FieldKey,
+        templates: &[u32],
+        at: (i16, i16),
+        why: &str,
+    ) -> (Vec<Reply>, Vec<u32>) {
         let landed = self.config.footholds.landing(key.map, at.0, at.1);
         let (sx, sy, fh) = match landed {
             Some(l) => (l.x, l.y, i16::try_from(l.foothold).unwrap_or(0)),
             None => (at.0, at.1, 0),
         };
         let mut out = Vec::new();
+        let mut ids = Vec::new();
         for &template in templates {
             let hp = self.config.mob_templates.get(&template).map(|t| u64::from(t.max_hp)).unwrap_or(1);
             let live = self.fields.summon_mob(key, template, (sx, sy), fh, hp);
             let mut mob = live.as_seen();
+            ids.push(mob.object_id);
             mob.forced_stat = self.forced_stat_for(mob.template_id);
             let spawn = Reply {
                 opcode: net::mob::MOB_ENTER_FIELD,
@@ -143,6 +172,6 @@ impl Session {
                 });
             }
         }
-        out
+        (out, ids)
     }
 }

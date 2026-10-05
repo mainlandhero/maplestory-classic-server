@@ -2359,6 +2359,87 @@ level, 200, 1, 0, 15, 50, 15, 7 7 7
         assert!(closed);
     }
 
+    /// **No new summons until 70% of the last cast is defeated.** The owner, 2026-10-04: Mano
+    /// and King Slime *"should not be allowed to use the skill to spawn additional monsters until
+    /// at least 70% of what was spawned has been defeated"*. King Slime with its interval set to
+    /// 0, so only the new rule can hold it back: three Slimes; then no offer and a reported
+    /// cast summons nothing while one or two are down (66%); the third down, it is offered and
+    /// summons three more.
+    #[test]
+    fn a_summoner_waits_until_seventy_percent_of_its_last_cast_is_down() {
+        use crate::firsttime;
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let stage = firsttime::STAGE_5;
+        let mut cfg = (*config).clone();
+        cfg.fields.insert(stage);
+        cfg.mobs.insert(stage, vec![net::mob::FieldMob::new(1_000, firsttime::KING_SLIME, 162, -435, 1, 16_820)]);
+        cfg.mob_respawn_s.insert((stage, 1_000), -1);
+        cfg.mob_templates.insert(firsttime::KING_SLIME, crate::config::MobTemplate { max_hp: 16_820, max_mp: 100, ..Default::default() });
+        cfg.mob_templates.insert(firsttime::SLIME, crate::config::MobTemplate { max_hp: 115, ..Default::default() });
+        cfg.mob_skills = crate::mobskills::MobSkillTable::parse(
+            "mob, 800003, 100, 10
+skill, 800003, 200, 1
+level, 200, 1, 0, 0, 50, 15, 7 7 7
+",
+        );
+        let config = Arc::new(cfg);
+        let chr = net::opcode::Character { name: "Leader".to_string(), map_id: stage, level: 30, ..Default::default() };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        store.set_character_map(id, stage).unwrap();
+        store.create_migration(account, id, 0, 0).unwrap();
+        let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+        s.claim_for_character(id);
+        let run = fields.runs().open(5_902, vec![id], store::Store::unix_now());
+        let key = crate::fields::FieldKey::instanced(stage, run.id);
+        let _ = s.on_field_entered();
+
+        let report = |move_id: u16, skill: u64| {
+            let mut b = net::mobmove::MOB_MOVE_REQUEST.to_le_bytes().to_vec();
+            b.extend_from_slice(&1_000u32.to_le_bytes());
+            b.extend_from_slice(&move_id.to_le_bytes());
+            b.push(0);
+            b.push(0xFF);
+            b.extend_from_slice(&skill.to_le_bytes());
+            b.extend_from_slice(&[0u8; 4]);
+            b.extend_from_slice(&0u32.to_le_bytes());
+            b.extend_from_slice(&[0u8; 22]);
+            b.extend_from_slice(&[0u8; net::mobmove::MOB_PATH_HEAD_LEN]);
+            b
+        };
+        let offered = |out: &[Reply]| {
+            let a = out.iter().find(|r| r.opcode == net::mobmove::MOB_CTRL_ACK).expect("an ack");
+            u32::from_le_bytes(a.body[11..15].try_into().unwrap())
+        };
+        let slimes = || -> Vec<u32> {
+            fields.mobs_on(key).iter().filter(|m| m.spawn.template_id == firsttime::SLIME).map(|m| m.spawn.object_id).collect()
+        };
+        let used = 200u64 | (1 << 16);
+
+        let _ = s.deal_to_mob(key, 1_000, 8_410, id); // half HP: the summon's own condition
+        assert_eq!(offered(&s.handle(&report(1, 0))), 200, "offered before any cast");
+        let _ = s.handle(&report(2, used));
+        let first = slimes();
+        assert_eq!(first.len(), 3);
+
+        // None down, then one, then two (66%): no offer, and a reported cast summons nothing.
+        for (n, move_id) in [(0usize, 3u16), (1, 5), (2, 7)] {
+            if n > 0 {
+                let _ = s.deal_to_mob(key, first[n - 1], 115, id);
+            }
+            assert_eq!(offered(&s.handle(&report(move_id, 0))), 0, "{n} of 3 down: not offered");
+            let _ = s.handle(&report(move_id + 1, used));
+            assert_eq!(slimes().len(), 3 - n, "{n} of 3 down: a reported cast summons nothing");
+        }
+        // The third down (100%): offered again, and it summons three more.
+        let _ = s.deal_to_mob(key, first[2], 115, id);
+        assert!(slimes().is_empty());
+        assert_eq!(offered(&s.handle(&report(9, 0))), 200, "all three down: offered again");
+        let _ = s.handle(&report(10, used));
+        assert_eq!(slimes().len(), 3, "and three more");
+        assert!(fields.runs().close(run.id));
+    }
+
     /// **Opening a Companion's Magic Box.** The owner, 2026-09-23, and 2026-10-03 for the four
     /// slots. Two boxes stacked in one Use slot; the `0x0114` for that slot opens ONE:
     /// exactly one prize from EACH slot - an equip, a use item, a scroll, an etc item - in its
