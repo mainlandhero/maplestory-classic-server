@@ -353,7 +353,7 @@ impl Session {
 
         // The Treasure path spends a second item, so it has a second thing to re-read and a
         // second way to refuse. Both are resolved before anything is applied.
-        let mut second_item: Option<(store::InventoryType, u16)> = None;
+        let mut second_item: Option<(store::InventoryType, u16, u32)> = None;
         let mut real_name = String::new();
         let applied = match action {
             Confirmed::Secrets { mode, .. } => {
@@ -416,7 +416,7 @@ impl Session {
                         "the chosen scroll is no longer in the bag",
                     );
                 };
-                second_item = Some((store::InventoryType::Use, slot));
+                second_item = Some((store::InventoryType::Use, slot, real_scroll));
                 real_name = self.item_name(real_scroll);
                 match scrolls::apply_treasure(&base, &state, &scroll_template.increments) {
                     Ok(a) => a,
@@ -439,7 +439,7 @@ impl Session {
                         "the Scroll of Secrets is no longer in the bag",
                     );
                 };
-                second_item = Some((store::InventoryType::Etc, slot));
+                second_item = Some((store::InventoryType::Etc, slot, scrolls::SCROLL_OF_SECRETS));
                 match scrolls::apply(mode, &base, &state, Chance::Guaranteed, self.next_roll()) {
                     Ok(a) => a,
                     Err(refusal) => {
@@ -472,7 +472,7 @@ impl Session {
         // Only now do the scrolls leave the bag.
         let removed =
             self.store.remove_item(chr.id, store::InventoryType::Etc, bag_slot, Some(1));
-        let removed_real = second_item.map(|(tab, slot)| self.store.remove_item(chr.id, tab, slot, Some(1)));
+        let removed_real = second_item.map(|(tab, slot, _)| self.store.remove_item(chr.id, tab, slot, Some(1)));
 
         let item_name = self.item_name(item_id);
         let changes: Vec<(&str, i32)> = applied.changes.clone();
@@ -514,6 +514,18 @@ impl Session {
         }
         if matches!(removed_real, Some(Err(_))) {
             crate::server::log("   scroll: the equip was written but the REAL scroll would not leave the bag");
+        }
+        // **Tell the bag what left it.** The owner, 2026-10-04: *"player's inventory does not
+        // immediately update that they have used a scroll, so they see a phantom item"* - the
+        // rows were removed above and nothing said so until the next map change. Mode 3 for an
+        // emptied slot, mode 1 with the count for a stack that is still there; the Etc item
+        // (Treasure Scroll / Scroll of Secrets) and, on the Treasure path, the real scroll or the
+        // guaranteed Secrets. Only for a removal that went through.
+        if removed.is_ok() {
+            out.push(self.used_slot_reply(chr.id, store::InventoryType::Etc, bag_slot, used_item.item_id()));
+        }
+        if let (Some((tab, slot, id)), Some(Ok(_))) = (second_item, &removed_real) {
+            out.push(self.used_slot_reply(chr.id, tab, slot, id));
         }
         // Refresh the item on screen: the tooltip is the only place the player can see the
         // stats and the remaining slots, and it is drawn from what the client holds.
@@ -966,6 +978,33 @@ mod tests {
         let _ = s.apply_scroll(9_010_000, Confirmed::Secrets { mode: SecretsMode::Innocence, equip_slot: 1 });
         assert!(s.scroll_confirm_answer(net::script::SCRIPT_ACTION_NO).is_empty(), "No: closed, nothing said");
         assert!(s.conversation.is_none());
+    }
+
+    /// **The bag hears what left it** (the owner, 2026-10-04: a used scroll stayed on screen as a
+    /// phantom). The last of a stack: mode 3 on its slot - both the Treasure Scroll and the Scroll
+    /// of Secrets it guaranteed. One of two: mode 1 with the one left.
+    #[test]
+    fn a_used_scroll_leaves_the_bag_on_screen_too() {
+        let ops = |out: &[Reply]| -> Vec<Vec<u8>> {
+            out.iter().filter(|r| r.opcode == net::inventory::INVENTORY_OPERATION).map(|r| r.body.clone()).collect()
+        };
+        let etc = store::InventoryType::Etc.as_u8() as i8;
+        let slot_of = |store: &Store, id: u32, item: u32| {
+            store.bag_items(id, store::InventoryType::Etc).unwrap().iter().find(|r| r.item.item_id == item).unwrap().slot as i16
+        };
+
+        let (store, mut s, id) = hatter(1, 1);
+        let (secrets, treasure) = (slot_of(&store, id, scrolls::SCROLL_OF_SECRETS), slot_of(&store, id, scrolls::TREASURE_SCROLL));
+        let out = s.apply_scroll(9_010_000, Confirmed::TreasureSecrets { mode: SecretsMode::Chaos, equip_slot: 1 });
+        let sent = ops(&out);
+        assert!(sent.contains(&net::inventory::inventory_removed(etc, treasure)), "{out:?}");
+        assert!(sent.contains(&net::inventory::inventory_removed(etc, secrets)), "{out:?}");
+        assert!(store.bag_items(id, store::InventoryType::Etc).unwrap().is_empty(), "and the bag agrees");
+
+        let (store, mut s, id) = hatter(2, 0);
+        let secrets = slot_of(&store, id, scrolls::SCROLL_OF_SECRETS);
+        let out = s.apply_scroll(9_010_000, Confirmed::Secrets { mode: SecretsMode::Innocence, equip_slot: 1 });
+        assert!(ops(&out).contains(&net::inventory::inventory_quantity(etc, secrets, 1)), "{out:?}");
     }
 
     /// The daily key names the mode, not the item - all three modes now live in one item, so

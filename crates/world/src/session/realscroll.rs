@@ -537,24 +537,31 @@ impl Session {
     /// because this is where it was first needed; the two callers must not grow separate
     /// copies, because a copy is where one of them quietly stops handling the stack case.
     pub(super) fn scroll_slot_reply(&self, character_id: u32, slot: u16, scroll_id: u32) -> Reply {
+        self.used_slot_reply(character_id, store::InventoryType::Use, slot, scroll_id)
+    }
+
+    /// [`Session::scroll_slot_reply`] for any bag tab - `session::scroll`'s `!scroll` takes a
+    /// Treasure Scroll or Scroll of Secrets out of the Etc tab as well as a real scroll out of
+    /// Use, and the client has to hear about both or it keeps drawing a phantom.
+    pub(super) fn used_slot_reply(&self, character_id: u32, tab: store::InventoryType, slot: u16, item_id: u32) -> Reply {
         let left = self
-            .bag_slot_item(character_id, store::InventoryType::Use, slot)
-            .filter(|i| i.item_id == scroll_id)
+            .bag_slot_item(character_id, tab, slot)
+            .filter(|i| i.item_id == item_id)
             .map(|i| i.kind.quantity())
             .unwrap_or(0);
-        let inv = store::InventoryType::Use.as_u8() as i8;
+        let inv = tab.as_u8() as i8;
         if left == 0 {
             Reply {
                 opcode: net::inventory::INVENTORY_OPERATION,
                 body: net::inventory::inventory_removed(inv, slot as i16),
-                what: format!("InventoryOperation REMOVE: the last {scroll_id} left Use slot {slot}"),
+                what: format!("InventoryOperation REMOVE: the last {item_id} left {tab:?} slot {slot}"),
             }
         } else {
             Reply {
                 opcode: net::inventory::INVENTORY_OPERATION,
                 body: net::inventory::inventory_quantity(inv, slot as i16, left),
                 what: format!(
-                    "InventoryOperation UPDATE QUANTITY: {left} x {scroll_id} left in Use slot \
+                    "InventoryOperation UPDATE QUANTITY: {left} x {item_id} left in {tab:?} slot \
                      {slot} after one was used"
                 ),
             }
