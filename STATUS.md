@@ -439,7 +439,7 @@ we're going to implement them."* `research/jump-quests-2026-10-04.md`.
 * **The ways in** (`world::jumpquest`, `session/jumpquest.rs`):
   * Shane (Ellinia) takes anyone who has taken Sabitrama's quest 10509, **free**. A stranger
     hears his own `d0` refusal.
-  * The Mysterious Statue (Sleepywood) takes anyone.
+  * The Mysterious Statue (Sleepywood) takes anyone who has taken one of John's quests.
   * Both offer a **menu of the courses**: the Forest is steps 1-2 and 3-5, the Deep Forest
     1-2, 3-4 and 5-7. Steps 2, 4 and 7 have no exit **[L]**.
   * Jake sells the B1/B2/B3 tickets (Lv 20/30/40, 500/1 200/2 000 mesos), and the Ticket
@@ -484,8 +484,9 @@ we're going to implement them."* `research/jump-quests-2026-10-04.md`.
 * **A quest narrows the door** (the owner, 2026-10-04): with a course's quest in progress,
   Shane, the Statue, Jake and the Ticket Gate offer only that course. Between two quests of a
   chain they offer only the courses already completed (the owner, the same day), and once all
-  are completed - or for a player who never took any - every course. A line the menu did not
-  show is refused.
+  are completed every course. A line the menu did not show is refused. **A player who never
+  took any of a door's quests is turned away** - the Statue: *"you don't seem to have any
+  business here"*; Jake and the gate: *"authorized personnel only"*; Shane: his own refusal.
 * **"Time Left" explained:** the first field entry after a door starts the hour prints a
   yellow line - the clock counts down to when `!skipjq` opens, so try your best.
 * **The Pet-Walking Road** (Henesys Park, 10001052) - the owner's "non-quest" jump quest:

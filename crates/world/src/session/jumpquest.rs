@@ -368,11 +368,31 @@ impl Session {
         Some(self.jq_menu(jq::SHANE, jq::SHANE_PATH, &text, "which Forest of Patience course"))
     }
 
+    /// **A stranger at a door is turned away.** The owner, 2026-10-04, of players who never took
+    /// any of a door's quests: *"This set of players should be shown that either we don't allow
+    /// strangers in, or authorized personnel only, you don't see to have any business here."*
+    /// Shane says his own `d0`; the others say it here.
+    fn jq_turn_away(&mut self, npc: u32, chr: &net::opcode::Character, text: &str) -> Vec<Reply> {
+        crate::server::log(&format!(
+            "   jump quest: NPC {npc} turns {} ({}) away - none of its quests ever taken",
+            chr.name, chr.id
+        ));
+        self.jq_say(npc, text, "a stranger to its quests".to_string())
+    }
+
     fn open_statue(&mut self, chr: &net::opcode::Character) -> Vec<Reply> {
+        let lines = self.jq_deep_forest_lines(chr.id);
+        if lines.is_empty() {
+            return self.jq_turn_away(
+                jq::MYSTERIOUS_STATUE,
+                chr,
+                "(A strange statue. It's hard to tell whether it's laughing or crying. Nothing happens when you touch \
+                 it - you don't seem to have any business here.)",
+            );
+        }
         let mut text = "(A strange statue. It's hard to tell whether it's laughing or crying.) Laying a hand on it, \
                         I feel I could be pulled somewhere far away. Which flower am I looking for?"
             .to_string();
-        let lines = self.jq_deep_forest_lines(chr.id);
         for c in jq::DEEP_FOREST_COURSES.iter().filter(|c| lines.contains(&c.line)) {
             text.push_str(&format!(r"\n#L{}##b#t{}##k ({})#l", c.line, c.item, c.steps));
         }
@@ -380,10 +400,18 @@ impl Session {
     }
 
     fn open_jake(&mut self, chr: &net::opcode::Character) -> Vec<Reply> {
+        let lines = self.jq_ticket_lines(chr.id);
+        if lines.is_empty() {
+            return self.jq_turn_away(
+                jq::JAKE,
+                chr,
+                "Sorry, the construction site is for authorized personnel only, and you don't seem to have any business \
+                 down there. Monsters that like the dark hide inside the subway anyway - better stay up here!",
+            );
+        }
         let mut text = "Monsters that like the dark often hide inside the subway, so please be careful if you're \
                         thinking of going in! No one's allowed in without a ticket. Which one would you like?"
             .to_string();
-        let lines = self.jq_ticket_lines(chr.id);
         for t in jq::TICKETS.into_iter().filter(|t| lines.contains(&t.line)) {
             text.push_str(&format!(r"\n#L{}##b#t{}##k - Lv. {}+, {} mesos#l", t.line, t.item, t.min_level, t.price));
         }
@@ -392,6 +420,13 @@ impl Session {
 
     fn open_ticket_gate(&mut self, chr: &net::opcode::Character) -> Vec<Reply> {
         let lines = self.jq_ticket_lines(chr.id);
+        if lines.is_empty() {
+            return self.jq_turn_away(
+                jq::TICKET_GATE,
+                chr,
+                "Authorized personnel only. You don't seem to have any business in the construction site.",
+            );
+        }
         let held: Vec<jq::Ticket> = jq::TICKETS
             .into_iter()
             .filter(|t| lines.contains(&t.line) && self.held_count(chr.id, t.item) > 0)
@@ -899,6 +934,38 @@ mod tests {
         (store, s, id)
     }
 
+    /// Each quest taken and turned in.
+    fn finished(store: &Store, id: u32, quests: &[u32]) {
+        for &q in quests {
+            store.start_quest(id, q).unwrap();
+            store.complete_quest(id, q).unwrap();
+        }
+    }
+
+    /// **A stranger to a door's quests is turned away** - the Statue, Jake and the Ticket Gate
+    /// each say so, and nobody moves or buys. Shane says his own refusal.
+    #[test]
+    fn a_stranger_to_the_quests_is_turned_away_at_every_door() {
+        let (_, mut s, _) = standing(jq::SLEEPYWOOD, jq::MYSTERIOUS_STATUE, (1061, 255), 50);
+        let out = said(&s.handle(&click()));
+        assert!(out.contains("any business here") && !out.contains("#L"), "{out}");
+        let _ = s.handle(&pick(0));
+        assert_eq!(map_of(&s), jq::SLEEPYWOOD);
+
+        let (store, mut s, id) = standing(jq::TICKET_BOOTH, jq::JAKE, (71, 187), 50);
+        store.set_mesos(id, 5_000).unwrap();
+        let out = said(&s.handle(&click()));
+        assert!(out.contains("authorized personnel only") && !out.contains("#L"), "{out}");
+        let _ = s.handle(&pick(0));
+        assert_eq!((store.mesos(id).unwrap(), held(&store, id, 4_031_036)), (5_000, 0), "nothing sold");
+
+        let (store, mut s, id) = standing(jq::TICKET_BOOTH, jq::TICKET_GATE, (272, 187), 50);
+        store.add_item(id, store::InventoryType::Etc, &store::Item::bundle(4_031_036, 1), 100).unwrap();
+        let out = said(&s.handle(&click()));
+        assert!(out.contains("Authorized personnel only") && !out.contains("#L"), "even holding a ticket: {out}");
+        assert_eq!(map_of(&s), jq::TICKET_BOOTH);
+    }
+
     fn click() -> Vec<u8> {
         let mut b = net::script::CLIENT_NPC_CLICK.to_le_bytes().to_vec();
         b.extend_from_slice(&OBJ.to_le_bytes());
@@ -1089,11 +1156,13 @@ mod tests {
         assert_eq!(store.jump_quest_run(id).unwrap(), None, "no pity timer");
     }
 
-    /// **The Statue** offers the three courses to anyone and sends each to its own start.
+    /// **The Statue**, once all of John's quests are done, offers the three courses and sends each
+    /// to its own start.
     #[test]
     fn the_mysterious_statue_sends_each_flower_to_its_own_course() {
         for c in jq::DEEP_FOREST_COURSES {
-            let (_, mut s, _) = standing(jq::SLEEPYWOOD, jq::MYSTERIOUS_STATUE, (1061, 255), 10);
+            let (store, mut s, id) = standing(jq::SLEEPYWOOD, jq::MYSTERIOUS_STATUE, (1061, 255), 10);
+            finished(&store, id, &[10_006, 10_007, 10_008]);
             let out = s.handle(&click());
             assert!(said(&out).contains(&format!("#L{}#", c.line)));
             let _ = s.handle(&pick(c.line));
@@ -1263,6 +1332,7 @@ mod tests {
     #[test]
     fn jake_sells_a_ticket_and_the_gate_takes_it() {
         let (store, mut s, id) = standing(jq::TICKET_BOOTH, jq::JAKE, (71, 187), 35);
+        finished(&store, id, &[10_312, 10_313, 10_314]);
         store.set_mesos(id, 1_500).unwrap();
         let _ = s.handle(&click());
         let out = s.handle(&pick(2));
@@ -1350,9 +1420,17 @@ mod tests {
             let _ = s.handle(&pick(1));
         };
         let (store, mut s, id) = standing(jq::SLEEPYWOOD, jq::MYSTERIOUS_STATUE, (1061, 255), 50);
-        store.start_jump_quest(id, jq::CHEST_B3).unwrap();
         enter(&mut s);
-        assert_eq!(store.jump_quest_run(id).unwrap(), None, "no quest: a reward run, and the leftover is gone");
+        assert_eq!((map_of(&s), store.jump_quest_run(id).unwrap()), (jq::SLEEPYWOOD, None), "never took John's quests: turned away");
+
+        // A reward run (pink done, blue's quest not taken - the pink course) clears a leftover row.
+        finished(&store, id, &[10_006]);
+        store.start_jump_quest(id, jq::CHEST_B3).unwrap();
+        let mut chr = s.claimed_character().unwrap();
+        let _ = s.teleport(&mut chr, jq::SLEEPYWOOD, "back to the statue".to_string());
+        let _ = s.handle(&click());
+        let _ = s.handle(&pick(0));
+        assert_eq!((map_of(&s), store.jump_quest_run(id).unwrap()), (10_005_040, None), "a reward run, and the leftover is gone");
 
         store.start_quest(id, goal.quest).unwrap();
         store.add_item(id, store::InventoryType::Etc, &store::Item::bundle(goal.item, 20), 100).unwrap();

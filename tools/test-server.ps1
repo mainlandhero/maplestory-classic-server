@@ -2647,11 +2647,11 @@
              the bag, back in Ellinia beside Shane. No box, or nothing given -> paste the
              "jump quest:" lines from world-ch0.log. Click it from a few steps away (more than
              250 px): "Go a little closer", nothing given -> right
-          d. Sleepywood, the Mysterious Statue: a menu of three flowers -> Deep Forest step 1 / 3
-             / 5. The Crumbling Statue at the bottom: Yes -> Sleepywood beside the statue. With
+          d. Sleepywood, the Mysterious Statue (with John's quests done; see j for the rest): a
+             menu of three flowers -> Deep Forest step 1 / 3 / 5. The Crumbling Statue at the bottom: Yes -> Sleepywood beside the statue. With
              John's quest 10006 in progress the pink pile (top of step 2) gives 10 Pink Violas
-          e. Subway Ticketing Booth: Jake sells B1/B2/B3 tickets (Lv 20/30/40, 500/1200/2000
-             mesos); the Ticket Gate lists only the tickets held, takes one -> that floor's
+          e. Subway Ticketing Booth (with Shumi's quests done; see j): Jake sells B1/B2/B3
+             tickets (Lv 20/30/40, 500/1200/2000 mesos); the Ticket Gate lists only the tickets held, takes one -> that floor's
              Area 1. An Exit: Yes -> back at the booth beside the gate
           f. B1 Area 1 has press-up portals that lead elsewhere on the same map. Using one moves
              you -> fine. The client hangs on one -> paste the last world-ch0.log lines: nobody
@@ -2678,7 +2678,9 @@
              Red Ginseng course; with John's 10008 the Statue only the white flower; with Shumi's
              10313 Jake sells only the B2 ticket and the gate opens only B2. Between two quests
              (10509 done, 10510 not taken yet) Shane offers only the completed Pink Anthurium
-             course. All done, or never taken: every course.
+             course. All done: every course. NEVER TAKEN any of the door's quests: turned away -
+             the Statue "you don't seem to have any business here", Jake and the gate
+             "authorized personnel only" (even holding a ticket), Shane his own refusal.
           k. PET-WALKING ROAD (Henesys Park, the in01 portal). No timer here. Trainer Bartos at the
              bottom: no pet out -> "Bring your pet out first"; pet out -> Yes gives Bartos's
              Letter (one at a time). Climb to Trainer Frod at the top, talk from beside him: a
@@ -6650,8 +6652,8 @@ function Show-TestPlan {
         Write-Host '       a. Shane (Ellinia, top): stranger to quest 10509 -> his refusal; with 10509 -> free menu, step 1 or step 3' -ForegroundColor Cyan
         Write-Host '       b. Louis: Yes -> Ellinia beside Shane   c. pile of flowers (top of step 2): box lists a Use + a Scroll' -ForegroundColor Cyan
         Write-Host '          (+ Pink Anthurium on 10509); OK -> items + chat lines, back beside Shane; from >250 px: "Go a little closer"' -ForegroundColor Cyan
-        Write-Host '       d. Sleepywood statue: 3 flowers -> Deep Forest step 1/3/5; Crumbling Statue -> back; 10006 -> 10 Pink Violas' -ForegroundColor Cyan
-        Write-Host '       e. Booth: Jake sells B1/B2/B3 (Lv 20/30/40, 500/1200/2000); the gate takes one -> Area 1; Exit -> booth' -ForegroundColor Cyan
+        Write-Host '       d. Sleepywood statue (John''s quests done): 3 flowers -> Deep Forest step 1/3/5; Crumbling Statue -> back; 10006 -> 10 Pink Violas' -ForegroundColor Cyan
+        Write-Host '       e. Booth (Shumi''s quests done): Jake sells B1/B2/B3 (Lv 20/30/40, 500/1200/2000); the gate takes one -> Area 1; Exit -> booth' -ForegroundColor Cyan
         Write-Host '       f. B1 press-up portals within the map move you -> fine; a hang -> paste the last world-ch0.log lines' -ForegroundColor Yellow
         Write-Host '       g. B1 depot chest: a Use + a Scroll (+ Shumi''s Coin on 10312); back at the booth   h. drops page: Jump Quest Reward (JQ)' -ForegroundColor Cyan
         Write-Host '       i. PITY TIMER (quest entries only): a countdown like the PQ''s shows 60:00 on entering, kept across steps/relogs;' -ForegroundColor Cyan
@@ -6661,6 +6663,7 @@ function Show-TestPlan {
         Write-Host '          first entry: a yellow line explains "Time Left" (once, not on the next step)' -ForegroundColor Cyan
         Write-Host '       j. a quest in progress narrows the door: 10510 -> Shane offers the ginseng course only; 10313 -> Jake/gate B2 only' -ForegroundColor Cyan
         Write-Host '          between quests (10509 done, 10510 not taken): only the completed course; all done: every course' -ForegroundColor Cyan
+        Write-Host '          never taken any of the quests: turned away (Statue: no business here; Jake/gate: authorized personnel only)' -ForegroundColor Cyan
         Write-Host '       k. PET-WALKING ROAD (no timer): Bartos gives the letter if a pet is out; Frod at the top: Closeness +20, a Use' -ForegroundColor Cyan
         Write-Host '          + a Scroll, letter taken, no warp' -ForegroundColor Cyan
         Write-Host '       no box / nothing given / no warp -> paste the "jump quest:" lines' -ForegroundColor Yellow

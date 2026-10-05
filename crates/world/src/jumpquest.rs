@@ -273,21 +273,17 @@ pub const ENTRY_NOTICE: &str = "The \"Time Left\" clock counts down to when you 
 /// `stages[i]` is where the player is on course `i`'s quest. In order:
 /// * **any in progress** - only those courses;
 /// * **some completed, not all** (between two quests of a chain) - only the completed ones;
-/// * **all completed, or none touched** - every course. A player who never took the door's
-///   quests is not a "player with quests", and the doors that take strangers (the Statue,
-///   Jake, the gate) let them choose.
+/// * **all completed** - every course;
+/// * **none ever taken** - **nothing**: the door turns them away. The owner: *"This set of
+///   players should be shown that either we don't allow strangers in, or authorized personnel
+///   only, you don't see to have any business here."*
 pub fn offered(stages: &[QuestStage]) -> Vec<usize> {
-    let all = || (0..stages.len()).collect::<Vec<usize>>();
     let with = |want: QuestStage| (0..stages.len()).filter(|&i| stages[i] == want).collect::<Vec<usize>>();
     let in_progress = with(QuestStage::InProgress);
     if !in_progress.is_empty() {
         return in_progress;
     }
-    let done = with(QuestStage::Complete);
-    if done.is_empty() || done.len() == stages.len() {
-        return all();
-    }
-    done
+    with(QuestStage::Complete)
 }
 
 /// Where a player is on one course's quest.
@@ -581,7 +577,7 @@ mod tests {
         assert_eq!(offered(&[C, N, N]), vec![0], "between the chain's quests: only what is completed");
         assert_eq!(offered(&[C, C, N]), vec![0, 1]);
         assert_eq!(offered(&[C, C, C]), vec![0, 1, 2], "all completed: every course");
-        assert_eq!(offered(&[N, N, N]), vec![0, 1, 2], "never touched: every course");
+        assert_eq!(offered(&[N, N, N]), Vec::<usize>::new(), "never taken: nothing - the door turns them away");
         assert!(ENTRY_NOTICE.contains("\"Time Left\"") && ENTRY_NOTICE.contains("!skipjq") && ENTRY_NOTICE.contains("an hour"));
         let t = frod_text(&[("use", (2_000_001, 100)), ("scroll", (2_040_801, 1))]);
         assert!(t.contains(r"\n\n#bCloseness#k +20\n#bUse#k: #i2000001# #t2000001# x100\n#bScroll#k"), "{t}");
