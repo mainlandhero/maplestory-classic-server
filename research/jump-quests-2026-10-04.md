@@ -277,5 +277,7 @@ The client enforces these itself. `session::summonsack` already relies on bit `0
 * **The pity timer:** an hour per player for a **quest entry** only (*"it should not be active
   when the player is completing additional attempts for just the jump quest reward"*).
   * It is kept across a log out or disconnect.
+  * It is stopped only by a warden, by finishing, or by `!skipjq`.
+  * A leftover row is removed only once its player is outside that course.
   * After the hour, a yellow reminder comes every 5 minutes.
   * `!skipjq` then leaves with the quest item and nothing else.

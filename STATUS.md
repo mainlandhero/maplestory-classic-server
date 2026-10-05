@@ -470,9 +470,13 @@ we're going to implement them."* `research/jump-quests-2026-10-04.md`.
   * **At the hour:** a yellow reminder, then one every 5 minutes.
   * **`!skipjq`** (public) then takes the player out with the quest item only - no Use, no
     Scroll. Before the hour it says how long is left.
-  * **Ends:** finishing, a warden, `!skipjq` or leaving the course any other way. That covers
-    a log in that lands in town after a log out on a course, and a GM warp onto another
-    course. Moving between the steps of one course keeps the same run.
+  * **Stopped only by** finishing, a warden (Louis, the Crumbling Statue, the Exits) or
+    `!skipjq` (the owner).
+  * **Disconnects:** a disconnect keeps the run, and a log in back on the course carries on
+    from the time already spent.
+  * **Stale rows:** a row left behind is removed only once its player is seen outside that
+    course - a return scroll, a death, a GM warp, a log in elsewhere.
+  * **Steps:** moving between the steps of one course keeps the same run.
 * **Unmeasured:** whether a same-map press-up portal (B1 Area 1 has thirteen) sends the server
   anything at all. Plan step 50.
 

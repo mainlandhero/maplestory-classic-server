@@ -198,8 +198,17 @@ pub fn course_goal(map: u32) -> Option<&'static Goal> {
 /// such as consumable and scroll."*
 ///
 /// The hour starts when a door (Shane, the Statue, the Ticket Gate) sends the player in, and
-/// counts only time spent on that course while online (`store::jumpquest`). It ends when they
-/// finish, leave by a warden, leave any other way, or skip.
+/// counts only time spent on that course while online (`store::jumpquest`).
+///
+/// **It is stopped only three ways** - the owner, 2026-10-04: *"The timer should only be stopped
+/// when the player leaves the area via the exit NPC, finish the quest, or use the skip
+/// command."* A disconnect keeps it, and a log in back on the course carries on from the time
+/// already spent.
+///
+/// **A row left behind is removed only once its player is seen outside that course** - the
+/// owner: *"Make sure the server does not destroy stale rows unless the player they are
+/// tracking are no longer within the jump quest area."* That covers a return scroll, a death,
+/// a GM warp, or a log in that lands somewhere else.
 pub const PITY_SECS: u64 = 3_600;
 /// One reminder at the hour, then one every five minutes.
 pub const REMIND_SECS: u64 = 300;

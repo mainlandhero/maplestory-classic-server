@@ -2666,6 +2666,7 @@
              quest item only (no Use, no Scroll), back in town. Log out at 30 minutes and back
              in: !skipjq still says about 30 to go -> the hour was kept. Climb from one step to
              the next: !skipjq's minutes keep counting down -> one timer for the whole course.
+             Disconnect on the course (close the client), log back in: the minutes carry on.
              Leave by the warden (or a return scroll), come back in: the hour starts again from 60
 
     49. PLAYER STORE (2026-10-04). Two clients on one map; the owner holds a Store Permit

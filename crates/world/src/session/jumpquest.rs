@@ -106,7 +106,8 @@ impl Session {
         }
     }
 
-    /// The run is over - finished, shown out, skipped, or left some other way.
+    /// The run is over: finished, shown out by a warden, or skipped - or, as a stale row, its
+    /// player has been seen outside the course (`jump_quest_pity_tick`). Nothing else ends it.
     fn jq_end_run(&mut self, character_id: u32, why: &str) {
         if let Ok(true) = self.store.end_jump_quest(character_id) {
             crate::server::log(&format!("   jump quest: character {character_id}'s pity timer ends - {why}"));
@@ -118,10 +119,16 @@ impl Session {
     /// ten seconds, and a reminder goes out each time the total earns one. Time in the Cash Shop
     /// is not counted.
     ///
-    /// **Off every course the run is over** - a return scroll, a death, a GM warp, or a log in
-    /// that landed in town after a log out on a course. **On another course than the run's**
-    /// (only a GM warp gets there) it is over too. Moving between the steps of the same course
-    /// keeps it: the run is named by the course's goal, which every step of it shares.
+    /// **A row is removed here only when its player is outside its course** (the owner: *"does
+    /// not destroy stale rows unless the player they are tracking are no longer within the jump
+    /// quest area"*):
+    /// * off every course - a return scroll, a death, a GM warp, or a log in that landed
+    ///   elsewhere;
+    /// * on another course than the run's, which only a GM warp reaches.
+    ///
+    /// Moving between the steps of the same course keeps it, because the run is named by the
+    /// course's goal and every step shares that. A disconnect is not seen here at all: the row
+    /// waits, and a log in back on the course carries on from it.
     pub(super) fn jump_quest_pity_tick(&mut self, now_ms: u64) -> Vec<Reply> {
         if now_ms < self.jq_clock.next_check_ms {
             return Vec::new();
@@ -961,8 +968,23 @@ mod tests {
         let _ = s.tick(base + 1_000);
         let _ = s.tick(base + 8_000);
         assert_eq!(store.jump_quest_run(id).unwrap().unwrap().spent_secs, 0, "7 s gathered, not yet written");
+        let account = s.claimed().unwrap().account_id;
+        let config = s.config.clone();
         drop(s);
         assert_eq!(store.jump_quest_run(id).unwrap().unwrap().spent_secs, 7, "written as the connection closed, and kept");
+
+        // **Back in, on the course: the hour carries on from where it was.** The owner,
+        // 2026-10-04: *"if a player disconnected and later logged back in to continue working on
+        // the jump quest, I would like to have them keep the previous time left."*
+        store.create_migration(account, id, 0, 0).unwrap();
+        let mut back = Session::joining(store.clone(), config, Arc::new(Fields::new()));
+        back.claim_for_character(id);
+        let base = back.clock_ms;
+        let _ = back.tick(base + 1_000);
+        let _ = back.tick(base + 11_000);
+        assert_eq!(store.jump_quest_run(id).unwrap().unwrap().spent_secs, 17, "7 before the disconnect, 10 after");
+        let left = notices(&back.handle(&chat("!skipjq")));
+        assert!(left.iter().any(|n| n.contains("60 more minutes")), "3 583 s left rounds up to 60: {left:?}");
     }
 
     /// **`!skipjq`**: refused before the hour with what is left; after it, the quest item the
