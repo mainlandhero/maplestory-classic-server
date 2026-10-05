@@ -800,6 +800,27 @@ fn main() -> ExitCode {
             quest_reqs_path.display(),
         );
     }
+    // **Quest-only drops at no less than 5% before the rate** (the owner, 2026-10-04, after
+    // Broken Mirror Glass at 0.9%). The same `info/quest` flag the gate above uses, minus the
+    // items another module owns (`questitems::is_exempt`). Each raised row is printed, so a
+    // re-scrape that adds one is visible.
+    {
+        let quest_only =
+            |id: u32| config.quest_items.is_quest_item(id) && !world::questitems::is_exempt(id);
+        let floor = world::droptables::QUEST_ITEM_FLOOR_PPM;
+        let mut raised = config.drops.raise_quest_item_floor(floor, quest_only);
+        raised.extend(config.reactor_drops.raise_quest_item_floor(floor, quest_only));
+        for (template, e) in &raised {
+            println!(
+                "maplecw-world: drops: quest item {} {} on {} raised from {}% to {}% before the drop rate",
+                e.item_id,
+                e.name,
+                template.map_or("the global table".to_string(), |t| format!("template {t}")),
+                f64::from(e.chance_ppm) / 10_000.0,
+                f64::from(floor) / 10_000.0,
+            );
+        }
+    }
 
     report_binding_readiness();
 

@@ -91,6 +91,10 @@ pub const GLOBAL_KEY: &str = "*";
 /// `drop_data.chance`) - so `0.0001%` is representable and no float ever decides a drop.
 pub const PER_MILLION: u32 = 1_000_000;
 
+/// **The least a quest-only item drops at, before the server's drop rate**: 5% (the owner,
+/// 2026-10-04). [`DropTables::raise_quest_item_floor`].
+pub const QUEST_ITEM_FLOOR_PPM: u32 = 50_000;
+
 /// One row: an item this mob can drop, and how likely it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropEntry {
@@ -227,6 +231,33 @@ impl DropTables {
             }
         }
         out
+    }
+
+    /// **Raise every row `is_quest_only` names to at least `floor_ppm`**, before the drop rate.
+    /// Returns the rows it raised, for the startup banner.
+    ///
+    /// The owner, 2026-10-04: *"make sure any and all quest only item drops have at least 5% drop
+    /// rate base before our server's 5x multiplier is applied"* - after Broken Mirror Glass
+    /// (Stirge, 0.9%) made quest 10309's twenty pieces a ~440-kill grind at 5x. Applied at load
+    /// rather than written into `data/drops.txt`, so a re-scrape cannot quietly undo it.
+    ///
+    /// **A `0` row is left at 0**: zero is how a row is opted out, and a floor that turned an
+    /// opt-out into a drop would be a surprise nobody asked for. Mesos are never quest items.
+    pub fn raise_quest_item_floor(&mut self, floor_ppm: u32, is_quest_only: impl Fn(u32) -> bool) -> Vec<(Option<u32>, DropEntry)> {
+        let mut raised = Vec::new();
+        let rows = self
+            .per_mob
+            .iter_mut()
+            .flat_map(|(t, rows)| rows.iter_mut().map(move |e| (Some(*t), e)))
+            .chain(self.global.iter_mut().map(|e| (None, e)));
+        for (template, e) in rows {
+            if e.item_id != MESOS && e.chance_ppm > 0 && e.chance_ppm < floor_ppm && is_quest_only(e.item_id) {
+                raised.push((template, e.clone()));
+                e.chance_ppm = floor_ppm;
+            }
+        }
+        raised.sort_by_key(|(t, e)| (*t, e.item_id));
+        raised
     }
 
     /// Roll everything this mob can drop: **its own table, then the global one**.
@@ -497,6 +528,30 @@ mod tests {
 2 | 1302000 | 1   | 1 | 1  | 3 | Sword
 * | 2022000 | 5   | 1 | 3  | 0 | Event Candy
 ";
+
+    /// **A quest-only row below 5% is raised to 5%; nothing else moves** - not an ordinary
+    /// item, not a quest item already above the floor, not a `0` opt-out, not mesos.
+    #[test]
+    fn quest_only_rows_are_raised_to_the_floor_and_nothing_else_is() {
+        let mut t = DropTables::parse(
+            "17 | 0 | 40 | 32 | 48 | 0 | mesos\n\
+             17 | 4031007 | 0.9 | 1 | 1 | 3 | Broken Mirror Glass\n\
+             17 | 4010001 | 0.9 | 1 | 1 | 7 | Iron Ore\n\
+             20 | 4031075 | 0 | 1 | 1 | 2 | opted out\n\
+             20 | 4031013 | 60 | 1 | 1 | 2 | already common\n",
+        );
+        let quest = |id: u32| id >= 4_031_000;
+        let raised = t.raise_quest_item_floor(QUEST_ITEM_FLOOR_PPM, quest);
+        assert_eq!(raised.len(), 1, "{raised:?}");
+        assert_eq!((raised[0].0, raised[0].1.chance_ppm), (Some(17), 9_000), "the row as it was");
+        let chance = |m: u32, id: u32| t.for_mob(m).iter().find(|e| e.item_id == id).unwrap().chance_ppm;
+        assert_eq!(chance(17, 4_031_007), 50_000);
+        assert_eq!(chance(17, 4_010_001), 9_000, "not a quest item");
+        assert_eq!(chance(17, MESOS), 400_000);
+        assert_eq!(chance(20, 4_031_075), 0, "an opt-out stays out");
+        assert_eq!(chance(20, 4_031_013), 600_000, "a floor never lowers");
+        assert!(t.raise_quest_item_floor(QUEST_ITEM_FLOOR_PPM, quest).is_empty(), "idempotent");
+    }
 
     #[test]
     fn a_table_parses_into_a_mob_half_and_a_global_half() {

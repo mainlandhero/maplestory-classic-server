@@ -12,6 +12,11 @@
 # rows carry a real chance. See chance_percent() in the script, and the score column
 # here, which is what those chances were derived from.
 #
+# QUEST-ONLY ITEMS (info/quest) NEVER DROP BELOW 5% before the drop rate - the owner,
+# 2026-10-04. The five that were 0.9% (templates 6, 7, 12, 17, 20) are written as 5 below.
+# The loader enforces the same floor (droptables::QUEST_ITEM_FLOOR_PPM) in case a re-scrape
+# brings a lower one back, and the world banner names any row it had to raise. 0 stays 0.
+#
 # ---------------------------------------------------------------------------------
 # THE GLOBAL SCROLLS, set by hand 2026-10-01 on the owner's instruction:
 #   "Remove Scroll of Secrets and Treasure Scroll from global drop tables. Here are the new
@@ -135,7 +140,7 @@
 6 | 4010000 | 0.9 | 1 | 1 | 3 | Bronze Ore
 6 | 4010003 | 0.9 | 1 | 1 | 0 | Adamantium Ore
 6 | 4020003 | 0.9 | 1 | 1 | 4 | Emerald Ore
-6 | 4031046 | 0.9 | 1 | 1 | 1 | Omok Table
+6 | 4031046 | 5 | 1 | 1 | 1 | Omok Table
 6 | 1082001 | 0.1 | 1 | 1 | 1 | Juno
 6 | 1040008 | 0.08 | 1 | 1 | 1 | Green Archer Top
 6 | 1050000 | 0.08 | 1 | 1 | 1 | Beige Plain Robe
@@ -158,7 +163,7 @@
 7 | 2061000 | 2 | 10 | 30 | 2 | Arrows for Crossbows
 7 | 4010005 | 0.9 | 1 | 1 | 7 | Orihalcon Ore
 7 | 4020005 | 0.9 | 1 | 1 | 7 | Sapphire Ore
-7 | 4031047 | 0.9 | 1 | 1 | 5 | Omok Piece: Slime
+7 | 4031047 | 5 | 1 | 1 | 5 | Omok Piece: Slime
 7 | 1002011 | 0.1287 | 1 | 1 | 3 | White Bandana
 7 | 1082003 | 0.1 | 1 | 1 | 3 | Lemona
 7 | 1002016 | 0.08 | 1 | 1 | 2 | Bronze Koif
@@ -269,7 +274,7 @@
 12 | 2000003 | 2 | 1 | 1 | 0 | Blue Potion
 12 | 4010003 | 0.9 | 1 | 1 | 8 | Adamantium Ore
 12 | 4020002 | 0.9 | 1 | 1 | 5 | Aquamarine Ore
-12 | 4031054 | 0.9 | 1 | 1 | 1 | Omok Piece: Octopus
+12 | 4031054 | 5 | 1 | 1 | 1 | Omok Piece: Octopus
 12 | 1032000 | 0.1 | 1 | 1 | 1 | Single Earring
 12 | 1002012 | 0.08 | 1 | 1 | 1 | Red Bandana
 12 | 1002022 | 0.08 | 1 | 1 | 2 | Brown Winter Hat
@@ -427,7 +432,7 @@
 17 | 2061000 | 2 | 10 | 30 | 3 | Arrows for Crossbows
 17 | 4010001 | 0.9 | 1 | 1 | 7 | Iron Ore
 17 | 4020000 | 0.9 | 1 | 1 | 6 | Garnet Ore
-17 | 4031007 | 0.9 | 1 | 1 | 3 | Broken Mirror Glass
+17 | 4031007 | 5 | 1 | 1 | 3 | Broken Mirror Glass
 17 | 1002063 | 0.1287 | 1 | 1 | 0 | Green Robin Hat
 17 | 1082000 | 0.1 | 1 | 1 | 3 | Work Gloves
 17 | 1002084 | 0.08 | 1 | 1 | 5 | Red Starry Bandana
@@ -503,7 +508,7 @@
 20 | 4006001 | 1 | 1 | 1 | 0 | The Summoning Rock
 20 | 4010005 | 0.9 | 1 | 1 | 4 | Orihalcon Ore
 20 | 4020007 | 0.9 | 1 | 1 | 1 | Diamond Ore
-20 | 4031075 | 0.9 | 1 | 1 | 2 | Stump's Teardrop
+20 | 4031075 | 5 | 1 | 1 | 2 | Stump's Teardrop
 20 | 2012002 | 0.6 | 1 | 1 | 5 | Sap of Ancient Tree
 20 | 1002086 | 0.1287 | 1 | 1 | 0 | Yellow Starry Bandana
 20 | 1002054 | 0.08 | 1 | 1 | 1 | Bronze Football Helmet

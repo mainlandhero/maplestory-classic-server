@@ -695,6 +695,28 @@ mod tests {
         assert!(q.may_receive(4_031_047, &active(&[80002])), "and drops for one doing 80002");
     }
 
+    /// **The 5% floor on the real tables** (the owner, 2026-10-04): the file already carries it -
+    /// Broken Mirror Glass, the row that prompted it, is written as 5% and the loader has nothing
+    /// left to raise; Iron Ore beside it on the same Stirge, which no quest owns, stays at 0.9%;
+    /// and no quest-only row anywhere is between 0 and 5%.
+    #[test]
+    fn the_real_quest_only_drops_are_at_least_five_percent() {
+        let Some(q) = real() else { return };
+        let mut drops = crate::droptables::DropTables::load(Path::new("../../data/drops.txt"));
+        let quest_only = |id: u32| q.is_quest_item(id) && !is_exempt(id);
+        let floor = crate::droptables::QUEST_ITEM_FLOOR_PPM;
+        let raised = drops.raise_quest_item_floor(floor, quest_only);
+        assert!(raised.is_empty(), "data/drops.txt has a quest-only row below 5% again: {raised:?}");
+        let stirge = drops.for_mob(17);
+        assert_eq!(stirge.iter().find(|e| e.item_id == 4_031_007).unwrap().chance_ppm, 50_000);
+        assert_eq!(stirge.iter().find(|e| e.item_id == 4_010_001).unwrap().chance_ppm, 9_000);
+        for (t, rows) in drops.mobs() {
+            for e in rows.iter().filter(|e| quest_only(e.item_id)) {
+                assert!(e.chance_ppm == 0 || e.chance_ppm >= floor, "template {t}: {e:?}");
+            }
+        }
+    }
+
     /// **The negative control, which is the half that says the instrument discriminates.**
     ///
     /// `4000001` Snail Shell sits in the same `4000000+` ETC range and is not a quest item.
