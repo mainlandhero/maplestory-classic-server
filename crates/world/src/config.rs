@@ -1674,6 +1674,11 @@ pub struct Quest {
     /// which nothing charged until the owner, 2026-10-02: *"Quests that take away money should
     /// properly take away mesos and complain if the player does not have enough mesos"*.
     pub start_money: i32,
+    /// `Act.1.pop` - fame for turning it in. 15 quests carry one, 1 to 5, every value positive
+    /// (10201..10205, 10311..10314, 10401, 10509, 10510, 10703, 12108, 12139). Not scaled by
+    /// any rate. **Nothing paid it until 2026-10-04** (the owner: *"Quests that award fame
+    /// currently do not give fame"*). `Session::pay_quest_fame`.
+    pub complete_fame: i32,
     /// `Check.1.lvmin` - the level needed to TURN IT IN (0 when the quest names none). The
     /// Community Board's weeklies all start at 12 and finish at `12 + 5 (grade - 1)`, so a board
     /// posting has to look at this one, not the start level (the owner, 2026-10-01: a level-17
@@ -1933,6 +1938,9 @@ fn read_quest_rows(text: &str, out: &mut HashMap<u32, Quest>, mode: Overlay) -> 
             }
             "Act" if fill && dotted == "0.money" => {
                 quest.start_money = value.parse().unwrap_or(0);
+            }
+            "Act" if fill && dotted == "1.pop" => {
+                quest.complete_fame = value.parse().unwrap_or(0);
             }
             "Act" if fill && dotted.starts_with("1.citizenshipContr.") => {
                 let c = quest.citizenship_contr.get_or_insert_with(CitizenshipContr::default);
@@ -3281,6 +3289,22 @@ mod spawn_tests {
         assert_eq!(cfg.random_spawn_point(999_999_999, 7), 0, "a map with none: the default");
         // The Magician Job Instructor's `job00` is NOT a random landing spot - it is used by name.
         assert!(!cfg.spawn_points[&10002070].contains(&32));
+    }
+
+    /// **`Act.1.pop` is read** - 15 quests award fame, every value positive.
+    #[test]
+    fn quest_fame_is_read_from_act_1_pop() {
+        let path = std::path::Path::new("../../gm-handbook/questlines.txt");
+        if !path.exists() {
+            return; // generated data, gitignored
+        }
+        let quests = load_quests(path);
+        assert_eq!(quests.values().filter(|q| q.complete_fame != 0).count(), 15);
+        assert!(quests.values().all(|q| q.complete_fame >= 0));
+        assert_eq!(quests[&10_205].complete_fame, 3);
+        assert_eq!(quests[&12_139].complete_fame, 5);
+        // 10401 also has `Check.0.pop 10` - a requirement, not a reward.
+        assert_eq!(quests[&10_401].complete_fame, 2);
     }
 
     /// Quest 1000's tree, read back out of the generated table.

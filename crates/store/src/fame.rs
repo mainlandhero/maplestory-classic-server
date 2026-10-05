@@ -155,6 +155,28 @@ impl Store {
         tx.commit()?;
         Ok(FameOutcome::Given { target_name, fame })
     }
+
+    /// **Move a character's fame by `delta`** - a quest's `Act.1.pop`. Not a gift: no
+    /// `fame_log` row and neither of the giver's rules, which are about one player raising
+    /// another. The new fame, or `None` for no such character.
+    pub fn add_fame(&self, character_id: u32, delta: i32) -> Result<Option<i32>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        if tx.execute(
+            "UPDATE characters SET fame = fame + ?2 WHERE id = ?1",
+            rusqlite::params![character_id, delta],
+        )? == 0
+        {
+            return Ok(None);
+        }
+        let fame: i32 = tx.query_row(
+            "SELECT fame FROM characters WHERE id = ?1",
+            rusqlite::params![character_id],
+            |row| row.get(0),
+        )?;
+        tx.commit()?;
+        Ok(Some(fame))
+    }
 }
 
 #[cfg(test)]
@@ -230,6 +252,24 @@ mod tests {
         assert_eq!(store.give_fame(t3, 9_999, true, next_mon + 100_000).unwrap(), FameOutcome::NoSuchTarget);
         let rows: i64 = store.conn().query_row("SELECT COUNT(*) FROM fame_log", [], |r| r.get(0)).unwrap();
         assert_eq!(rows, 4, "one log row per gift that went through");
+    }
+
+    /// **A quest's fame is not a gift**: it moves the number, writes no log row, and does not
+    /// spend the character's own gift for the day.
+    #[test]
+    fn quest_fame_moves_the_number_and_spends_no_gift() {
+        let (store, wisp, t2, _) = two_characters();
+        assert_eq!(store.add_fame(wisp, 3).unwrap(), Some(3));
+        assert_eq!(store.add_fame(wisp, 2).unwrap(), Some(5));
+        assert_eq!(store.fame(wisp).unwrap(), Some(5));
+        assert_eq!(store.add_fame(9_999, 1).unwrap(), None, "nobody");
+        let rows: i64 = store.conn().query_row("SELECT COUNT(*) FROM fame_log", [], |r| r.get(0)).unwrap();
+        assert_eq!(rows, 0);
+        assert_eq!(
+            store.give_fame(wisp, t2, true, FRI_2026_09_18_15_00).unwrap(),
+            FameOutcome::Given { target_name: "Tester2".into(), fame: 1 },
+            "the day's gift is still there"
+        );
     }
 
     /// The column lands on a database that predates it, and the character record reads it.

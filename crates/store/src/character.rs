@@ -126,8 +126,9 @@ impl Store {
             // Named rather than `..`-ignored so this stays a decision someone made.
             equip_bag: _,
             inventory_slots,
-            // A new character has no fame and the column defaults to 0; the only writer is
-            // `Store::give_fame`, so a value on a `Character` handed in here is not honoured.
+            // A new character has no fame and the column defaults to 0; the only writers are
+            // `Store::give_fame` and `Store::add_fame` (quest rewards), so a value on a
+            // `Character` handed in here is not honoured.
             fame: _,
         } = chr;
 

@@ -415,6 +415,8 @@ impl Session {
         // `Act.1.money`, at the Quest rate like the EXP - every quest (the owner, 2026-09-28).
         // Nothing paid it before. session/questmoney.rs.
         out.extend(self.pay_quest_mesos(finished, 1));
+        // `Act.1.pop` - fame (the owner, 2026-10-04). Nothing paid it before. session/fame.rs.
+        out.extend(self.pay_quest_fame(finished));
         // **The turn-in fanfare.** The owner, 2026-08-21: *"Quest finish still does not trigger
         // the SFX for quest finish."* It did not, because nothing sent one.
         //
