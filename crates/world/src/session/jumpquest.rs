@@ -87,6 +87,37 @@ impl Session {
         self.jq_clock = jq::PityClock { last_ms: Some(self.clock_ms), ..jq::PityClock::default() };
     }
 
+    /// **The pity timer on screen**, on every field entry on a course with a running hour. The
+    /// owner, 2026-10-04: *"The timer is not visible, it should be a timer similar to the one in
+    /// the First Time Together party quest."*
+    ///
+    /// The same widget as the party quest's: `0x01BC` type 2, the seconds left. It builds its
+    /// own widget, so it is safe on these maps, which declare no `clock` node
+    /// (`net::clock::clock_seconds`). It is sent on every entry - the door's warp, each step's
+    /// portal, a log in or a channel change back onto the course, the way back from the Cash
+    /// Shop - because a map change drops the widget. The client counts it down from there.
+    ///
+    /// Past the hour it shows zero, which is when `!skipjq` opens. A reward-only run has no
+    /// row, so it gets no clock.
+    pub(super) fn jump_quest_clock(&mut self) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let Some(goal) = jq::course_goal(chr.map_id) else { return Vec::new() };
+        let run = match self.store.jump_quest_run(chr.id) {
+            Ok(Some(r)) if r.goal_npc == goal.npc => r,
+            _ => return Vec::new(),
+        };
+        let spent = run.spent_secs + self.jq_clock.pending_ms / 1_000;
+        let left = u32::try_from(jq::PITY_SECS.saturating_sub(spent)).unwrap_or(0);
+        vec![Reply {
+            opcode: net::clock::FIELD_CLOCK,
+            body: net::clock::clock_seconds(left),
+            what: format!(
+                "FieldClock type 2 to character {}: {left}s left of the jump quest's pity hour (course to NPC {})",
+                chr.id, goal.npc
+            ),
+        }]
+    }
+
     /// **What this connection counted and had not written yet**, written now - the connection
     /// is closing. The owner, 2026-10-04: *"The timer should also be kept should the player
     /// logout or otherwise disconnect"*. The row is kept either way; this saves the last few
@@ -924,6 +955,11 @@ mod tests {
         assert_eq!(map_of(&s), 10_005_042);
         let run = store.jump_quest_run(id).unwrap().unwrap();
         assert_eq!((run.goal_npc, run.spent_secs), (jq::BLUE_PILE, 0), "the blue course's hour");
+        let entry = s.on_field_entered();
+        assert!(
+            entry.iter().any(|r| r.opcode == net::clock::FIELD_CLOCK && r.body == net::clock::clock_seconds(3_600)),
+            "the field entry after the door's warp shows 60:00"
+        );
 
         let base = s.clock_ms;
         assert!(notices(&s.tick(base + 1_000)).is_empty());
@@ -967,6 +1003,29 @@ mod tests {
         store.complete_quest(id, goal.quest).unwrap();
         enter(&mut s);
         assert_eq!(store.jump_quest_run(id).unwrap(), None, "a finished quest: reward runs only");
+    }
+
+    /// **The hour is on screen**: entering a course field with a running hour sends the party
+    /// quest's countdown with the seconds left; a reward-only run (no row) and a field off the
+    /// course get none.
+    #[test]
+    fn entering_a_course_field_shows_the_countdown_with_the_time_left() {
+        let clock = |out: &[Reply]| -> Vec<Vec<u8>> {
+            out.iter().filter(|r| r.opcode == net::clock::FIELD_CLOCK).map(|r| r.body.clone()).collect()
+        };
+        let (store, mut s, id) = standing(10_005_043, jq::CRUMBLING_STATUE, (0, 0), 50);
+        assert!(clock(&s.on_field_entered()).is_empty(), "no run, no clock");
+
+        store.start_jump_quest(id, jq::BLUE_PILE).unwrap();
+        store.add_jump_quest_time(id, 600).unwrap();
+        assert_eq!(clock(&s.on_field_entered()), vec![net::clock::clock_seconds(3_000)], "50 minutes left");
+
+        store.add_jump_quest_time(id, 3_500).unwrap();
+        assert_eq!(clock(&s.on_field_entered()), vec![net::clock::clock_seconds(0)], "past the hour: zero, !skipjq open");
+
+        let mut chr = s.claimed_character().unwrap();
+        let _ = s.teleport(&mut chr, jq::SLEEPYWOOD, "out".to_string());
+        assert!(clock(&s.on_field_entered()).is_empty(), "off the course");
     }
 
     /// **A disconnect keeps the hour**, the seconds not yet written included.

@@ -468,6 +468,9 @@ we're going to implement them."* `research/jump-quests-2026-10-04.md`.
   * **Counts:** only time on that course while online. It is kept in `jump_quest_runs`
     (`store::jumpquest`), so a log out, a disconnect or a channel change keeps it; the last
     seconds are written when the connection closes.
+  * **On screen:** the party quest's countdown (`0x01BC` type 2) with the time left, sent on
+    every field entry onto the course - the owner: *"it should be a timer similar to the one in
+    the First Time Together party quest."*
   * **At the hour:** a yellow reminder, then one every 5 minutes.
   * **`!skipjq`** (public) then takes the player out with the quest item only - no Use, no
     Scroll. Before the hour it says how long is left.

@@ -2661,7 +2661,11 @@
           h. the drops page: "Jump Quest Reward" (badge JQ) lists the use and scroll slots;
              after c its "finished" count reads 1 within 30 minutes
           i. PITY TIMER. Only an entry ON the course's quest (still short of its item) starts the
-             hour; a reward-only run never does. !skipjq before the hour -> "N more minutes to
+             hour; a reward-only run never does. A countdown like First Time Together's shows
+             60:00 on entering and counts down; it is there again on each next step and after a
+             relog, showing the time left. No countdown on a quest entry -> paste the
+             "FieldClock type 2" line (or its absence) from world-ch0.log.
+             !skipjq before the hour -> "N more minutes to
              go", nothing else happens. After 60 minutes on the course a yellow line "You have spent over an
              hour on this jump quest" -> right, and again every 5 minutes. !skipjq then -> the
              quest item only (no Use, no Scroll), back in town. Log out at 30 minutes and back
@@ -6638,7 +6642,8 @@ function Show-TestPlan {
         Write-Host '       e. Booth: Jake sells B1/B2/B3 (Lv 20/30/40, 500/1200/2000); the gate takes one -> Area 1; Exit -> booth' -ForegroundColor Cyan
         Write-Host '       f. B1 press-up portals within the map move you -> fine; a hang -> paste the last world-ch0.log lines' -ForegroundColor Yellow
         Write-Host '       g. B1 depot chest: a Use + a Scroll (+ Shumi''s Coin on 10312); back at the booth   h. drops page: Jump Quest Reward (JQ)' -ForegroundColor Cyan
-        Write-Host '       i. PITY TIMER (quest entries only): 60 min on the course -> yellow reminder, every 5 min after;' -ForegroundColor Cyan
+        Write-Host '       i. PITY TIMER (quest entries only): a countdown like the PQ''s shows 60:00 on entering, kept across steps/relogs;' -ForegroundColor Cyan
+        Write-Host '          at 0 -> yellow reminder, every 5 min after;' -ForegroundColor Cyan
         Write-Host '          !skipjq before -> "N more minutes"; after -> quest item only, back in town; a relog keeps the time' -ForegroundColor Cyan
         Write-Host '          next step of the same course keeps counting; leaving by the warden or a scroll stops it (back in -> 60 again)' -ForegroundColor Cyan
         Write-Host '       no box / nothing given / no warp -> paste the "jump quest:" lines' -ForegroundColor Yellow
