@@ -2681,7 +2681,7 @@
           k. PET-WALKING ROAD (Henesys Park, the in01 portal). No timer here. Trainer Bartos at the
              bottom: no pet out -> "Bring your pet out first"; pet out -> Yes gives Bartos's
              Letter (one at a time). Climb to Trainer Frod at the top, talk from beside him: a
-             box with "Closeness +2", a Use and a Scroll; OK -> the letter is gone, the client's
+             box with "Closeness +20", a Use and a Scroll; OK -> the letter is gone, the client's
              own "Closeness has increased" line, the items in the bag, and you stay where you are
              Leave by the warden (or a return scroll), come back in: the hour starts again from 60
 
@@ -6659,7 +6659,7 @@ function Show-TestPlan {
         Write-Host '          next step of the same course keeps counting; leaving by the warden or a scroll stops it (back in -> 60 again)' -ForegroundColor Cyan
         Write-Host '          first entry: a yellow line explains "Time Left" (once, not on the next step)' -ForegroundColor Cyan
         Write-Host '       j. a quest in progress narrows the door: 10510 -> Shane offers the ginseng course only; 10313 -> Jake/gate B2 only' -ForegroundColor Cyan
-        Write-Host '       k. PET-WALKING ROAD (no timer): Bartos gives the letter if a pet is out; Frod at the top: Closeness +2, a Use' -ForegroundColor Cyan
+        Write-Host '       k. PET-WALKING ROAD (no timer): Bartos gives the letter if a pet is out; Frod at the top: Closeness +20, a Use' -ForegroundColor Cyan
         Write-Host '          + a Scroll, letter taken, no warp' -ForegroundColor Cyan
         Write-Host '       no box / nothing given / no warp -> paste the "jump quest:" lines' -ForegroundColor Yellow
         Write-Host ''

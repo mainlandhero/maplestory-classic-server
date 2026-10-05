@@ -489,7 +489,7 @@ we're going to implement them."* `research/jump-quests-2026-10-04.md`.
 * **The Pet-Walking Road** (Henesys Park, 10001052) - the owner's "non-quest" jump quest:
   * Trainer Bartos gives Bartos's Letter to a player whose pet is out, one at a time.
   * Trainer Frod at the top takes it, from within 250 px.
-  * The reward is +2 pet closeness (**[M]**, the old GMS script as recalled) plus the Jump
+  * The reward is +20 pet closeness (the owner's number) plus the Jump
     Quest Reward.
   * No warp and no pity timer (the owner: *"not quest relevant"*).
 * **Unmeasured:** whether a same-map press-up portal (B1 Area 1 has thirteen) sends the server

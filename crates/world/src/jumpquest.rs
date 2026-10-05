@@ -298,9 +298,9 @@ pub const PET_WALKING_ROAD: u32 = 10_001_052;
 pub const BARTOS: u32 = 222;
 pub const FROD: u32 = 223;
 pub const BARTOS_LETTER: u32 = 4_031_035;
-/// What Frod adds to the summoned pet's closeness. **[M]**, the old GMS script as recalled -
-/// the reference leaves only a comment where the number goes.
-pub const PET_PARK_CLOSENESS: u32 = 2;
+/// What Frod adds to the summoned pet's closeness - the owner's number, 2026-10-04: *"We should
+/// reward 20 closeness instead."* (It had been 2, the old GMS script as recalled.)
+pub const PET_PARK_CLOSENESS: u32 = 20;
 pub const BARTOS_PATH: &str = "jumpquest.bartos";
 
 /// Frod's box: his own words, the closeness, and the reward.
@@ -560,7 +560,7 @@ mod tests {
         assert_eq!(offered(&[false, false, false]), vec![0, 1, 2]);
         assert!(ENTRY_NOTICE.contains("\"Time Left\"") && ENTRY_NOTICE.contains("!skipjq") && ENTRY_NOTICE.contains("an hour"));
         let t = frod_text(&[("use", (2_000_001, 100)), ("scroll", (2_040_801, 1))]);
-        assert!(t.contains(r"\n\n#bCloseness#k +2\n#bUse#k: #i2000001# #t2000001# x100\n#bScroll#k"), "{t}");
+        assert!(t.contains(r"\n\n#bCloseness#k +20\n#bUse#k: #i2000001# #t2000001# x100\n#bScroll#k"), "{t}");
         assert_eq!(area_of(PET_WALKING_ROAD), None, "the road is not a pity-timer course");
     }
 

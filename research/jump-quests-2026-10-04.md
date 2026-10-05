@@ -285,7 +285,7 @@ The client enforces these itself. `session::summonsack` already relies on bit `0
   course is offered.
 * **The Pet-Walking Road** (10001052) joins the set, with no pity timer:
   * Trainer Bartos (222, bottom) gives Bartos's Letter (4031035) to a player whose pet is out.
-  * Trainer Frod (223, top) takes it for +2 closeness - **[M]**; the reference
+  * Trainer Frod (223, top) takes it for +20 closeness - the owner's number; the reference
     `pet_letter.py` leaves only a comment there - plus the Jump Quest Reward.
   * There is no warp: the hidden `h005` beside Frod leads back down to `h006` by Bartos
     **[L]**.

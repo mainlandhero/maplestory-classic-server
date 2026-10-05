@@ -1047,7 +1047,7 @@ mod tests {
         let _ = s.handle(&answer(0, net::script::SCRIPT_ACTION_YES));
         s.last_position = Some((-1593, -1588));
         let box_text = said(&s.handle(&click()));
-        assert!(box_text.contains("my brother's letter") && box_text.contains("#bCloseness#k +2"), "{box_text}");
+        assert!(box_text.contains("my brother's letter") && box_text.contains("#bCloseness#k +20"), "{box_text}");
         let (_, prizes) = jq::parse_found_path(&s.conversation.as_ref().unwrap().path).unwrap();
         assert_eq!(held(&store, id, jq::BARTOS_LETTER), 1, "nothing moves while the box is open");
         let _ = s.handle(&answer(0, net::script::SCRIPT_ACTION_YES));
