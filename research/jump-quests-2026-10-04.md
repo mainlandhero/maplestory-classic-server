@@ -281,8 +281,9 @@ The client enforces these itself. `session::summonsack` already relies on bit `0
   * A leftover row is removed only once its player is outside that course.
   * After the hour, a yellow reminder comes every 5 minutes.
   * `!skipjq` then leaves with the quest item and nothing else.
-* **Door menus:** a course's quest in progress limits the door to that course. Otherwise every
-  course is offered.
+* **Door menus:** a course's quest in progress limits the door to that course. Between two
+  quests of a chain, only the completed courses are offered. Every course is offered once all
+  are completed, or to a player who never took any.
 * **The Pet-Walking Road** (10001052) joins the set, with no pity timer:
   * Trainer Bartos (222, bottom) gives Bartos's Letter (4031035) to a player whose pet is out.
   * Trainer Frod (223, top) takes it for +20 closeness - the owner's number; the reference

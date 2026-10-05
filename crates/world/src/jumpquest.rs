@@ -266,16 +266,36 @@ pub const ENTRY_NOTICE: &str = "The \"Time Left\" clock counts down to when you 
 /// Only after they completed all of the quest should we allow them to choose any of the jump
 /// quest areas."*
 ///
-/// `in_progress[i]` says whether course `i`'s quest is in progress. When any is, only those
-/// courses are offered. When none is, every course is - including, for now, between two
-/// quests of a chain, when nothing is in progress either.
-pub fn offered(in_progress: &[bool]) -> Vec<usize> {
-    let mine: Vec<usize> = (0..in_progress.len()).filter(|&i| in_progress[i]).collect();
-    if mine.is_empty() {
-        (0..in_progress.len()).collect()
-    } else {
-        mine
+/// And, the same day: *"When players are between two chains of quests, the server should only
+/// offer the option that they have already completed (and not any new ones they haven't been
+/// through the quests of)."*
+///
+/// `stages[i]` is where the player is on course `i`'s quest. In order:
+/// * **any in progress** - only those courses;
+/// * **some completed, not all** (between two quests of a chain) - only the completed ones;
+/// * **all completed, or none touched** - every course. A player who never took the door's
+///   quests is not a "player with quests", and the doors that take strangers (the Statue,
+///   Jake, the gate) let them choose.
+pub fn offered(stages: &[QuestStage]) -> Vec<usize> {
+    let all = || (0..stages.len()).collect::<Vec<usize>>();
+    let with = |want: QuestStage| (0..stages.len()).filter(|&i| stages[i] == want).collect::<Vec<usize>>();
+    let in_progress = with(QuestStage::InProgress);
+    if !in_progress.is_empty() {
+        return in_progress;
     }
+    let done = with(QuestStage::Complete);
+    if done.is_empty() || done.len() == stages.len() {
+        return all();
+    }
+    done
+}
+
+/// Where a player is on one course's quest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuestStage {
+    NotTaken,
+    InProgress,
+    Complete,
 }
 
 /// **The Henesys Pet Park's jump quest** - the Pet-Walking Road (10001052), walked into from
@@ -555,9 +575,13 @@ mod tests {
     /// course is offered.
     #[test]
     fn a_quest_in_progress_narrows_the_door_to_its_course() {
-        assert_eq!(offered(&[false, true, false]), vec![1]);
-        assert_eq!(offered(&[true, false]), vec![0]);
-        assert_eq!(offered(&[false, false, false]), vec![0, 1, 2]);
+        use QuestStage::{Complete as C, InProgress as P, NotTaken as N};
+        assert_eq!(offered(&[C, P, N]), vec![1], "in progress: that course only");
+        assert_eq!(offered(&[P, N]), vec![0]);
+        assert_eq!(offered(&[C, N, N]), vec![0], "between the chain's quests: only what is completed");
+        assert_eq!(offered(&[C, C, N]), vec![0, 1]);
+        assert_eq!(offered(&[C, C, C]), vec![0, 1, 2], "all completed: every course");
+        assert_eq!(offered(&[N, N, N]), vec![0, 1, 2], "never touched: every course");
         assert!(ENTRY_NOTICE.contains("\"Time Left\"") && ENTRY_NOTICE.contains("!skipjq") && ENTRY_NOTICE.contains("an hour"));
         let t = frod_text(&[("use", (2_000_001, 100)), ("scroll", (2_040_801, 1))]);
         assert!(t.contains(r"\n\n#bCloseness#k +20\n#bUse#k: #i2000001# #t2000001# x100\n#bScroll#k"), "{t}");

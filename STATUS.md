@@ -482,8 +482,10 @@ we're going to implement them."* `research/jump-quests-2026-10-04.md`.
     course - a return scroll, a death, a GM warp, a log in elsewhere.
   * **Steps:** moving between the steps of one course keeps the same run.
 * **A quest narrows the door** (the owner, 2026-10-04): with a course's quest in progress,
-  Shane, the Statue, Jake and the Ticket Gate offer only that course. A line the menu did not
-  show is refused. With none in progress, every course is offered.
+  Shane, the Statue, Jake and the Ticket Gate offer only that course. Between two quests of a
+  chain they offer only the courses already completed (the owner, the same day), and once all
+  are completed - or for a player who never took any - every course. A line the menu did not
+  show is refused.
 * **"Time Left" explained:** the first field entry after a door starts the hour prints a
   yellow line - the clock counts down to when `!skipjq` opens, so try your best.
 * **The Pet-Walking Road** (Henesys Park, 10001052) - the owner's "non-quest" jump quest:

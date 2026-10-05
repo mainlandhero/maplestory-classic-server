@@ -2676,8 +2676,9 @@
              down to when !skipjq opens -> right; it does not repeat on the next step.
           j. A QUEST NARROWS THE DOOR. With 10510 in progress Shane offers only the Double-Rooted
              Red Ginseng course; with John's 10008 the Statue only the white flower; with Shumi's
-             10313 Jake sells only the B2 ticket and the gate opens only B2. With none in
-             progress, every course is offered.
+             10313 Jake sells only the B2 ticket and the gate opens only B2. Between two quests
+             (10509 done, 10510 not taken yet) Shane offers only the completed Pink Anthurium
+             course. All done, or never taken: every course.
           k. PET-WALKING ROAD (Henesys Park, the in01 portal). No timer here. Trainer Bartos at the
              bottom: no pet out -> "Bring your pet out first"; pet out -> Yes gives Bartos's
              Letter (one at a time). Climb to Trainer Frod at the top, talk from beside him: a
@@ -6659,6 +6660,7 @@ function Show-TestPlan {
         Write-Host '          next step of the same course keeps counting; leaving by the warden or a scroll stops it (back in -> 60 again)' -ForegroundColor Cyan
         Write-Host '          first entry: a yellow line explains "Time Left" (once, not on the next step)' -ForegroundColor Cyan
         Write-Host '       j. a quest in progress narrows the door: 10510 -> Shane offers the ginseng course only; 10313 -> Jake/gate B2 only' -ForegroundColor Cyan
+        Write-Host '          between quests (10509 done, 10510 not taken): only the completed course; all done: every course' -ForegroundColor Cyan
         Write-Host '       k. PET-WALKING ROAD (no timer): Bartos gives the letter if a pet is out; Frod at the top: Closeness +20, a Use' -ForegroundColor Cyan
         Write-Host '          + a Scroll, letter taken, no warp' -ForegroundColor Cyan
         Write-Host '       no box / nothing given / no warp -> paste the "jump quest:" lines' -ForegroundColor Yellow

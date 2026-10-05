@@ -92,11 +92,18 @@ impl Session {
     /// to build the menu and again to check the answer, so a line the menu never showed is
     /// refused.
     fn jq_offered_lines(&self, character_id: u32, courses: &[(u32, u32)]) -> Vec<u32> {
-        let in_progress: Vec<bool> = courses
+        let stages: Vec<jq::QuestStage> = courses
             .iter()
-            .map(|&(_, map)| jq::course_goal(map).is_some_and(|g| self.jq_quest_in_progress(character_id, g.quest)))
+            .map(|&(_, map)| {
+                let row = jq::course_goal(map).and_then(|g| self.store.quest_row(character_id, g.quest).ok().flatten());
+                match row.map(|r| r.state) {
+                    Some(store::QuestState::InProgress) => jq::QuestStage::InProgress,
+                    Some(store::QuestState::Complete) => jq::QuestStage::Complete,
+                    None => jq::QuestStage::NotTaken,
+                }
+            })
             .collect();
-        jq::offered(&in_progress).into_iter().map(|i| courses[i].0).collect()
+        jq::offered(&stages).into_iter().map(|i| courses[i].0).collect()
     }
 
     fn jq_forest_lines(&self, character_id: u32) -> Vec<u32> {
@@ -390,13 +397,21 @@ impl Session {
             .filter(|t| lines.contains(&t.line) && self.held_count(chr.id, t.item) > 0)
             .collect();
         if held.is_empty() {
-            let text = match jq::TICKETS.into_iter().filter(|t| lines.contains(&t.line)).collect::<Vec<_>>().as_slice() {
-                [only] if lines.len() < jq::TICKETS.len() => format!(
-                    "Shumi's errand takes you to #b{}#k, so you need that floor's ticket to go through the gate. \
-                     #bJake#k, right beside it, sells them.",
-                    only.floor
-                ),
-                _ => "You need a ticket to go through the gate. #bJake#k, right beside it, sells them.".to_string(),
+            // Narrowed (an errand in progress, or between two of Shumi's errands): name the
+            // floors this player may go through to.
+            let text = if lines.len() < jq::TICKETS.len() {
+                let floors: Vec<String> = jq::TICKETS
+                    .into_iter()
+                    .filter(|t| lines.contains(&t.line))
+                    .map(|t| format!("#b{}#k", t.floor))
+                    .collect();
+                format!(
+                    "Right now the gate only opens to {} for you, and you need that floor's ticket. #bJake#k, right \
+                     beside it, sells them.",
+                    floors.join(" or ")
+                )
+            } else {
+                "You need a ticket to go through the gate. #bJake#k, right beside it, sells them.".to_string()
             };
             return self.jq_say(jq::TICKET_GATE, &text, "no ticket for a floor this player may enter".to_string());
         }
@@ -950,11 +965,18 @@ mod tests {
         let _ = s.handle(&pick(0));
         assert_eq!((map_of(&s), store.mesos(id).unwrap()), (10_002_040, 1_000), "step 1, free");
 
-        // On the second errand: only the ginseng's course.
+        // Between the two errands: only the course already completed, not the one ahead.
         store.complete_quest(id, jq::SHANE_KEY_QUEST).unwrap();
-        store.start_quest(id, 10_510).unwrap();
         let mut chr = s.claimed_character().unwrap();
         let _ = s.teleport(&mut chr, jq::ELLINIA, "back".to_string());
+        let menu = said(&s.handle(&click()));
+        assert!(menu.contains("#L0#") && !menu.contains("#L1#"), "10509 done, 10510 not taken: the done course only - {menu}");
+        let _ = s.handle(&pick(1));
+        assert_eq!(map_of(&s), jq::ELLINIA, "the course ahead is refused");
+
+        // On the second errand: only the ginseng's course.
+        store.start_quest(id, 10_510).unwrap();
+        s.conversation = None;
         let menu = said(&s.handle(&click()));
         assert!(menu.contains("#L1#") && !menu.contains("#L0#"), "10510 in progress: {menu}");
 
@@ -976,6 +998,13 @@ mod tests {
         store.start_quest(id, 10_008).unwrap();
         let menu = said(&s.handle(&click()));
         assert!(menu.contains("#L2#") && !menu.contains("#L0#") && !menu.contains("#L1#"), "white only: {menu}");
+
+        // Between John's quests: the pink flower is done, the blue not yet taken - pink only.
+        let (store, mut s, id) = standing(jq::SLEEPYWOOD, jq::MYSTERIOUS_STATUE, (1061, 255), 50);
+        store.start_quest(id, 10_006).unwrap();
+        store.complete_quest(id, 10_006).unwrap();
+        let menu = said(&s.handle(&click()));
+        assert!(menu.contains("#L0#") && !menu.contains("#L1#") && !menu.contains("#L2#"), "between the chain: pink only - {menu}");
 
         let (store, mut s, id) = standing(jq::TICKET_BOOTH, jq::JAKE, (71, 187), 50);
         store.start_quest(id, 10_313).unwrap();
