@@ -3531,6 +3531,17 @@
                      mode-0 add for a quest item
           the collection popup ("n / N item") appears on the map change -> say so; that
                      is what mode 5 exists to prevent and this must not undo it
+        2026-10-04, the owner on The Tree That Grew I: right, but only about a second after
+        arriving (0/15 Blue Mushroom Cap, then 8/15). The restore waited for the client's
+        0x00DC, a full round trip after the map is up - nothing on one machine (26 ms in the
+        hook log), visible over a network. Now the bag, the mesos and the recount also ride
+        right behind every SetField (log lines tagged "[behind the SetField, before
+        0x00DC]"); the 0x00DC copy stays as the safety net. Against the remote server, change
+        maps with items for a collection quest in the bag:
+          the count is right as the map appears -> DONE
+          still 0/N for about a second -> the delay is the client's own; paste the hook
+                     log lines for 0x0070 / 0x0089 around the SetField
+          any tab empty, or items doubled -> say which tab; the early copy is the cause
     11. A QUEST INTO A FULL BAG - 2026-09-17. Mint: "quest continues to complete despite this
         happening" under "Quest 1008 could not give you item 1002005: inventory 1 is full".
         The completion was written, the EXP paid, the letter taken, and the hat never came.
@@ -7061,6 +7072,11 @@ function Show-TestPlan {
         Write-Host '       right count at once (49/5), no popup -> DONE' -ForegroundColor Green
         Write-Host '       still 0/N until a pickup -> paste the QuestRecord lines after the restore' -ForegroundColor Yellow
         Write-Host '       the "n / N" collection popup on the map change -> say so (must not)' -ForegroundColor Red
+        Write-Host '     2026-10-04: right only ~1 s after arriving. The bag + recount now ride right' -ForegroundColor White
+        Write-Host '     behind every SetField too (no wait for 0x00DC). On the REMOTE server, change maps:'
+        Write-Host '       count right as the map appears -> DONE' -ForegroundColor Green
+        Write-Host '       still 0/N for ~1 s -> the client''s own delay; paste hook 0x0070/0x0089 lines' -ForegroundColor Yellow
+        Write-Host '       a tab empty or items doubled -> say which tab' -ForegroundColor Red
         Write-Host '  11. A QUEST INTO A FULL BAG (2026-09-17). Mint: quest 1008 completed and the' -ForegroundColor White
         Write-Host '     hat never came. Now the room is counted BEFORE anything moves. Full Equip'
         Write-Host '     tab, Lucas'' letter in Etc, quest 1008 in progress: talk to Lucas.'

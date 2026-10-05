@@ -429,6 +429,20 @@ the ammo's attack - this client names it **`incWAT`** (Ilbi 27), and the first d
 never been compared with a night of real hits; a suspects line naming an honest character is
 the model being low, and log-only is the fix until it is corrected.
 
+**2026-10-04: the Quest Helper's item counts no longer wait for `0x00DC` - tests only.** The
+owner, on The Tree That Grew I: *"the Quest Helper takes a second upon loading into the map for
+the item count to be properly updated"* - `0 / 15 Blue Mushroom Cap`, then `8 / 15`; only items
+in the bag, since kill counts ride in the record. The bag restore and the `0x0089` recount went
+out only in answer to `0x00DC`, which the client sends from inside its own `SetField` handler
+(hook log 2026-10-04 17:11:39: the handler took 465 ms and returned 21 ms after the server had
+the `0x00DC`). On one machine that is 26 ms and invisible; against a server elsewhere it is a
+round trip after the map is on screen - and no local log has the screenshots' character, so
+they came from one. `Session::bag_behind_set_field` now sends the restore, the mesos and the
+recount right behind every `SetField` (login and `go_to_map`), log lines tagged `[behind the
+SetField, before 0x00DC]`; the `0x00DC` copy stays as the safety net until a run confirms it.
+**[L]** that the helper redraws from the live bag (its layout reads the character data; no
+timer in it); **[I]** that the early copy is what the player sees. Plan step 11a.
+
 **2026-10-04: the jump quests - Forest of Patience, Deep Forest of Patience, Construction Site
 B1-B3 - built, tests only.** The owner: *"research on how [they are] suppose to flow, and then
 we're going to implement them."* `research/jump-quests-2026-10-04.md`.

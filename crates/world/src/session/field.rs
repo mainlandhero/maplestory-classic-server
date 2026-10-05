@@ -472,6 +472,37 @@ impl Session {
             .collect()
     }
 
+    /// **The bag, the balance and the Quest Helper's recount, right behind every `SetField`.**
+    ///
+    /// The owner, 2026-10-04, two screenshots on The Tree That Grew I: the Quest Helper read
+    /// `0 / 15 Blue Mushroom Cap` on arrival and `8 / 15` about a second later - only for the
+    /// items in the bag, because the kill counts ride in the record itself.
+    ///
+    /// Until today the bag went out only in answer to the client's `0x00DC`. That is a full
+    /// round trip after the map is on screen: the client sends `0x00DC` from inside its own
+    /// `SetField` handler (the hook log of 2026-10-04 17:11:39 has the handler taking 465 ms
+    /// and returning 21 ms after the server had the `0x00DC`), so on the same machine the
+    /// restore and the recount land within 26 ms of the map and nobody sees it. The screenshots
+    /// came from a server that is not this machine, where that round trip is the network's.
+    ///
+    /// Sent here, the restore is in the same burst as the `SetField` and the client handles it
+    /// the moment the `SetField` handler returns - after the record has rebuilt the empty
+    /// bags, and with the character-data object `0x0089` needs already in place. The keymap,
+    /// the skill-point `0x007C` and `0x0198` have ridden in the same position for weeks.
+    /// **[I]** that the early copy is what the player sees; the run is the test.
+    ///
+    /// **The `0x00DC` copy stays, as the safety net**, until a run shows this one working: the
+    /// restore is mode 5 (a SET into the slot), so the second copy rewrites the same stacks
+    /// and costs packets, not correctness. Every line carries the tag below so the log says
+    /// which copy it was.
+    pub(super) fn bag_behind_set_field(&mut self) -> Vec<Reply> {
+        let mut out = self.restore_bag_and_mesos();
+        for reply in &mut out {
+            reply.what.push_str(" [behind the SetField, before 0x00DC]");
+        }
+        out
+    }
+
 
     /// Move a character to a map and tell the client, persisting the move.
     ///
@@ -681,6 +712,8 @@ impl Session {
         out.extend(self.skill_point_reply(chr));
         // The pet's long-range pickup box, for the same reason. session/pet.rs.
         out.push(self.pet_pickup_range_reply());
+        // The bag and the Quest Helper's recount, without waiting for 0x00DC.
+        out.extend(self.bag_behind_set_field());
         out
     }
 
@@ -1584,5 +1617,47 @@ mod death_cost_tests {
         let _ = revive(&mut s);
         assert_eq!(exp(&s), 1_000);
         assert_eq!(charms(&store, id), 1);
+    }
+}
+
+#[cfg(test)]
+mod bag_behind_set_field_tests {
+    use super::*;
+    use crate::config::Config;
+    use std::sync::Arc;
+    use store::Store;
+
+    /// **The bag and the Quest Helper's recount ride right behind the `SetField`**, on a portal
+    /// walk and on the login alike: the `SetField` first, then the restored stacks, then each
+    /// in-progress quest's record after the last of them - all before any `0x00DC`.
+    #[test]
+    fn the_bag_and_the_recount_follow_every_set_field_without_waiting_for_the_field_entry() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Pebble".to_string(), map_id: 100_000_000, ..Default::default() };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        store.add_item(id, store::InventoryType::Etc, &store::Item::bundle(4_000_001, 8), 100).unwrap();
+        store.start_quest(id, 1008).unwrap();
+        store.create_migration(account, id, 0, 0).unwrap();
+        let mut s = Session::new(store.clone(), Arc::new(Config::default()));
+        s.claim_for_character(id);
+
+        let check = |out: &[Reply], how: &str| {
+            let at = |want: &dyn Fn(&Reply) -> bool| out.iter().position(|r| want(r));
+            let set_field = at(&|r| r.opcode == net::opcode::SET_FIELD).unwrap_or_else(|| panic!("{how}: no SetField"));
+            let stack = at(&|r| r.opcode == net::inventory::INVENTORY_OPERATION && r.what.contains("4000001"))
+                .unwrap_or_else(|| panic!("{how}: the Etc stack is not restored: {:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>()));
+            let last_bag = out.iter().rposition(|r| r.opcode == net::inventory::INVENTORY_OPERATION).unwrap();
+            let record = at(&|r| r.opcode == net::quest::MESSAGE && r.body[1..5] == 1008u32.to_le_bytes())
+                .unwrap_or_else(|| panic!("{how}: no recount for quest 1008"));
+            assert!(set_field < stack && last_bag < record, "{how}: SetField {set_field}, stack {stack}, last bag {last_bag}, record {record}");
+            assert!(out[stack].what.contains("behind the SetField"), "{how}: the log says which copy: {}", out[stack].what);
+        };
+
+        let out = s.handle(&crate::session::CLIENT_MIGRATION_HELLO.to_le_bytes());
+        check(&out, "login");
+        let mut chr = s.claimed_character().unwrap();
+        let out = s.go_to_map(&mut chr, 100_000_000, 0, "a portal walk".to_string());
+        check(&out, "portal walk");
     }
 }

@@ -1401,6 +1401,8 @@ impl Session {
         // The buffs the last channel was holding, re-sent and held here so this channel's tick
         // takes them down. Nothing on a login from character select. session/buffcarry.rs.
         out.extend(self.carry_buffs_in());
+        // The bag and the Quest Helper's recount, without waiting for 0x00DC. session/field.rs.
+        out.extend(self.bag_behind_set_field());
         out
     }
 
