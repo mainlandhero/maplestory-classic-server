@@ -32,11 +32,11 @@ use crate::config::Config;
 /// Pruned 2026-09-06 on the owner's instruction: the per-kind rate setters, `!migsweep`,
 /// `!npcfx`, `!buff`, `!unbuff`, `!buy`, `!locker` and `!kit` are gone.
 const GM_COMMANDS: &str =
-    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !setrates <exp> <meso> <drop> <quest> <party%>, !rates, !announce [message], !job <jobId>, !npcecho [dx], !nx [amount], !lp [amount], !meso [amount], !resetap, !resetsp, !learn [level] | !learn <skillId> <level>, !craft [profession] [level] [mastery], !npcreload [templateId], !hair <hairId>, !face <faceId>, !giftdrop <player> <itemId> [count] [message], !giftall <itemId> [count] [message], !registrationcode, !recoverycode <email|username>, !online, !track <character>, !citizenship [<town> <state|grade|contr> <value>], !help";
+    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !setrates <exp> <meso> <drop> <quest> <party%>, !rates, !announce [message], !job <jobId>, !npcecho [dx], !nx [amount], !lp [amount], !meso [amount], !resetap, !resetsp, !learn [level] | !learn <skillId> <level>, !craft [profession] [level] [mastery], !npcreload [templateId], !hair <hairId>, !face <faceId>, !giftdrop <player> <itemId> [count] [message], !giftall <itemId> [count] [message], !registrationcode, !recoverycode <email|username>, !online, !track <character>, !citizenship [<town> <state|grade|contr> <value>], !skipjq, !help";
 
 /// What a player who is not a GM is shown by `!help`, and all they may run. The owner,
 /// 2026-09-06: *"A player should only be shown commands that they are allowed to execute."*
-const PLAYER_COMMANDS: &str = "Commands: !tool, !scroll, !giftdrop, !rates, !online, !help";
+const PLAYER_COMMANDS: &str = "Commands: !tool, !scroll, !giftdrop, !rates, !online, !skipjq, !help";
 
 /// One packet to send, plus what it is - the label goes in the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -372,6 +372,8 @@ pub struct Session {
     /// A drop with no position at all is refused rather than guessed, because a guessed one
     /// loses the item to a spot the player cannot reach.
     last_position: Option<(i16, i16)>,
+    /// The jump quests' pity timer, as this connection counts it. `session/jumpquest.rs`.
+    jq_clock: crate::jumpquest::PityClock,
     /// The claimed character's name, read once at claim time for [`Session::log_tag`].
     log_name: Option<String>,
     /// The stance and facing this character last reported, `(action << 1) | facing`.
@@ -561,6 +563,9 @@ impl Drop for Session {
         // **Where they stood, as the spawn point they come back in at** - a log off, a dropped
         // socket, a crash, a channel change. First, while the character is still claimed.
         self.remember_spawn_point("the connection closed");
+        // The jump quests' pity timer keeps its row; this writes the last seconds of it.
+        // session/jumpquest.rs.
+        self.flush_jump_quest_time_on_disconnect();
         // **The party, before anything else is torn down**: a dropped socket, a crash, a kill.
         // A channel change is a handover and says nothing here (`handing_over`); a log out
         // already said it. `session/party.rs` `leave_party_on_disconnect`.
@@ -727,6 +732,7 @@ impl Session {
             mp_eater_ready_ms: 0,
             skill_ready_ms: std::collections::HashMap::new(),
             last_position: None,
+            jq_clock: crate::jumpquest::PityClock::default(),
             friend_popups_raised: std::collections::HashMap::new(),
             pending_pet_line: None,
             active_effect_item: 0,
@@ -872,6 +878,9 @@ impl Session {
         self.pet_line_fallback_tick(now_ms);
         // The Community Board turning over at midnight UTC. session/citizenship.rs.
         out.extend(self.board_tick());
+        // The jump quests' pity timer: time on a course, and the reminder past the hour.
+        // session/jumpquest.rs.
+        out.extend(self.jump_quest_pity_tick(now_ms));
         if self.config.chatter_off {
             return out;
         }

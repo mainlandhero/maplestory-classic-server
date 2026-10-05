@@ -113,6 +113,9 @@ impl Session {
             // that queues a gift, and a non-GM typing that is said out loud like any other.
             // crate::giftdrop.
             crate::giftdrop::COMMAND => return self.giftdrop_command(arg, is_gm, text),
+            // The jump quests' way out after an hour on one - the owner, 2026-10-04: it "will
+            // become available to them", so it is everyone's. session/jumpquest.rs.
+            crate::jumpquest::SKIP_COMMAND => return self.skip_jump_quest(),
             "help" => {
                 return self.gm_ack(if is_gm { GM_COMMANDS.to_string() } else { PLAYER_COMMANDS.to_string() })
             }

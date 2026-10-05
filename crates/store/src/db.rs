@@ -282,6 +282,8 @@ impl Store {
         crate::playershop::create_tables(&conn)?;
         // Omok and Match Cards win / tie / loss / points, per character and game. store::minigame.
         crate::minigame::create_tables(&conn)?;
+        // The jump quests' pity timer, one row per character on a course. store::jumpquest.
+        crate::jumpquest::create_tables(&conn)?;
         crate::cash::create_tables(&conn)?;
         // After the three tables that carry item ids exist: rewrite ids the client no longer
         // knows into the ones it does. Idempotent, every open - the live server runs a

@@ -17,6 +17,11 @@
 //! The grant waits for the dismissal so that a disconnect with the box open loses nothing and
 //! gains nothing. The player is still at the top, and their next click rolls again.
 //!
+//! **The pity timer** (the owner, 2026-10-04). A door starts an hour per player, counted while
+//! they are on that course (`store::jumpquest`). Past the hour, a yellow reminder comes every
+//! five minutes, and `!skipjq` takes them out with the course's quest item and nothing else.
+//! Leaving the course any other way ends the run.
+//!
 //! Nothing here authenticates: whoever holds the socket is the player.
 
 use super::{Conversation, Reply, Session};
@@ -51,6 +56,179 @@ impl Session {
             body: net::script::npc_menu(template, text),
             what: format!("ScriptMessage MENU from NPC {template} (jump quest): {why}"),
         }]
+    }
+
+    /// A door sent the player onto a course: a fresh hour - **only for a quest entry**. The
+    /// owner, 2026-10-04: *"The timer will only be active for quest entries, it should not be
+    /// active when the player is completing additional attempts for just the jump quest
+    /// reward."* So the course's quest must be in progress and still want its item; any
+    /// other entry starts no timer and clears a leftover one.
+    fn jq_start_run(&mut self, character_id: u32, map: u32, why: &str) {
+        let Some(goal) = jq::course_goal(map) else { return };
+        let owed = jq::quest_item_owed(self.jq_quest_in_progress(character_id, goal.quest), self.held_count(character_id, goal.item), goal.count);
+        if owed == 0 {
+            let _ = self.store.end_jump_quest(character_id);
+            crate::server::log(&format!(
+                "   jump quest: character {character_id} enters the course to NPC {} ({why}) for the reward only - quest {} is not in progress or already has its item, so no pity timer",
+                goal.npc, goal.quest
+            ));
+            self.jq_clock = jq::PityClock { next_check_ms: self.jq_clock.next_check_ms, ..jq::PityClock::default() };
+            return;
+        }
+        match self.store.start_jump_quest(character_id, goal.npc) {
+            Ok(()) => crate::server::log(&format!(
+                "   jump quest: character {character_id} starts the course to NPC {} ({why}) - the pity timer is at 0 of {} s",
+                goal.npc,
+                jq::PITY_SECS
+            )),
+            Err(e) => crate::server::log(&format!("   jump quest: could not start the pity timer for {character_id}: {e}")),
+        }
+        self.jq_clock = jq::PityClock { last_ms: Some(self.clock_ms), ..jq::PityClock::default() };
+    }
+
+    /// **What this connection counted and had not written yet**, written now - the connection
+    /// is closing. The owner, 2026-10-04: *"The timer should also be kept should the player
+    /// logout or otherwise disconnect"*. The row is kept either way; this saves the last few
+    /// seconds of it.
+    pub(super) fn flush_jump_quest_time_on_disconnect(&mut self) {
+        let mut ms = self.jq_clock.pending_ms;
+        if let Some(last) = self.jq_clock.last_ms {
+            ms += self.clock_ms.saturating_sub(last);
+        }
+        self.jq_clock.pending_ms = 0;
+        self.jq_clock.last_ms = None;
+        if ms < 1_000 {
+            return;
+        }
+        let Some(chr) = self.claimed_character() else { return };
+        if jq::area_of(chr.map_id).is_some() {
+            let _ = self.store.add_jump_quest_time(chr.id, ms / 1_000);
+        }
+    }
+
+    /// The run is over - finished, shown out, skipped, or left some other way.
+    fn jq_end_run(&mut self, character_id: u32, why: &str) {
+        if let Ok(true) = self.store.end_jump_quest(character_id) {
+            crate::server::log(&format!("   jump quest: character {character_id}'s pity timer ends - {why}"));
+        }
+        self.jq_clock = jq::PityClock { next_check_ms: self.jq_clock.next_check_ms, ..jq::PityClock::default() };
+    }
+
+    /// **The pity timer's tick.** Once a second: time on a course is gathered and written every
+    /// ten seconds, and a reminder goes out each time the total earns one. Time in the Cash Shop
+    /// is not counted.
+    ///
+    /// **Off every course the run is over** - a return scroll, a death, a GM warp, or a log in
+    /// that landed in town after a log out on a course. **On another course than the run's**
+    /// (only a GM warp gets there) it is over too. Moving between the steps of the same course
+    /// keeps it: the run is named by the course's goal, which every step of it shares.
+    pub(super) fn jump_quest_pity_tick(&mut self, now_ms: u64) -> Vec<Reply> {
+        if now_ms < self.jq_clock.next_check_ms {
+            return Vec::new();
+        }
+        self.jq_clock.next_check_ms = now_ms + jq::CHECK_MS;
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        if jq::area_of(chr.map_id).is_none() {
+            if !self.jq_clock.cleared {
+                self.jq_end_run(chr.id, &format!("off the course, on map {}", chr.map_id));
+                self.jq_clock.cleared = true;
+            }
+            self.jq_clock.last_ms = None;
+            return Vec::new();
+        }
+        if self.in_cash_shop {
+            self.jq_clock.last_ms = None;
+            return Vec::new();
+        }
+        self.jq_clock.cleared = false;
+        let Some(last) = self.jq_clock.last_ms.replace(now_ms) else { return Vec::new() };
+        self.jq_clock.pending_ms += now_ms.saturating_sub(last);
+        if self.jq_clock.pending_ms < jq::FLUSH_MS {
+            return Vec::new();
+        }
+        let secs = self.jq_clock.pending_ms / 1_000;
+        self.jq_clock.pending_ms -= secs * 1_000;
+        let Ok(Some(run)) = self.store.add_jump_quest_time(chr.id, secs) else { return Vec::new() };
+        // A run for another course: they left that one (only a GM warp gets here).
+        if jq::course_goal(chr.map_id).map(|g| g.npc) != Some(run.goal_npc) {
+            self.jq_end_run(chr.id, &format!("on another course's map {}", chr.map_id));
+            return Vec::new();
+        }
+        let due = jq::notices_due(run.spent_secs);
+        if due <= run.notices {
+            return Vec::new();
+        }
+        let _ = self.store.set_jump_quest_notices(chr.id, due);
+        crate::server::log(&format!(
+            "   jump quest: {} ({}) has spent {} s on the course to NPC {} - reminder {due}, !{} is open",
+            chr.name,
+            chr.id,
+            run.spent_secs,
+            run.goal_npc,
+            jq::SKIP_COMMAND
+        ));
+        self.notice(jq::reminder_text(run.spent_secs))
+    }
+
+    /// **`!skipjq`.** Past the hour on the course they are on: the quest item that course's
+    /// quest still wants (nothing else), out to the town, the run over. Before it, how long is
+    /// left. Always answers.
+    pub(super) fn skip_jump_quest(&mut self) -> Vec<Reply> {
+        let Some(mut chr) = self.claimed_character() else { return Vec::new() };
+        let Some(goal) = jq::course_goal(chr.map_id) else {
+            return self.notice(format!("!{} only works on a jump quest.", jq::SKIP_COMMAND));
+        };
+        let run = match self.store.jump_quest_run(chr.id) {
+            Ok(Some(r)) if r.goal_npc == goal.npc => r,
+            _ => {
+                return self.notice(
+                    concat!(
+                        "There is no jump quest timer running for you here. It starts when Shane, the Mysterious Statue or ",
+                        "the Ticket Gate sends you in while you are on this course's quest."
+                    )
+                    .to_string(),
+                )
+            }
+        };
+        let spent = run.spent_secs + self.jq_clock.pending_ms / 1_000;
+        if spent < jq::PITY_SECS {
+            return self.notice(jq::not_yet_text(spent));
+        }
+        let owed = jq::quest_item_owed(self.jq_quest_in_progress(chr.id, goal.quest), self.held_count(chr.id, goal.item), goal.count);
+        let mut out = Vec::new();
+        if owed > 0 {
+            let tab = self.config.tab_for(goal.item).or_else(|| store::InventoryType::for_item(goal.item)).unwrap_or(store::InventoryType::Etc);
+            let short = match self.store.bag(chr.id) {
+                Ok(bag) => crate::questroom::shortfall(&bag, &[(goal.item, owed, tab)], &[], |id| self.config.shops.max_stack(id)),
+                Err(_) => Vec::new(),
+            };
+            if !short.is_empty() {
+                return self.notice(format!("{} Then type !{} again.", crate::questroom::refusal_text(&short), jq::SKIP_COMMAND));
+            }
+            match self.give_item(goal.item, owed, "jump quest skipped") {
+                Ok((_, replies)) => {
+                    out.extend(replies);
+                    out.push(self.item_chat_line(goal.item, i64::from(owed)));
+                }
+                Err(why) => {
+                    crate::server::log(&format!("   jump quest: !skipjq could not give {owed} x {} to {}: {why}", goal.item, chr.id));
+                    return self.notice(format!("The quest item could not be given ({why}). You are still on the jump quest."));
+                }
+            }
+        }
+        crate::server::log(&format!(
+            "   jump quest: {} ({}) skips the course to NPC {} after {spent} s - quest item {} x{owed}, no prizes",
+            chr.name, chr.id, goal.npc, goal.item
+        ));
+        self.jq_end_run(chr.id, "skipped with !skipjq");
+        self.conversation = None;
+        out.extend(self.jq_land(&mut chr, jq::goal_landing(goal), format!("jump quest: !{} from NPC {}'s course", jq::SKIP_COMMAND, goal.npc)));
+        out.extend(self.notice(if owed > 0 {
+            "You left the jump quest. You were given its quest item; the other rewards stay at the top.".to_string()
+        } else {
+            "You left the jump quest. The other rewards stay at the top.".to_string()
+        }));
+        out
     }
 
     fn jq_quest_in_progress(&self, character_id: u32, quest: u32) -> bool {
@@ -264,6 +442,7 @@ impl Session {
             goal.npc,
             if lines.is_empty() { "nothing".to_string() } else { lines.join("; ") }
         ));
+        self.jq_end_run(chr.id, &format!("finished at NPC {}", goal.npc));
         out.extend(self.jq_land(&mut chr, jq::goal_landing(goal), format!("jump quest: done at NPC {}", goal.npc)));
         out
     }
@@ -280,11 +459,19 @@ impl Session {
         let mut chr = self.claimed_character()?;
         let out = match convo.path.as_str() {
             jq::SHANE_PATH if chr.map_id == jq::ELLINIA => match jq::FOREST_COURSES.iter().find(|c| c.line == line) {
-                Some(c) => self.teleport(&mut chr, c.start_map, format!("Shane: the Forest of Patience, {}", c.steps)),
+                Some(c) => {
+                    let out = self.teleport(&mut chr, c.start_map, format!("Shane: the Forest of Patience, {}", c.steps));
+                    self.jq_start_run(chr.id, c.start_map, "Shane");
+                    out
+                }
                 None => Vec::new(),
             },
             jq::STATUE_PATH if chr.map_id == jq::SLEEPYWOOD => match jq::DEEP_FOREST_COURSES.iter().find(|c| c.line == line) {
-                Some(c) => self.teleport(&mut chr, c.start_map, format!("the Mysterious Statue: the Deep Forest, {}", c.steps)),
+                Some(c) => {
+                    let out = self.teleport(&mut chr, c.start_map, format!("the Mysterious Statue: the Deep Forest, {}", c.steps));
+                    self.jq_start_run(chr.id, c.start_map, "the Mysterious Statue");
+                    out
+                }
                 None => Vec::new(),
             },
             jq::JAKE_PATH if chr.map_id == jq::TICKET_BOOTH => match jq::TICKETS.into_iter().find(|t| t.line == line) {
@@ -359,6 +546,7 @@ impl Session {
         let mut out = self.take_items(chr.id, store::InventoryType::Etc, t.item, 1);
         out.push(self.item_chat_line(t.item, -1));
         out.extend(self.teleport(chr, t.area_one, format!("the Ticket Gate: the {}", t.floor)));
+        self.jq_start_run(chr.id, t.area_one, "the Ticket Gate");
         out
     }
 
@@ -379,6 +567,7 @@ impl Session {
         }
         let mut chr = self.claimed_character()?;
         let area = jq::area_of(chr.map_id)?;
+        self.jq_end_run(chr.id, &format!("NPC {} showed them out", area.warden()));
         Some(self.jq_land(&mut chr, area.landing(), format!("jump quest: {} shows them out", area.warden())))
     }
 }
@@ -596,15 +785,65 @@ mod tests {
             (10_005_045, jq::CRUMBLING_STATUE, jq::SLEEPYWOOD, "forest00"),
             (10_003_104, jq::EXIT, jq::TICKET_BOOTH, "out01"),
         ] {
-            let (_, mut s, _) = standing(map, warden, (0, 0), 30);
+            let (store, mut s, id) = standing(map, warden, (0, 0), 30);
+            let goal = jq::course_goal(map).unwrap().npc;
+            store.start_jump_quest(id, goal).unwrap();
             let _ = s.handle(&click());
             let _ = s.handle(&answer(net::script::SCRIPT_TYPE_YES_NO, net::script::SCRIPT_ACTION_NO));
             assert_eq!(map_of(&s), map, "No stays");
+            assert!(store.jump_quest_run(id).unwrap().is_some(), "No keeps the hour running");
             let _ = s.handle(&click());
             let out = s.handle(&answer(net::script::SCRIPT_TYPE_YES_NO, net::script::SCRIPT_ACTION_YES));
             assert_eq!(map_of(&s), town, "{warden}");
             assert!(out.iter().any(|r| r.what.starts_with("SetField") && r.what.contains(&format!("(portal {portal})"))), "{warden}");
+            assert_eq!(store.jump_quest_run(id).unwrap(), None, "{warden} stops the timer");
+            let base = s.clock_ms;
+            let _ = s.tick(base + 1_000);
+            let _ = s.tick(base + 60_000);
+            assert_eq!(store.jump_quest_run(id).unwrap(), None, "and nothing is counted in town");
         }
+    }
+
+    /// **The hour carries across the steps of one course.** The owner, 2026-10-04: *"when the
+    /// player transitions from one stage of the jump quest to the next (but still for the same
+    /// quest...) the timer is persisted throughout those maps"*. Deep Forest step 3 to step 4
+    /// through the `in00` portal (a map change like any other): the same run, the time adding
+    /// up across both, and the reminder still due on step 4.
+    #[test]
+    fn the_hour_carries_across_the_steps_of_one_course() {
+        let (store, mut s, id) = standing(10_005_042, jq::CRUMBLING_STATUE, (0, 0), 50);
+        store.start_jump_quest(id, jq::BLUE_PILE).unwrap();
+        let base = s.clock_ms;
+        let _ = s.tick(base + 1_000);
+        let _ = s.tick(base + 1_800_000 + 1_000);
+        assert_eq!(store.jump_quest_run(id).unwrap().unwrap().spent_secs, 1_800, "half an hour on step 3");
+        let mut chr = s.claimed_character().unwrap();
+        let _ = s.go_to_map(&mut chr, 10_005_043, 0, "in00 to step 4".to_string());
+        let _ = s.tick(base + 1_802_000);
+        let reminder = notices(&s.tick(base + 3_611_000));
+        let run = store.jump_quest_run(id).unwrap().unwrap();
+        assert_eq!((run.goal_npc, run.spent_secs), (jq::BLUE_PILE, 3_610), "one run, both steps' time");
+        assert_eq!(reminder.len(), 1, "the hour is up on step 4: {reminder:?}");
+    }
+
+    /// **Off the course, the server stops keeping track** - including a log in that lands in
+    /// town with a run left over from a log out on a course, and a GM warp onto another course.
+    #[test]
+    fn a_run_is_dropped_off_the_course_and_on_another_course() {
+        let (store, mut s, id) = standing(jq::SLEEPYWOOD, jq::MYSTERIOUS_STATUE, (1061, 255), 50);
+        store.start_jump_quest(id, jq::WHITE_PILE).unwrap();
+        let _ = s.tick(s.clock_ms + 1_000);
+        assert_eq!(store.jump_quest_run(id).unwrap(), None, "logged in off the course: the leftover run is gone");
+
+        let (store, mut s, id) = standing(10_005_044, jq::CRUMBLING_STATUE, (0, 0), 50);
+        store.start_jump_quest(id, jq::WHITE_PILE).unwrap();
+        let base = s.clock_ms;
+        let _ = s.tick(base + 1_000);
+        let mut chr = s.claimed_character().unwrap();
+        let _ = s.go_to_map(&mut chr, 10_003_100, 0, "a GM warp to B1".to_string());
+        let _ = s.tick(base + 2_000);
+        let _ = s.tick(base + 15_000);
+        assert_eq!(store.jump_quest_run(id).unwrap(), None, "another course is not this one");
     }
 
     /// **Jake and the gate**: too low a level is refused, a short purse is refused, a sale
@@ -635,5 +874,136 @@ mod tests {
         assert!(menu.contains("#L1#") && !menu.contains("#L0#"), "only the held ticket: {menu}");
         let _ = s.handle(&pick(1));
         assert_eq!((map_of(&s), held(&store, id, 4_031_037)), (10_003_103, 0), "B2 Area 1, ticket taken");
+        assert_eq!(store.jump_quest_run(id).unwrap(), None, "not on Shumi's quest: a reward run, no timer");
+    }
+
+    fn chat(text: &str) -> Vec<u8> {
+        let mut b = net::opcode::CLIENT_CHAT.to_le_bytes().to_vec();
+        b.extend_from_slice(&[0u8; 4]);
+        b.extend_from_slice(&(text.len() as u16).to_le_bytes());
+        b.extend_from_slice(text.as_bytes());
+        b.push(3);
+        b
+    }
+
+    fn notices(out: &[Reply]) -> Vec<String> {
+        out.iter()
+            .filter(|r| r.opcode == net::notice::CHAT_NOTICE)
+            .map(|r| {
+                let len = u16::from_le_bytes([r.body[1], r.body[2]]) as usize;
+                String::from_utf8_lossy(&r.body[3..3 + len]).to_string()
+            })
+            .collect()
+    }
+
+    /// **The pity timer.** A door starts the hour; nothing is said before it; at the hour one
+    /// yellow reminder, then one every five minutes and not more often.
+    #[test]
+    fn the_hour_starts_at_the_door_and_the_reminders_come_every_five_minutes_after() {
+        let (store, mut s, id) = standing(jq::SLEEPYWOOD, jq::MYSTERIOUS_STATUE, (1061, 255), 50);
+        store.start_quest(id, 10_007).unwrap();
+        let _ = s.handle(&click());
+        let _ = s.handle(&pick(1));
+        assert_eq!(map_of(&s), 10_005_042);
+        let run = store.jump_quest_run(id).unwrap().unwrap();
+        assert_eq!((run.goal_npc, run.spent_secs), (jq::BLUE_PILE, 0), "the blue course's hour");
+
+        let base = s.clock_ms;
+        assert!(notices(&s.tick(base + 1_000)).is_empty());
+        assert!(notices(&s.tick(base + 3_599_000)).is_empty(), "59:59 - nothing yet");
+        let at_hour = notices(&s.tick(base + 3_610_000));
+        assert_eq!(at_hour.len(), 1, "{at_hour:?}");
+        assert!(at_hour[0].contains("over an hour") && at_hour[0].contains("!skipjq"), "{at_hour:?}");
+        assert!(notices(&s.tick(base + 3_610_000 + 200_000)).is_empty(), "three minutes later: quiet");
+        assert_eq!(notices(&s.tick(base + 3_610_000 + 300_000)).len(), 1, "five minutes after the hour");
+        assert_eq!(store.jump_quest_run(id).unwrap().unwrap().notices, 2, "kept, so a reconnect does not repeat one");
+    }
+
+    /// **Only a quest entry starts the hour.** The owner, 2026-10-04: *"it should not be active
+    /// when the player is completing additional attempts for just the jump quest reward."* No
+    /// quest, a finished quest, or a quest whose item is already held: no timer, and a leftover
+    /// run is cleared. On the quest and still short of the item: the hour starts.
+    #[test]
+    fn only_an_entry_on_the_courses_quest_starts_the_hour() {
+        let goal = jq::goal_for(jq::BLUE_PILE).unwrap();
+        let enter = |s: &mut Session| {
+            let mut chr = s.claimed_character().unwrap();
+            let _ = s.teleport(&mut chr, jq::SLEEPYWOOD, "back to the statue".to_string());
+            let _ = s.handle(&click());
+            let _ = s.handle(&pick(1));
+        };
+        let (store, mut s, id) = standing(jq::SLEEPYWOOD, jq::MYSTERIOUS_STATUE, (1061, 255), 50);
+        store.start_jump_quest(id, jq::CHEST_B3).unwrap();
+        enter(&mut s);
+        assert_eq!(store.jump_quest_run(id).unwrap(), None, "no quest: a reward run, and the leftover is gone");
+
+        store.start_quest(id, goal.quest).unwrap();
+        store.add_item(id, store::InventoryType::Etc, &store::Item::bundle(goal.item, 20), 100).unwrap();
+        enter(&mut s);
+        assert_eq!(store.jump_quest_run(id).unwrap(), None, "the 20 Blue Violas are already held");
+
+        let tab_rows = store.bag_items(id, store::InventoryType::Etc).unwrap();
+        store.remove_item(id, store::InventoryType::Etc, tab_rows[0].slot, Some(5)).unwrap();
+        enter(&mut s);
+        assert_eq!(store.jump_quest_run(id).unwrap().map(|r| r.goal_npc), Some(goal.npc), "15 of 20: a quest entry");
+
+        store.complete_quest(id, goal.quest).unwrap();
+        enter(&mut s);
+        assert_eq!(store.jump_quest_run(id).unwrap(), None, "a finished quest: reward runs only");
+    }
+
+    /// **A disconnect keeps the hour**, the seconds not yet written included.
+    #[test]
+    fn a_disconnect_keeps_the_time_counted_so_far() {
+        let (store, mut s, id) = standing(10_003_101, jq::EXIT, (0, 0), 30);
+        store.start_jump_quest(id, jq::CHEST_B1).unwrap();
+        let base = s.clock_ms;
+        let _ = s.tick(base + 1_000);
+        let _ = s.tick(base + 8_000);
+        assert_eq!(store.jump_quest_run(id).unwrap().unwrap().spent_secs, 0, "7 s gathered, not yet written");
+        drop(s);
+        assert_eq!(store.jump_quest_run(id).unwrap().unwrap().spent_secs, 7, "written as the connection closed, and kept");
+    }
+
+    /// **`!skipjq`**: refused before the hour with what is left; after it, the quest item the
+    /// quest still wants and NOTHING else, out to town, the run over. Off a course it says so.
+    #[test]
+    fn skipjq_after_the_hour_gives_the_quest_item_only_and_leaves() {
+        let goal = jq::goal_for(jq::PINK_PILE).unwrap();
+        let (store, mut s, id) = standing(10_005_040, jq::CRUMBLING_STATUE, (0, 0), 50);
+        store.start_quest(id, goal.quest).unwrap();
+        store.start_jump_quest(id, goal.npc).unwrap();
+
+        let early = notices(&s.handle(&chat("!skipjq")));
+        assert!(early.iter().any(|n| n.contains("60 more minutes")), "{early:?}");
+        assert_eq!(map_of(&s), 10_005_040, "still on the course");
+
+        store.add_jump_quest_time(id, jq::PITY_SECS).unwrap();
+        let out = s.handle(&chat("!skipjq"));
+        assert_eq!(held(&store, id, goal.item), 10, "John's ten Pink Violas");
+        let use_items = store.bag_items(id, store::InventoryType::Use).unwrap();
+        assert!(use_items.is_empty(), "no consumable or scroll: {use_items:?}");
+        assert_eq!(map_of(&s), jq::SLEEPYWOOD);
+        assert!(out.iter().any(|r| r.what.starts_with("SetField") && r.what.contains("(portal forest00)")));
+        assert_eq!(store.jump_quest_run(id).unwrap(), None, "the run is over");
+
+        let off = notices(&s.handle(&chat("!skipjq")));
+        assert!(off.iter().any(|n| n.contains("only works on a jump quest")), "{off:?}");
+    }
+
+    /// Leaving a course any other way - a return scroll, a GM warp - ends the run, so the next
+    /// visit starts a fresh hour rather than inheriting this one.
+    #[test]
+    fn leaving_the_course_any_other_way_ends_the_run() {
+        let (store, mut s, id) = standing(10_003_101, jq::EXIT, (0, 0), 30);
+        store.start_jump_quest(id, jq::CHEST_B1).unwrap();
+        let base = s.clock_ms;
+        let _ = s.tick(base + 1_000);
+        let _ = s.tick(base + 20_000);
+        assert_eq!(store.jump_quest_run(id).unwrap().unwrap().spent_secs, 19, "time on the course counts");
+        let mut chr = s.claimed_character().unwrap();
+        let _ = s.teleport(&mut chr, jq::ELLINIA, "a return scroll".to_string());
+        let _ = s.tick(base + 22_000);
+        assert_eq!(store.jump_quest_run(id).unwrap(), None);
     }
 }

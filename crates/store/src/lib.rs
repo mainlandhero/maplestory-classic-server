@@ -42,6 +42,7 @@ pub mod db;
 pub mod fieldreturn;
 pub mod spawnpoint;
 pub mod inventory;
+pub mod jumpquest;
 pub mod keymap;
 pub mod announcement;
 pub mod killstats;

@@ -460,6 +460,19 @@ we're going to implement them."* `research/jump-quests-2026-10-04.md`.
   box (`killstats::note_jump_quest`, row `"jq"`).
 * **Guards.** A goal clicked from more than 600 px across or 300 px up or down gives nothing.
   A full bag gives nothing and leaves the player at the top.
+* **The pity timer** (the owner, the same day).
+  * **Starts:** an hour per player, started by the door - **only for a quest entry**, meaning
+    the course's quest is in progress and still short of its item. A run for the reward alone
+    has no timer.
+  * **Counts:** only time on that course while online. It is kept in `jump_quest_runs`
+    (`store::jumpquest`), so a log out, a disconnect or a channel change keeps it; the last
+    seconds are written when the connection closes.
+  * **At the hour:** a yellow reminder, then one every 5 minutes.
+  * **`!skipjq`** (public) then takes the player out with the quest item only - no Use, no
+    Scroll. Before the hour it says how long is left.
+  * **Ends:** finishing, a warden, `!skipjq` or leaving the course any other way. That covers
+    a log in that lands in town after a log out on a course, and a GM warp onto another
+    course. Moving between the steps of one course keeps the same run.
 * **Unmeasured:** whether a same-map press-up portal (B1 Area 1 has thirteen) sends the server
   anything at all. Plan step 50.
 

@@ -182,6 +182,76 @@ pub fn goal_for(npc: u32) -> Option<&'static Goal> {
     GOALS.iter().find(|g| g.npc == npc)
 }
 
+/// **The goal at the end of the course `map` is part of.** An area's courses are runs of
+/// consecutive maps, each ending at its goal's map, so it is the first goal of the same area
+/// at or after `map`. `None` outside the 22 maps.
+pub fn course_goal(map: u32) -> Option<&'static Goal> {
+    let area = area_of(map)?;
+    GOALS.iter().filter(|g| area_of(g.map) == Some(area) && g.map >= map).min_by_key(|g| g.map)
+}
+
+/// **The pity timer.** The owner, 2026-10-04: *"for all of the jump quests, start a 1 hour timer
+/// (per player), this is the pity timer. When the player has expended all 1 hour of it, a yellow
+/// notice text in chat will remind them every 5 minute that they have spent over an hour on
+/// this jump quest, `!skipjq` will become available to them which removes them from the jump
+/// quest instance, gives them the jump quest quest item only without the rewards themselves
+/// such as consumable and scroll."*
+///
+/// The hour starts when a door (Shane, the Statue, the Ticket Gate) sends the player in, and
+/// counts only time spent on that course while online (`store::jumpquest`). It ends when they
+/// finish, leave by a warden, leave any other way, or skip.
+pub const PITY_SECS: u64 = 3_600;
+/// One reminder at the hour, then one every five minutes.
+pub const REMIND_SECS: u64 = 300;
+/// The command, typed `!skipjq`. Open to everyone.
+pub const SKIP_COMMAND: &str = "skipjq";
+
+/// How many reminders `spent` seconds have earned: none before the hour, one at it, one more
+/// every [`REMIND_SECS`] after.
+pub fn notices_due(spent_secs: u64) -> u32 {
+    if spent_secs < PITY_SECS {
+        return 0;
+    }
+    u32::try_from(1 + (spent_secs - PITY_SECS) / REMIND_SECS).unwrap_or(u32::MAX)
+}
+
+/// The yellow reminder.
+pub fn reminder_text(spent_secs: u64) -> String {
+    format!(
+        "You have spent over an hour on this jump quest ({} minutes). Type !{SKIP_COMMAND} to leave it with its quest item - \
+         the other rewards stay at the top.",
+        spent_secs / 60
+    )
+}
+
+/// **This connection's share of the pity timer**: when it last looked, the time it has
+/// counted and not yet written, and whether it has seen the character on a course. The total
+/// lives in `store::jumpquest`; this only batches the writes, one per [`FLUSH_MS`].
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PityClock {
+    pub next_check_ms: u64,
+    pub last_ms: Option<u64>,
+    pub pending_ms: u64,
+    /// Set once this connection has ended any run while the character is off every course, so
+    /// it does that once per stay off a course - a log in on a town map after logging out on a
+    /// course included - rather than once a second.
+    pub cleared: bool,
+}
+
+/// How often the tick looks, and how much time it gathers before writing it.
+pub const CHECK_MS: u64 = 1_000;
+pub const FLUSH_MS: u64 = 10_000;
+
+/// What `!skipjq` says before the hour is up.
+pub fn not_yet_text(spent_secs: u64) -> String {
+    let left = PITY_SECS.saturating_sub(spent_secs);
+    let minutes = left.div_ceil(60).max(1);
+    format!(
+        "!{SKIP_COMMAND} becomes available after an hour on a jump quest. {minutes} more minute{} to go.",
+        if minutes == 1 { "" } else { "s" }
+    )
+}
+
 /// **Shane opens the door to anyone who has taken Sabitrama's first errand** (10509, in
 /// progress or done). A stranger gets his `d0`: *"I can't let some stranger like you enter my
 /// property."*
@@ -358,6 +428,46 @@ mod tests {
         let course_items: Vec<u32> = FOREST_COURSES.iter().chain(&DEEP_FOREST_COURSES).map(|c| c.item).collect();
         let goal_items: Vec<u32> = GOALS.iter().filter(|g| area_of(g.map) != Some(Area::ConstructionSite)).map(|g| g.item).collect();
         assert_eq!(course_items, goal_items, "each course is hunted for its goal's item");
+    }
+
+    /// Every course map belongs to the goal at its end, and every door sends the player onto a
+    /// course whose goal is the one it advertises.
+    #[test]
+    fn every_course_map_belongs_to_the_goal_at_its_end() {
+        let expect = [
+            (10_002_040..=10_002_041, FLOWER_PILE),
+            (10_002_042..=10_002_044, HERB_PILE),
+            (10_005_040..=10_005_041, PINK_PILE),
+            (10_005_042..=10_005_043, BLUE_PILE),
+            (10_005_044..=10_005_046, WHITE_PILE),
+            (10_003_100..=10_003_102, CHEST_B1),
+            (10_003_103..=10_003_105, CHEST_B2),
+            (10_003_106..=10_003_109, CHEST_B3),
+        ];
+        for (maps, npc) in expect {
+            for m in maps {
+                assert_eq!(course_goal(m).map(|g| g.npc), Some(npc), "map {m}");
+            }
+        }
+        assert_eq!(course_goal(ELLINIA), None);
+        for c in FOREST_COURSES.iter().chain(&DEEP_FOREST_COURSES) {
+            assert_eq!(course_goal(c.start_map).map(|g| g.item), Some(c.item), "{}", c.steps);
+        }
+        assert_eq!(TICKETS.map(|t| course_goal(t.area_one).map(|g| g.npc)), [Some(CHEST_B1), Some(CHEST_B2), Some(CHEST_B3)]);
+    }
+
+    /// The owner's hour, then one reminder every five minutes.
+    #[test]
+    fn the_pity_timer_reminds_at_the_hour_and_every_five_minutes_after() {
+        assert_eq!(notices_due(0), 0);
+        assert_eq!(notices_due(3_599), 0);
+        assert_eq!(notices_due(3_600), 1);
+        assert_eq!(notices_due(3_899), 1);
+        assert_eq!(notices_due(3_900), 2);
+        assert_eq!(notices_due(3_600 + 300 * 10), 11);
+        assert!(reminder_text(3_900).contains("65 minutes") && reminder_text(3_900).contains("!skipjq"));
+        assert!(not_yet_text(0).contains("60 more minutes"), "{}", not_yet_text(0));
+        assert!(not_yet_text(3_559).contains("1 more minute "), "{}", not_yet_text(3_559));
     }
 
     /// The quest gets what it still wants, while it is in progress, and never more.

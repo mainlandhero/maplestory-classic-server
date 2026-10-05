@@ -274,3 +274,8 @@ The client enforces these itself. `session::summonsack` already relies on bit `0
   Companion's Magic Box's use and scroll slots. *"the chest also gives jump quest rewards in
   addition to the quest item."*
 * **Jake:** B1/B2/B3 at level 20/30/40 for 500/1 200/2 000 mesos.
+* **The pity timer:** an hour per player for a **quest entry** only (*"it should not be active
+  when the player is completing additional attempts for just the jump quest reward"*).
+  * It is kept across a log out or disconnect.
+  * After the hour, a yellow reminder comes every 5 minutes.
+  * `!skipjq` then leaves with the quest item and nothing else.
