@@ -2645,7 +2645,8 @@
           c. the pile of flowers at the top of step 2: a box lists a Use prize and a Scroll (and
              the Pink Anthurium while 10509 is in progress). OK -> grey chat lines, the items in
              the bag, back in Ellinia beside Shane. No box, or nothing given -> paste the
-             "jump quest:" lines from world-ch0.log
+             "jump quest:" lines from world-ch0.log. Click it from a few steps away (more than
+             250 px): "Go a little closer", nothing given -> right
           d. Sleepywood, the Mysterious Statue: a menu of three flowers -> Deep Forest step 1 / 3
              / 5. The Crumbling Statue at the bottom: Yes -> Sleepywood beside the statue. With
              John's quest 10006 in progress the pink pile (top of step 2) gives 10 Pink Violas
@@ -6632,7 +6633,7 @@ function Show-TestPlan {
         Write-Host '  50. JUMP QUESTS (2026-10-04, NEVER ON A SCREEN): every step logs a "jump quest:" line' -ForegroundColor White
         Write-Host '       a. Shane (Ellinia, top): stranger to quest 10509 -> his refusal; with 10509 -> free menu, step 1 or step 3' -ForegroundColor Cyan
         Write-Host '       b. Louis: Yes -> Ellinia beside Shane   c. pile of flowers (top of step 2): box lists a Use + a Scroll' -ForegroundColor Cyan
-        Write-Host '          (+ Pink Anthurium on 10509); OK -> items + chat lines, back beside Shane' -ForegroundColor Cyan
+        Write-Host '          (+ Pink Anthurium on 10509); OK -> items + chat lines, back beside Shane; from >250 px: "Go a little closer"' -ForegroundColor Cyan
         Write-Host '       d. Sleepywood statue: 3 flowers -> Deep Forest step 1/3/5; Crumbling Statue -> back; 10006 -> 10 Pink Violas' -ForegroundColor Cyan
         Write-Host '       e. Booth: Jake sells B1/B2/B3 (Lv 20/30/40, 500/1200/2000); the gate takes one -> Area 1; Exit -> booth' -ForegroundColor Cyan
         Write-Host '       f. B1 press-up portals within the map move you -> fine; a hang -> paste the last world-ch0.log lines' -ForegroundColor Yellow

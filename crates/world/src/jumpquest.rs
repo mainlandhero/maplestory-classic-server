@@ -296,14 +296,16 @@ pub const SLOTS: [Slot; 2] = [
 /// mob, item or map id in this client: mob templates are four digits, maps eight.
 pub const STATS_ROW: u32 = 999_000_001;
 
-/// **How close a player must stand to take what is at the top.** The reference refuses a click
-/// from 225-275 px away; these are looser, because the point is only that the bottom of the
-/// step (over 3 000 px below every pile) cannot reach the top.
-pub const REACH_X: i32 = 600;
-pub const REACH_Y: i32 = 300;
+/// **How close a player must stand to take what is at the end of a course**: within 250 px of
+/// the NPC, straight-line, both measured at the feet (the player's last reported position, the
+/// NPC's foothold `cy`). The owner, 2026-10-04: *"It should require the player to be within 250
+/// px of the NPC."* The reference's own checks are 225-275 px, one axis each.
+pub const REACH_PX: i64 = 250;
 
 pub fn within_reach(player: (i16, i16), npc: (i16, i16)) -> bool {
-    (i32::from(player.0) - i32::from(npc.0)).abs() <= REACH_X && (i32::from(player.1) - i32::from(npc.1)).abs() <= REACH_Y
+    let dx = i64::from(player.0) - i64::from(npc.0);
+    let dy = i64::from(player.1) - i64::from(npc.1);
+    dx * dx + dy * dy <= REACH_PX * REACH_PX
 }
 
 /// How many of a goal's quest items to hand over: what the quest still wants, while it is in
@@ -492,9 +494,12 @@ mod tests {
     #[test]
     fn reach_is_a_box_around_the_npc() {
         assert!(within_reach((146, -3626), (146, -3626)));
-        assert!(within_reach((146 + 600, -3626 + 300), (146, -3626)));
+        assert!(within_reach((146 + 250, -3626), (146, -3626)), "250 px across is in");
+        assert!(within_reach((146, -3626 + 250), (146, -3626)), "250 px below is in");
+        assert!(within_reach((146 + 150, -3626 + 200), (146, -3626)), "150 across and 200 down is exactly 250");
+        assert!(!within_reach((146 + 251, -3626), (146, -3626)), "251 px is out");
+        assert!(!within_reach((146 + 180, -3626 + 180), (146, -3626)), "180 and 180 is 255 straight-line: out");
         assert!(!within_reach((-455, 247), (146, -3626)), "Louis's spot at the bottom of step 5");
-        assert!(!within_reach((146 + 601, -3626), (146, -3626)));
     }
 
     #[test]

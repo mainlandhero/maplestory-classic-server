@@ -10,7 +10,8 @@
 //! * **The Ticket Gate**: a menu of the tickets the player holds. One is taken, then they go
 //!   to that floor's Area 1.
 //! * **Louis / the Crumbling Statue / the Exit**: a yes/no, then the town's landing spot.
-//! * **A goal** (a pile, a chest): first a reach check, then the roll and a room check. A box
+//! * **A goal** (a pile, a chest): first a reach check (within 250 px), then the roll and a
+//!   room check. A box
 //!   then says what was found, and **dismissing it** hands everything over and warps the
 //!   player out.
 //!
@@ -781,6 +782,15 @@ mod tests {
         assert!(said(&out).contains("Go a little closer"), "{}", said(&out));
         let _ = s.handle(&answer(0, net::script::SCRIPT_ACTION_YES));
         assert_eq!((held(&store, id, goal.item), map_of(&s)), (0, goal.map), "nothing given, nobody moved");
+
+        // The owner's 250 px: 260 px along the same platform is still too far, 240 px is not.
+        s.last_position = Some((1009 + 260, -3355));
+        let out = s.handle(&click());
+        assert!(said(&out).contains("Go a little closer"), "260 px: {}", said(&out));
+        let _ = s.handle(&answer(0, net::script::SCRIPT_ACTION_YES));
+        s.last_position = Some((1009 + 240, -3355));
+        let out = s.handle(&click());
+        assert!(said(&out).contains("You search the pile of white flowers"), "240 px: {}", said(&out));
     }
 
     /// **The wardens** ask first; No leaves the player where they are, Yes lands them by the

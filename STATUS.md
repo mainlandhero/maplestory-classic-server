@@ -458,7 +458,8 @@ we're going to implement them."* `research/jump-quests-2026-10-04.md`.
     John's 10/20/30 at once, Shumi's coin, roll and sack.
 * **The drops page** lists the reward as **Jump Quest Reward** (badge JQ), counted like the
   box (`killstats::note_jump_quest`, row `"jq"`).
-* **Guards.** A goal clicked from more than 600 px across or 300 px up or down gives nothing.
+* **Guards.** A goal clicked from more than 250 px away, straight-line, gives nothing - *"Go a
+  little closer"* (the owner: *"within 250 px of the NPC"*).
   A full bag gives nothing and leaves the player at the top.
 * **The pity timer** (the owner, the same day).
   * **Starts:** an hour per player, started by the door - **only for a quest entry**, meaning
