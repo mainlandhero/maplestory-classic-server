@@ -377,6 +377,34 @@ pub const SLOTS: [Slot; 2] = [
     Slot { name: "scroll", prizes: &crate::magicbox::SCROLLS },
 ];
 
+/// **Jump Quest Rewards per character per UTC day.** The owner, 2026-10-04: *"Introduce a jump
+/// quest reward limit of 10, similar to the PQ limit. Players will be informed of their limit
+/// when they receive the reward and how many rewards they have left of the day."* Counted by
+/// `store::dailycount` beside the party quest's entries ([`crate::firsttime::DAILY_ENTRIES`]),
+/// so the day turns at the same UTC midnight. Only the [`SLOTS`] prizes count: a course's
+/// quest item, Frod's closeness and the way out are never withheld.
+pub const DAILY_REWARDS: u32 = 10;
+/// The key the rewards are counted under.
+pub const REWARD_COUNT_KEY: &str = "jump_quest_reward";
+
+/// The chat line after a reward: how many are left today. `left` is after this one.
+pub fn rewards_left_text(left: u32) -> String {
+    match left {
+        0 => format!(
+            "That was your last Jump Quest Reward for today ({DAILY_REWARDS} of {DAILY_REWARDS}). More after midnight (UTC)."
+        ),
+        1 => format!("You can receive 1 more Jump Quest Reward today (limit {DAILY_REWARDS} a day)."),
+        n => format!("You can receive {n} more Jump Quest Rewards today (limit {DAILY_REWARDS} a day)."),
+    }
+}
+
+/// The line a box ends with when today's rewards are used up - said instead of a reward.
+pub fn limit_reached_text() -> String {
+    format!(
+        "(You have received all {DAILY_REWARDS} of today's Jump Quest Rewards. They come back at midnight (UTC).)"
+    )
+}
+
 /// The row the drops page's seven-day counts keep the reward under, as though it were a
 /// monster and a finished course a kill - beside the box's own [`crate::magicbox::BOX`]. Not a
 /// mob, item or map id in this client: mob templates are four digits, maps eight.

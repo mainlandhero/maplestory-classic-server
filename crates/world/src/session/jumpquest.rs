@@ -480,7 +480,9 @@ impl Session {
             }
         }
         let owed = jq::quest_item_owed(self.jq_quest_in_progress(chr.id, goal.quest), self.held_count(chr.id, goal.item), goal.count);
-        let prizes: Vec<(&str, crate::magicbox::Prize)> = if goal.prize {
+        // Today's rewards used up: the quest item still, the reward not (`jq::DAILY_REWARDS`).
+        let limited = goal.prize && self.jq_rewards_left(chr.id) == 0;
+        let prizes: Vec<(&str, crate::magicbox::Prize)> = if goal.prize && !limited {
             jq::SLOTS.iter().map(|s| (s.name, crate::magicbox::roll(s, self.rng.next()))).collect()
         } else {
             Vec::new()
@@ -489,7 +491,10 @@ impl Session {
             return refusal;
         }
         let landing = jq::goal_landing(goal);
-        let text = jq::found_text(goal, (owed > 0).then_some((goal.item, owed)), &prizes, jq::town_name(landing));
+        let mut text = jq::found_text(goal, (owed > 0).then_some((goal.item, owed)), &prizes, jq::town_name(landing));
+        if limited {
+            text.push_str(&format!(r"\n\n{}", jq::limit_reached_text()));
+        }
         let path = jq::found_path(goal.npc, &prizes.iter().map(|&(_, p)| p).collect::<Vec<_>>());
         crate::server::log(&format!(
             "   jump quest: {} ({}) reached NPC {} on map {} - quest {} item {} x{owed}, prizes {:?}; handed over when the box closes",
@@ -533,6 +538,55 @@ impl Session {
         Some(self.jq_say(goal.npc, &text, "the bag is full".to_string()))
     }
 
+    /// How many Jump Quest Rewards `character` may still receive today ([`jq::DAILY_REWARDS`]).
+    /// A store that cannot answer reads as none left: a reward withheld is recoverable, a
+    /// limit that silently stopped counting is not.
+    fn jq_rewards_left(&self, character: u32) -> u32 {
+        match self.store.daily_uses_now(character, jq::REWARD_COUNT_KEY) {
+            Ok(used) => jq::DAILY_REWARDS.saturating_sub(used),
+            Err(e) => {
+                crate::server::log(&format!("   jump quest: could not read character {character}'s rewards today ({e}); treating as none left"));
+                0
+            }
+        }
+    }
+
+    /// **Charge one of today's Jump Quest Rewards** for the prizes a box promised, as they are
+    /// handed over - after the room check, so a full bag costs nothing. The prizes to give
+    /// (none when the day's limit was reached since the box opened, or the count could not be
+    /// written) and the chat line that says how many are left - the owner, 2026-10-04: *"Players
+    /// will be informed of their limit when they receive the reward and how many rewards they
+    /// have left of the day"*. No prizes, nothing charged and nothing said.
+    fn jq_charge_reward(
+        &mut self,
+        chr: &net::opcode::Character,
+        prizes: Vec<crate::magicbox::Prize>,
+    ) -> (Vec<crate::magicbox::Prize>, Vec<Reply>) {
+        if prizes.is_empty() {
+            return (prizes, Vec::new());
+        }
+        match self.store.take_daily_uses_now(&[chr.id], jq::REWARD_COUNT_KEY, jq::DAILY_REWARDS) {
+            Ok(Ok(())) => {
+                let left = self.jq_rewards_left(chr.id);
+                crate::server::log(&format!(
+                    "   jump quest: {} ({}) takes a Jump Quest Reward - {left} of {} left today",
+                    chr.name,
+                    chr.id,
+                    jq::DAILY_REWARDS
+                ));
+                (prizes, self.notice(jq::rewards_left_text(left)))
+            }
+            Ok(Err(_)) => {
+                crate::server::log(&format!("   jump quest: {} ({}) reached today's reward limit since the box opened; no reward", chr.name, chr.id));
+                (Vec::new(), self.notice(jq::limit_reached_text()))
+            }
+            Err(e) => {
+                crate::server::log(&format!("   jump quest: could not count {} ({})'s reward ({e}); none given", chr.name, chr.id));
+                (Vec::new(), self.notice("The Jump Quest Reward could not be given just now.".to_string()))
+            }
+        }
+    }
+
     /// **The box at the top was dismissed** - OK or Close alike: hand over what it promised and
     /// what the quest is still owed, then warp out. A bag that filled in between refuses it all
     /// and leaves the player there.
@@ -546,7 +600,7 @@ impl Session {
         if let Some(refusal) = self.jq_room_refusal(&chr, goal, owed, &prizes) {
             return refusal;
         }
-        let mut out = Vec::new();
+        let (prizes, mut out) = self.jq_charge_reward(&chr, prizes);
         let mut lines = Vec::new();
         let mut gained = Vec::new();
         let quest_item = (owed > 0).then_some((goal.item, owed));
@@ -670,8 +724,13 @@ impl Session {
                 "no pet out - the letter is kept".to_string(),
             );
         }
-        let prizes: Vec<(&str, crate::magicbox::Prize)> =
-            jq::SLOTS.iter().map(|s| (s.name, crate::magicbox::roll(s, self.rng.next()))).collect();
+        // Today's rewards used up: the closeness still, the reward not.
+        let limited = self.jq_rewards_left(chr.id) == 0;
+        let prizes: Vec<(&str, crate::magicbox::Prize)> = if limited {
+            Vec::new()
+        } else {
+            jq::SLOTS.iter().map(|s| (s.name, crate::magicbox::roll(s, self.rng.next()))).collect()
+        };
         let plain: Vec<crate::magicbox::Prize> = prizes.iter().map(|&(_, p)| p).collect();
         if let Some(refusal) = self.jq_frod_room_refusal(chr, &plain) {
             return refusal;
@@ -685,7 +744,12 @@ impl Session {
         self.jq_park(jq::FROD, jq::found_path(jq::FROD, &plain), false);
         vec![Reply {
             opcode: net::script::SCRIPT_MESSAGE,
-            body: net::script::npc_say(jq::FROD, &jq::frod_text(&prizes), false, false),
+            body: net::script::npc_say(
+                jq::FROD,
+                &if limited { format!(r"{}\n\n{}", jq::frod_text(&prizes), jq::limit_reached_text()) } else { jq::frod_text(&prizes) },
+                false,
+                false,
+            ),
             what: "ScriptMessage Say from Trainer Frod: the letter, the closeness and the reward".to_string(),
         }]
     }
@@ -718,9 +782,11 @@ impl Session {
         let Some(closeness) = self.add_pet_closeness(jq::PET_PARK_CLOSENESS, "Trainer Frod, for Bartos's letter") else {
             return self.jq_say(jq::FROD, "Hmm, something's off. Keep the letter and talk to me again.", "the closeness was not stored".to_string());
         };
+        let (prizes, told) = self.jq_charge_reward(&chr, prizes);
         let mut out = self.take_items(chr.id, store::InventoryType::Etc, jq::BARTOS_LETTER, 1);
         out.push(self.item_chat_line(jq::BARTOS_LETTER, -1));
         out.extend(closeness);
+        out.extend(told);
         let mut gained = Vec::new();
         for &(id, q) in &prizes {
             if let Ok((_, replies)) = self.give_item(id, q, "Trainer Frod") {
@@ -1197,6 +1263,46 @@ mod tests {
         assert!(out.iter().any(|r| r.what.starts_with("SetField") && r.what.contains("(portal forest00)")), "the Statue's landing");
         assert!(out.iter().any(|r| r.opcode == net::stats::USER_EFFECT_LOCAL), "chat lines for what was given");
         assert!(s.conversation.is_none());
+    }
+
+    /// **Ten Jump Quest Rewards a day, per character, apart from the party quest's ten** (the
+    /// owner, 2026-10-04). The tenth reward is handed over with a chat line saying it was the
+    /// last; past it the box says so, rolls nothing and charges nothing - while the course's quest
+    /// item is still handed over. The PQ's own count never moves.
+    #[test]
+    fn jump_quest_rewards_stop_at_ten_a_day_and_say_how_many_are_left() {
+        let chest = jq::goal_for(jq::CHEST_B2).unwrap();
+        let (store, mut s, id) = standing(chest.map, chest.npc, (107, 547), 40);
+        for _ in 0..8 {
+            store.take_daily_uses_now(&[id], jq::REWARD_COUNT_KEY, jq::DAILY_REWARDS).unwrap().unwrap();
+        }
+        let _ = s.handle(&click());
+        let out = s.handle(&answer(0, net::script::SCRIPT_ACTION_YES));
+        assert!(notices(&out).iter().any(|n| n.contains("1 more Jump Quest Reward today")), "the ninth: {:?}", notices(&out));
+
+        let mut chr = s.claimed_character().unwrap();
+        let _ = s.go_to_map(&mut chr, chest.map, 0, "back to the chest".to_string());
+        s.last_position = Some((107, 547));
+        let _ = s.handle(&click());
+        let out = s.handle(&answer(0, net::script::SCRIPT_ACTION_YES));
+        assert!(notices(&out).iter().any(|n| n.contains("That was your last Jump Quest Reward for today")), "{:?}", notices(&out));
+        assert_eq!(store.daily_uses_now(id, jq::REWARD_COUNT_KEY).unwrap(), 10);
+
+        // The eleventh: the quest item still, the reward not.
+        let mut chr = s.claimed_character().unwrap();
+        let _ = s.go_to_map(&mut chr, chest.map, 0, "back to the chest".to_string());
+        s.last_position = Some((107, 547));
+        store.start_quest(id, chest.quest).unwrap();
+        let box_text = said(&s.handle(&click()));
+        assert!(box_text.contains("all 10 of today's Jump Quest Rewards") && !box_text.contains("#bScroll#k"), "{box_text}");
+        assert!(box_text.contains(&format!("#t{}#", chest.item)), "the quest item is never withheld: {box_text}");
+        let (_, prizes) = jq::parse_found_path(&s.conversation.as_ref().unwrap().path).unwrap();
+        assert!(prizes.is_empty());
+        let out = s.handle(&answer(0, net::script::SCRIPT_ACTION_YES));
+        assert_eq!(held(&store, id, chest.item), 1);
+        assert!(notices(&out).iter().all(|n| !n.contains("more Jump Quest")), "nothing taken, nothing to count");
+        assert_eq!(store.daily_uses_now(id, jq::REWARD_COUNT_KEY).unwrap(), 10, "not charged past the limit");
+        assert_eq!(store.daily_uses_now(id, crate::firsttime::ENTRY_COUNT_KEY).unwrap(), 0, "the PQ's count is separate");
     }
 
     /// Without the quest a pile still gives its prizes and no quest item; so does a chest (the
