@@ -234,6 +234,9 @@ mod tests {
         let out = s.handle(&quest_request(2, SHELLS));
         let ops: Vec<&Vec<u8>> = out.iter().filter(|r| r.opcode == net::inventory::INVENTORY_OPERATION).map(|r| &r.body).collect();
         assert_eq!(ops, vec![&net::inventory::inventory_removed(4, 1), &net::inventory::inventory_quantity(4, 2, 15)], "{out:?}");
+        // And one chat line for the whole hand-in, across both slots (the owner, 2026-10-04).
+        let lines: Vec<&Vec<u8>> = out.iter().filter(|r| r.opcode == net::stats::USER_EFFECT_LOCAL && r.body[0] == net::message::EFFECT_ITEM_GAINED).map(|r| &r.body).collect();
+        assert_eq!(lines, vec![&net::message::item_lost_in_chat(SHELL, 10)], "{out:?}");
         let left: Vec<(u16, u16)> = store.bag_items(id, etc).unwrap().iter().map(|r| (r.slot, r.item.kind.quantity())).collect();
         assert_eq!(left, vec![(2, 15)]);
     }

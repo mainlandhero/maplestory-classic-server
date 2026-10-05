@@ -409,6 +409,8 @@ impl Session {
         }
         out.extend(self.quest_cost_replies(finished, charged));
         out.extend(self.apply_quest_completion_rewards(finished, chosen));
+        // The second-job test's 30 marbles - its data asks for them and never takes them.
+        out.extend(self.take_test_marbles(finished));
         // `Act.1.citizenshipContr` - Contribution, and a grade-up when it crosses one.
         // After the rewards, so the item and EXP lines come first. `session/citizenship.rs`.
         out.extend(self.bank_citizenship_contribution(finished));
@@ -631,6 +633,18 @@ impl Session {
                 r.what = format!("{} - {take} x {item_id} taken back by a quest ({held} -> {})", r.what, held - take);
                 out.push(r);
             }
+        }
+        // **`<Item> x<n> has been lost.` in the chat**, the twin of the reward's "earned" line
+        // (the owner, 2026-10-04: *"the server should also show that the player has lost those
+        // items in chat, similar to the items that they gain from a quest"*). One line for the
+        // whole take, however many slots it came out of, and only for what actually left.
+        let taken = count - left;
+        if taken > 0 {
+            out.push(Reply {
+                opcode: net::stats::USER_EFFECT_LOCAL,
+                body: net::message::item_lost_in_chat(item_id, u32::from(taken)),
+                what: format!("UserEffectLocal item line: {item_id} x{taken} handed in - '... has been lost.', chat category 6, grey"),
+            });
         }
         if left > 0 {
             // Not an error. The quest is completing either way; say so and carry on.
@@ -1702,10 +1716,48 @@ impl Session {
                     what: format!("ScriptMessage AskYesNo from examiner {template}: back into the test area? - {question:?}"),
                 }])
             }
+            // **All thirty in hand: the talk IS the hand-in** (the owner, 2026-10-04: *"when the
+            // player hands in the 30 marbles, they should be immediately accepting the quest that
+            // gives them the proof of hero"*). It used to only point at the quest window. Now it
+            // runs the client's own turn-in - `0x0151` action 2 for the Test of Qualification -
+            // through the one path every turn-in takes, so the record, the experience, the
+            // marbles leaving (`take_test_marbles`) and `Act.1.nextQuest` starting *Proof of
+            // Qualification* with its Proof all happen in this one click, and nothing is
+            // written twice: the store's `InProgress` guard still decides.
+            crate::secondjob::ExaminerTalk::HandIn(_) => {
+                let mut body = vec![net::script::QUEST_ACTION_COMPLETE];
+                body.extend_from_slice(&branch.chain.quests[2].to_le_bytes());
+                body.extend_from_slice(&template.to_le_bytes());
+                body.extend_from_slice(&u32::MAX.to_le_bytes()); // no reward pick
+                crate::server::log(&format!(
+                    "   second-job test: {} talks to {} holding {marbles} marbles - handing the test in",
+                    chr.name, branch.examiner_name
+                ));
+                Some(self.on_quest_request(&body))
+            }
             crate::secondjob::ExaminerTalk::NothingMoreToTeach(line)
             | crate::secondjob::ExaminerTalk::NotReady(line)
-            | crate::secondjob::ExaminerTalk::HandIn(line)
             | crate::secondjob::ExaminerTalk::Passed(line) => Some(self.instructor_says(template, &line)),
+        }
+    }
+
+    /// **The Test of Qualification takes its marbles on the turn-in.** All four test quests
+    /// (`20002`/`20102`/`20202`/`20302`) gate completion on `Check.1.item` = 30 of the branch's
+    /// marble and carry **no** `Act.1.item` take - the take belonged to the end script
+    /// (`q20102e`) this client does not ship. So the marbles stayed in the bag after the test
+    /// was passed (the owner, 2026-10-04: *"when the player hands in the 30 marbles"*). Nothing
+    /// for any other quest. Called on a recorded completion only.
+    fn take_test_marbles(&mut self, quest_id: u32) -> Vec<Reply> {
+        let Some(branch) = crate::secondjob::BRANCHES.iter().find(|b| b.chain.quests[2] == quest_id) else {
+            return Vec::new();
+        };
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let marble = branch.chain.marble_item;
+        let Some(inv) = store::InventoryType::for_item(marble) else { return Vec::new() };
+        let count = u16::try_from(branch.chain.marble_count_items).unwrap_or(u16::MAX);
+        match self.take_quest_item(chr.id, inv, marble, count) {
+            Ok(replies) => replies,
+            Err(e) => self.notice(format!("The test's {} could not be taken: {e}", crate::secondjob::MARBLE_ITEM_NAME)),
         }
     }
 

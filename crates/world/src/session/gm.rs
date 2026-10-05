@@ -1212,34 +1212,13 @@ impl Session {
     /// 10, so a job id reads an empty pool and greys the `+` button with nothing on screen to
     /// say why.
     pub(super) fn job_change_reply(&self, was: u16, job: u16) -> Reply {
-        let level = self.claimed_character().map(|c| c.level).unwrap_or(0);
-        let mut pools = Vec::new();
-        for tier in [
-            crate::skillpoints::Tier::First,
-            crate::skillpoints::Tier::Second,
-            crate::skillpoints::Tier::Third,
-        ] {
-            let amount = match tier {
-                // The first-job pool past 30 depends on the job's book - session/skills.rs.
-                crate::skillpoints::Tier::First => {
-                    crate::skillpoints::first_job_entitlement(level, self.first_job_book_points(job))
-                }
-                _ => crate::skillpoints::entitlement(tier, level),
-            };
-            if amount > 0 {
-                pools.push(net::stats::SpPool {
-                    job_level: net::stats::tier_for_job(match tier {
-                        // A *representative* job per tier, because `tier_for_job` is what
-                        // the wire wants and it is derived from a job id. 111 is a Crusader;
-                        // any third job would do, since all ten end in 1 and map to tier 3.
-                        crate::skillpoints::Tier::First => 100,
-                        crate::skillpoints::Tier::Second => 110,
-                        crate::skillpoints::Tier::Third => 111,
-                    }),
-                    amount,
-                });
-            }
-        }
+        // **What is left, not what was ever owed** - `skills::sp_pools`, the same table every
+        // refresh sends. This used to send the entitlement, so a second advancement showed a
+        // level-31 Magician 64 first-job points when 3 were left (the owner, 2026-10-04).
+        let pools = match self.claimed_character() {
+            Some(chr) => self.sp_pools(chr.id, chr.level, job),
+            None => Vec::new(),
+        };
         let owed: Vec<String> =
             pools.iter().map(|p| format!("tier {} = {}", p.job_level, p.amount)).collect();
 

@@ -268,27 +268,7 @@ impl Session {
     /// others. Without it the database is right and the screen is wrong, which is the failure
     /// this server has shipped twice.
     pub(super) fn skill_point_reply(&self, chr: &net::opcode::Character) -> Vec<Reply> {
-        let spent = self.store.skill_points_spent_by_tier(chr.id).unwrap_or_default();
-        // Only pools the character has actually ADVANCED into. `pool_entitlement` returns a
-        // level's worth for any tier - `entitlement(First, 12)` is 7 whether or not the
-        // character is a first job yet - so without this gate a beginner refreshed after a
-        // SetField would be handed 7 first-job points they never earned. `tier_for_job` is
-        // the job's own pool (0 beginner, 1 first job, 2 second, 3 third), and a character
-        // holds every pool up to it. This matters because 2026-09-14 this reply became a
-        // per-SetField refresh (see the callers), not just a post-skill-up packet.
-        let reached = net::stats::tier_for_job(chr.job);
-        let mut pools = Vec::new();
-        for tier in [1u8, 2] {
-            if tier > reached {
-                continue;
-            }
-            let owed = self.pool_entitlement(tier, chr.level, chr.job);
-            let used = spent.iter().find(|(t, _)| *t == tier).map(|(_, n)| *n).unwrap_or(0);
-            let left = store::balance(owed, used);
-            if owed > 0 {
-                pools.push(net::stats::SpPool { job_level: tier, amount: left });
-            }
-        }
+        let pools = self.sp_pools(chr.id, chr.level, chr.job);
         if pools.is_empty() {
             return Vec::new();
         }
@@ -311,6 +291,41 @@ impl Session {
                 owed.join(", ")
             ),
         }]
+    }
+
+    /// **What is LEFT in every pool this character holds** - owed minus spent, the one number
+    /// the skill window may show. Both `0x007C`s that carry the table build it here: this
+    /// file's refresh and `gm::job_change_reply`, the advancement's packet.
+    ///
+    /// The owner, 2026-10-04, after a second advancement: *"my 1st job shows me a bunch of skill
+    /// points I cannot use"* - 64 on the first-job tab of a level-31 Magician who had spent 61.
+    /// `job_change_reply` built its own table from the ENTITLEMENT, never subtracting what the
+    /// ledger says was spent, so the advancement handed the client the lifetime total; the
+    /// server, which spends against the balance (3), refused every one past the third. The next
+    /// SetField's refresh would have put it right, which is why it looked like a job-change bug.
+    ///
+    /// Only pools the character has actually ADVANCED into. `pool_entitlement` returns a level's
+    /// worth for any tier - `entitlement(First, 12)` is 7 whether or not the character is a first
+    /// job yet - so without this gate a beginner refreshed after a SetField would be handed 7
+    /// first-job points they never earned. `tier_for_job` is the job's own pool (0 beginner,
+    /// 1 first job, 2 second, 3 third), and a character holds every pool up to it. **Tier 3 is
+    /// in the walk**: the refresh used to stop at 2, so a third job's pool would have been
+    /// blanked by every refresh (the extended arm clears the whole list before reading it).
+    pub(super) fn sp_pools(&self, character_id: u32, level: u32, job: u16) -> Vec<net::stats::SpPool> {
+        let spent = self.store.skill_points_spent_by_tier(character_id).unwrap_or_default();
+        let reached = net::stats::tier_for_job(job);
+        let mut pools = Vec::new();
+        for tier in [1u8, 2, 3] {
+            if tier > reached {
+                continue;
+            }
+            let owed = self.pool_entitlement(tier, level, job);
+            let used = spent.iter().find(|(t, _)| *t == tier).map(|(_, n)| *n).unwrap_or(0);
+            if owed > 0 {
+                pools.push(net::stats::SpPool { job_level: tier, amount: store::balance(owed, used) });
+            }
+        }
+        pools
     }
 
     /// Every reply on this path is the same opcode, and every one of them clears the latch.

@@ -2660,6 +2660,36 @@ fn the_first_job_pool_grows_past_thirty_and_a_reset_refunds_to_it() {
     }
 }
 
+/// **The advancement's packet carries what is LEFT, not what was ever owed.** The owner,
+/// 2026-10-04: after the second advancement a level-31 Magician's first-job tab showed 64 points
+/// that could not be spent - `job_change_reply` sent the entitlement and ignored the ledger.
+/// No skill table here, so the first-job pool is the classic 61 at 31; 58 spent leaves 3, and
+/// the new second-job pool is its 4.
+#[test]
+fn the_job_change_packet_sends_the_balance_not_the_entitlement() {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Wisp".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &chr).unwrap();
+    made.job = 200;
+    made.level = 31;
+    store.save_character_progress(&made).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let mut s = Session::new(store.clone(), Arc::new(Config::default()));
+    s.claim_for_character(made.id);
+    let up = store.spend_and_raise_skill(made.id, 2001003, 1, 61, 58).unwrap();
+    assert!(!matches!(up.spend, store::SpendOutcome::Refused(_)), "{:?}", up.spend);
+
+    let reply = s.job_change_reply(200, 210);
+    assert!(reply.what.contains("tier 1 = 3,"), "61 owed - 58 spent: {}", reply.what);
+    assert!(reply.what.contains("tier 2 = 4"), "{}", reply.what);
+    assert_eq!(reply.body, s.job_change_reply(200, 210).body);
+    // The same table the refresh sends - the two cannot disagree any more.
+    made.job = 210;
+    let refresh = s.skill_point_reply(&made);
+    assert!(refresh[0].what.contains("tier 1 = 3, tier 2 = 4]"), "{}", refresh[0].what);
+}
+
 /// **`!learn` grants levels without spending a point**, which is the whole reason it exists.
 ///
 /// If it charged the pool, `!learn` on a Magician book would want far more points than a
@@ -8772,7 +8802,18 @@ fn the_second_advancement_walks_the_client_s_own_chain() {
     let mut quests = std::collections::HashMap::new();
     let mut say = std::collections::HashMap::new();
     say.insert("0".to_string(), vec!["So Grendel sent you.".to_string(), "There is a place near here.".to_string(), "Bring me #b30#k of them.".to_string()]);
-    quests.insert(test_quest, crate::config::Quest { name: "Test of Qualification".into(), start_npc: Some(b.examiner_npc), say, ..Default::default() });
+    quests.insert(test_quest, crate::config::Quest { name: "Test of Qualification".into(), start_npc: Some(b.examiner_npc), say, next_quest: Some(b.chain.quests[3]), ..Default::default() });
+    // 20103's real shape: one `Say.0` line, and `Act.0` hands over the Proof.
+    let mut proof_say = std::collections::HashMap::new();
+    proof_say.insert("0".to_string(), vec!["All right. You've passed the test.".to_string()]);
+    quests.insert(b.chain.quests[3], crate::config::Quest {
+        name: "Proof of Qualification".into(),
+        start_npc: Some(b.examiner_npc),
+        end_npc: Some(b.instructor_npc),
+        say: proof_say,
+        start_items: vec![(b.chain.proof_item, 1)],
+        ..Default::default()
+    });
     let mut portal_index = std::collections::HashMap::new();
     portal_index.insert((b.examiner_map_id, crate::secondjob::EXAMINER_SPAWN_PORTAL.to_string()), 32u8);
 
@@ -8844,16 +8885,30 @@ fn the_second_advancement_walks_the_client_s_own_chain() {
     assert_eq!(held(&s, b.chain.marble_item), 29, "and nothing was taken");
     s.handle(&npc_click(1000)); // the warden again
 
-    // ---- leg 4: all thirty in hand - the talk points at the quest, and warps nobody --------
+    // ---- leg 4: all thirty in hand - the TALK is the hand-in, and warps nobody ------------
+    // The owner, 2026-10-04: handing in the marbles should immediately accept the quest that
+    // gives the Proof. Every effect of the one click: the test complete, the thirty gone (with
+    // their chat line), Proof of Qualification in progress, the Proof in the bag.
     store.add_item(made.id, etc, &store::Item::bundle(b.chain.marble_item, 1), 200).unwrap();
     let out = s.handle(&npc_click(1000));
-    assert!(said(&out).contains("Test of Qualification"), "{}", said(&out));
     assert_eq!(map_of(&store, made.id), b.examiner_map_id);
-    assert_eq!(held(&s, b.chain.marble_item), 30, "a talk takes nothing - the quest's turn-in does");
+    assert_eq!(store.quest_row(made.id, test_quest).unwrap().map(|r| r.state), Some(store::QuestState::Complete), "{:?}", out.iter().map(|r| &r.what).collect::<Vec<_>>());
+    assert_eq!(held(&s, b.chain.marble_item), 0, "the thirty are handed in");
+    assert!(out.iter().any(|r| r.body == net::message::item_lost_in_chat(b.chain.marble_item, 30)), "and said so in chat");
+    assert_eq!(
+        store.quest_row(made.id, b.chain.quests[3]).unwrap().map(|r| r.state),
+        Some(store::QuestState::InProgress),
+        "Proof of Qualification accepted in the same click"
+    );
+    assert_eq!(held(&s, b.chain.proof_item), 1, "with the Proof");
+    assert!(said(&out).contains("passed the test"), "its line is spoken: {}", said(&out));
+    s.conversation = None;
+    // A second talk hands nothing in again - the test is complete.
+    let out = s.handle(&npc_click(1000));
+    assert!(said(&out).contains("You have passed my test"), "{}", said(&out));
+    assert_eq!(held(&s, b.chain.proof_item), 1);
 
     // ---- leg 5: the instructor, and only the instructor, advances ---------------------------
-    // The proof is what quest 20103's start hands over once the test is turned in.
-    store.add_item(made.id, etc, &store::Item::bundle(b.chain.proof_item, 1), 200).unwrap();
     store.set_character_map(made.id, b.instructor_map_id).unwrap();
     s.claim_for_character(made.id); // re-read the character at its new map
     let out = s.handle(&npc_click(1000));
@@ -16176,3 +16231,4 @@ fn a_trade_accept_without_a_room_opens_nothing() {
         "the inviter is told, and no window opens"
     );
 }
+
