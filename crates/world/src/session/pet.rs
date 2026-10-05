@@ -495,6 +495,33 @@ impl Session {
         }
     }
 
+    /// **`inc` closeness for the pet that is out**, the way a trick or a feed earns it: the level
+    /// follows the table (up only), capped where the table ends, and the Cash item goes out again
+    /// so the client prints its own *"Closeness has increased"* line. A level gained adds the
+    /// flash. `None` - nothing written - when no pet is out or the write fails. Used by Trainer
+    /// Frod (`session/jumpquest.rs`).
+    pub(super) fn add_pet_closeness(&mut self, inc: u32, why: &str) -> Option<Vec<Reply>> {
+        let active = self.active_pet?;
+        let chr = self.claimed_character()?;
+        let st = self.pet_state(Some(active.pet_id));
+        let cap = crate::petlevel::LEVEL_STARTS_AT[usize::from(crate::petlevel::MAX_LEVEL) - 1];
+        let closeness = st.closeness.saturating_add(inc).min(cap.max(st.closeness));
+        let level = crate::petlevel::level_after(st.level, closeness);
+        if let Err(e) = self.store.set_pet_vitals(active.pet_id, level, closeness, st.fullness) {
+            crate::server::log(&format!("   pet: +{inc} closeness for pet {} ({why}) NOT stored: {e}", active.item_id));
+            return None;
+        }
+        crate::server::log(&format!(
+            "   pet: {why} - pet {} +{inc} closeness -> {closeness}, level {} -> {level}",
+            active.item_id, st.level
+        ));
+        let mut out = vec![self.pet_item_refresh(&chr, active, true)];
+        if level > st.level {
+            out.extend(self.pet_level_up_replies(&chr, st.level, level));
+        }
+        Some(out)
+    }
+
     /// **`0x0112`: Pet Food on the pet that is out.** The owner, 2026-09-15: *"Using a pet food
     /// should recover the current active pet's fullness by 30 and their closeness by 1."*
     /// `net::petfood` has the packet (never captured - the opcode is read off the client's

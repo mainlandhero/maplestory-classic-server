@@ -442,12 +442,12 @@ pub fn tables_json(config: &Config, mob_names: &HashMap<u32, String>, descs: &Ha
         (
             "jq",
             "Jump Quest Reward",
-            "Forest of Patience, Deep Forest of Patience, Construction Site",
+            "Forest of Patience, Deep Forest of Patience, Construction Site, Pet-Walking Road",
             "JQ",
             "course",
             "The pile or treasure chest at the end of every Forest of Patience, Deep Forest of Patience and \
-             Construction Site course gives it, with the course's quest item for a player on that quest. Finishing a \
-             course always gives",
+             Construction Site course gives it, with the course's quest item for a player on that quest, and so does \
+             Trainer Frod at the top of the Pet-Walking Road for Bartos's letter. Finishing a course always gives",
             &crate::jumpquest::SLOTS,
         ),
     ];
@@ -543,7 +543,7 @@ mod tests {
         assert!(j.contains("\"kind\":\"First Time Together reward\""));
         assert!(j.contains("\"slots\":[[\"equip\",7],[\"use\",20],[\"scroll\",36],[\"etc\",14]]"), "one prize per slot: {j}");
         assert!(
-            j.contains("{\"id\":\"jq\",\"name\":\"Jump Quest Reward\",\"level\":0,\"kind\":\"Forest of Patience, Deep Forest of Patience, Construction Site\",\"tag\":\"JQ\",\"per\":\"course\","),
+            j.contains("{\"id\":\"jq\",\"name\":\"Jump Quest Reward\",\"level\":0,\"kind\":\"Forest of Patience, Deep Forest of Patience, Construction Site, Pet-Walking Road\",\"tag\":\"JQ\",\"per\":\"course\","),
             "{j}"
         );
         assert!(j.contains("\"slots\":[[\"use\",20],[\"scroll\",36]]"), "the jump quest's two slots: {j}");

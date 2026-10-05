@@ -84,7 +84,31 @@ impl Session {
             )),
             Err(e) => crate::server::log(&format!("   jump quest: could not start the pity timer for {character_id}: {e}")),
         }
-        self.jq_clock = jq::PityClock { last_ms: Some(self.clock_ms), ..jq::PityClock::default() };
+        self.jq_clock = jq::PityClock { last_ms: Some(self.clock_ms), announce: true, ..jq::PityClock::default() };
+    }
+
+    /// **Which lines of a door's menu this player may pick** - `courses` is `(line, the course's
+    /// first map)`. A course's quest in progress narrows it to that course (`jq::offered`). Used
+    /// to build the menu and again to check the answer, so a line the menu never showed is
+    /// refused.
+    fn jq_offered_lines(&self, character_id: u32, courses: &[(u32, u32)]) -> Vec<u32> {
+        let in_progress: Vec<bool> = courses
+            .iter()
+            .map(|&(_, map)| jq::course_goal(map).is_some_and(|g| self.jq_quest_in_progress(character_id, g.quest)))
+            .collect();
+        jq::offered(&in_progress).into_iter().map(|i| courses[i].0).collect()
+    }
+
+    fn jq_forest_lines(&self, character_id: u32) -> Vec<u32> {
+        self.jq_offered_lines(character_id, &jq::FOREST_COURSES.map(|c| (c.line, c.start_map)))
+    }
+
+    fn jq_deep_forest_lines(&self, character_id: u32) -> Vec<u32> {
+        self.jq_offered_lines(character_id, &jq::DEEP_FOREST_COURSES.map(|c| (c.line, c.start_map)))
+    }
+
+    fn jq_ticket_lines(&self, character_id: u32) -> Vec<u32> {
+        self.jq_offered_lines(character_id, &jq::TICKETS.map(|t| (t.line, t.area_one)))
     }
 
     /// **The pity timer on screen**, on every field entry on a course with a running hour. The
@@ -108,14 +132,19 @@ impl Session {
         };
         let spent = run.spent_secs + self.jq_clock.pending_ms / 1_000;
         let left = u32::try_from(jq::PITY_SECS.saturating_sub(spent)).unwrap_or(0);
-        vec![Reply {
+        let mut out = vec![Reply {
             opcode: net::clock::FIELD_CLOCK,
             body: net::clock::clock_seconds(left),
             what: format!(
                 "FieldClock type 2 to character {}: {left}s left of the jump quest's pity hour (course to NPC {})",
                 chr.id, goal.npc
             ),
-        }]
+        }];
+        // The first entry after a door started the hour says what the clock is for.
+        if std::mem::take(&mut self.jq_clock.announce) {
+            out.extend(self.notice(jq::ENTRY_NOTICE.to_string()));
+        }
+        out
     }
 
     /// **What this connection counted and had not written yet**, written now - the connection
@@ -289,9 +318,11 @@ impl Session {
         let chr = self.claimed_character()?;
         match template {
             jq::SHANE if chr.map_id == jq::ELLINIA => self.open_shane(&chr),
-            jq::MYSTERIOUS_STATUE if chr.map_id == jq::SLEEPYWOOD => Some(self.open_statue()),
-            jq::JAKE if chr.map_id == jq::TICKET_BOOTH => Some(self.open_jake()),
+            jq::MYSTERIOUS_STATUE if chr.map_id == jq::SLEEPYWOOD => Some(self.open_statue(&chr)),
+            jq::JAKE if chr.map_id == jq::TICKET_BOOTH => Some(self.open_jake(&chr)),
             jq::TICKET_GATE if chr.map_id == jq::TICKET_BOOTH => Some(self.open_ticket_gate(&chr)),
+            jq::BARTOS if chr.map_id == jq::PET_WALKING_ROAD => Some(self.open_bartos(&chr)),
+            jq::FROD if chr.map_id == jq::PET_WALKING_ROAD => Some(self.open_frod(&chr)),
             _ => {
                 let area = jq::area_of(chr.map_id)?;
                 if template == area.warden() {
@@ -323,40 +354,51 @@ impl Session {
         let mut text = "Are you here at Sabitrama's request? Then go on in - I won't charge you. Which herb are you \
                         looking for?"
             .to_string();
-        for c in jq::FOREST_COURSES {
+        let lines = self.jq_forest_lines(chr.id);
+        for c in jq::FOREST_COURSES.iter().filter(|c| lines.contains(&c.line)) {
             text.push_str(&format!(r"\n#L{}##b#t{}##k ({})#l", c.line, c.item, c.steps));
         }
         Some(self.jq_menu(jq::SHANE, jq::SHANE_PATH, &text, "which Forest of Patience course"))
     }
 
-    fn open_statue(&mut self) -> Vec<Reply> {
+    fn open_statue(&mut self, chr: &net::opcode::Character) -> Vec<Reply> {
         let mut text = "(A strange statue. It's hard to tell whether it's laughing or crying.) Laying a hand on it, \
                         I feel I could be pulled somewhere far away. Which flower am I looking for?"
             .to_string();
-        for c in jq::DEEP_FOREST_COURSES {
+        let lines = self.jq_deep_forest_lines(chr.id);
+        for c in jq::DEEP_FOREST_COURSES.iter().filter(|c| lines.contains(&c.line)) {
             text.push_str(&format!(r"\n#L{}##b#t{}##k ({})#l", c.line, c.item, c.steps));
         }
         self.jq_menu(jq::MYSTERIOUS_STATUE, jq::STATUE_PATH, &text, "which Deep Forest of Patience course")
     }
 
-    fn open_jake(&mut self) -> Vec<Reply> {
+    fn open_jake(&mut self, chr: &net::opcode::Character) -> Vec<Reply> {
         let mut text = "Monsters that like the dark often hide inside the subway, so please be careful if you're \
                         thinking of going in! No one's allowed in without a ticket. Which one would you like?"
             .to_string();
-        for t in jq::TICKETS {
+        let lines = self.jq_ticket_lines(chr.id);
+        for t in jq::TICKETS.into_iter().filter(|t| lines.contains(&t.line)) {
             text.push_str(&format!(r"\n#L{}##b#t{}##k - Lv. {}+, {} mesos#l", t.line, t.item, t.min_level, t.price));
         }
         self.jq_menu(jq::JAKE, jq::JAKE_PATH, &text, "which Construction Site ticket")
     }
 
     fn open_ticket_gate(&mut self, chr: &net::opcode::Character) -> Vec<Reply> {
-        let held: Vec<jq::Ticket> = jq::TICKETS.into_iter().filter(|t| self.held_count(chr.id, t.item) > 0).collect();
+        let lines = self.jq_ticket_lines(chr.id);
+        let held: Vec<jq::Ticket> = jq::TICKETS
+            .into_iter()
+            .filter(|t| lines.contains(&t.line) && self.held_count(chr.id, t.item) > 0)
+            .collect();
         if held.is_empty() {
-            return self.jq_say(
-                jq::TICKET_GATE,
-                "You need a ticket to go through the gate. #bJake#k, right beside it, sells them.",
-                "no Construction Site ticket held".to_string(),
-            );
+            let text = match jq::TICKETS.into_iter().filter(|t| lines.contains(&t.line)).collect::<Vec<_>>().as_slice() {
+                [only] if lines.len() < jq::TICKETS.len() => format!(
+                    "Shumi's errand takes you to #b{}#k, so you need that floor's ticket to go through the gate. \
+                     #bJake#k, right beside it, sells them.",
+                    only.floor
+                ),
+                _ => "You need a ticket to go through the gate. #bJake#k, right beside it, sells them.".to_string(),
+            };
+            return self.jq_say(jq::TICKET_GATE, &text, "no ticket for a floor this player may enter".to_string());
         }
         let mut text = "Which ticket will you use?".to_string();
         for t in held {
@@ -486,6 +528,170 @@ impl Session {
         out
     }
 
+    /// **Trainer Bartos**, at the bottom of the Pet-Walking Road: the letter for Frod, to a
+    /// player whose pet is out. One letter at a time.
+    fn open_bartos(&mut self, chr: &net::opcode::Character) -> Vec<Reply> {
+        if self.held_count(chr.id, jq::BARTOS_LETTER) > 0 {
+            return self.jq_say(
+                jq::BARTOS,
+                "Jump over the obstacles with your pet, and take that letter to my brother #bTrainer Frod#k at the top. \
+                 Give him the letter and something good is going to happen to your pet.",
+                "the letter is already held".to_string(),
+            );
+        }
+        if self.active_pet.is_none() {
+            return self.jq_say(
+                jq::BARTOS,
+                "This is the road where you can take a walk with your pet, or train it to go through the obstacles here. \
+                 Bring your pet out first, then talk to me.",
+                "no pet out".to_string(),
+            );
+        }
+        self.jq_park(jq::BARTOS, jq::BARTOS_PATH.to_string(), true);
+        vec![Reply {
+            opcode: net::script::SCRIPT_MESSAGE,
+            body: net::script::npc_ask(
+                jq::BARTOS,
+                "This is the road where you can take a walk with your pet. You can just walk around with it, or you can \
+                 train your pet to go through the obstacles here. If you aren't too close with your pet yet, it may not \
+                 follow your command as much... So, what do you think? Wanna train your pet?",
+                false,
+            ),
+            what: format!("ScriptMessage YES/NO from Trainer Bartos: train the pet on the Pet-Walking Road ({})", chr.name),
+        }]
+    }
+
+    fn give_bartos_letter(&mut self) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        if chr.map_id != jq::PET_WALKING_ROAD || self.held_count(chr.id, jq::BARTOS_LETTER) > 0 {
+            return Vec::new();
+        }
+        let short = match self.store.bag(chr.id) {
+            Ok(bag) => crate::questroom::shortfall(&bag, &[(jq::BARTOS_LETTER, 1, store::InventoryType::Etc)], &[], |id| self.config.shops.max_stack(id)),
+            Err(_) => Vec::new(),
+        };
+        if !short.is_empty() {
+            return self.jq_say(jq::BARTOS, &crate::questroom::refusal_text(&short), "no room for the letter".to_string());
+        }
+        let mut out = match self.give_item(jq::BARTOS_LETTER, 1, "Trainer Bartos") {
+            Ok((_, replies)) => replies,
+            Err(why) => return self.jq_say(jq::BARTOS, "Hmm, I can't find my letter paper just now. Come back in a moment.", why),
+        };
+        out.push(self.item_chat_line(jq::BARTOS_LETTER, 1));
+        crate::server::log(&format!("   jump quest: Trainer Bartos gave {} ({}) the letter for Frod", chr.name, chr.id));
+        out.extend(self.jq_say(
+            jq::BARTOS,
+            "Ok, here's the letter. He wouldn't know I sent you if you just went there straight, so go through the \
+             obstacles with your pet, go to the very top, and then talk to #bTrainer Frod#k to give him the letter. It \
+             won't be hard if you pay attention to your pet while going through obstacles. Good luck!",
+            "the letter handed over".to_string(),
+        ));
+        out
+    }
+
+    /// **Trainer Frod**, at the top: the letter for closeness and the Jump Quest Reward. Within
+    /// reach, letter held, pet out, room for the prizes - then the box, and the grant on its
+    /// dismissal (`claim_frod`), the way every other goal does it. No warp.
+    fn open_frod(&mut self, chr: &net::opcode::Character) -> Vec<Reply> {
+        if self.held_count(chr.id, jq::BARTOS_LETTER) == 0 {
+            return self.jq_say(
+                jq::FROD,
+                "My brother told me to take care of the pet obstacle course, but... since I'm so far away from him, I \
+                 can't help but want to goof around... hehe, since I don't see him in sight, might as well just chill \
+                 for a few minutes.",
+                "no letter".to_string(),
+            );
+        }
+        let at = self
+            .config
+            .npcs
+            .get(&chr.map_id)
+            .and_then(|list| list.iter().find(|n| n.template_id == jq::FROD))
+            .map(|n| (n.x, n.cy));
+        if let Some(npc) = at {
+            if !self.last_position.is_some_and(|p| jq::within_reach(p, npc)) {
+                return self.jq_say(jq::FROD, "Hm? Who's that down there? Come up here if you want to talk to me.", format!("out of reach from {:?}", self.last_position));
+            }
+        }
+        if self.active_pet.is_none() {
+            return self.jq_say(
+                jq::FROD,
+                "A letter from my brother... but where's your pet? Bring it out, and then give me the letter.",
+                "no pet out - the letter is kept".to_string(),
+            );
+        }
+        let prizes: Vec<(&str, crate::magicbox::Prize)> =
+            jq::SLOTS.iter().map(|s| (s.name, crate::magicbox::roll(s, self.rng.next()))).collect();
+        let plain: Vec<crate::magicbox::Prize> = prizes.iter().map(|&(_, p)| p).collect();
+        if let Some(refusal) = self.jq_frod_room_refusal(chr, &plain) {
+            return refusal;
+        }
+        crate::server::log(&format!(
+            "   jump quest: {} ({}) brought Bartos's letter to Frod - +{} closeness and {prizes:?} when the box closes",
+            chr.name,
+            chr.id,
+            jq::PET_PARK_CLOSENESS
+        ));
+        self.jq_park(jq::FROD, jq::found_path(jq::FROD, &plain), false);
+        vec![Reply {
+            opcode: net::script::SCRIPT_MESSAGE,
+            body: net::script::npc_say(jq::FROD, &jq::frod_text(&prizes), false, false),
+            what: "ScriptMessage Say from Trainer Frod: the letter, the closeness and the reward".to_string(),
+        }]
+    }
+
+    fn jq_frod_room_refusal(&mut self, chr: &net::opcode::Character, prizes: &[crate::magicbox::Prize]) -> Option<Vec<Reply>> {
+        let gives: Vec<(u32, u16, store::InventoryType)> = prizes
+            .iter()
+            .filter_map(|&(id, q)| self.config.tab_for(id).or_else(|| store::InventoryType::for_item(id)).map(|t| (id, q, t)))
+            .collect();
+        let short = match self.store.bag(chr.id) {
+            Ok(bag) => crate::questroom::shortfall(&bag, &gives, &[], |id| self.config.shops.max_stack(id)),
+            Err(_) => Vec::new(),
+        };
+        if short.is_empty() {
+            return None;
+        }
+        let text = format!("{} Then come and talk to me again.", crate::questroom::refusal_text(&short));
+        Some(self.jq_say(jq::FROD, &text, "the bag is full".to_string()))
+    }
+
+    /// Frod's box was dismissed: the letter, the closeness, the prizes - all checked again first.
+    fn claim_frod(&mut self, prizes: Vec<crate::magicbox::Prize>) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        if chr.map_id != jq::PET_WALKING_ROAD || self.held_count(chr.id, jq::BARTOS_LETTER) == 0 || self.active_pet.is_none() {
+            return Vec::new();
+        }
+        if let Some(refusal) = self.jq_frod_room_refusal(&chr, &prizes) {
+            return refusal;
+        }
+        let Some(closeness) = self.add_pet_closeness(jq::PET_PARK_CLOSENESS, "Trainer Frod, for Bartos's letter") else {
+            return self.jq_say(jq::FROD, "Hmm, something's off. Keep the letter and talk to me again.", "the closeness was not stored".to_string());
+        };
+        let mut out = self.take_items(chr.id, store::InventoryType::Etc, jq::BARTOS_LETTER, 1);
+        out.push(self.item_chat_line(jq::BARTOS_LETTER, -1));
+        out.extend(closeness);
+        let mut gained = Vec::new();
+        for &(id, q) in &prizes {
+            if let Ok((_, replies)) = self.give_item(id, q, "Trainer Frod") {
+                out.extend(replies);
+                out.push(self.item_chat_line(id, i64::from(q)));
+                gained.push((id, q));
+            }
+        }
+        if !gained.is_empty() {
+            crate::killstats::note_jump_quest(chr.id, &gained);
+        }
+        crate::server::log(&format!("   jump quest: {} ({}) finished the Pet-Walking Road - {gained:?}", chr.name, chr.id));
+        out.extend(self.jq_say(
+            jq::FROD,
+            "What do you think? Don't you think you have gotten much closer with your pet? If you have time, train your \
+             pet again on this obstacle course... of course, with my brother's permission.",
+            "the road is done".to_string(),
+        ));
+        out
+    }
+
     /// **A jump-quest menu came back.** `None` when none of theirs is parked.
     pub(super) fn jump_quest_menu_answer(&mut self, body: &[u8]) -> Option<Vec<Reply>> {
         let convo = self.conversation.clone()?;
@@ -496,6 +702,18 @@ impl Session {
         self.conversation = None;
         let Some(line) = reply.selection else { return Some(Vec::new()) };
         let mut chr = self.claimed_character()?;
+        let offered = match convo.path.as_str() {
+            jq::SHANE_PATH => self.jq_forest_lines(chr.id),
+            jq::STATUE_PATH => self.jq_deep_forest_lines(chr.id),
+            _ => self.jq_ticket_lines(chr.id),
+        };
+        if !offered.contains(&line) {
+            crate::server::log(&format!(
+                "   jump quest: {} ({}) picked line {line} at {}, which the menu did not offer ({offered:?}); refused",
+                chr.name, chr.id, convo.path
+            ));
+            return Some(Vec::new());
+        }
         let out = match convo.path.as_str() {
             jq::SHANE_PATH if chr.map_id == jq::ELLINIA => match jq::FOREST_COURSES.iter().find(|c| c.line == line) {
                 Some(c) => {
@@ -595,7 +813,17 @@ impl Session {
     pub(super) fn jump_quest_script_answer(&mut self, path: &str, action: i8) -> Option<Vec<Reply>> {
         if let Some((npc, prizes)) = jq::parse_found_path(path) {
             self.conversation = None;
+            if npc == jq::FROD {
+                return Some(self.claim_frod(prizes));
+            }
             return Some(self.claim_goal(npc, prizes));
+        }
+        if path == jq::BARTOS_PATH {
+            self.conversation = None;
+            if action != net::script::SCRIPT_ACTION_YES {
+                return Some(Vec::new());
+            }
+            return Some(self.give_bartos_letter());
         }
         if path != jq::LEAVE_PATH {
             return None;
@@ -634,7 +862,7 @@ mod tests {
         for (i, (m, name)) in [jq::ELLINIA_LANDING, jq::SLEEPYWOOD_LANDING, jq::BOOTH_LANDING].into_iter().enumerate() {
             cfg.portal_index.insert((m, name.to_string()), 30 + i as u8);
         }
-        let mut items: Vec<u32> = jq::GOALS.iter().map(|g| g.item).chain(jq::TICKETS.map(|t| t.item)).collect();
+        let mut items: Vec<u32> = jq::GOALS.iter().map(|g| g.item).chain(jq::TICKETS.map(|t| t.item)).chain([jq::BARTOS_LETTER]).collect();
         for s in &jq::SLOTS {
             items.extend(s.prizes.iter().map(|p| p.0));
         }
@@ -711,18 +939,125 @@ mod tests {
         assert!(!said(&out).contains("#L0#"), "a stranger gets no menu: {}", said(&out));
         assert!(s.conversation.as_ref().map_or(true, |c| !c.path.starts_with(jq::PATH_PREFIX)));
 
+        // On Sabitrama's first errand: only the Pink Anthurium's course, and the other line is
+        // refused even when the client sends it.
         store.start_quest(id, jq::SHANE_KEY_QUEST).unwrap();
-        for c in jq::FOREST_COURSES {
-            s.conversation = None;
-            let out = s.handle(&click());
-            let menu = said(&out);
-            assert!(menu.contains("#L0#") && menu.contains("#L1#") && menu.contains(c.steps), "{menu}");
-            let _ = s.handle(&pick(c.line));
-            assert_eq!(map_of(&s), c.start_map, "{}", c.steps);
-            assert_eq!(store.mesos(id).unwrap(), 1_000, "free");
-            let mut chr = s.claimed_character().unwrap();
-            let _ = s.teleport(&mut chr, jq::ELLINIA, "back for the next".to_string());
+        let menu = said(&s.handle(&click()));
+        assert!(menu.contains("#L0#") && !menu.contains("#L1#"), "10509 in progress: its course only - {menu}");
+        let _ = s.handle(&pick(1));
+        assert_eq!(map_of(&s), jq::ELLINIA, "a line the menu did not offer is refused");
+        let _ = s.handle(&click());
+        let _ = s.handle(&pick(0));
+        assert_eq!((map_of(&s), store.mesos(id).unwrap()), (10_002_040, 1_000), "step 1, free");
+
+        // On the second errand: only the ginseng's course.
+        store.complete_quest(id, jq::SHANE_KEY_QUEST).unwrap();
+        store.start_quest(id, 10_510).unwrap();
+        let mut chr = s.claimed_character().unwrap();
+        let _ = s.teleport(&mut chr, jq::ELLINIA, "back".to_string());
+        let menu = said(&s.handle(&click()));
+        assert!(menu.contains("#L1#") && !menu.contains("#L0#"), "10510 in progress: {menu}");
+
+        // Both done: every course.
+        store.complete_quest(id, 10_510).unwrap();
+        s.conversation = None;
+        let menu = said(&s.handle(&click()));
+        assert!(menu.contains("#L0#") && menu.contains("#L1#"), "all done: both - {menu}");
+        let _ = s.handle(&pick(1));
+        assert_eq!(map_of(&s), 10_002_042, "a reward run to step 3");
+    }
+
+    /// **The Statue and Jake narrow the same way**: John's quest in progress shows only its
+    /// flower; Shumi's only its floor's ticket, and the gate only that floor even with another
+    /// ticket held.
+    #[test]
+    fn the_statue_jake_and_the_gate_offer_only_the_course_of_a_quest_in_progress() {
+        let (store, mut s, id) = standing(jq::SLEEPYWOOD, jq::MYSTERIOUS_STATUE, (1061, 255), 50);
+        store.start_quest(id, 10_008).unwrap();
+        let menu = said(&s.handle(&click()));
+        assert!(menu.contains("#L2#") && !menu.contains("#L0#") && !menu.contains("#L1#"), "white only: {menu}");
+
+        let (store, mut s, id) = standing(jq::TICKET_BOOTH, jq::JAKE, (71, 187), 50);
+        store.start_quest(id, 10_313).unwrap();
+        let menu = said(&s.handle(&click()));
+        assert!(menu.contains("#L1#") && !menu.contains("#L0#") && !menu.contains("#L2#"), "B2 only: {menu}");
+        let _ = s.handle(&pick(0));
+        assert_eq!(held(&store, id, 4_031_036), 0, "the B1 ticket is not sold on Shumi's B2 errand");
+
+        store.add_item(id, store::InventoryType::Etc, &store::Item::bundle(4_031_036, 1), 100).unwrap();
+        let mut cfg = (*s.config).clone();
+        cfg.npcs.insert(
+            jq::TICKET_BOOTH,
+            vec![net::opcode::FieldNpc { object_id: OBJ, template_id: jq::TICKET_GATE, x: 272, cy: 187, fh: 1, rx0: 0, rx1: 0, f: 0 }],
+        );
+        s.config = Arc::new(cfg);
+        let said_gate = said(&s.handle(&click()));
+        assert!(said_gate.contains("Construction Site B2") && !said_gate.contains("#L0#"), "a B1 ticket does not open B2: {said_gate}");
+    }
+
+    /// **The first entry after a door says what "Time Left" is**, once; a later entry shows the
+    /// clock alone.
+    #[test]
+    fn the_first_entry_after_the_door_explains_the_countdown_once() {
+        let (store, mut s, id) = standing(jq::SLEEPYWOOD, jq::MYSTERIOUS_STATUE, (1061, 255), 50);
+        store.start_quest(id, 10_006).unwrap();
+        let _ = s.handle(&click());
+        let _ = s.handle(&pick(0));
+        let first = notices(&s.on_field_entered());
+        assert!(first.iter().any(|n| n.contains("\"Time Left\"") && n.contains("an hour")), "{first:?}");
+        let mut chr = s.claimed_character().unwrap();
+        let _ = s.go_to_map(&mut chr, 10_005_041, 0, "in00 to step 2".to_string());
+        assert!(notices(&s.on_field_entered()).iter().all(|n| !n.contains("Time Left")), "said once");
+    }
+
+    /// **The Pet-Walking Road**: Bartos wants a pet out and gives one letter; Frod, from close
+    /// by, takes it for closeness and the Jump Quest Reward - and nobody is warped. No timer.
+    #[test]
+    fn the_pet_walking_road_trades_the_letter_for_closeness_and_the_reward() {
+        let (store, mut s, id) = standing(jq::PET_WALKING_ROAD, jq::BARTOS, (-2108, 236), 20);
+        let said_first = said(&s.handle(&click()));
+        assert!(said_first.contains("Bring your pet out first"), "{said_first}");
+
+        let pet_slot = store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap()[0].slot;
+        let mut activate = 0u32.to_le_bytes().to_vec();
+        activate.extend_from_slice(&pet_slot.to_le_bytes());
+        let _ = s.on_pet_activate(&activate);
+        assert!(s.active_pet.is_some(), "the pet is out");
+        let pet = s.active_pet.unwrap().pet_id;
+        let before = store.pet_state(pet).unwrap().closeness;
+
+        let _ = s.handle(&click());
+        let _ = s.handle(&answer(net::script::SCRIPT_TYPE_YES_NO, net::script::SCRIPT_ACTION_YES));
+        assert_eq!(held(&store, id, jq::BARTOS_LETTER), 1, "the letter");
+        s.conversation = None;
+        let again = said(&s.handle(&click()));
+        assert!(again.contains("take that letter"), "one at a time: {again}");
+        assert_eq!(held(&store, id, jq::BARTOS_LETTER), 1);
+
+        // Frod, from the bottom: too far. From beside him: the box, then the grant.
+        let mut cfg = (*s.config).clone();
+        cfg.npcs.insert(
+            jq::PET_WALKING_ROAD,
+            vec![net::opcode::FieldNpc { object_id: OBJ, template_id: jq::FROD, x: -1593, cy: -1588, fh: 1, rx0: 0, rx1: 0, f: 0 }],
+        );
+        s.config = Arc::new(cfg);
+        s.conversation = None;
+        let far = said(&s.handle(&click()));
+        assert!(far.contains("Come up here"), "{far}");
+        let _ = s.handle(&answer(0, net::script::SCRIPT_ACTION_YES));
+        s.last_position = Some((-1593, -1588));
+        let box_text = said(&s.handle(&click()));
+        assert!(box_text.contains("my brother's letter") && box_text.contains("#bCloseness#k +2"), "{box_text}");
+        let (_, prizes) = jq::parse_found_path(&s.conversation.as_ref().unwrap().path).unwrap();
+        assert_eq!(held(&store, id, jq::BARTOS_LETTER), 1, "nothing moves while the box is open");
+        let _ = s.handle(&answer(0, net::script::SCRIPT_ACTION_YES));
+        assert_eq!(held(&store, id, jq::BARTOS_LETTER), 0, "the letter is taken");
+        assert_eq!(store.pet_state(pet).unwrap().closeness, before + jq::PET_PARK_CLOSENESS);
+        for (item, q) in prizes {
+            assert!(held(&store, id, item) >= u32::from(q), "{item}");
         }
+        assert_eq!(map_of(&s), jq::PET_WALKING_ROAD, "no warp");
+        assert_eq!(store.jump_quest_run(id).unwrap(), None, "no pity timer");
     }
 
     /// **The Statue** offers the three courses to anyone and sends each to its own start.

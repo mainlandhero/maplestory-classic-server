@@ -481,6 +481,17 @@ we're going to implement them."* `research/jump-quests-2026-10-04.md`.
   * **Stale rows:** a row left behind is removed only once its player is seen outside that
     course - a return scroll, a death, a GM warp, a log in elsewhere.
   * **Steps:** moving between the steps of one course keeps the same run.
+* **A quest narrows the door** (the owner, 2026-10-04): with a course's quest in progress,
+  Shane, the Statue, Jake and the Ticket Gate offer only that course. A line the menu did not
+  show is refused. With none in progress, every course is offered.
+* **"Time Left" explained:** the first field entry after a door starts the hour prints a
+  yellow line - the clock counts down to when `!skipjq` opens, so try your best.
+* **The Pet-Walking Road** (Henesys Park, 10001052) - the owner's "non-quest" jump quest:
+  * Trainer Bartos gives Bartos's Letter to a player whose pet is out, one at a time.
+  * Trainer Frod at the top takes it, from within 250 px.
+  * The reward is +2 pet closeness (**[M]**, the old GMS script as recalled) plus the Jump
+    Quest Reward.
+  * No warp and no pity timer (the owner: *"not quest relevant"*).
 * **Unmeasured:** whether a same-map press-up portal (B1 Area 1 has thirteen) sends the server
   anything at all. Plan step 50.
 

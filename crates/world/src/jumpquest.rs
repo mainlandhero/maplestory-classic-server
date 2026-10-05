@@ -245,11 +245,81 @@ pub struct PityClock {
     /// it does that once per stay off a course - a log in on a town map after logging out on a
     /// course included - rather than once a second.
     pub cleared: bool,
+    /// A door has just started an hour: the next field entry explains the countdown
+    /// ([`ENTRY_NOTICE`]), once.
+    pub announce: bool,
 }
 
 /// How often the tick looks, and how much time it gathers before writing it.
 pub const CHECK_MS: u64 = 1_000;
 pub const FLUSH_MS: u64 = 10_000;
+
+/// **What the countdown means**, in yellow on the first field entry after a door starts the
+/// hour. The owner, 2026-10-04: *"upon entry, we should tell the player that "Time Left"
+/// indicates timer until Jump Quest skip becomes active. Try their best, but they are allowed
+/// to skip the jump quest after an hour of attempts."*
+pub const ENTRY_NOTICE: &str = "The \"Time Left\" clock counts down to when you may skip this jump quest. Try your best - \
+                                but after an hour of attempts you may type !skipjq to leave with its quest item.";
+
+/// **Which of a door's courses to offer.** The owner, 2026-10-04: *"if they are currently on an
+/// in progress quest, we should only show them the option of the one relevant to their quest.
+/// Only after they completed all of the quest should we allow them to choose any of the jump
+/// quest areas."*
+///
+/// `in_progress[i]` says whether course `i`'s quest is in progress. When any is, only those
+/// courses are offered. When none is, every course is - including, for now, between two
+/// quests of a chain, when nothing is in progress either.
+pub fn offered(in_progress: &[bool]) -> Vec<usize> {
+    let mine: Vec<usize> = (0..in_progress.len()).filter(|&i| in_progress[i]).collect();
+    if mine.is_empty() {
+        (0..in_progress.len()).collect()
+    } else {
+        mine
+    }
+}
+
+/// **The Henesys Pet Park's jump quest** - the Pet-Walking Road (10001052), walked into from
+/// Henesys Park through `in01`. The owner, 2026-10-04: *"we missed a "non-quest" jump quest which
+/// is the henesys pet park jump quest ... this should reward pet closeness along with jump quest
+/// rewards when the player has brought the letter up to the top."*
+///
+/// [L] from the client:
+/// * Trainer Bartos (222) stands at the bottom (-2108, 236) and Trainer Frod (223) at the top
+///   (-1593, -1588); both name server scripts.
+/// * Bartos's Letter (4031035) is *"A letter from Bartos the Instructor. Needs to be delivered
+///   to Trainer Frod."*
+/// * No quest uses the letter, so this course has **no pity timer** (the owner).
+///
+/// [R] for the flow (`pet_lifeitem.py`, `pet_letter.py`):
+/// * Bartos hands over the letter.
+/// * Frod takes it and boosts the pet's closeness.
+/// * Nobody is warped: the hidden `h005` beside Frod already leads back down to Bartos.
+pub const PET_WALKING_ROAD: u32 = 10_001_052;
+pub const BARTOS: u32 = 222;
+pub const FROD: u32 = 223;
+pub const BARTOS_LETTER: u32 = 4_031_035;
+/// What Frod adds to the summoned pet's closeness. **[M]**, the old GMS script as recalled -
+/// the reference leaves only a comment where the number goes.
+pub const PET_PARK_CLOSENESS: u32 = 2;
+pub const BARTOS_PATH: &str = "jumpquest.bartos";
+
+/// Frod's box: his own words, the closeness, and the reward.
+pub fn frod_text(prizes: &[(&str, Prize)]) -> String {
+    let mut text = String::from(
+        "Eh, that's my brother's letter! Ahhh... you followed my brother's advice and trained your pet and got up here, \
+         huh? Nice!! Since you worked hard to get here, I'll boost your intimacy level with your pet.",
+    );
+    text.push_str(&format!(r"\n\n#bCloseness#k +{PET_PARK_CLOSENESS}"));
+    for &(slot, (id, q)) in prizes {
+        let mut label = slot.to_string();
+        if let Some(c) = label.get_mut(..1) {
+            c.make_ascii_uppercase();
+        }
+        let amount = if q > 1 { format!(" x{q}") } else { String::new() };
+        text.push_str(&format!(r"\n#b{label}#k: #i{id}# #t{id}#{amount}"));
+    }
+    text
+}
 
 /// What `!skipjq` says before the hour is up.
 pub fn not_yet_text(spent_secs: u64) -> String {
@@ -426,7 +496,7 @@ mod tests {
             let row = format!("{}, {}, ", g.map, g.npc);
             assert!(npcs.lines().any(|l| l.starts_with(&row)), "NPC {} is not on map {}", g.npc, g.map);
         }
-        for (map, npc) in [(ELLINIA, SHANE), (SLEEPYWOOD, MYSTERIOUS_STATUE), (TICKET_BOOTH, JAKE), (TICKET_BOOTH, TICKET_GATE)] {
+        for (map, npc) in [(ELLINIA, SHANE), (SLEEPYWOOD, MYSTERIOUS_STATUE), (TICKET_BOOTH, JAKE), (TICKET_BOOTH, TICKET_GATE), (PET_WALKING_ROAD, BARTOS), (PET_WALKING_ROAD, FROD)] {
             assert!(npcs.lines().any(|l| l.starts_with(&format!("{map}, {npc}, "))), "{npc} on {map}");
         }
         let Ok(portals) = std::fs::read_to_string("../../gm-handbook/portals.txt") else { return };
@@ -479,6 +549,19 @@ mod tests {
         assert!(reminder_text(3_900).contains("65 minutes") && reminder_text(3_900).contains("!skipjq"));
         assert!(not_yet_text(0).contains("60 more minutes"), "{}", not_yet_text(0));
         assert!(not_yet_text(3_559).contains("1 more minute "), "{}", not_yet_text(3_559));
+    }
+
+    /// An in-progress quest narrows the menu to its own course; with none in progress every
+    /// course is offered.
+    #[test]
+    fn a_quest_in_progress_narrows_the_door_to_its_course() {
+        assert_eq!(offered(&[false, true, false]), vec![1]);
+        assert_eq!(offered(&[true, false]), vec![0]);
+        assert_eq!(offered(&[false, false, false]), vec![0, 1, 2]);
+        assert!(ENTRY_NOTICE.contains("\"Time Left\"") && ENTRY_NOTICE.contains("!skipjq") && ENTRY_NOTICE.contains("an hour"));
+        let t = frod_text(&[("use", (2_000_001, 100)), ("scroll", (2_040_801, 1))]);
+        assert!(t.contains(r"\n\n#bCloseness#k +2\n#bUse#k: #i2000001# #t2000001# x100\n#bScroll#k"), "{t}");
+        assert_eq!(area_of(PET_WALKING_ROAD), None, "the road is not a pity-timer course");
     }
 
     /// The quest gets what it still wants, while it is in progress, and never more.
