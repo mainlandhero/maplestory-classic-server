@@ -1,6 +1,6 @@
 //! **Using a weather item** - Sprinkled Chocolate and the rest of `Item/Cash/0512.img`. One is
 //! spent and everyone on the map gets `0x01B7`: the item's own falling effect with the player's
-//! message, for thirty seconds, after which the client fades it out. `net::weather` has the
+//! message, for thirty seconds, after which the server takes it down. `net::weather` has the
 //! packet and the evidence.
 //!
 //! The owner, 2026-09-30: *"display my chosen message with the particular item effect as an
@@ -9,6 +9,11 @@
 //! **One at a time per map.** A second item while one is running is refused and kept - the
 //! client draws one weather object per field, and a second `0x01B7` would cut the first short.
 //! Someone who walks in while one is running gets the rest of it on field entry.
+//!
+//! **And each screen is told when it is over.** The client times the message and leaves the
+//! effect falling forever (the owner, 2026-10-04); every session's tick sends the clear
+//! (`net::weather::clear_weather`) to its own client once the effect it was showing has run
+//! out - only to a client that was on the map while it ran, never to one that arrived after.
 //!
 //! Nothing authenticates: the effect is cast by whoever holds the socket.
 
@@ -71,6 +76,39 @@ impl Session {
         let Some((item, text, until)) = running else { return Vec::new() };
         let left = u32::try_from(until - now).unwrap_or(0);
         vec![weather_reply(item, &text, left, &format!("the rest of the effect already on {map}, for character {}", chr.id))]
+    }
+
+    /// **The effect's time is up: take it off this screen.** Called from `tick`.
+    ///
+    /// A running effect on this character's map is remembered as shown - whether this session
+    /// sent it or the bus delivered someone else's, which is why this looks at the map rather
+    /// than at what went out. Once its second has passed, this client gets the clear, once. A
+    /// different map, or the Cash Shop, forgets it without a word: the client tore that field
+    /// down, and its weather with it.
+    pub(super) fn weather_tick(&mut self) -> Vec<Reply> {
+        self.weather_tick_at(store::Store::unix_now())
+    }
+
+    pub(super) fn weather_tick_at(&mut self, now: i64) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let here = self.field_of(&chr);
+        if self.in_cash_shop {
+            self.weather_shown = None;
+            return Vec::new();
+        }
+        let until = self.fields.weather().get(&here).map(|w| w.2);
+        if let Some(until) = until.filter(|&until| until > now) {
+            self.weather_shown = Some((here, until));
+            return Vec::new();
+        }
+        match self.weather_shown.take() {
+            Some((map, until)) if map == here && until <= now => vec![Reply {
+                opcode: net::weather::BLOW_WEATHER,
+                body: net::weather::clear_weather(),
+                what: format!("BlowWeather 0x01B7: item 0 - the effect on {map} ran out at {until}, so it comes off character {}'s screen", chr.id),
+            }],
+            _ => Vec::new(),
+        }
     }
 }
 
@@ -290,5 +328,30 @@ mod tests {
         let late = ss[2].weather_on_entry_at(now + 10);
         assert_eq!(effects(&late), vec![net::weather::blow_weather(CHOCOLATE, text, 20)], "twenty seconds left");
         assert!(effects(&ss[2].weather_on_entry_at(now + 31)).is_empty(), "and nothing once it has run out");
+    }
+
+    /// **The effect comes off every screen that was showing it when its thirty seconds are up**
+    /// - the user's and the onlooker's alike, once each - and nobody on another map, or arriving
+    /// after it ended, is sent anything. The owner, 2026-10-04: the sparkles stayed after the
+    /// message went.
+    #[test]
+    fn a_weather_effect_is_cleared_from_each_screen_when_its_time_is_up() {
+        let (_store, mut ss, _) = three(1);
+        let out = ss[0].handle(&use_packet(CHOCOLATE, "Sprinkler's Chocolatey Message: hi"));
+        assert_eq!(effects(&out).len(), 1);
+        let until = ss[0].fields.weather().values().next().unwrap().2;
+        let clear = net::weather::clear_weather();
+        for (i, s) in ss.iter_mut().enumerate() {
+            assert!(effects(&s.weather_tick_at(until - 1)).is_empty(), "player {i}: still running");
+        }
+        assert_eq!(effects(&ss[0].weather_tick_at(until)), vec![clear.clone()], "the user's screen");
+        assert_eq!(effects(&ss[1].weather_tick_at(until)), vec![clear], "the onlooker's, from their own session");
+        assert!(effects(&ss[2].weather_tick_at(until)).is_empty(), "another map: nothing to take down");
+        assert!(effects(&ss[0].weather_tick_at(until + 5)).is_empty(), "once");
+
+        // Arriving after it ended: never saw it, sent nothing.
+        let mut chr = ss[2].claimed_character().unwrap();
+        let _ = ss[2].go_to_map(&mut chr, 100_000_000, 0, "walks in late".to_string());
+        assert!(effects(&ss[2].weather_tick_at(until + 6)).is_empty(), "a late arrival gets no clear");
     }
 }

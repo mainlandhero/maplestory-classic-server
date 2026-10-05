@@ -3071,8 +3071,18 @@
 
     27. WEATHER ITEMS (2026-09-30). Two clients on one map; Sprinkled Chocolate (or any 512xxxx).
           a. use it with a message: chocolate falls and the message shows on BOTH screens, one
-             spent -> DONE. After ~30 s it fades out -> DONE
-               it stops dead instead of fading, or lasts ~10 s -> say which; 0x01B7 carries 30
+             spent -> DONE.
+          e. THE EFFECT ENDS WITH THE MESSAGE (2026-10-04). The owner: the Blessing of Wind's line
+             went and its sparkles stayed. The 30 s on the wire only times the message; the
+             client never takes the weather down itself. Now every screen that was on the map
+             is sent 0x01B7 with item 0 (the client's own clear) when the 30 s are up. Use one
+             (chocolate, or a GM's Blessing), watch BOTH screens for 30 s:
+               the particles go when the message goes, on both -> DONE
+               they vanish at once instead of fading -> say so; still gone is the point
+               still falling on one screen -> say which (the user's or the onlooker's) and
+                 paste the "item 0" BlowWeather lines from world-chN.log
+               the BGM or the map goes wrong at the 30 s mark -> say what; item 0 also
+                 touches the field's sound slot
           b. use a second one while the first is running: refused with a notice, item kept -> DONE
           c. a third client walking onto the map mid-effect sees the rest of it -> DONE
           d. GM'S BLESSINGS (Use tab, !item 2023000 / 2023001), two clients on one map: the GM
@@ -6869,7 +6879,10 @@ function Show-TestPlan {
         Write-Host '       any !scroll result with scrolls left: "keep scrolling?" Yes = menu again -> DONE' -ForegroundColor Green
         Write-Host ''
         Write-Host '  27. WEATHER ITEMS (2026-09-30): Sprinkled Chocolate etc. with a message, two clients on one map' -ForegroundColor White
-        Write-Host '       both see the effect and message, one spent, fades after ~30 s -> DONE' -ForegroundColor Green
+        Write-Host '       both see the effect and message, one spent -> DONE' -ForegroundColor Green
+        Write-Host '       2026-10-04: the PARTICLES now go with the message at 30 s (0x01B7 item 0), both screens -> DONE' -ForegroundColor Green
+        Write-Host '          still falling on one screen -> say whose; paste the "item 0" lines' -ForegroundColor Yellow
+        Write-Host '          music or map goes wrong at 30 s -> say what' -ForegroundColor Red
         Write-Host '       a second while one runs: refused, kept; a late arrival sees the rest -> DONE' -ForegroundColor Green
         Write-Host '       GM Blessings 2023000/2023001: GM weather + name on both screens, BOTH get a 60:00 icon;' -ForegroundColor Green
         Write-Host '       Wind = faster + higher jump, Precision = accuracy -> DONE' -ForegroundColor Green

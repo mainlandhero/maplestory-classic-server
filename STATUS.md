@@ -429,6 +429,16 @@ the ammo's attack - this client names it **`incWAT`** (Ilbi 27), and the first d
 never been compared with a night of real hits; a suspects line naming an honest character is
 the model being low, and log-only is the fix until it is corrected.
 
+**2026-10-04: a weather effect comes down with its message - tests only.** The owner: *"the
+effects on screen should fade away after the message disappears, but currently they remain"* -
+a screenshot of the Blessing of Wind's sparkles still falling on the Pet-Walking Road. The
+seconds in `0x01B7` time the message only; the client never removes the weather itself.
+**Item 0 is its clear [L]** (`FUN_14185b1c0`'s zero arm: `FUN_141ba36f0(field)` and the
+field's weather state zeroed). `Session::weather_tick` remembers the effect on this
+character's map while it runs - its own or one the bus delivered - and sends
+`net::weather::clear_weather` to its own client once it has run out; nothing to another map, a
+late arrival or the Cash Shop. **[I]** that it fades rather than vanishes. Plan step 27e.
+
 **2026-10-04: the Quest Helper's item counts no longer wait for `0x00DC` - tests only.** The
 owner, on The Tree That Grew I: *"the Quest Helper takes a second upon loading into the map for
 the item count to be properly updated"* - `0 / 15 Blue Mushroom Cap`, then `8 / 15`; only items

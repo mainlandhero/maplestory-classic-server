@@ -23,7 +23,13 @@
 //! only which item, what it says and for how long. `0x00AC` type 12 calls the same routine with
 //! a fixed 10 000 ms; this one takes the duration from the wire, which is why it is used.
 //!
-//! **[I]**: the gradual fade at the end is the client's own - nothing on the wire asks for it.
+//! **The seconds time the message, not the effect.** The owner, 2026-10-04, a screenshot on the
+//! Pet-Walking Road: the Blessing of Wind's line had gone and its sparkles were still falling.
+//! The client never takes the weather down by itself; it waits to be told. **Item 0 is the
+//! clear [L]**: `FUN_141853820` reads nothing after a zero item, and `FUN_14185b1c0`'s
+//! `param_2 == 0` arm calls `FUN_141ba36f0(field)`, zeroes the field's weather state at
+//! `+0x400`, `+0x408` and `+0x410`, and returns ([`clear_weather`]). **[I]** that the
+//! particles fade rather than vanish - the run is the test.
 //!
 //! # The request [L]
 //!
@@ -85,6 +91,11 @@ pub fn blow_weather(item_id: u32, message: &str, seconds: u32) -> Vec<u8> {
     w.u32(seconds);
     w.u8(0); // no 0x78-byte block
     w.into_vec()
+}
+
+/// The `0x01B7` body that takes the weather down: item 0 and nothing after it.
+pub fn clear_weather() -> Vec<u8> {
+    0u32.to_le_bytes().to_vec()
 }
 
 #[cfg(test)]

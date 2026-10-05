@@ -374,6 +374,9 @@ pub struct Session {
     last_position: Option<(i16, i16)>,
     /// The jump quests' pity timer, as this connection counts it. `session/jumpquest.rs`.
     jq_clock: crate::jumpquest::PityClock,
+    /// The weather effect this client is drawing - its map and the second it ends - so the
+    /// tick can take it down. `session/weather.rs`.
+    weather_shown: Option<(crate::fields::FieldKey, i64)>,
     /// The claimed character's name, read once at claim time for [`Session::log_tag`].
     log_name: Option<String>,
     /// The stance and facing this character last reported, `(action << 1) | facing`.
@@ -733,6 +736,7 @@ impl Session {
             skill_ready_ms: std::collections::HashMap::new(),
             last_position: None,
             jq_clock: crate::jumpquest::PityClock::default(),
+            weather_shown: None,
             friend_popups_raised: std::collections::HashMap::new(),
             pending_pet_line: None,
             active_effect_item: 0,
@@ -881,6 +885,8 @@ impl Session {
         // The jump quests' pity timer: time on a course, and the reminder past the hour.
         // session/jumpquest.rs.
         out.extend(self.jump_quest_pity_tick(now_ms));
+        // A weather effect whose thirty seconds are up comes off this screen. session/weather.rs.
+        out.extend(self.weather_tick());
         if self.config.chatter_off {
             return out;
         }
