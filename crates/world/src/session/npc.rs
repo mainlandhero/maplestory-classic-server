@@ -695,7 +695,9 @@ impl Session {
             before = None;
         }
         if before == Some(store::QuestState::Complete) {
-            return Vec::new();
+            // A daily already turned in today, offered by a client that still reads
+            // `interval 0`: Arwen says so. session/dailyquest.rs.
+            return self.daily_quest_refusal(quest_id, npc_template).unwrap_or_default();
         }
         // The same rule at the other end: a quest that hands something over on accept
         // (Sera's mirror, Roger's apple) is not accepted into a bag that cannot take it.
@@ -985,7 +987,15 @@ impl Session {
         // the packet has been decoded for a while and had nobody to send it to, because
         // nothing joined `data/shops.txt`'s NPC *name* onto the template id the click
         // carries. `Config::shop_by_template` is that join.
-        if let Some(replies) = self.open_shop_for(template, chr.id) {
+        //
+        // **Except a shop a quest opens** (Arwen, Jane), which asks first and only someone who
+        // has finished the quest: `None` from `quest_shop_click` means no counter at all, so
+        // that shop is never opened here. session/questshop.rs.
+        if questshop::quest_shop(template).is_some() {
+            if let Some(replies) = self.quest_shop_click(template) {
+                return replies;
+            }
+        } else if let Some(replies) = self.open_shop_for(template, chr.id) {
             return replies;
         }
 
@@ -2641,6 +2651,10 @@ impl Session {
         }
         if convo.path == crate::firsttime::NELLA_PATH {
             return self.nella_answer(reply.action);
+        }
+        // "Look at my wares?" from a shop a quest opens. session/questshop.rs.
+        if convo.path == questshop::ASK_PATH {
+            return self.quest_shop_answer(convo.npc_template, reply.action);
         }
         // The ships: a seller's Next, a boarder's or steward's yes/no, the Platform Usher's.
         // `boat.` paths, both routes. session/boat.rs.

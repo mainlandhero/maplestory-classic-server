@@ -329,7 +329,7 @@ which server halves exist. A row that says **not built** is a row that was looke
 | `2101001` | Teleport | COST ONLY: Teleport - the client moves itself |
 | `2101002` | Slow | MOB DEBUFF, **not built**: MP taken, nothing sent - Slow; mob status **not sent** (slow) - no mob-stat packet is decoded |
 | `2101003` | Fire Arrow | ATTACK: costs from the row (bullets=bulletCount on shoot), damage as the client sent it; mob status **not sent** (burn DoT) - no mob-stat packet is decoded |
-| `2101004` | Poison Breath | ATTACK: costs from the row (Poison Breath: no mad column, the hit lines are what the client sent, bullets=bulletCount on shoot), damage as the client sent it; mob status **not sent** (poison DoT) - no mob-stat packet is decoded |
+| `2101004` | Poison Breath | ATTACK: costs from the row; the client's own hit is 0. **Since 2026-10-05 the server runs the burst** from `2101005`'s row (`session/poisonbreath.rs`): up to 4 mobs in `lt`/`rb` around the struck one, a magic hit each, `prop`% poison ticking `dot`% per second for `dotTime`, never killing. Since 2026-10-06 it also sends the poison mark, `0x03E6` status 23 (`research/mob-status-index-2026-10-06.md`) |
 | `2101005` | *(hidden)* | hidden `invisible=1`: never granted; if the client sends it as a hit, costs/bullets/damage apply from its row; ATTACK: costs from the row, damage as the client sent it; mob status **not sent** (poison DoT) - no mob-stat packet is decoded |
 
 ### 220 Wizard (I/L)

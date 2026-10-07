@@ -56,14 +56,19 @@
 //! `net::opcode::EquipStats`, because that struct maps exhaustively onto both the packet and
 //! the 26 stored columns - adding a field there would change a packet.
 //!
-//! The client does carry a field that means this in the real game: `EquipOptions::unknown_b1`,
-//! `item+0x102`, which the v214 reference calls `cuc`, the successful-upgrade count. Using it
-//! would have needed no new storage at all. **It was checked and rejected**: a field scan of
-//! `+0x102` returns four sites and two of them are `lea rcx, [reg+0x102]`, the address handed
-//! off to code nobody has read. `CLAUDE.md` records that exact shape defeating a write-scan
-//! once already (`mob+0x42c`, found only by dropping the `--write` filter), so "nothing names
-//! it" is not "nothing reads it", and writing a client-visible field on that evidence is the
-//! assumption this file exists to avoid.
+//! `EquipOptions::upgrade_count` (`item+0x102`) is **not** this count either, and it was once
+//! considered for it. On 2026-10-05 the code behind one of its `lea rcx, [reg+0x102]` sites was
+//! read: it is the tooltip title, `"%s (+%d)"`, the number of scrolls that PASSED (`net::opcode`
+//! has the listing). That is [`EquipState::upgrades`] - a different number from this one, and a
+//! client-visible one.
+//!
+//! # The `(+N)` beside the name
+//!
+//! [`EquipState::upgrades`] counts passes: a real scroll, a Chaos or a Treasure Scroll that
+//! succeeds adds one, a failure adds none, a Clean Slate changes nothing (it returns a slot, it
+//! does not pass a scroll), and an Innocence that succeeds puts it back to 0 with everything
+//! else. The owner, 2026-10-05: *"For items that are scrolled, the number of scrolls passed
+//! should show as a +X number right next to the item name."*
 
 use net::opcode::EquipStatSet;
 
@@ -281,6 +286,8 @@ pub struct EquipState {
     /// **Server-only.** How many slots this item has lost to FAILED scrolls and not yet had
     /// returned. Never sent; see the module docs.
     pub failed_slots: u8,
+    /// `EquipOptions::upgrade_count` - how many scrolls have PASSED, the tooltip's `(+N)`.
+    pub upgrades: u8,
     /// The item's current stats.
     pub stats: EquipStatSet,
 }
@@ -423,7 +430,7 @@ pub fn apply(
             destroyed: false,
         }),
         SecretsMode::Innocence => Ok(Applied {
-            after: EquipState { remaining: base.tuc, failed_slots: 0, stats: base.stats },
+            after: EquipState { remaining: base.tuc, failed_slots: 0, upgrades: 0, stats: base.stats },
             succeeded: true,
             slot_spent: false,
             changes: Vec::new(),
@@ -441,6 +448,7 @@ pub fn apply(
             after.remaining -= 1;
             let mut changes = Vec::new();
             if succeeded {
+                after.upgrades = after.upgrades.saturating_add(1);
                 if let Some(change) = roll_one_stat(base, &mut after.stats, roll) {
                     changes.push(change);
                 }
@@ -525,6 +533,7 @@ pub fn apply_treasure(
         set(&mut after.stats, next);
         changes.push((*name, i32::from(next) - i32::from(now)));
     }
+    after.upgrades = after.upgrades.saturating_add(1);
     // A guarantee never reaches a failure arm, so it never reaches a destroy either.
     Ok(Applied { after, succeeded: true, slot_spent: true, changes, destroyed: false })
 }
@@ -585,6 +594,7 @@ pub fn apply_real(
         });
     }
 
+    after.upgrades = after.upgrades.saturating_add(1);
     let mut changes = Vec::new();
     for (name, get, set) in STATS {
         let granted = get(increments);
@@ -666,6 +676,7 @@ mod tests {
         EquipState {
             remaining,
             failed_slots: failed,
+            upgrades: 0,
             stats: EquipStatSet { inc_wat: wat, ..Default::default() },
         }
     }
@@ -1079,7 +1090,7 @@ mod tests {
         assert!(BACKPORTED.iter().all(|(id, _, _)| (2_049_000..2_049_200).contains(id)), "the range the client lets onto any equip");
 
         let base = EquipBase { tuc: 7, stats: EquipStatSet { inc_pdd: 10, ..Default::default() } };
-        let worn = EquipState { remaining: 3, failed_slots: 2, stats: EquipStatSet { inc_pdd: 15, ..Default::default() } };
+        let worn = EquipState { remaining: 3, failed_slots: 2, upgrades: 0, stats: EquipStatSet { inc_pdd: 15, ..Default::default() } };
         // roll % 100 = 69 succeeds at 70; 70 does not.
         let hit = apply(SecretsMode::Innocence, &base, &worn, Chance::Percent(70), 69).unwrap();
         assert!(hit.succeeded);
@@ -1090,5 +1101,38 @@ mod tests {
         assert!(apply(SecretsMode::Innocence, &base, &worn, Chance::Rolled, 99).unwrap().succeeded, "!scroll's is still 100%");
         assert!(!apply(SecretsMode::CleanSlate, &base, &worn, Chance::Percent(1), 1).unwrap().succeeded, "1% misses at roll 1");
         assert!(apply(SecretsMode::CleanSlate, &base, &worn, Chance::Percent(1), 100).unwrap().succeeded, "and hits at roll 0");
+    }
+
+    /// **The `(+N)` counts passes and nothing else.** A real scroll, a Chaos and a Treasure
+    /// Scroll that pass add one; a failure and a Clean Slate add none; an Innocence that passes
+    /// puts it back to 0; one that misses leaves it.
+    #[test]
+    fn the_upgrade_count_is_the_number_of_scrolls_that_passed() {
+        let base = base(7, 10);
+        let mut worn = state(7, 0, 10);
+        let plus = EquipStatSet { inc_wat: 1, ..Default::default() };
+
+        let passed = apply_real(&base, &worn, 100, 0, &plus, 0).unwrap();
+        assert_eq!(passed.after.upgrades, 1, "a real scroll passed");
+        worn = passed.after;
+        let failed = apply_real(&base, &worn, 0, 0, &plus, 0).unwrap();
+        assert_eq!(failed.after.upgrades, 1, "a failure adds nothing");
+        worn = failed.after;
+        let chaos = apply(SecretsMode::Chaos, &base, &worn, Chance::Guaranteed, 0).unwrap();
+        assert_eq!(chaos.after.upgrades, 2, "a Chaos that passes");
+        let chaos_miss = apply(SecretsMode::Chaos, &base, &worn, Chance::Percent(0), 0).unwrap();
+        assert_eq!(chaos_miss.after.upgrades, 1, "a Chaos that misses");
+        worn = chaos.after;
+        let treasure = apply_treasure(&base, &worn, &plus).unwrap();
+        assert_eq!(treasure.after.upgrades, 3, "a Treasure Scroll");
+        worn = treasure.after;
+        let slate = apply(SecretsMode::CleanSlate, &base, &worn, Chance::Guaranteed, 0).unwrap();
+        assert!(slate.succeeded);
+        assert_eq!(slate.after.upgrades, 3, "a Clean Slate returns a slot, it passes no scroll");
+        worn = slate.after;
+        let missed = apply(SecretsMode::Innocence, &base, &worn, Chance::Percent(0), 0).unwrap();
+        assert_eq!(missed.after.upgrades, 3, "an Innocence that misses changes nothing");
+        let innocent = apply(SecretsMode::Innocence, &base, &worn, Chance::Guaranteed, 0).unwrap();
+        assert_eq!(innocent.after.upgrades, 0, "an Innocence resets it with everything else");
     }
 }

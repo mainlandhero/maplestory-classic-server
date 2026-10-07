@@ -480,9 +480,8 @@ impl Session {
             }
         }
         let owed = jq::quest_item_owed(self.jq_quest_in_progress(chr.id, goal.quest), self.held_count(chr.id, goal.item), goal.count);
-        // Today's rewards used up: the quest item still, the reward not (`jq::DAILY_REWARDS`).
-        let limited = goal.prize && self.jq_rewards_left(chr.id) == 0;
-        let prizes: Vec<(&str, crate::magicbox::Prize)> = if goal.prize && !limited {
+        // No daily limit here: only the Pet-Walking Road counts (`jq::DAILY_REWARDS`).
+        let prizes: Vec<(&str, crate::magicbox::Prize)> = if goal.prize {
             jq::SLOTS.iter().map(|s| (s.name, crate::magicbox::roll(s, self.rng.next()))).collect()
         } else {
             Vec::new()
@@ -491,10 +490,7 @@ impl Session {
             return refusal;
         }
         let landing = jq::goal_landing(goal);
-        let mut text = jq::found_text(goal, (owed > 0).then_some((goal.item, owed)), &prizes, jq::town_name(landing));
-        if limited {
-            text.push_str(&format!(r"\n\n{}", jq::limit_reached_text()));
-        }
+        let text = jq::found_text(goal, (owed > 0).then_some((goal.item, owed)), &prizes, jq::town_name(landing));
         let path = jq::found_path(goal.npc, &prizes.iter().map(|&(_, p)| p).collect::<Vec<_>>());
         crate::server::log(&format!(
             "   jump quest: {} ({}) reached NPC {} on map {} - quest {} item {} x{owed}, prizes {:?}; handed over when the box closes",
@@ -600,7 +596,8 @@ impl Session {
         if let Some(refusal) = self.jq_room_refusal(&chr, goal, owed, &prizes) {
             return refusal;
         }
-        let (prizes, mut out) = self.jq_charge_reward(&chr, prizes);
+        // Uncharged: every finished course pays. Only Frod counts (`claim_frod`).
+        let mut out = Vec::new();
         let mut lines = Vec::new();
         let mut gained = Vec::new();
         let quest_item = (owed > 0).then_some((goal.item, owed));
@@ -638,8 +635,11 @@ impl Session {
         if self.held_count(chr.id, jq::BARTOS_LETTER) > 0 {
             return self.jq_say(
                 jq::BARTOS,
-                "Jump over the obstacles with your pet, and take that letter to my brother #bTrainer Frod#k at the top. \
-                 Give him the letter and something good is going to happen to your pet.",
+                &format!(
+                    "Jump over the obstacles with your pet, and take that letter to my brother #bTrainer Frod#k at the top. \
+                     Give him the letter and something good is going to happen to your pet.\\n\\n{}",
+                    jq::bartos_rewards_left_text(self.jq_rewards_left(chr.id))
+                ),
                 "the letter is already held".to_string(),
             );
         }
@@ -683,12 +683,16 @@ impl Session {
         };
         out.push(self.item_chat_line(jq::BARTOS_LETTER, 1));
         crate::server::log(&format!("   jump quest: Trainer Bartos gave {} ({}) the letter for Frod", chr.name, chr.id));
+        let left = self.jq_rewards_left(chr.id);
         out.extend(self.jq_say(
             jq::BARTOS,
-            "Ok, here's the letter. He wouldn't know I sent you if you just went there straight, so go through the \
-             obstacles with your pet, go to the very top, and then talk to #bTrainer Frod#k to give him the letter. It \
-             won't be hard if you pay attention to your pet while going through obstacles. Good luck!",
-            "the letter handed over".to_string(),
+            &format!(
+                "Ok, here's the letter. He wouldn't know I sent you if you just went there straight, so go through the \
+                 obstacles with your pet, go to the very top, and then talk to #bTrainer Frod#k to give him the letter. It \
+                 won't be hard if you pay attention to your pet while going through obstacles. Good luck!\\n\\n{}",
+                jq::bartos_rewards_left_text(left)
+            ),
+            format!("the letter handed over - {left} of Frod's rewards left today"),
         ));
         out
     }
@@ -1265,43 +1269,96 @@ mod tests {
         assert!(s.conversation.is_none());
     }
 
-    /// **Ten Jump Quest Rewards a day, per character, apart from the party quest's ten** (the
-    /// owner, 2026-10-04). The tenth reward is handed over with a chat line saying it was the
-    /// last; past it the box says so, rolls nothing and charges nothing - while the course's quest
-    /// item is still handed over. The PQ's own count never moves.
+    /// **Every course but the Pet-Walking Road pays every finished run** (the owner, 2026-10-05:
+    /// *"only the pet park jump quest is limited to 10 rewards per day, everything else should be
+    /// unlimited as long as they finish"*). A chest opened with Frod's ten already used still rolls
+    /// a prize per slot, hands them over, and charges and says nothing.
     #[test]
-    fn jump_quest_rewards_stop_at_ten_a_day_and_say_how_many_are_left() {
+    fn a_course_pays_every_run_whatever_frods_count_says() {
         let chest = jq::goal_for(jq::CHEST_B2).unwrap();
         let (store, mut s, id) = standing(chest.map, chest.npc, (107, 547), 40);
+        for _ in 0..jq::DAILY_REWARDS {
+            store.take_daily_uses_now(&[id], jq::REWARD_COUNT_KEY, jq::DAILY_REWARDS).unwrap().unwrap();
+        }
+        for run in 0..2 {
+            let mut chr = s.claimed_character().unwrap();
+            let _ = s.go_to_map(&mut chr, chest.map, 0, "to the chest".to_string());
+            s.last_position = Some((107, 547));
+            let box_text = said(&s.handle(&click()));
+            assert!(!box_text.contains("today's"), "run {run}: no limit line: {box_text}");
+            let (_, prizes) = jq::parse_found_path(&s.conversation.as_ref().unwrap().path).unwrap();
+            assert_eq!(prizes.len(), jq::SLOTS.len(), "run {run}: a prize per slot");
+            let out = s.handle(&answer(0, net::script::SCRIPT_ACTION_YES));
+            for (item, q) in prizes {
+                assert!(held(&store, id, item) >= u32::from(q), "run {run}: {item}");
+            }
+            assert!(notices(&out).iter().all(|n| !n.contains("reward")), "run {run}: nothing counted: {:?}", notices(&out));
+        }
+        assert_eq!(store.daily_uses_now(id, jq::REWARD_COUNT_KEY).unwrap(), jq::DAILY_REWARDS, "never charged");
+    }
+
+    /// **The Pet-Walking Road alone counts, ten a day, and Bartos says how many are left** (the
+    /// owner, 2026-10-05). Bartos's letter line names the rewards left; Frod's ninth and tenth
+    /// say how many remain; past ten Frod's box says so and gives the closeness without a prize;
+    /// Bartos then says none are left. The PQ's own count never moves.
+    #[test]
+    fn the_pet_walking_road_alone_is_limited_and_bartos_says_how_many_are_left() {
+        let (store, mut s, id) = standing(jq::PET_WALKING_ROAD, jq::BARTOS, (-2108, 236), 20);
+        let pet_slot = store.add_item(id, store::InventoryType::Cash, &store::Item::bundle(5_000_006, 1), 1).unwrap()[0].slot;
+        let mut activate = 0u32.to_le_bytes().to_vec();
+        activate.extend_from_slice(&pet_slot.to_le_bytes());
+        let _ = s.on_pet_activate(&activate);
+        let pet = s.active_pet.expect("the pet is out").pet_id;
         for _ in 0..8 {
             store.take_daily_uses_now(&[id], jq::REWARD_COUNT_KEY, jq::DAILY_REWARDS).unwrap().unwrap();
         }
-        let _ = s.handle(&click());
-        let out = s.handle(&answer(0, net::script::SCRIPT_ACTION_YES));
-        assert!(notices(&out).iter().any(|n| n.contains("1 more Jump Quest Reward today")), "the ninth: {:?}", notices(&out));
+        let bartos_cfg = s.config.clone();
+        let mut frod_cfg = (*s.config).clone();
+        frod_cfg.npcs.insert(
+            jq::PET_WALKING_ROAD,
+            vec![net::opcode::FieldNpc { object_id: OBJ, template_id: jq::FROD, x: -1593, cy: -1588, fh: 1, rx0: 0, rx1: 0, f: 0 }],
+        );
+        let frod_cfg = Arc::new(frod_cfg);
 
-        let mut chr = s.claimed_character().unwrap();
-        let _ = s.go_to_map(&mut chr, chest.map, 0, "back to the chest".to_string());
-        s.last_position = Some((107, 547));
+        // Bartos, for the letter: "2 rewards left".
         let _ = s.handle(&click());
-        let out = s.handle(&answer(0, net::script::SCRIPT_ACTION_YES));
-        assert!(notices(&out).iter().any(|n| n.contains("That was your last Jump Quest Reward for today")), "{:?}", notices(&out));
+        let letter = said(&s.handle(&answer(net::script::SCRIPT_TYPE_YES_NO, net::script::SCRIPT_ACTION_YES)));
+        assert!(letter.contains("You have 2 rewards left to claim from my brother today"), "{letter}");
+        assert_eq!(held(&store, id, jq::BARTOS_LETTER), 1);
+
+        // Frod, three times: the ninth, the tenth, then the limit.
+        let frod = |s: &mut Session| -> (String, Vec<(u32, u16)>, Vec<String>) {
+            s.config = frod_cfg.clone();
+            s.conversation = None;
+            s.last_position = Some((-1593, -1588));
+            if held(&store, id, jq::BARTOS_LETTER) == 0 {
+                store.add_item(id, store::InventoryType::Etc, &store::Item::bundle(jq::BARTOS_LETTER, 1), 100).unwrap();
+            }
+            let text = said(&s.handle(&click()));
+            let (_, prizes) = jq::parse_found_path(&s.conversation.as_ref().unwrap().path).unwrap();
+            let out = s.handle(&answer(0, net::script::SCRIPT_ACTION_YES));
+            (text, prizes, notices(&out))
+        };
+        let (_, prizes, told) = frod(&mut s);
+        assert_eq!(prizes.len(), jq::SLOTS.len());
+        assert!(told.iter().any(|n| n.contains("1 more Pet-Walking Road reward today")), "the ninth: {told:?}");
+        let (_, _, told) = frod(&mut s);
+        assert!(told.iter().any(|n| n.contains("That was your last Pet-Walking Road reward")), "the tenth: {told:?}");
         assert_eq!(store.daily_uses_now(id, jq::REWARD_COUNT_KEY).unwrap(), 10);
-
-        // The eleventh: the quest item still, the reward not.
-        let mut chr = s.claimed_character().unwrap();
-        let _ = s.go_to_map(&mut chr, chest.map, 0, "back to the chest".to_string());
-        s.last_position = Some((107, 547));
-        store.start_quest(id, chest.quest).unwrap();
-        let box_text = said(&s.handle(&click()));
-        assert!(box_text.contains("all 10 of today's Jump Quest Rewards") && !box_text.contains("#bScroll#k"), "{box_text}");
-        assert!(box_text.contains(&format!("#t{}#", chest.item)), "the quest item is never withheld: {box_text}");
-        let (_, prizes) = jq::parse_found_path(&s.conversation.as_ref().unwrap().path).unwrap();
-        assert!(prizes.is_empty());
-        let out = s.handle(&answer(0, net::script::SCRIPT_ACTION_YES));
-        assert_eq!(held(&store, id, chest.item), 1);
-        assert!(notices(&out).iter().all(|n| !n.contains("more Jump Quest")), "nothing taken, nothing to count");
+        let closeness = store.pet_state(pet).unwrap().closeness;
+        let (text, prizes, _) = frod(&mut s);
+        assert!(text.contains("all 10 of today's Pet-Walking Road rewards"), "{text}");
+        assert!(prizes.is_empty(), "no prize past ten");
+        assert_eq!(store.pet_state(pet).unwrap().closeness, closeness + jq::PET_PARK_CLOSENESS, "the closeness is never withheld");
         assert_eq!(store.daily_uses_now(id, jq::REWARD_COUNT_KEY).unwrap(), 10, "not charged past the limit");
+
+        // Bartos again, letter in hand: none left.
+        s.config = bartos_cfg;
+        s.conversation = None;
+        s.last_position = Some((-2108, 236));
+        store.add_item(id, store::InventoryType::Etc, &store::Item::bundle(jq::BARTOS_LETTER, 1), 100).unwrap();
+        let reminder = said(&s.handle(&click()));
+        assert!(reminder.contains("already claimed all 10 of today's rewards"), "{reminder}");
         assert_eq!(store.daily_uses_now(id, crate::firsttime::ENTRY_COUNT_KEY).unwrap(), 0, "the PQ's count is separate");
     }
 

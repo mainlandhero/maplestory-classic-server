@@ -30,10 +30,10 @@ impl Session {
         let duration_ms = seconds * 1000;
         let mut out = Vec::new();
         if let Some(x) = row.x.filter(|v| *v > 0) {
-            out.push(net::mobstat::MobStatus { index: net::mobstat::PAD, value: -x, reason: skill_id, duration_ms });
+            out.push(net::mobstat::MobStatus { index: net::mobstat::PAD, value: -x, reason: skill_id, duration_ms, extra: 0 });
         }
         if let Some(y) = row.y.filter(|v| *v > 0) {
-            out.push(net::mobstat::MobStatus { index: net::mobstat::PDR, value: -y, reason: skill_id, duration_ms });
+            out.push(net::mobstat::MobStatus { index: net::mobstat::PDR, value: -y, reason: skill_id, duration_ms, extra: 0 });
         }
         out
     }

@@ -94,7 +94,7 @@ pub use fame::{fame_windows, FameOutcome, FameWindows};
 pub use gifts::{Gift, GiftTarget, GIFT_TTL_SECS};
 pub use inventory::{
     plan_consolidation, plan_sort, Bag, Equipped, EquippedItem, InvItem, InventoryType, Item,
-    ItemKind, ItemRules, MoveOutcome, Stack, StackChange, WornItem,
+    ItemKind, ItemRules, MoveOutcome, Stack, StackChange, UpgradeCountRepair, WornItem,
 };
 pub use quest::{QuestRow, QuestState};
 pub use skillpoints::{

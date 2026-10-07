@@ -273,6 +273,11 @@ mod tests {
             indie_mhp_r: None,
             fix_damage: None,
             tooltip_damage_percent: None,
+            mastery: None,
+            dot: None,
+            dot_time_seconds: None,
+            dot_interval_seconds: None,
+            area: None,
         };
         assert_eq!(ValueFrom::X.resolve(&row, 7), Some(-2), "sign kept");
         assert_eq!(ValueFrom::Level.resolve(&row, 7), Some(7));

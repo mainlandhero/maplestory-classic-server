@@ -103,6 +103,17 @@ pub(crate) fn create_tables(conn: &Connection) -> Result<()> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_quest_state_character ON quest_state(character_id);
+
+        -- Daily quests (world::session::dailyquest) whose completion the daily reset has
+        -- cleared: how many times, and the last turn-in. Store::has_completed_quest reads it,
+        -- so "has ever returned Arwen's shoe" survives the reset (2026-10-05).
+        CREATE TABLE IF NOT EXISTS daily_quest_history (
+            character_id      INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+            quest_id          INTEGER NOT NULL,
+            times             INTEGER NOT NULL,
+            last_completed_at INTEGER NOT NULL,
+            PRIMARY KEY (character_id, quest_id)
+        );
         "#,
     )?;
     Ok(())
@@ -320,6 +331,70 @@ impl Store {
             ],
         )?;
         Ok(changed > 0)
+    }
+
+    /// **Clear a daily quest's completion once its day is over** - the row goes, so the
+    /// character is back to never having done it and the client offers it again.
+    /// `true` only when a row was removed: it must be `Complete` AND completed before
+    /// `day_start` (a unix second). A completion from today, an in-progress row, or a row that
+    /// is not there are all left alone and answer `false`.
+    ///
+    /// The one other `DELETE` here, [`Store::forget_quest`], refuses completions on purpose
+    /// (the farmable-Heena loop). This one exists for the quests the server has decided repeat
+    /// daily (`world::dailyquest`), and the predicate on `completed_at` is the guard that keeps
+    /// it from becoming the same loop: a turn-in made today cannot be cleared today, whoever
+    /// calls this.
+    ///
+    /// **The turn-in is not forgotten with the row.** Before the row goes, the character is
+    /// recorded in `daily_quest_history` in the same transaction, so
+    /// [`Store::has_completed_quest`] still says yes the next day - Arwen's shop is for anyone
+    /// who has ever returned the shoe, not just whoever returned it today.
+    pub fn clear_daily_completion(&self, character_id: u32, quest_id: u32, day_start: i64) -> Result<bool> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let completed_at: Option<i64> = tx
+            .query_row(
+                "SELECT completed_at FROM quest_state
+                  WHERE character_id = ?1 AND quest_id = ?2 AND state = ?3
+                    AND completed_at IS NOT NULL AND completed_at < ?4",
+                rusqlite::params![
+                    i64::from(character_id),
+                    i64::from(quest_id),
+                    QuestState::Complete.as_u8(),
+                    day_start,
+                ],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(completed_at) = completed_at else { return Ok(false) };
+        tx.execute(
+            "INSERT INTO daily_quest_history (character_id, quest_id, times, last_completed_at)
+             VALUES (?1, ?2, 1, ?3)
+             ON CONFLICT(character_id, quest_id) DO UPDATE SET
+                 times = times + 1,
+                 last_completed_at = excluded.last_completed_at",
+            rusqlite::params![i64::from(character_id), i64::from(quest_id), completed_at],
+        )?;
+        tx.execute(
+            "DELETE FROM quest_state WHERE character_id = ?1 AND quest_id = ?2 AND state = ?3",
+            rusqlite::params![i64::from(character_id), i64::from(quest_id), QuestState::Complete.as_u8()],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// **Has this character ever turned this quest in?** Complete now, or cleared by the daily
+    /// reset after a turn-in ([`Store::clear_daily_completion`]'s history row).
+    pub fn has_completed_quest(&self, character_id: u32, quest_id: u32) -> Result<bool> {
+        let done: i64 = self.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM quest_state
+                            WHERE character_id = ?1 AND quest_id = ?2 AND state = ?3)
+                 OR EXISTS(SELECT 1 FROM daily_quest_history
+                            WHERE character_id = ?1 AND quest_id = ?2)",
+            rusqlite::params![i64::from(character_id), i64::from(quest_id), QuestState::Complete.as_u8()],
+            |row| row.get(0),
+        )?;
+        Ok(done != 0)
     }
 
     /// The two record blocks' worth of state, ready for
@@ -579,6 +654,33 @@ mod tests {
             None,
             "\"not started\" is the absence of a row, not a stored value"
         );
+    }
+
+    /// A daily's completion is cleared only once its day is over: not an in-progress row, not
+    /// a turn-in from today, and only once.
+    #[test]
+    fn a_daily_completion_clears_only_after_its_day() {
+        let (store, chr) = store_with_character();
+        let today = crate::dailyperks::utc_day_start(crate::dailyperks::today());
+        assert!(!store.has_completed_quest(chr, 10200).unwrap());
+        assert!(store.start_quest(chr, 10200).unwrap());
+        assert!(!store.clear_daily_completion(chr, 10200, today + 86_400).unwrap(), "in progress stays");
+        assert!(!store.has_completed_quest(chr, 10200).unwrap(), "accepted is not completed");
+        store.complete_quest(chr, 10200).unwrap();
+        assert!(store.has_completed_quest(chr, 10200).unwrap());
+        assert!(!store.clear_daily_completion(chr, 10200, today).unwrap(), "today's turn-in stays");
+        assert_eq!(store.quest_row(chr, 10200).unwrap().unwrap().state, QuestState::Complete);
+        assert!(store.clear_daily_completion(chr, 10200, today + 86_400).unwrap(), "tomorrow it goes");
+        assert_eq!(store.quest_row(chr, 10200).unwrap(), None);
+        assert!(store.has_completed_quest(chr, 10200).unwrap(), "but the turn-in is remembered");
+        assert!(!store.clear_daily_completion(chr, 10200, today + 86_400).unwrap(), "once");
+        assert!(store.start_quest(chr, 10200).unwrap(), "and it can be accepted afresh");
+        assert!(store.has_completed_quest(chr, 10200).unwrap(), "still remembered while in progress again");
+        let times: i64 = store
+            .conn()
+            .query_row("SELECT times FROM daily_quest_history WHERE character_id = ?1", [i64::from(chr)], |r| r.get(0))
+            .unwrap();
+        assert_eq!(times, 1);
     }
 
     fn book_has_started(store: &Store, chr: u32, quest_id: u32) -> bool {

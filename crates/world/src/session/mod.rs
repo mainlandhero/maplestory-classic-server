@@ -385,6 +385,14 @@ pub struct Session {
     /// a value this client never sends, and announcing it is why every remote player faced
     /// right. `net::userpool::MOVE_ACTION_STANDING` is the fallback instead.
     last_move_action: Option<u8>,
+    /// Whether the rest of the map was last told this character is in Dark Sight.
+    /// `session/darksight.rs`.
+    dark_sight_shown: bool,
+    /// The UTC day the daily quests were last refreshed on; `0` until the first field entry.
+    /// `session/dailyquest.rs`.
+    daily_quest_day: i64,
+    /// The Poison Breath poisons this character's casts are ticking. `session/poisonbreath.rs`.
+    poisons: Vec<poisonbreath::Poison>,
     /// The pet this session has summoned, if any - session-only, put away by a relog.
     /// `session/pet.rs`.
     active_pet: Option<pet::ActivePet>,
@@ -667,6 +675,10 @@ mod groupchat;
 mod whisper;
 mod messenger;
 pub mod worldlink;
+mod darksight;
+mod dailyquest;
+mod questshop;
+mod poisonbreath;
 mod pet;
 mod pools;
 mod mobwatch;
@@ -746,6 +758,9 @@ impl Session {
             pending_craft: None,
             log_name: None,
             last_move_action: None,
+            dark_sight_shown: false,
+            daily_quest_day: 0,
+            poisons: Vec::new(),
             active_pet: None,
             pet_position: None,
             pet_hunger_due_ms: None,
@@ -832,6 +847,10 @@ impl Session {
         // covers the busy case; this covers the idle one, and between them a
         // broadcast waits at most one tick.
         let mut out = self.collect_mail();
+        // A Dark Sight the last tick's expiry ended: the map is told. session/darksight.rs.
+        self.sync_remote_dark_sight();
+        // A daily quest turned in before today comes back at midnight. session/dailyquest.rs.
+        out.extend(self.refresh_daily_quests());
         // Party requests answered by the hub's echo. `session/worldlink.rs`.
         out.extend(self.collect_party_outcomes());
         out.extend(self.collect_messenger_outcomes());
@@ -872,6 +891,8 @@ impl Session {
         // tick arrive in the order the client draws them.
         out.extend(self.buff_tick(now_ms));
         out.extend(self.dragon_blood_tick(now_ms));
+        // Poison Breath's poison on the mobs it burst over. session/poisonbreath.rs.
+        out.extend(self.poison_tick(now_ms));
         // The summoned pet's fullness, one down every five minutes. session/pet.rs.
         out.extend(self.pet_hunger_tick(now_ms));
         // A friend request nobody answered. Before the chatter switch, because an unanswered
@@ -980,6 +1001,8 @@ impl Session {
     /// below is one whose handler has been read, and unknown ones fall through to nothing.
     pub fn handle(&mut self, body: &[u8]) -> Vec<Reply> {
         let mut out = self.dispatch(body);
+        // Dark Sight came on or went off in that packet: the map is told. session/darksight.rs.
+        self.sync_remote_dark_sight();
         // **After** whatever this packet asked for, never before or inside it. A
         // reply sequence like a `SetField` and its field contents is a script the
         // client walks in order, and another player's movement spliced into the
@@ -1062,8 +1085,11 @@ impl Session {
             net::pet::CLIENT_PET_PICK_UP => {
                 return self.on_pick_up(net::pet::CLIENT_PET_PICK_UP, body.get(2..).unwrap_or(&[]))
             }
+            // An attack in Dark Sight ends it first (the owner, 2026-10-05). session/darksight.rs.
             op if net::combat::is_attack_opcode(op) => {
-                return self.on_attack(op, body.get(2..).unwrap_or(&[]))
+                let mut out = self.leave_dark_sight_on_attack();
+                out.extend(self.on_attack(op, body.get(2..).unwrap_or(&[])));
+                return out;
             }
             net::inventory::CLIENT_INVENTORY_MOVE => {
                 return self.on_inventory_move(body.get(2..).unwrap_or(&[]))

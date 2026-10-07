@@ -1128,3 +1128,26 @@ shop: Rumi | Armor Seller | El Nath: El Nath Weapon Store
 	Blue Steal Pants	9600
 	Pink Whitebottom Boots	4680
 	Blue Whitebottom Boots	4680
+
+# Arwen the Fairy - added 2026-10-05 at the owner's word, NOT transcribed from the live UI.
+# Classic World's Arwen sells these three (meowdb.com/msclassic npc 304); its prices are not
+# published, so each is the item's own sell-back price (Item.wz info/price), which the one
+# public number agrees with - Moon Rock "reduced from 8,000 to 2,000 mesos in COT2". Not
+# opened on click: Arwen asks first, and only once "Arwen and the Glass Shoe" (10200) has
+# been completed. crates/world/src/session/questshop.rs.
+shop: Arwen the Fairy | Material Merchant | Victoria Road: Ellinia
+	Moon Rock	2000
+	Star Rock	4000
+	Black Feather	1000
+
+# Jane - added 2026-10-05 at the owner's word, NOT transcribed from the live UI. Classic
+# World's Jane sells these four (meowdb.com/msclassic npc 103), prices not published; each is
+# the price every other counter in this file already charges for the same item (White Potion
+# 350 x11, Unagi 1000 x6, Pure Water 1120 x5, Watermelon 1920 x1). Not opened on click: Jane
+# asks first, and only once "Jane and the Mushroom" (10002) has been completed - the server's
+# choice of quest. crates/world/src/session/questshop.rs.
+shop: Jane | Potion Merchant | Victoria Road: Lith Harbor
+	White Potion	350
+	Unagi	1000
+	Pure Water	1120
+	Watermelon	1920

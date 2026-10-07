@@ -184,6 +184,7 @@ impl Session {
         let state = EquipState {
             remaining: current.options.remaining_enhancements,
             failed_slots,
+            upgrades: current.options.upgrade_count,
             stats: current.stats,
         };
 
@@ -236,6 +237,7 @@ impl Session {
         let mut new_stats = current;
         new_stats.stats = applied.after.stats;
         new_stats.options.remaining_enhancements = applied.after.remaining;
+        new_stats.options.upgrade_count = applied.after.upgrades;
         new_stats.options.attribute &= !net::opcode::ATTRIBUTE_LUCKY_DAY;
 
         let wrote = if applied.destroyed {
@@ -752,6 +754,9 @@ mod tests {
             assert_eq!(hat.stats.inc_pdd, 10 + u16::from(round));
             assert_eq!(hat.options.remaining_enhancements, 7 - round);
             assert_eq!(hat.options.attribute & net::opcode::ATTRIBUTE_LUCKY_DAY, 0, "the mark is spent");
+            // The tooltip's "(+N)": one more pass, stored, and on the wire as option bit 1.
+            assert_eq!(hat.options.upgrade_count, round, "passes so far");
+            assert_ne!(hat.options.mask() & (1 << 1), 0, "option bit 1 goes out");
         }
         assert_eq!(held(&store, id, scrolls::LUCKY_DAY), 5, "one Lucky Day per mark; the refused second ones took nothing");
         assert_eq!(held(&store, id, HAT_SCROLL_10), 5);

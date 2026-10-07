@@ -1110,6 +1110,18 @@ pub struct CastNumbers {
     /// deals damage. Arrow Bomb is the one: `damage` 0 at every level, tooltip *"damage 80%"*
     /// ... *"damage 140%"*. **[L]**, the client's own text; `None` when it states no percent.
     pub tooltip_damage_percent: Option<u32>,
+    /// `mastery` - the skill's mastery level, `1..=10` (*"Mastery level 1"*). **[L]**
+    pub mastery: Option<u32>,
+    /// `dot` - a poison's damage per tick, as a **percent of Basic Attack** like `mad`
+    /// (*"deals 10 Basic Attack over 5 sec"*). Poison Breath's hidden half, `2101005`. **[L]**
+    pub dot: Option<u32>,
+    /// `dotTime` - how long the poison lasts, **SECONDS**.
+    pub dot_time_seconds: Option<u32>,
+    /// `dotInterval` - seconds between ticks.
+    pub dot_interval_seconds: Option<u32>,
+    /// `lt`/`rb` - the area the hit covers, relative to its centre, as `((ltX, ltY), (rbX,
+    /// rbY))`. `None` unless all four cells are present.
+    pub area: Option<((i32, i32), (i32, i32))>,
 }
 
 /// The `N` in the first `damage N%` of a tooltip, case-insensitive. `"MP -14; Stun chance 30%
@@ -1276,7 +1288,7 @@ const WANTED_MORE: [&str; 3] = ["attackCount", "mobCount", "bulletCount"];
 /// combat numbers. The cost of that leniency is bounded: a missing column reads as "the
 /// skill grants no such stat", which turns a party buff into a chat notice rather than into
 /// a wrong number.
-const OPTIONAL: [&str; 21] = [
+const OPTIONAL: [&str; 28] = [
     "indieSpeed", "indieJump", "indiePad", "indieMad", "indiePdd", "indieMdd", "ltX", "mhpR", "mmpR",
     // Added 2026-09-07 for the second- and third-job audit. Same leniency, same bounded cost.
     "noBulletConsume", "itemCon", "itemConNo", "moneyCon", "x", "y", "prop", "indieAcc", "indieEva",
@@ -1284,6 +1296,9 @@ const OPTIONAL: [&str; 21] = [
     // Added 2026-10-02 for the damage guard (`crate::damageguard`): Three Snails' fixed damage,
     // and the tooltip - the only place Arrow Bomb states its damage percent.
     "fixdamage", "tooltip",
+    // Added 2026-10-05 for Poison Breath's burst (`session/poisonbreath.rs`): the poison and
+    // the box the burst covers.
+    "dot", "dotTime", "dotInterval", "ltY", "rbX", "rbY", "mastery",
 ];
 
 /// Resolve the [`OPTIONAL`] columns that this header actually has.
@@ -1562,6 +1577,14 @@ fn parse_cast(
         indie_mhp_r: at_opt("indieMhpR")?.map(|v| u32::try_from(v).unwrap_or(0)),
         fix_damage: at_opt("fixdamage")?.map(|v| u32::try_from(v).unwrap_or(0)),
         tooltip_damage_percent: opt.get("tooltip").and_then(|i| f.get(*i)).and_then(|t| tooltip_damage_percent(t)),
+        mastery: at_opt("mastery")?.map(|v| u32::try_from(v).unwrap_or(0)),
+        dot: at_opt("dot")?.map(|v| u32::try_from(v).unwrap_or(0)),
+        dot_time_seconds: at_opt("dotTime")?.map(|v| u32::try_from(v).unwrap_or(0)),
+        dot_interval_seconds: at_opt("dotInterval")?.map(|v| u32::try_from(v).unwrap_or(0)),
+        area: match (at_opt("ltX")?, at_opt("ltY")?, at_opt("rbX")?, at_opt("rbY")?) {
+            (Some(lx), Some(ly), Some(rx), Some(ry)) => Some(((lx, ly), (rx, ry))),
+            _ => None,
+        },
     })
 }
 

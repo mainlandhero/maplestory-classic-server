@@ -35,6 +35,16 @@ The run prints every id it touched, and refuses to write if the selection is eve
 `QuestInfo/area` is the client's own region field: area 1's twenty images are the island's
 quest chain (Sera, Heena, Roger, Sen, Nina, Todd, Sam, Lucas, Mai, Biggs, Pio, Rain).
 
+## And one quest that came back too soon
+
+The owner, 2026-10-05: *"Arwen's Glass Shoes is repeatable every day, but the server should not
+immediately offer the quest again."* Quest 10200 has `Check/0/interval = 0` - the only
+`interval` in this client - which the client reads as repeatable the moment it is turned in.
+So **every quest with a `Check/0/interval` loses that node** too, selected from the archive the
+same way, and becomes a one-time quest to the client. The server brings it back once each UTC
+day by clearing the completion (`crates/world/src/session/dailyquest.rs`), which is a cadence
+the server owns rather than a number the client reads.
+
 ## Getting it to players
 
 `tools/package-server.ps1` ships `client-patched\` as the canonical client and every launcher
@@ -84,56 +94,74 @@ def sha(path):
 
 
 def select(base):
-    """(image, jobs) for every Maple Island quest with a start-time job list, from `base`."""
+    """(image, [node, ...], note) for every image that loses a node, from `base`.
+
+    `Check/0/job` on every Maple Island quest that has one; `Check/0/interval` on every quest
+    that has one (the daily the server owns). An image can lose both.
+    """
     chosen = []
     for img in images(base):
         quest = json.loads(dump("cat", base, img))
-        if quest.get("QuestInfo", {}).get("area") != MAPLE_ISLAND:
-            continue
-        job = quest.get("Check", {}).get("0", {}).get("job")
-        if job is None:
-            continue
-        jobs = sorted(job.values()) if isinstance(job, dict) else job
-        chosen.append((img, jobs))
+        start = quest.get("Check", {}).get("0", {})
+        nodes, notes = [], []
+        job = start.get("job")
+        if quest.get("QuestInfo", {}).get("area") == MAPLE_ISLAND and job is not None:
+            jobs = sorted(job.values()) if isinstance(job, dict) else job
+            nodes.append("job")
+            notes.append("job %s -> any" % (str(jobs) if len(jobs) <= 4 else "%d jobs" % len(jobs)))
+        if "interval" in start:
+            nodes.append("interval")
+            notes.append("interval %s -> none (daily, server-side)" % start["interval"])
+        if nodes:
+            chosen.append((img, nodes, "; ".join(notes)))
     return chosen
 
 
 def build(base):
     chosen = select(base)
-    if not chosen:
+    if not any("job" in nodes for _, nodes, _ in chosen):
         raise SystemExit("no Maple Island quest with a job list in %s - refusing to write an unchanged archive" % base)
+    if not any("interval" in nodes for _, nodes, _ in chosen):
+        raise SystemExit("no quest with Check/0/interval in %s - the Arwen patch selected nothing" % base)
     os.makedirs(BUILD, exist_ok=True)
-    patch = os.path.join(BUILD, "drop-job.tsv")
-    with open(patch, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write("# every job may start it: the whole Check/0/job node goes\n")
-        fh.write("Check/0/job\tdel\n")
+    # One patch file per distinct set of deleted nodes.
+    patches = {}
+    for _, nodes, _ in chosen:
+        key = tuple(nodes)
+        if key in patches:
+            continue
+        patch = os.path.join(BUILD, "drop-%s.tsv" % "-".join(key))
+        with open(patch, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("# job: every job may start it; interval: the server owns the daily cadence\n")
+            for node in key:
+                fh.write("Check/0/%s\tdel\n" % node)
+        patches[key] = patch
     spec = os.path.join(BUILD, "spec-QuestData.tsv")
     with open(spec, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("# built by tools/quest_patch.py; base %s\n" % base)
-        for img, _ in chosen:
-            fh.write("patch\t%s\t%s\n" % (img, patch))
+        for img, nodes, _ in chosen:
+            fh.write("patch\t%s\t%s\n" % (img, patches[tuple(nodes)]))
     out = os.path.join(BUILD, "Data", "Quest", "QuestData", "QuestData_000.wz")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     tail = dump("build", out, VERSION, spec, base).strip().splitlines()[-1:]
     print("   " + (tail[0] if tail else "(no output)"))
-    for img, jobs in chosen:
-        shown = str(jobs) if len(jobs) <= 4 else "%d jobs" % len(jobs)
-        print("   %-10s job %s -> any" % (img, shown))
+    for img, _, note in chosen:
+        print("   %-10s %s" % (img, note))
 
-    # Prove it: every image parses, the chosen ones lost exactly that node, the rest are untouched.
+    # Prove it: every image parses, the chosen ones lost exactly those nodes, the rest are untouched.
     verified = dump("verify", os.path.dirname(out)).strip().splitlines()[-1:]
     print("   verify: " + (verified[0] if verified else "(no output)"))
-    ids = {img for img, _ in chosen}
+    lost = {img: nodes for img, nodes, _ in chosen}
     for img in images(out):
         after = json.loads(dump("cat", out, img))
         before = json.loads(dump("cat", base, img))
-        if img in ids:
-            if "job" in after.get("Check", {}).get("0", {}):
-                raise SystemExit("%s still has Check/0/job after the build" % img)
-            del before["Check"]["0"]["job"]
+        for node in lost.get(img, []):
+            if node in after.get("Check", {}).get("0", {}):
+                raise SystemExit("%s still has Check/0/%s after the build" % (img, node))
+            del before["Check"]["0"][node]
         if after != before:
-            raise SystemExit("%s differs from the base in more than Check/0/job" % img)
-    print("   %d image(s) changed, every other image identical to the base" % len(ids))
+            raise SystemExit("%s differs from the base in more than %s" % (img, lost.get(img, "nothing")))
+    print("   %d image(s) changed, every other image identical to the base" % len(lost))
     return out, chosen
 
 

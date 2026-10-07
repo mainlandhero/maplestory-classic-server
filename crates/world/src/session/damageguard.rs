@@ -25,6 +25,30 @@ pub(crate) enum Pricing {
 }
 
 impl Session {
+    /// **The claimed character as a caster of a `percent`% magic skill** - total INT and magic
+    /// attack, gear and a held magic attack buff included. The guard prices a cast with
+    /// it, and Poison Breath's burst (`session/poisonbreath.rs`) rolls its damage with it, so
+    /// the two cannot disagree about what this character's magic is worth.
+    pub(super) fn magic_attacker(&self, percent: u32, mastery: u32) -> Option<MagicAttacker> {
+        let chr = self.claimed_character()?;
+        let worn = self.dressed(&chr);
+        let int_gear: u32 = worn.iter().map(|(_, _, s)| u32::from(s.stats.inc_int)).sum();
+        Some(self.magic_attacker_from(&worn, u32::from(chr.intelligence) + int_gear, percent, mastery))
+    }
+
+    fn magic_attacker_from(
+        &self,
+        worn: &[(u8, u32, net::opcode::EquipStats)],
+        intelligence: u32,
+        percent: u32,
+        mastery: u32,
+    ) -> MagicAttacker {
+        let gear_mad: u32 = worn.iter().map(|(_, _, s)| u32::from(s.stats.inc_mad)).sum();
+        let buff = u32::try_from(self.held_value(net::jobbuffs::CTS_MAGIC_ATTACK).max(0)).unwrap_or(0);
+        let magic_total = crate::magic::magic_total_seed(intelligence) + gear_mad + buff;
+        MagicAttacker { magic_total, intelligence, mastery, skill_magic_percent: percent }
+    }
+
     /// Price a swing. **Never refuses anything itself** - see [`Session::guarded_damage`].
     pub(super) fn price_swing(&self, opcode: u16, payload: &[u8]) -> Pricing {
         if self.config.damage_guard == Mode::Off {
@@ -98,9 +122,8 @@ impl Session {
             let Some(mad) = row.and_then(|r| r.mad_percent).filter(|m| *m > 0) else {
                 return Pricing::Unchecked(format!("skill {skill_id} has no Basic Attack (mad) column"));
             };
-            let buff = u32::try_from(self.held_value(net::jobbuffs::CTS_MAGIC_ATTACK).max(0)).unwrap_or(0);
-            let magic_total = crate::magic::magic_total_seed(stats.intelligence) + gear(|s| s.inc_mad) + buff;
-            let attacker = MagicAttacker { magic_total, intelligence: stats.intelligence, mastery: 0, skill_magic_percent: mad };
+            let attacker = self.magic_attacker_from(&worn, stats.intelligence, mad, 0);
+            let magic_total = attacker.magic_total;
             return Pricing::Magic {
                 attacker,
                 what: format!("magic skill {skill_id} lv{level}: magic {magic_total}, INT {}, {mad}%", stats.intelligence),

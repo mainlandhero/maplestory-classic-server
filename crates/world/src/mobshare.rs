@@ -244,7 +244,16 @@ pub type SessionId = u64;
 pub struct Controllers {
     /// `map -> object id -> the connection that controls it`.
     inner: Mutex<HashMap<crate::fields::FieldKey, HashMap<u32, SessionId>>>,
+    /// `(map, object id) -> (who, when)`: the last time a connection hit a mob **while
+    /// holding it**, on the server's one clock. Read by [`Controllers::hit_by`]; always taken
+    /// after `inner`, never on its own while `inner` is wanted.
+    engaged: Mutex<HashMap<(crate::fields::FieldKey, u32), (SessionId, u64)>>,
 }
+
+/// **How long a holder keeps a mob it is fighting.** A hit by somebody else takes control only
+/// once the holder has not hit the mob for this long. Ten seconds, the owner 2026-10-05 (it
+/// was four for an hour). See [`Controllers::hit_by`].
+pub const STICKY_CONTROL_MS: u64 = 10_000;
 
 impl Controllers {
     pub fn new() -> Self {
@@ -303,6 +312,7 @@ impl Controllers {
         let Some(held) = inner.get_mut(&key) else { return 0 };
         let before = held.len();
         held.retain(|object_id, _| alive.contains(object_id));
+        self.engaged_lock().retain(|(map, object_id), _| *map != key || alive.contains(object_id));
         before - held.len()
     }
 
@@ -348,6 +358,57 @@ impl Controllers {
     pub fn forget(&self, key: crate::fields::FieldKey, object_id: u32) {
         if let Some(held) = self.lock().get_mut(&key) {
             held.remove(&object_id);
+        }
+        self.engaged_lock().remove(&(key, object_id));
+    }
+
+    /// **`attacker` hit this mob: does control move to them?** `None` - no change, no packet -
+    /// when they already hold it or when the holder is still fighting it; otherwise
+    /// `Some(previous holder)`, exactly as [`Controllers::hand_over_one`] answers, and the
+    /// caller releases the previous holder and grants `attacker`.
+    ///
+    /// # Why the holder keeps a mob it is fighting
+    ///
+    /// The owner, 2026-10-05: *"Seems like there's a bit of desync for King Slime, players are
+    /// still reporting that the boss teleports randomly when they are not the ones with mob
+    /// control."* Control used to move on **every** hit by a non-holder
+    /// ([`Controllers::hand_over_one`]), so two players fighting one boss passed it back and
+    /// forth on nearly every swing. Each pass is a release to one client and a grant to the
+    /// other, and the new holder starts the mob from its own copy of where it was - which on a
+    /// boss that jumps is not where the old holder had it - so every other screen snapped to
+    /// the new holder's position. A boss is exactly where several people hit one mob for a
+    /// long time, which is why the King Slime showed it.
+    ///
+    /// So a non-holder's hit takes control only when nobody holds the mob, or the holder has
+    /// not hit it for [`STICKY_CONTROL_MS`]. The reason control moves on a hit at all is kept:
+    /// the flinch and the knockback are played only by the holder's client (`hand_over_one`'s
+    /// docs), so a player hitting a mob that its holder is NOT fighting - the usual case, the
+    /// holder being whoever walked in first - still takes it on the first swing. What is given
+    /// up is the non-holder's own flinch while both fight the same mob; on the King Slime that
+    /// costs almost nothing, since it is a boss and is only pushed by a hit of 1 750 or more
+    /// (`Mob.wz` `pushed`).
+    pub fn hit_by(&self, key: crate::fields::FieldKey, object_id: u32, attacker: SessionId, now_ms: u64) -> Option<Option<SessionId>> {
+        let mut inner = self.lock();
+        let held = inner.entry(key).or_default();
+        let mut engaged = self.engaged_lock();
+        let holder = held.get(&object_id).copied();
+        match holder {
+            Some(who) if who == attacker => {
+                engaged.insert((key, object_id), (attacker, now_ms));
+                None
+            }
+            Some(who)
+                if engaged
+                    .get(&(key, object_id))
+                    .is_some_and(|&(by, at)| by == who && now_ms.saturating_sub(at) < STICKY_CONTROL_MS) =>
+            {
+                None
+            }
+            previous => {
+                held.insert(object_id, attacker);
+                engaged.insert((key, object_id), (attacker, now_ms));
+                Some(previous)
+            }
         }
     }
 
@@ -534,6 +595,10 @@ impl Controllers {
     /// which is still a well-formed entry. Same call `Fields` and `Bus` already make.
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<crate::fields::FieldKey, HashMap<u32, SessionId>>> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn engaged_lock(&self) -> std::sync::MutexGuard<'_, HashMap<(crate::fields::FieldKey, u32), (SessionId, u64)>> {
+        self.engaged.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -946,6 +1011,39 @@ mod tests {
 
         c.release_all(A);
         assert!(c.maps_held_by(A).is_empty(), "and a map it no longer holds drops off the list");
+    }
+
+    /// **Two players on one boss do not pass it back and forth.** The owner, 2026-10-05: the
+    /// King Slime teleporting on every screen but its holder's. A holder who is hitting the mob
+    /// keeps it; a non-holder takes it on the first swing when the holder is not fighting it,
+    /// when nobody holds it, or once the holder has stopped for `STICKY_CONTROL_MS`.
+    #[test]
+    fn a_holder_who_is_fighting_the_mob_keeps_it() {
+        let c = Controllers::new();
+        // A walked in first and holds it, but has not hit it: B's first swing takes it.
+        c.claim_uncontrolled(MAP, A, &[2000]);
+        assert_eq!(c.hit_by(MAP, 2000, B, 10_000), Some(Some(A)), "an idle holder gives it up");
+        assert_eq!(c.controller_of(MAP, 2000), Some(B));
+        // Now both swing, every 600 ms, for half a minute: it never moves.
+        for i in 0..50u64 {
+            let t = 10_600 + i * 600;
+            assert_eq!(c.hit_by(MAP, 2000, A, t), None, "A's swing at {t} while B fights it");
+            assert_eq!(c.hit_by(MAP, 2000, B, t + 300), None, "B's own swing");
+        }
+        assert_eq!(c.controller_of(MAP, 2000), Some(B));
+        // B stops; A keeps swinging. Just inside the window it stays, past it A takes it.
+        let last_b = 10_600 + 49 * 600 + 300;
+        assert_eq!(c.hit_by(MAP, 2000, A, last_b + STICKY_CONTROL_MS - 1), None);
+        assert_eq!(c.hit_by(MAP, 2000, A, last_b + STICKY_CONTROL_MS), Some(Some(B)));
+        assert_eq!(c.controller_of(MAP, 2000), Some(A));
+        // A mob nobody holds goes to the first hitter, and a holder change by another route
+        // (a departure's hand-over) does not inherit the old holder's last swing.
+        assert_eq!(c.hit_by(MAP, 2001, B, 0), Some(None));
+        assert_eq!(c.hand_over(MAP, B, A), vec![2001]);
+        assert_eq!(c.hit_by(MAP, 2001, B, 1), Some(Some(A)), "A never swung at 2001, so B's swing takes it back");
+        // A dead mob's swing record goes with it.
+        c.forget(MAP, 2001);
+        assert_eq!(c.hit_by(MAP, 2001, A, 2), Some(None));
     }
 
     /// A portal walk frees only the map being left. `release_all` would free both, which is

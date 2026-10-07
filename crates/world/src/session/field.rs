@@ -58,6 +58,8 @@ impl Session {
         // in one call, because half of a mutual sighting is invisible on one
         // screen. `crate::session::multiplayer`.
         out.extend(self.announce_field_entry());
+        // A daily quest turned in on an earlier UTC day is offered again. session/dailyquest.rs.
+        out.extend(self.refresh_daily_quests());
         // **Every spawn above is a fresh `CUser` on the other screens, with an empty HP bar**,
         // so the party HP cache must forget what it sent. `announce_field_entry` posts this
         // character's `0x0225` farewell and a new `0x0224`, and the object the new one

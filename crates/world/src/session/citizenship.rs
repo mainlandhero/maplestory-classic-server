@@ -529,7 +529,7 @@ impl Session {
         }
     }
 
-    fn citizenship_refusal(&mut self, quest_id: u32, speaker: u32, text: String) -> Vec<Reply> {
+    pub(super) fn citizenship_refusal(&mut self, quest_id: u32, speaker: u32, text: String) -> Vec<Reply> {
         crate::server::log(&format!("   quest {quest_id}: NOT accepted - {text}"));
         if speaker == 0 {
             return self.notice(text);

@@ -214,7 +214,7 @@ pub struct Item {
     /// stored beside the slot would be lost the moment the player unequips or moves it.
     /// `remove_item` hands back an `Item` and `add_item` takes one, so a field here survives
     /// every move for free. And it cannot go in `EquipStats`: that struct maps exhaustively
-    /// onto both the wire and the 26 stat columns, so a field there would change a packet.
+    /// onto both the wire and the 27 stat columns, so a field there would change a packet.
     ///
     /// Always `0` for a bundle. Nothing enforces that in the type because a `CHECK` on the
     /// column is the wrong shape for a value that is legitimately `0` on most rows.
@@ -453,10 +453,14 @@ pub(crate) const EQUIP_STAT_COLUMNS: [&str; EQUIP_STAT_COLUMN_COUNT] = [
     "damage_pct",
     "all_stats_pct",
     "scissor_uses",
+    // Option bit 1, the passed-scroll count the tooltip draws as "(+N)" (2026-10-05). Last,
+    // so every column before it keeps its index; `add_equip_stat_columns` ALTERs it onto each
+    // table that holds equips.
+    "upgrade_count",
 ];
 
-/// 17 stats + 9 named options.
-pub(crate) const EQUIP_STAT_COLUMN_COUNT: usize = 26;
+/// 17 stats + 10 named options.
+pub(crate) const EQUIP_STAT_COLUMN_COUNT: usize = 27;
 
 /// The columns that describe an item, shared by `inventory` and `storage_item`.
 /// `equipment` carries the stat tail but not `kind`/`quantity` - a worn slot is one equip.
@@ -582,7 +586,7 @@ pub(crate) fn equip_stat_declarations() -> String {
     out
 }
 
-/// `EquipStats` -> the 26 column values, in [`EQUIP_STAT_COLUMNS`] order.
+/// `EquipStats` -> the 27 column values, in [`EQUIP_STAT_COLUMNS`] order.
 ///
 /// **Exhaustive at all three levels.** Adding a field to `EquipStats`, `EquipStatSet` or
 /// `EquipOptions` stops this file compiling until somebody decides whether it persists - the
@@ -624,9 +628,9 @@ fn equip_stat_values(stats: &EquipStats) -> [i64; EQUIP_STAT_COLUMN_COUNT] {
         damage_percent,
         all_stats_percent,
         scissor_uses,
-        // The twelve the binary does not name. Listed rather than `..`-ignored, so a new
+        upgrade_count,
+        // The eleven the binary does not name. Listed rather than `..`-ignored, so a new
         // option bit cannot slip past unstored.
-        unknown_b1: _,
         unknown_b3: _,
         unknown_b4: _,
         unknown_b5: _,
@@ -667,10 +671,11 @@ fn equip_stat_values(stats: &EquipStats) -> [i64; EQUIP_STAT_COLUMN_COUNT] {
         i64::from(*damage_percent),
         i64::from(*all_stats_percent),
         i64::from(*scissor_uses),
+        i64::from(*upgrade_count),
     ]
 }
 
-/// The 26 columns -> `EquipStats`, or `None` when they are all NULL.
+/// The 27 columns -> `EquipStats`, or `None` when they are all NULL.
 ///
 /// **All-NULL is "no per-item stats stored"**, not "an item with zero stats". A row where some
 /// are NULL and some are not can only be hand-written; the NULLs read as 0 rather than the row
@@ -722,9 +727,9 @@ fn equip_stats_from_row(row: &rusqlite::Row<'_>, base: usize) -> rusqlite::Resul
             damage_percent: n8(23),
             all_stats_percent: n8(24),
             scissor_uses: n8(25),
+            upgrade_count: n8(26),
             // Named in full rather than `..Default::default()`: a new option bit must break
             // this line, exactly as it breaks the writer above.
-            unknown_b1: 0,
             unknown_b3: 0,
             unknown_b4: 0,
             unknown_b5: 0,
@@ -742,7 +747,7 @@ fn equip_stats_from_row(row: &rusqlite::Row<'_>, base: usize) -> rusqlite::Resul
     }))
 }
 
-/// `item_id, kind, quantity` and the 26 stat columns, as bind values.
+/// `item_id, kind, quantity` and the 27 stat columns, as bind values.
 pub(crate) fn item_values(item: &Item) -> Vec<Value> {
     let mut out = Vec::with_capacity(3 + EQUIP_STAT_COLUMN_COUNT);
     out.push(Value::Integer(i64::from(item.item_id)));
@@ -1118,7 +1123,85 @@ pub(crate) fn read_slot(
         .optional()?)
 }
 
+/// Every table that holds equips with the stat columns - the tables
+/// [`add_equip_stat_columns`] is called for.
+const EQUIP_HOLDING_TABLES: [&str; 6] = ["inventory", "equipment", "storage_item", "cash_locker", "trade_escrow", "shop_escrow"];
+
+/// One equip whose `(+N)` was repaired by [`Store::repair_upgrade_counts`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpgradeCountRepair {
+    pub table: &'static str,
+    pub item_id: u32,
+    pub before: Option<u8>,
+    pub after: u8,
+}
+
 impl Store {
+    /// **Make every stored equip's `upgrade_count` - the tooltip's `(+N)` - agree with its
+    /// slots**, and say which ones changed.
+    ///
+    /// The owner, 2026-10-05, with the live database: *"Can we make sure that all items that
+    /// players own that are scrolled contain the correct +N number next to the name?"* The
+    /// count was first stored that day, so every item scrolled before it read 0.
+    ///
+    /// # Why the count can be recovered exactly
+    ///
+    /// `tuc = remaining + failed_slots + passed` holds for every equip this server has ever
+    /// written: an item starts at `remaining = tuc` with nothing failed or passed; a pass
+    /// spends a slot and adds one to `passed`; a failure spends one and adds one to
+    /// `failed_slots`; a Clean Slate moves one from `failed_slots` back to `remaining`; an
+    /// Innocence puts all three back to the start (`world::scrolls`). `failed_slots` has been
+    /// stored since before either way of scrolling went live (2026-09-09, 16:00; `!scroll` at
+    /// 16:19, the client's scroll window at 21:14), so no failure was ever lost. Checked on the
+    /// live database's 15 scrolled items: each one's stats are above its template, and the one
+    /// that already had a stored count agrees.
+    ///
+    /// `tuc_of` is the item's template `tuc` (`gm-handbook/equips.txt`); an item it does not
+    /// know, a row with no stored stats (a fresh item, whose count is 0 anyway), or a row whose
+    /// numbers would give a negative count is left alone. Runs at every start and is a no-op
+    /// once the numbers agree, so a non-empty answer on a later start is itself a finding.
+    pub fn repair_upgrade_counts(&self, tuc_of: impl Fn(u32) -> Option<u8>) -> Result<Vec<UpgradeCountRepair>> {
+        let conn = self.conn();
+        let mut repaired = Vec::new();
+        for table in EQUIP_HOLDING_TABLES {
+            let columns: std::collections::HashSet<String> = {
+                let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+                let names = stmt.query_map([], |row| row.get::<_, String>(1))?;
+                names.collect::<std::result::Result<_, _>>()?
+            };
+            if !["item_id", "remaining_enhancements", FAILED_SLOTS_COLUMN, "upgrade_count"].iter().all(|c| columns.contains(*c)) {
+                continue;
+            }
+            let equips_only = if columns.contains("kind") { "AND kind = 1" } else { "" };
+            let rows: Vec<(i64, i64, i64, Option<i64>, Option<i64>)> = {
+                let mut stmt = conn.prepare(&format!(
+                    "SELECT rowid, item_id, remaining_enhancements, {FAILED_SLOTS_COLUMN}, upgrade_count FROM {table}
+                      WHERE remaining_enhancements IS NOT NULL {equips_only}"
+                ))?;
+                let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?;
+                rows.collect::<std::result::Result<_, _>>()?
+            };
+            for (rowid, item_id, remaining, failed, stored) in rows {
+                let Ok(item_id) = u32::try_from(item_id) else { continue };
+                let Some(tuc) = tuc_of(item_id) else { continue };
+                let passed = i64::from(tuc) - remaining - failed.unwrap_or(0);
+                let Ok(after) = u8::try_from(passed) else { continue };
+                // NULL reads back as 0 (`equip_stats_from_row`), so an unscrolled NULL already agrees.
+                if stored.unwrap_or(0) == i64::from(after) {
+                    continue;
+                }
+                conn.execute(&format!("UPDATE {table} SET upgrade_count = ?1 WHERE rowid = ?2"), rusqlite::params![i64::from(after), rowid])?;
+                repaired.push(UpgradeCountRepair {
+                    table,
+                    item_id,
+                    before: stored.and_then(|s| u8::try_from(s).ok()),
+                    after,
+                });
+            }
+        }
+        Ok(repaired)
+    }
+
     /// Everything a character is carrying, plus its six slot counts.
     ///
     /// **This is the field-entry call.** One query for the counts and one for the contents;
@@ -2698,6 +2781,44 @@ mod tests {
         assert_ne!(zeroed.kind, back.kind, "None and Some(zeros) must not collapse");
     }
 
+    /// **The `(+N)` of an item scrolled before it was stored is recovered from its slots**
+    /// (`tuc - remaining - failed`), a count stored short is corrected, and a second run - the
+    /// next start - changes nothing.
+    #[test]
+    fn the_upgrade_count_is_repaired_from_the_slots_and_only_once() {
+        let (store, _, chr) = store_with_character();
+        let equip = |remaining, upgrade_count, failed_slots| Item {
+            item_id: 1302000,
+            kind: ItemKind::Equip(Some(EquipStats {
+                options: EquipOptions { remaining_enhancements: remaining, upgrade_count, ..EquipOptions::default() },
+                ..EquipStats::default()
+            })),
+            failed_slots,
+            pet_id: None,
+            rolled_base: None,
+        };
+        // tuc 7. Slot 1: 1 left, 2 failed -> 4 passed, stored before the column (NULL).
+        // Slot 2: 4 left -> 3 passed, but only 1 counted since the column arrived.
+        // Slot 3: unscrolled, 0 already. Slot 4: no stored stats - a fresh item, skipped.
+        store.set_inventory_slot(chr, InventoryType::Equip, 1, &equip(1, 0, 2)).unwrap();
+        store.set_inventory_slot(chr, InventoryType::Equip, 2, &equip(4, 1, 0)).unwrap();
+        store.set_inventory_slot(chr, InventoryType::Equip, 3, &equip(7, 0, 0)).unwrap();
+        store.set_inventory_slot(chr, InventoryType::Equip, 4, &Item::equip(1302000)).unwrap();
+        store.conn().execute("UPDATE inventory SET upgrade_count = NULL WHERE slot = 1", []).unwrap();
+
+        let tuc = |id: u32| (id == 1302000).then_some(7u8);
+        let fixed = store.repair_upgrade_counts(tuc).unwrap();
+        let got: Vec<(&str, Option<u8>, u8)> = fixed.iter().map(|f| (f.table, f.before, f.after)).collect();
+        assert_eq!(got, vec![("inventory", None, 4), ("inventory", Some(1), 3)], "slots 3 and 4 already agree");
+        let count = |slot| match store.inventory_slot(chr, InventoryType::Equip, slot).unwrap().unwrap().kind {
+            ItemKind::Equip(Some(s)) => s.options.upgrade_count,
+            _ => 0,
+        };
+        assert_eq!((count(1), count(2), count(3)), (4, 3, 0));
+        assert!(store.repair_upgrade_counts(tuc).unwrap().is_empty(), "a second start changes nothing");
+        assert!(store.repair_upgrade_counts(|_| None).unwrap().is_empty(), "an unknown template is left alone");
+    }
+
     /// Every stat column round-trips. A column silently missing from the writer or the reader
     /// is exactly the failure the exhaustive destructure exists to prevent, and a test that
     /// only checks two fields would not see it.
@@ -2734,6 +2855,7 @@ mod tests {
                 damage_percent: 24,
                 all_stats_percent: 25,
                 scissor_uses: 26,
+                upgrade_count: 27,
                 ..EquipOptions::default()
             },
             ..EquipStats::default()
@@ -2748,9 +2870,9 @@ mod tests {
             .unwrap();
         let back = store.inventory_slot(chr, InventoryType::Equip, 1).unwrap().unwrap();
         assert_eq!(back.kind, ItemKind::Equip(Some(stats)));
-        // 1..=26, one per column, so a duplicated or transposed column name shows up as a
+        // 1..=27, one per column, so a duplicated or transposed column name shows up as a
         // wrong number rather than passing.
-        assert_eq!(equip_stat_values(&stats).to_vec(), (1..=26).collect::<Vec<i64>>());
+        assert_eq!(equip_stat_values(&stats).to_vec(), (1..=27).collect::<Vec<i64>>());
         assert_eq!(EQUIP_STAT_COLUMNS.len(), EQUIP_STAT_COLUMN_COUNT);
         let mut names: Vec<&str> = EQUIP_STAT_COLUMNS.to_vec();
         names.sort_unstable();

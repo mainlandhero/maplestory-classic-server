@@ -720,6 +720,22 @@ pub fn serve(config: Config) -> std::io::Result<()> {
     // says why a compile-time constant would have been stale in exactly this case.
     log(&store::buildstamp::line());
 
+    // **Every stored equip's `(+N)` agrees with its slots** (the owner, 2026-10-05: items
+    // scrolled before the count was stored read no `+N`). A no-op once they agree; each
+    // channel runs it and the second finds nothing. `Store::repair_upgrade_counts`.
+    match store.repair_upgrade_counts(|item_id| {
+        config.equips.get(&item_id).map(|e| u8::try_from(e.tuc).unwrap_or(u8::MAX))
+    }) {
+        Ok(fixed) if fixed.is_empty() => log("upgrade counts: every stored equip's (+N) already agrees with its slots"),
+        Ok(fixed) => {
+            log(&format!("upgrade counts: {} stored equip(s) given the (+N) their slots say they have passed:", fixed.len()));
+            for f in &fixed {
+                log(&format!("   {} item {}: {:?} -> {}", f.table, f.item_id, f.before, f.after));
+            }
+        }
+        Err(e) => log(&format!("upgrade counts: NOT repaired ({e}) - items scrolled before 2026-10-05 keep reading no (+N)")),
+    }
+
     let listener = TcpListener::bind(config.bind)?;
     log(&format!(
         "world {} channel {} listening on {}",

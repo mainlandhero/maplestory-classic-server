@@ -368,11 +368,12 @@ impl Session {
             map: self.field_of(chr),
             spawn: Reply {
                 opcode: net::userpool::USER_ENTER_FIELD,
-                body: net::userpool::user_enter_field_with_rooms(
+                body: net::userpool::user_enter_field_with_buffs(
                     chr,
                     self.remote_at(),
                     self.own_balloon(chr.id).as_ref(),
                     self.own_store_sign(chr.id).as_ref(),
+                    &self.remote_spawn_bits(),
                 ),
                 what: format!(
                     "UserEnterField: {} ({}) on map {} at ({}, {}) - {} bytes. \

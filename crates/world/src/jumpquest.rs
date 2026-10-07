@@ -381,32 +381,49 @@ pub const SLOTS: [Slot; 3] = [
     Slot { name: "etc", prizes: &crate::magicbox::ETC },
 ];
 
-/// **Jump Quest Rewards per character per UTC day.** The owner, 2026-10-04: *"Introduce a jump
-/// quest reward limit of 10, similar to the PQ limit. Players will be informed of their limit
-/// when they receive the reward and how many rewards they have left of the day."* Counted by
-/// `store::dailycount` beside the party quest's entries ([`crate::firsttime::DAILY_ENTRIES`]),
-/// so the day turns at the same UTC midnight. Only the [`SLOTS`] prizes count: a course's
-/// quest item, Frod's closeness and the way out are never withheld.
+/// **Trainer Frod's rewards per character per UTC day - the Pet-Walking Road only.** The owner,
+/// 2026-10-04: *"Introduce a jump quest reward limit of 10, similar to the PQ limit. Players will
+/// be informed of their limit when they receive the reward and how many rewards they have left
+/// of the day."* Then, 2026-10-05: *"only the pet park jump quest is limited to 10 rewards per
+/// day, everything else should be unlimited as long as they finish."* So the piles and the
+/// chests pay every finished run, and only Frod counts. Counted by `store::dailycount` beside the
+/// party quest's entries ([`crate::firsttime::DAILY_ENTRIES`]), so the day turns at the same UTC
+/// midnight. Only the [`SLOTS`] prizes count: Frod's closeness is never withheld.
 pub const DAILY_REWARDS: u32 = 10;
-/// The key the rewards are counted under.
+/// The key the rewards are counted under. Kept from when every course counted, so a count
+/// already taken today still applies.
 pub const REWARD_COUNT_KEY: &str = "jump_quest_reward";
 
-/// The chat line after a reward: how many are left today. `left` is after this one.
+/// The chat line after one of Frod's rewards: how many are left today. `left` is after this one.
 pub fn rewards_left_text(left: u32) -> String {
     match left {
         0 => format!(
-            "That was your last Jump Quest Reward for today ({DAILY_REWARDS} of {DAILY_REWARDS}). More after midnight (UTC)."
+            "That was your last Pet-Walking Road reward for today ({DAILY_REWARDS} of {DAILY_REWARDS}). More after midnight (UTC)."
         ),
-        1 => format!("You can receive 1 more Jump Quest Reward today (limit {DAILY_REWARDS} a day)."),
-        n => format!("You can receive {n} more Jump Quest Rewards today (limit {DAILY_REWARDS} a day)."),
+        1 => format!("You can receive 1 more Pet-Walking Road reward today (limit {DAILY_REWARDS} a day)."),
+        n => format!("You can receive {n} more Pet-Walking Road rewards today (limit {DAILY_REWARDS} a day)."),
     }
 }
 
-/// The line a box ends with when today's rewards are used up - said instead of a reward.
+/// The line Frod's box ends with when today's rewards are used up - said instead of a reward.
 pub fn limit_reached_text() -> String {
     format!(
-        "(You have received all {DAILY_REWARDS} of today's Jump Quest Rewards. They come back at midnight (UTC).)"
+        "(You have received all {DAILY_REWARDS} of today's Pet-Walking Road rewards. They come back at midnight (UTC). Your pet still grows closer to you.)"
     )
+}
+
+/// What Trainer Bartos adds when he hands over the letter, or reminds a player who holds one:
+/// how many of Frod's rewards are left today. The owner, 2026-10-05: *"The trainer that gives
+/// the letter at pet park should also additionally inform the player how many rewards they have
+/// left for today to claim."*
+pub fn bartos_rewards_left_text(left: u32) -> String {
+    match left {
+        0 => format!(
+            "#rYou have already claimed all {DAILY_REWARDS} of today's rewards from my brother.#k He will still help your pet grow closer to you, and the rewards come back at midnight (UTC)."
+        ),
+        1 => format!("#bYou have 1 reward left to claim from my brother today#k (of {DAILY_REWARDS})."),
+        n => format!("#bYou have {n} rewards left to claim from my brother today#k (of {DAILY_REWARDS})."),
+    }
 }
 
 /// The row the drops page's seven-day counts keep the reward under, as though it were a

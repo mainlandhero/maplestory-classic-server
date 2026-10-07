@@ -77,6 +77,7 @@ pub mod revive;
 pub mod abilityup;
 pub mod questeffect;
 pub mod questforfeit;
+pub mod remotebuff;
 pub mod upgrade;
 pub mod useitem;
 pub mod script;

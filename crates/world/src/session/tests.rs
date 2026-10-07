@@ -2295,7 +2295,7 @@ fn disorder_puts_its_attack_and_defence_cut_on_the_mob_it_hit() {
     let out = s.debuff_mobs(map, crate::session::mobdebuff::DISORDER, 1, &[2042]);
     assert_eq!(out.len(), 1, "{out:?}");
     assert_eq!(out[0].opcode, net::mobstat::MOB_STAT_SET);
-    let status = |index, value| net::mobstat::MobStatus { index, value, reason: 4_001_000, duration_ms: 10_000 };
+    let status = |index, value| net::mobstat::MobStatus { index, value, reason: 4_001_000, duration_ms: 10_000, extra: 0 };
     assert_eq!(
         out[0].body,
         net::mobstat::mob_stat_set(2042, &[status(net::mobstat::PAD, -5), status(net::mobstat::PDR, -1)])
@@ -3307,7 +3307,7 @@ fn every_authored_shop_resolves_to_an_npc_template() {
     let npc_strings = crate::config::load_npc_strings(strings);
     let (by_template, problems) = crate::shops::resolve_npc_templates(&table, &npc_strings);
 
-    assert_eq!(table.shops.len(), 39, "the authored shop count");
+    assert_eq!(table.shops.len(), 41, "the authored shop count - 39 transcribed, and Arwen and Jane (2026-10-05)");
     assert_eq!(by_template.get(&21).copied(), table.shops.iter().position(|s| s.npc == "Lucy"));
     assert!(
         !problems.iter().any(|p| p.contains("can never open")),
@@ -16232,3 +16232,114 @@ fn a_trade_accept_without_a_room_opens_nothing() {
     );
 }
 
+
+/// **Poison Breath bursts on the mob it hits and poisons around it** (the owner, 2026-10-05:
+/// *"Poison Breath the skill does not leave a cloud of area of effect that damages monsters
+/// over time"*). Three mobs: 2002 is struck, `near` stands 50 px away inside the level-1 box
+/// (`±130` x `±50`), `far` stands 300 px away outside it.
+///
+/// Every effect is checked: the struck mob and its neighbour lose HP, the far one does not;
+/// a poison runs `dotTime / dotInterval` = 5 ticks of exactly its number and then stops; and a
+/// mob already poisoned is not poisoned twice. `poisonbreath::tests` covers the box and the
+/// never-kill rule on their own.
+#[test]
+fn poison_breath_bursts_on_its_neighbours_and_poisons_them() {
+    let table = std::path::Path::new("../../gm-handbook/skills.txt");
+    if !table.exists() {
+        return;
+    }
+    const HP: u64 = 1_000_000;
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account = store.create_account("maplecw", "correct horse battery").unwrap();
+    let mut mobs = std::collections::HashMap::new();
+    mobs.insert(
+        SHARED_MAP,
+        vec![net::mob::FieldMob::new(2002, 2, 400, 395, 1, HP)],
+    );
+    let mut mob_templates = std::collections::HashMap::new();
+    mob_templates.insert(2u32, crate::config::MobTemplate { max_hp: HP as u32, level: 1, ..Default::default() });
+    let config = Arc::new(Config {
+        send_mobs: true,
+        mobs,
+        mob_templates,
+        firstjob: crate::firstjob::CombatTable::load(table),
+        ..Config::default()
+    });
+    let fields = Arc::new(crate::fields::Fields::new());
+    let map = crate::fields::FieldKey::world(SHARED_MAP);
+    fields.seed(map, &config, 0);
+    fields.due_respawns(map, &config, 999_999);
+    // The neighbours are summoned rather than spawned: a wave fills only part of a field.
+    let near = fields.summon_mob(map, 2, (450, 395), 1, HP).spawn.object_id;
+    let far = fields.summon_mob(map, 2, (700, 395), 1, HP).spawn.object_id;
+    assert_eq!(fields.mob_count(map), 3, "all three mobs standing");
+    let (mut s, chr_id) = adv_join(&store, &config, &fields, account, 210, &[(2_101_004, 1)]);
+    // Enough INT that the burst is a real number rather than the formula's floor of 1.
+    let mut chr = s.claimed_character().unwrap();
+    chr.intelligence = 300;
+    store.save_character_progress(&chr).unwrap();
+    let hp = |id| fields.mob_hp(map, id).unwrap();
+
+    // The captured swing claims 19 on 2002; Poison Breath's own row has no `mad`, so that is
+    // applied unchecked. Everything past it on 2002, and everything on `near`, is the burst.
+    let mut out = s.handle(&skilled_swing(net::combat::USER_MAGIC_ATTACK, 2_101_004));
+    assert!(hp(2002) < HP - 19, "the struck mob takes the burst too: {}", hp(2002));
+    assert!(hp(near) < HP, "the neighbour inside the box is hit");
+    assert_eq!(hp(far), HP, "the mob outside the box is not");
+
+    // `prop` is 45% at level 1, so cast until a poison takes - well inside 40 tries.
+    let mut tries = 0;
+    while s.poisons.is_empty() {
+        tries += 1;
+        assert!(tries < 40, "no poison in 40 bursts at 45% each");
+        out = s.handle(&skilled_swing(net::combat::USER_MAGIC_ATTACK, 2_101_004));
+    }
+    let poisoned: Vec<(u32, u64, u64)> = s.poisons.iter().map(|p| (p.object_id, p.per_tick, hp(p.object_id))).collect();
+    for p in &s.poisons {
+        assert_eq!(p.ticks_left, 5, "dotTime 5 / dotInterval 1");
+        assert!(p.per_tick > 0);
+        // The mark: status 23, the tick's number, Poison Breath, 5 s, and the poisoner's id.
+        let want = net::mobstat::mob_stat_set(
+            p.object_id,
+            &[net::mobstat::MobStatus {
+                index: net::mobstat::POISON,
+                value: p.per_tick as i32,
+                reason: 2_101_004,
+                duration_ms: 5_000,
+                extra: chr_id,
+            }],
+        );
+        assert!(
+            out.iter().any(|r| r.opcode == net::mobstat::MOB_STAT_SET && r.body == want),
+            "mob {} is sent its poison status: {out:?}",
+            p.object_id
+        );
+    }
+    let marks = out.iter().filter(|r| r.opcode == net::mobstat::MOB_STAT_SET).count();
+    assert_eq!(marks, s.poisons.len(), "one mark per new poison, none for a mob that was not poisoned");
+
+    // Recast while poisoned: no mob carries two poisons.
+    let before = s.poisons.len();
+    s.handle(&skilled_swing(net::combat::USER_MAGIC_ATTACK, 2_101_004));
+    let mut ids: Vec<u32> = s.poisons.iter().map(|p| p.object_id).collect();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), s.poisons.len(), "one poison per mob");
+    assert!(s.poisons.len() >= before);
+    let after_recast: Vec<(u32, u64)> = poisoned.iter().map(|(id, _, _)| (*id, hp(*id))).collect();
+
+    // Five seconds of ticks, then nothing.
+    let start = s.clock_ms;
+    s.tick(start + 5_000);
+    for ((id, per_tick, _), (_, was)) in poisoned.iter().zip(&after_recast) {
+        assert_eq!(was - hp(*id), 5 * per_tick, "mob {id}: five ticks of {per_tick}");
+    }
+    assert!(
+        s.poisons.iter().all(|p| !poisoned.iter().any(|(id, _, _)| *id == p.object_id)),
+        "the first poisons are spent"
+    );
+    let settled: Vec<u64> = poisoned.iter().map(|(id, _, _)| hp(*id)).collect();
+    s.poisons.clear();
+    s.tick(start + 20_000);
+    assert_eq!(settled, poisoned.iter().map(|(id, _, _)| hp(*id)).collect::<Vec<_>>(), "no tick after the end");
+}

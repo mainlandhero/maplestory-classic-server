@@ -74,6 +74,22 @@ SCROLLS = os.path.join("gm-handbook", "scrolls.txt")
 QUESTS = os.path.join("gm-handbook", "quests.json")
 
 PER_MONSTER = "# ---- per-monster"
+
+# **Every equip, use and etc chance a monster drops is DOUBLED from the v83 base** - the owner,
+# 2026-10-05: "For all equipment, consumable, and etc items that comes from monsters, can we double
+# all of the base rate?" Applied to the chances this script takes from v83 and to the medians it
+# fills in, capped at certainty. Rows it copies verbatim (pinned 100% rows, the party-quest
+# templates, meso rows) are read from the file, which already carries the doubling, so a re-run is
+# idempotent. Setup items (3xxxxxx) are not in the request and stay at the base.
+BASE_MULTIPLIER = 2
+DOUBLED_CATEGORIES = {"equip", "use", "scroll", "trophy", "etc"}
+
+
+def boosted(item, ppm):
+    """A v83 or median chance with the owner's multiplier applied."""
+    if category(item) not in DOUBLED_CATEGORIES:
+        return ppm
+    return min(ppm * BASE_MULTIPLIER, 1_000_000)
 MARBLE = "# ---- THE SIX DARK MARBLE ROWS"
 
 def fetch(path):
@@ -373,7 +389,7 @@ def build():
                 if item and category(item) == "equip":
                     lo, hi = 1, 1  # Cosmic's multi-equip copies are an option it ships switched on; one is classic
                 new.append({
-                    "tid": tid, "item": item, "ppm": r["ppm"], "lo": max(lo, 0), "hi": max(hi, lo),
+                    "tid": tid, "item": item, "ppm": boosted(item, r["ppm"]), "lo": max(lo, 0), "hi": max(hi, lo),
                     "score": had["score"] if had else 0,
                     "name": had["name"] if had else ("mesos" if item == 0 else items.get(item, "")),
                 })
@@ -386,14 +402,14 @@ def build():
                 if item == 0 and 0 in v83:
                     continue
                 report["meowdb-only, v83 median"] += 1
-                new.append({**r, "ppm": r["pct"] * 10_000 if item == 0 else median[category(item)]})
+                new.append({**r, "ppm": r["pct"] * 10_000 if item == 0 else boosted(item, median[category(item)])})
         else:
             for r in rows:
                 if r["item"] in pinned or r["item"] == 0:
                     new.append({**r, "ppm": int(round(r["pct"] * 10_000))})
                 else:
                     report["unmatched mob, v83 median"] += 1
-                    new.append({**r, "ppm": median[category(r["item"])]})
+                    new.append({**r, "ppm": boosted(r["item"], median[category(r["item"])])})
         new.sort(key=lambda r: (r["item"] != 0, -r["ppm"], r["item"]))
         out_rows.extend(new)
 
@@ -405,6 +421,8 @@ def write(head, rows, tail, median):
     body.append("# Chances are v83's (Cosmic " + COSMIC_COMMIT[:12] + ", tools/v83_drops.py) where the mob")
     body.append("# matched by name; otherwise the v83 median for the category: " +
                 ", ".join(f"{c} {fmt_pct(v)}%" for c, v in sorted(median.items()) if c != "mesos") + ".")
+    body.append("# Every equip, use and etc chance below is DOUBLED from that base, capped at 100% (the owner,")
+    body.append("# 2026-10-05; BASE_MULTIPLIER in tools/v83_drops.py). Mesos and setup items are not.")
     for r in rows:
         body.append(f"{r['tid']} | {r['item']} | {fmt_pct(int(round(r['ppm'])))} | {r['lo']} | {r['hi']} | {r['score']} | {r['name']}")
     body.append("")

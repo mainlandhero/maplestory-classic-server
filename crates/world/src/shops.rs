@@ -221,6 +221,14 @@ impl Shop {
     }
 }
 
+/// Quest items a shop stocks **on purpose**, so the loader's "a shop stocks a QUEST item" note
+/// stays quiet for them and still speaks for any other.
+///
+/// * `4031033` **Black Feather** - Arwen the Fairy's counter (2026-10-05, the owner): Classic
+///   World's Arwen sells it, quest 10114 needs it, and nothing else on this server gives it.
+///   Still never sold back (`ItemData::may_be_sold`).
+pub const STOCKED_QUEST_ITEMS: [u32; 1] = [4_031_033];
+
 /// Every shop, plus everything that went wrong loading them.
 #[derive(Debug, Clone, Default)]
 pub struct ShopTable {
@@ -505,7 +513,7 @@ impl ShopTable {
             // Not a drop. The owner's rule is about the SELL direction, and a shop that stocks a
             // quest item is a transcription worth looking at rather than a rule violation -
             // as it happens no shop in the file does, and this line is what would say so.
-            if measured.quest {
+            if measured.quest && !STOCKED_QUEST_ITEMS.contains(&item_id) {
                 table.problems.push(format!(
                     "{}:{lineno} [{npc}] {name} ({item_id}) is a QUEST item. Stocked, but it \
                      may never be sold back - ItemData::may_be_sold",
@@ -942,14 +950,15 @@ mod tests {
             return; // generated data, gitignored - tools/dump_names.py, dump_itemdata.py
         }
         let table = ShopTable::load(shops, names, data);
-        assert_eq!(table.shops.len(), 39, "39 shops were transcribed");
+        assert_eq!(table.shops.len(), 41, "39 shops were transcribed, and Arwen and Jane added (2026-10-05)");
         // 932 since 2026-08-19: seven female rows were restored to Don Hwang and Nuri
         // after the coordinator had deleted them as "duplicates". They were not - they
         // are the female variants, sharing a display name and differing only in id, and
         // the live UI counts (98/98 and 36/36) are what proved it.
         // 933 since 2026-09-29: Max's Elixir, on the source page and missing from the
         // transcription, added at the owner's word.
-        assert_eq!(table.item_count(), 933, "and 933 item rows");
+        // 940 since 2026-10-05: Arwen the Fairy's three rows and Jane's four.
+        assert_eq!(table.item_count(), 940, "and 940 item rows");
         assert!(
             table.problems.is_empty(),
             "every row must resolve; still open:\n{}",
@@ -971,9 +980,11 @@ mod tests {
         let food = lucy.items.iter().find(|i| i.name == "Pet Food").unwrap();
         assert_eq!((food.buy_price, food.sell_price), (35, 15), "the counterexample to 10x");
 
-        // The owner's restriction, measured over the whole file: no shop stocks a quest item, so
-        // "do not allow quest items to be sold" costs nothing here and is still enforced.
-        assert!(table.shops.iter().flat_map(|s| &s.items).all(|i| !i.quest_item));
+        // The owner's restriction, measured over the whole file: no shop stocks a quest item but
+        // the ones listed on purpose (Arwen's Black Feather, 2026-10-05), so "do not allow quest
+        // items to be sold" costs nothing here and is still enforced.
+        let stocked: Vec<u32> = table.shops.iter().flat_map(|s| &s.items).filter(|i| i.quest_item).map(|i| i.item_id).collect();
+        assert_eq!(stocked, STOCKED_QUEST_ITEMS.to_vec());
 
         // The citizenship gate survives the round trip.
         let flint = table.by_npc("Flint").expect("Flint sells scrolls");

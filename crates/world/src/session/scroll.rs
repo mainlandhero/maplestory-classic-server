@@ -348,6 +348,7 @@ impl Session {
         let state = EquipState {
             remaining: current.options.remaining_enhancements,
             failed_slots,
+            upgrades: current.options.upgrade_count,
             stats: current.stats,
         };
 
@@ -456,6 +457,7 @@ impl Session {
         let mut new_stats = current;
         new_stats.stats = applied.after.stats;
         new_stats.options.remaining_enhancements = applied.after.remaining;
+        new_stats.options.upgrade_count = applied.after.upgrades;
         new_stats.options.attribute &= !net::opcode::ATTRIBUTE_LUCKY_DAY;
         match self.store.set_worn_equip(chr.id, equip_slot, &new_stats, applied.after.failed_slots)
         {

@@ -736,8 +736,13 @@ impl Session {
             // **Release first, then grant.** Granting first leaves both clients past their
             // run gate, both rolling independent wanders, both sending `0x02FF` - which is
             // exactly the teleporting. Order is the fix, not an optimisation.
+            //
+            // **Unless the holder is still fighting it** (the owner, 2026-10-05, the King Slime
+            // "teleporting" on everyone else's screen): two players on one boss passed control
+            // back and forth on almost every swing. `Controllers::hit_by` keeps it with a
+            // holder who has hit it in the last `STICKY_CONTROL_MS`.
             if let Some(previous) =
-                self.fields.controllers().hand_over_one(map, target.object_id, me)
+                self.fields.controllers().hit_by(map, target.object_id, me, self.clock_ms)
             {
                 if let Some(loser) = previous.and_then(|s| self.bus().subscriber_of(s)) {
                     self.bus().publish_to_subscriber(
@@ -806,6 +811,15 @@ impl Session {
             // applied above like any other hit.
             if skill_id == crate::advbuffs::HEAL {
                 out.extend(self.heal_cast(level));
+            }
+            // **Poison Breath's burst.** The client reports the drop's hit as 0 and never sends
+            // the burst (`2101005`), so the server runs it: up to four mobs around the struck
+            // one, a magic hit each and a chance of poison. `session/poisonbreath.rs`.
+            if skill_id == super::poisonbreath::POISON_BREATH {
+                let struck: Vec<u32> = attack.targets.iter().map(|t| t.object_id).collect();
+                let (replies, templates) = self.poison_breath_burst(map, chr_id, level, &struck);
+                out.extend(replies);
+                landed.extend(templates);
             }
             // **A debuff on every mob the swing damaged** - Disorder's attack and defence cut.
             // `session/mobdebuff.rs`; the packet is `net::mobstat`.

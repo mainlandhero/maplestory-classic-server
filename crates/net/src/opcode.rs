@@ -2813,10 +2813,17 @@ pub struct EquipOptions {
     /// takes `>=` as "not fresh", the other `>`. **[L]** Keep this in `0..=tuc`; `tuc`
     /// itself is the unused-item boundary.
     pub remaining_enhancements: u8,
-    /// bit 1, `u8` at `item+0x102`. Nothing in this binary names it; the v214
-    /// reference calls this bit `cuc` - **[I]**, a 1-of-8 source, and section 10.3
-    /// of `research/equip-stats.md` says why that is a candidate and not a name.
-    pub unknown_b1: u8,
+    /// bit 1, `u8` at `item+0x102` - **how many scrolls have passed on this item**, drawn as
+    /// `Mithril Wand (+3)` in the tooltip title. **[L]**
+    ///
+    /// The tooltip builder reads it through the same integrity getter as
+    /// `remaining_enhancements` (`0x1426ad99b lea rcx,[rsi+0x102] / call 0x1401b0050`, the
+    /// check dword at `+0x106`); a non-zero value switches the title colour (`0x21` -> `0x1f`)
+    /// and, unless `FUN_1408419d0` says otherwise, formats the name with string id `0x0662`
+    /// **`"%s (+%d)"`** (`0x1426ad9f7`), `%d` being this byte (`movzx edi, al` ->
+    /// `r9d`). The v214 reference's name for the bit, `cuc`, agrees. Found 2026-10-05 after the
+    /// owner asked why scrolled items showed no `+N`. `world::scrolls::EquipState::upgrades`.
+    pub upgrade_count: u8,
     /// bit 2, `u16` at `item+0x10a` - the **attribute bitfield**; see [`ATTRIBUTE_BIT_3`].
     /// Twelve one-line client accessors read one bit each out of this. **[L]**
     pub attribute: u16,
@@ -2889,7 +2896,7 @@ impl EquipOptions {
     fn in_bit_order(&self) -> [(u64, usize); EQUIP_OPTION_BITS] {
         [
             (u64::from(self.remaining_enhancements), 1),
-            (u64::from(self.unknown_b1), 1),
+            (u64::from(self.upgrade_count), 1),
             (u64::from(self.attribute), 2),
             (u64::from(self.unknown_b3), 1),
             (u64::from(self.unknown_b4), 1),
@@ -4398,7 +4405,7 @@ mod tests {
         let mut o = EquipOptions::default();
         match bit {
             0 => o.remaining_enhancements = value as u8,
-            1 => o.unknown_b1 = value as u8,
+            1 => o.upgrade_count = value as u8,
             2 => o.attribute = value as u16,
             3 => o.unknown_b3 = value as u8,
             4 => o.unknown_b4 = value as u8,

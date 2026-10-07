@@ -697,7 +697,7 @@ mod tests {
 
     /// **The 5% floor on the real tables** (the owner, 2026-10-04): the file already carries it -
     /// Broken Mirror Glass, the row that prompted it, is written as 5% and the loader has nothing
-    /// left to raise; Iron Ore beside it on the same Stirge, which no quest owns, stays at 0.9%;
+    /// left to raise (10% since every monster chance was doubled); Iron Ore beside it on the same Stirge, which no quest owns, is 1.8%;
     /// and no quest-only row anywhere is between 0 and 5%.
     #[test]
     fn the_real_quest_only_drops_are_at_least_five_percent() {
@@ -708,8 +708,8 @@ mod tests {
         let raised = drops.raise_quest_item_floor(floor, quest_only);
         assert!(raised.is_empty(), "data/drops.txt has a quest-only row below 5% again: {raised:?}");
         let stirge = drops.for_mob(17);
-        assert_eq!(stirge.iter().find(|e| e.item_id == 4_031_007).unwrap().chance_ppm, 50_000);
-        assert_eq!(stirge.iter().find(|e| e.item_id == 4_010_001).unwrap().chance_ppm, 9_000);
+        assert_eq!(stirge.iter().find(|e| e.item_id == 4_031_007).unwrap().chance_ppm, 100_000, "5%, doubled with every monster chance (2026-10-05)");
+        assert_eq!(stirge.iter().find(|e| e.item_id == 4_010_001).unwrap().chance_ppm, 18_000);
         for (t, rows) in drops.mobs() {
             for e in rows.iter().filter(|e| quest_only(e.item_id)) {
                 assert!(e.chance_ppm == 0 || e.chance_ppm >= floor, "template {t}: {e:?}");
@@ -802,15 +802,21 @@ mod tests {
         // was missing. 43 of those rows are quest items, all nine ids belonging to a quest here
         // - the builder adds a quest item only when a quest of this client names it, which is
         // this module's orphan rule applied at build time, and `orphans` below proves it.
-        assert_eq!(rows, 3932, "every parseable row in data/drops.txt");
+        //
+        // 3937 since 2026-10-05: five hand-authored quest-item rows for items no monster dropped
+        // (the Alligator Skin Pouch and four others; `data/drops.txt`'s hand-authored section).
+        assert_eq!(rows, 3937, "every parseable row in data/drops.txt");
         // 42 since the field Jr. Sentinel (1001) drops its own shellpiece, not the tutorial's quest
-        // item - the owner, 2026-10-01.
-        assert_eq!(gated_rows, 42, "rows this filter can remove (quest-item rows, marbles excluded)");
+        // item - the owner, 2026-10-01. 47 with the five above.
+        assert_eq!(gated_rows, 47, "rows this filter can remove (quest-item rows, marbles excluded)");
         assert!(
             gated.contains(&4_031_047),
             "the screenshot item must be one of the rows this changes: {gated:?}"
         );
-        assert_eq!(gated.len(), 9, "quest-item ids in data/drops.txt, marbles excluded: {gated:?}");
+        assert_eq!(gated.len(), 14, "quest-item ids in data/drops.txt, marbles excluded: {gated:?}");
+        for pouch_and_co in [4_031_078u32, 4_031_088, 4_031_093, 4_031_116, 4_031_028] {
+            assert!(gated.contains(&pouch_and_co), "{pouch_and_co} drops, gated on its quest");
+        }
         assert!(orphans.is_empty(), "no droppable quest item is an orphan today: {orphans:?}");
     }
 }

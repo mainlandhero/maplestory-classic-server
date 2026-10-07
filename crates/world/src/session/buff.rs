@@ -916,7 +916,7 @@ impl Session {
     }
 
     /// One `0x007E`, with the length and the reason written into the log line.
-    fn reset_reply(&self, bits: &[u32], tail: usize, why: String) -> Vec<Reply> {
+    pub(super) fn reset_reply(&self, bits: &[u32], tail: usize, why: String) -> Vec<Reply> {
         vec![Reply {
             opcode: net::buff::TEMPORARY_STAT_RESET,
             body: net::buff::temporary_stat_reset_with_tail(bits, tail),

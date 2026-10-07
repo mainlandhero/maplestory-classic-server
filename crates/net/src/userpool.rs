@@ -720,6 +720,25 @@ pub fn user_enter_field_with_rooms(
     room: Option<&crate::minigame::Balloon>,
     store: Option<&crate::playershop::Sign>,
 ) -> Vec<u8> {
+    user_enter_field_with_buffs(chr, at, room, store, &[])
+}
+
+/// [`user_enter_field_with_rooms`] for a player who holds buffs everybody else must see: `bits`
+/// go into the remote mask at 55, so somebody arriving on the map sees what the players already
+/// there were sent as `crate::remotebuff`'s `0x02B0`. **Only bits whose remote decode reads no
+/// bytes** (`crate::remotebuff::ZERO_BYTE_REMOTE_BITS`, Dark Sight today) - the mask grows no
+/// fields, so every offset after it stays where it is.
+pub fn user_enter_field_with_buffs(
+    chr: &crate::opcode::Character,
+    at: RemoteAt,
+    room: Option<&crate::minigame::Balloon>,
+    store: Option<&crate::playershop::Sign>,
+    bits: &[u32],
+) -> Vec<u8> {
+    debug_assert!(
+        bits.iter().all(|b| crate::remotebuff::ZERO_BYTE_REMOTE_BITS.contains(b)),
+        "a remote bit whose decode reads bytes would shift every offset after the mask: {bits:?}"
+    );
     debug_assert_ne!(chr.id, 0, "a zero character id takes the four-u32 header branch");
     // Everything after the name shifts by its bytes; everything after the look shifts by
     // its equips. Both are folded into the offset assertions below.
@@ -752,7 +771,7 @@ pub fn user_enter_field_with_rooms(
     w.u32(0); //                  50
     w.u8(0); //                   54  stored as (v == 1)
     debug_assert_eq!(w.len(), 55 + shift, "the stat mask moved");
-    w.zeros(REMOTE_STAT_MASK_LEN); // 55  no buffs
+    w.bytes(&crate::buff::stat_mask(bits)); // 55  the remote mask - none, or Dark Sight
     // The tail the decoder reads unconditionally after the mask - see REMOTE_STAT_TAIL_LEN.
     // Written as four typed fields rather than seven zero bytes so the shape is visible at
     // the one place a future edit would break it.
